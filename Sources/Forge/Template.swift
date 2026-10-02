@@ -113,6 +113,15 @@ enum Template {
 
     """
 
+    /// The line every fresh scaffold shows. It's gone as soon as an agent writes the app's real interface.
+    static let scaffoldHint = "Press ⇧⌘E to tell Forge what to build."
+
+    /// Whether the app is still the empty scaffold: nothing has been built into it yet.
+    static func isScaffold(_ project: ForgeProject) -> Bool {
+        let view = try? String(contentsOf: project.dir.appendingPathComponent("Sources/ContentView.swift"), encoding: .utf8)
+        return view?.contains(scaffoldHint) ?? false
+    }
+
     static let contentViewSwift = """
     import SwiftUI
 
@@ -124,7 +133,7 @@ enum Template {
                     .foregroundStyle(.secondary)
                 Text("{{NAME}}")
                     .font(.title2.bold())
-                Text("Press ⇧⌘E to tell Forge what to build.")
+                Text("\(scaffoldHint)")
                     .foregroundStyle(.secondary)
             }
             .padding()
