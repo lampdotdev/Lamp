@@ -139,8 +139,8 @@ enum Template {
         }
     }
 
-    /// Saves what this app prints (`print`, `NSLog`, SwiftUI runtime warnings, fatal errors) to a file in its
-    /// Forge project, where Forge's builder reads it to see what happened while the app ran.
+    /// Saves what this app prints (`print`, `NSLog`, SwiftUI runtime warnings, fatal errors) and a picture of
+    /// its windows to its Forge project, where Forge's builder looks to see what happened while the app ran.
     enum ForgeRuntime {
         static let folder = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Application Support/Forge/Apps/{{SLUG}}/.forge/runtime")
@@ -151,6 +151,13 @@ enum Template {
             // Only on a Mac where Forge has this app's project.
             guard fm.fileExists(atPath: folder.deletingLastPathComponent().path) else { return }
             try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            // Pictures: once the first window has settled, and whenever the user leaves the app
+            // (often to ask Forge for a change).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { snapshot() } }
+            NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification,
+                                                   object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { snapshot() }
+            }
             let log = folder.appendingPathComponent("log.txt")
             let previous = folder.appendingPathComponent("previous-log.txt")
             try? fm.removeItem(at: previous)
@@ -166,6 +173,39 @@ enum Template {
             }
             trimmer.resume()
         }()
+
+        /// Saves up to three open windows, frontmost first, as screenshot.png, screenshot-2.png and screenshot-3.png.
+        /// The app draws its own windows, so this needs no screen recording permission.
+        @MainActor
+        static func snapshot() {
+            let windows = NSApp.orderedWindows.filter {
+                $0.isVisible && !$0.isMiniaturized && $0.frame.width > 40 && $0.frame.height > 40
+            }
+            guard !windows.isEmpty else { return }   // nothing on screen: keep the last pictures
+            for index in 0..<3 {
+                let url = folder.appendingPathComponent(index == 0 ? "screenshot.png" : "screenshot-\(index + 1).png")
+                if index < windows.count, let png = picture(of: windows[index]) {
+                    try? png.write(to: url, options: .atomic)
+                } else {
+                    try? FileManager.default.removeItem(at: url)
+                }
+            }
+        }
+
+        /// The window with its title bar, at most 1600 pixels on the long side.
+        @MainActor
+        private static func picture(of window: NSWindow) -> Data? {
+            guard let view = window.contentView?.superview ?? window.contentView else { return nil }
+            let size = view.bounds.size
+            let scale = min(window.backingScaleFactor, 1600 / max(size.width, size.height))
+            guard let bitmap = NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+            bitmap.size = size
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            return bitmap.representation(using: .png, properties: [:])
+        }
 
         /// Keeps a chatty app from filling the disk: past 1 MB, the log starts over.
         private static let trimmer: DispatchSourceTimer = {

@@ -1,8 +1,9 @@
 import AppKit
 
 /// What Forge can see of a generated app while it runs. The app saves what it prints to
-/// `.forge/runtime/log.txt` (see `ForgeRuntime` in Template.forgeSupportSwift), and macOS writes a
-/// report when it crashes. Both go to the agent, which otherwise only sees the code.
+/// `.forge/runtime/log.txt` and pictures of its windows next to it (see `ForgeRuntime` in
+/// Template.forgeSupportSwift), and macOS writes a report when it crashes. All of it goes to the
+/// agent, which otherwise only sees the code.
 enum Runtime {
     static func folder(_ project: ForgeProject) -> URL { project.dir.appendingPathComponent(".forge/runtime") }
     static func logURL(_ project: ForgeProject) -> URL { folder(project).appendingPathComponent("log.txt") }
@@ -50,6 +51,29 @@ enum Runtime {
         (the launch before).
 
         \(crash)
+        """
+    }
+
+    // MARK: - Screenshots
+
+    /// Added to a request when there's a picture of the current build's window, so the agent can look
+    /// at what the user sees. It isn't attached: not every model can read images.
+    static func screenshotNote(for project: ForgeProject) -> String {
+        func modified(_ url: URL) -> Date? {
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        }
+        guard let built = modified(builtURL(project)),
+              let taken = modified(folder(project).appendingPathComponent("screenshot.png")), taken > built
+        else { return "" }
+        let more = (2...3).map { "screenshot-\($0).png" }
+            .filter { modified(folder(project).appendingPathComponent($0)).map { $0 > built } ?? false }
+        return """
+
+
+        Note from Forge: .forge/runtime/screenshot.png is a picture of the app's front window, taken at \
+        \(taken.formatted(date: .omitted, time: .shortened)), just after it opened or when the user last switched away from it\
+        \(more.isEmpty ? "" : " (other open windows: " + more.map { ".forge/runtime/" + $0 }.joined(separator: ", ") + ")"). \
+        If you can view images, look at it when this request is about how the app looks or behaves.
         """
     }
 

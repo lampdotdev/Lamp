@@ -74,7 +74,9 @@ enum Agent {
     fatal errors, failed ForgeAI calls) in .forge/runtime/log.txt for the latest launch and \
     .forge/runtime/previous-log.txt for the one before. When the user says something doesn't work, read the log \
     before guessing. If the code doesn't show the cause, add `print` statements around it: the output will be \
-    there on your next turn, after the user has tried again.
+    there on your next turn, after the user has tried again. When Forge mentions a screenshot of the app's \
+    window, that is what the user was looking at: use it to check layout and visual problems rather than \
+    imagining the result from the code.
     - Keep APP.md current: what the app does and how the code is organised.
     - Finish with one or two plain sentences describing what changed. Users often don't know what a Mac can \
     do on its own, and assume things like reading text from a photo, cutting a person out of a picture, \
