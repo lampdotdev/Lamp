@@ -52,6 +52,17 @@ enum Template {
         return token
     }
 
+    /// Apps used to build unoptimized (`-c debug`), which made games and simulations run many times slower.
+    /// Forge owns build.sh, so before each build it moves older apps to optimized builds, with debug info
+    /// (-g) so crash reports keep file names and line numbers.
+    static func upgradeBuildScript(for project: ForgeProject) {
+        let url = project.dir.appendingPathComponent("build.sh")
+        guard let script = try? String(contentsOf: url, encoding: .utf8), script.contains("swift build -c debug") else { return }
+        let upgraded = script.replacingOccurrences(of: "swift build -c debug", with: "swift build -c release -Xswiftc -g")
+        try? upgraded.write(to: url, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
     /// Forge owns ForgeSupport.swift and rewrites it before every agent turn and build,
     /// so existing apps pick up helper improvements automatically.
     static func writeSupport(for project: ForgeProject) throws {
@@ -543,8 +554,8 @@ enum Template {
     # Builds build/{{EXE}}.app. Run after every change.
     set -euo pipefail
     cd "$(dirname "$0")"
-    swift build -c debug 2>&1
-    BIN="$(swift build -c debug --show-bin-path)/{{EXE}}"
+    swift build -c release -Xswiftc -g 2>&1
+    BIN="$(swift build -c release -Xswiftc -g --show-bin-path)/{{EXE}}"
     APP="build/{{EXE}}.app"
     rm -rf "$APP"
     mkdir -p "$APP/Contents/MacOS"

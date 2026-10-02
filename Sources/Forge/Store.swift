@@ -1278,6 +1278,7 @@ final class Store: ObservableObject {
     private func build(_ project: ForgeProject) async -> String? {
         log(project, .status, "Building…")
         try? Template.writeSupport(for: project)
+        Template.upgradeBuildScript(for: project)
         var output: [String] = []
         let status = await Shell.run(Shell.compatibleSDK + "./build.sh", cwd: project.dir) { output.append($0) }
         guard status != 0 else {
