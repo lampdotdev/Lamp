@@ -406,6 +406,13 @@ struct ProjectView: View {
                 .onChange(of: store.progress[project.id]?.screenshot != nil) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
             Divider()
+            if let approval = store.approvals[project.id] {
+                ApprovalCard(command: approval.command,
+                             onAllow: { store.answerApproval(for: project, allow: true) },
+                             onAllowAll: { store.answerApproval(for: project, allow: true, allowAll: true) },
+                             onDeny: { store.answerApproval(for: project, allow: false) })
+                    .padding(.horizontal, 12).padding(.top, 10)
+            }
             if !attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -867,5 +874,43 @@ struct ImportReviewView: View {
             .foregroundStyle(color)
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// A shell command the agent wants to run. Nothing runs until the user allows it.
+struct ApprovalCard: View {
+    let command: String
+    let onAllow: () -> Void
+    let onAllowAll: () -> Void
+    let onDeny: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("The agent wants to run a command", systemImage: "terminal")
+                .font(.headline)
+            ScrollView {
+                Text(command)
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 120)
+            .padding(8)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+            HStack {
+                Text("It runs in this app's folder with your permissions.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Deny", role: .cancel, action: onDeny)
+                    .keyboardShortcut(.escape, modifiers: [])
+                Button("Allow All This Turn", action: onAllowAll)
+                Button("Allow", action: onAllow)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(12)
+        .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.orange.opacity(0.35)))
     }
 }

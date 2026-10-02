@@ -17,7 +17,11 @@ enum AgentEvent {
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
 /// pi only gets file tools: Forge does the building and feeds compiler errors back.
 enum Agent {
-    static var tools: String { "read,edit,write,grep,find,ls" + (forgeTools == nil ? "" : ",look_at_app,plan,delete_file,list_versions,name_version,restore_version") }
+    /// `bash` only with Forge's extension, which routes every command through the user's approval.
+    static var tools: String {
+        "read,edit,write,grep,find,ls" + (forgeTools == nil ? "" :
+            ",bash,web_fetch,look_at_app,plan,delete_file,list_versions,name_version,restore_version")
+    }
 
     /// Forge's own tools for pi (Resources/forge-tools.ts): `look_at_app` has Forge build and open the app
     /// mid-turn and shows the agent the result; `plan` is the checklist on the build card; `delete_file`
@@ -63,8 +67,16 @@ enum Agent {
 
     Rules:
     - Make the change the user asks for by editing files under Sources/. Split code into files as it grows.
-    - You can read, search and edit files, but you can't run commands. When you finish, Forge builds the app \
-    and relaunches it. If the build fails, your next message will contain the compiler errors: fix them.
+    - You can read, search and edit files and read web pages without asking. You can also run shell commands \
+    (to clone a repo, inspect a file, convert data); Forge may ask the user to approve them, so run commands \
+    only when they really help, and prefer your file tools. Don't build or run the app yourself: when \
+    you finish, Forge builds and relaunches it, and if the build fails your next message will contain the \
+    compiler errors to fix. If something you need is denied or unavailable, say plainly what you need (for \
+    example "attach the files" or "allow the clone"). To read a GitHub repo, clone it shallowly into \
+    .forge/reference/ (`gh repo clone owner/name .forge/reference/name -- --depth 1` when gh is installed, which \
+    also works for private repos; otherwise `git clone --depth 1`); it's reference only, not part of the app. \
+    Never tell the user to approve prompts or change \
+    permission settings anywhere else: Forge is the only place they can approve anything.
     - Write code that compiles first time: only use Apple frameworks (SwiftUI, AppKit, Foundation, etc.), \
     no third-party packages, and APIs available on macOS 14.
     - Persist user data (JSON in ~/Library/Application Support/<app name>/) so relaunches don't lose state.

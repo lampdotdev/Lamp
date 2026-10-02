@@ -9,6 +9,9 @@
  *   (Undo).
  * - `list_versions`, `name_version`, `restore_version`: Forge saves a version of the app after every request.
  *   These let the agent see them, name one, and bring one back when the user asks. Forge does the work.
+ * - `web_fetch`: reads a web page (or any URL) as text. Reading needs no approval.
+ * - Shell commands (pi's `bash` tool) need the user's approval: before each one runs, this asks Forge, which
+ *   shows the command in the app's chat with Allow / Allow All This Turn / Deny, and blocks it if denied.
  * - `plan`: the agent's checklist of what it's building, with the files behind each part. Forge reads the
  *   list from pi's event stream, shows it on the build card, and ticks parts as their files are written,
  *   so the tool itself has nothing to do.
@@ -81,6 +84,61 @@ const plan = defineTool({
 		return { content: [{ type: "text", text: "The user can see the plan." }], details: undefined };
 	},
 });
+
+const webFetch = defineTool({
+	name: "web_fetch",
+	label: "Read web page",
+	description:
+		"Reads a web page or other URL and returns its text (HTML is converted to plain text). Use it to read " +
+		"documentation, a GitHub page, or an API response. Long pages are cut off at about 40,000 characters.",
+	parameters: Type.Object({
+		url: Type.String({ description: "The full URL, starting with http:// or https://" }),
+	}),
+
+	async execute(_toolCallId, params, signal) {
+		if (!/^https?:\/\//i.test(params.url)) throw new Error("Only http and https URLs can be read.");
+		const response = await fetch(params.url, {
+			headers: { "User-Agent": "Forge (pi web_fetch)", Accept: "text/html,text/plain,application/json,*/*" },
+			redirect: "follow",
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
+		});
+		const type = response.headers.get("content-type") ?? "";
+		let text = await response.text();
+		if (type.includes("html")) {
+			text = text
+				.replace(/<(script|style|noscript|svg)[\s\S]*?<\/\1>/gi, " ")
+				.replace(/<br\s*\/?>|<\/(p|div|li|h[1-6]|tr|section|article|pre)>/gi, "\n")
+				.replace(/<[^>]+>/g, " ")
+				.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+				.replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+				.replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n\n").trim();
+		}
+		const limit = 40_000;
+		const cut = text.length > limit;
+		const body = cut ? text.slice(0, limit) + `\n\n[Cut off: showed ${limit} of ${text.length} characters.]` : text;
+		const status = response.ok ? "" : `HTTP ${response.status}\n\n`;
+		return { content: [{ type: "text", text: status + body }], details: undefined };
+	},
+});
+
+/** Asks Forge to approve a shell command; resolves to an error message when it isn't approved. */
+async function askForge(command: string, signal?: AbortSignal): Promise<string | undefined> {
+	const url = process.env.FORGE_APPROVE_URL;
+	if (!url) return "Shell commands need approval in Forge, and Forge isn't available.";
+	try {
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.FORGE_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify({ command }),
+			// The user may take a while to answer; Forge itself never times out on their behalf.
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(3_600_000)]) : AbortSignal.timeout(3_600_000),
+		});
+		const reply = (await response.json()) as { allow?: boolean; reason?: string };
+		return reply.allow ? undefined : (reply.reason ?? "The user didn't approve this command.");
+	} catch {
+		return "Couldn't ask the user to approve this command.";
+	}
+}
 
 /** Files and folders Forge generates or depends on: never the agent's to delete. */
 const protectedPaths = [".forge", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/ForgeSupport.swift"];
@@ -181,6 +239,12 @@ const restoreVersion = defineTool({
 });
 
 export default function (pi: ExtensionAPI) {
+	pi.on("tool_call", async (event, ctx) => {
+		if (event.toolName !== "bash") return undefined;
+		const reason = await askForge(String((event.input as { command?: unknown }).command ?? ""), ctx.signal);
+		return reason ? { block: true, reason } : undefined;
+	});
+	pi.registerTool(webFetch);
 	pi.registerTool(lookAtApp);
 	pi.registerTool(plan);
 	pi.registerTool(deleteFile);

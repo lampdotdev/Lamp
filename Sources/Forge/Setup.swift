@@ -206,6 +206,7 @@ struct BuildingSettings: View {
     @AppStorage("piProvider") private var provider = "openrouter"
     @AppStorage("settingsTab") private var tab = "building"
     @AppStorage("notify") private var notify = true
+    @AppStorage("commandApproval") private var approval = CommandApproval.auto.rawValue
     @State private var model = Builder.piModel
     @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore
     @State private var notificationsDenied = false
@@ -260,11 +261,26 @@ struct BuildingSettings: View {
                 } else {
                     let path = ToolLocator.path(for: selectedEngine)
                     LabeledContent("Installed", value: path.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "Not found")
-                    Text("Forge lets it read and edit the app's files, but not run commands; Forge builds the app itself.")
+                    Text(selectedEngine == .codex
+                         ? "Codex runs commands inside its own sandbox, limited to the app's folder; it can't ask for approval."
+                         : selectedEngine == .opencode
+                            ? "opencode can't ask for approval, so it only runs commands when that's set to Never."
+                            : "Uses your Claude Code sign-in, without your personal hooks, plugins or connectors.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if let problem = Builder.problem() {
                     Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
+                }
+            }
+            Section {
+                Picker("Ask before running commands", selection: $approval) {
+                    ForEach(CommandApproval.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                Text((CommandApproval(rawValue: approval) ?? .auto).detail)
+                    .font(.caption).foregroundStyle(.secondary)
+                if approval == CommandApproval.auto.rawValue && CommandApproval.claudeAutoUnavailable && selectedEngine == .claude {
+                    Text("Claude Code's auto mode isn't available for your account, so Forge asks before every command.")
+                        .font(.caption).foregroundStyle(.orange)
                 }
             }
             Section {

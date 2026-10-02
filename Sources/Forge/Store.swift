@@ -98,6 +98,15 @@ final class Store: ObservableObject {
     @Published var usage: [String: AppUsage] = [:]
     @Published var icons: [String: NSImage] = [:]
     @Published var pendingImport: PendingImport?
+
+    /// A shell command an agent wants to run, waiting for the user (see ApprovalCard).
+    struct PendingApproval: Identifiable {
+        let id = UUID()
+        let command: String
+        let answer: CheckedContinuation<Bool, Never>
+    }
+    @Published var approvals: [String: PendingApproval] = [:]   // project id → the command waiting
+    private var allowAllThisTurn: Set<String> = []
     /// The app whose Rename… alert is showing.
     @Published var renaming: ForgeProject?
     /// The app whose Delete confirmation is showing.
@@ -699,6 +708,7 @@ final class Store: ObservableObject {
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
         let notes = Attachments.note(for: saved) + Versions.note(for: project) + Runtime.crashNote(for: project)
             + Runtime.screenshotNote(for: project)
+        currentRequests[project.id] = prompt
         looks[project.id] = Look()
         pendingNames[project.id] = nil
         guard await runAgent(prompt + notes, files: files, on: project) else {
@@ -850,6 +860,7 @@ final class Store: ObservableObject {
             }
         }
         running[project.id] = nil
+        endApprovals(for: project)
         log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost))
         recordAgent(project, cost: cost)
         if stopped.remove(project.id) != nil {
@@ -863,6 +874,15 @@ final class Store: ObservableObject {
         if status != 0 && failure == nil { failure = "\(engine.title) exited with status \(status)" }
         guard let failure else { return true }
         log(project, .detail, failure)
+        // Claude Code's auto permission mode isn't offered on every account or model: fall back to asking
+        // before every command, remember that, and run the turn again.
+        let lower = failure.lowercased()
+        if engine == .claude, CommandApproval.current == .auto, !CommandApproval.claudeAutoUnavailable,
+           lower.contains("auto"), lower.contains("mode") || lower.contains("permission") {
+            CommandApproval.claudeAutoUnavailable = true
+            log(project, .status, "Claude Code's auto mode isn't available, so Forge will ask before every command.")
+            return await runAgent(prompt, files: files, on: project)
+        }
         log(project, .error, Provider.friendlyError(failure))
         return false
     }
@@ -914,10 +934,86 @@ final class Store: ObservableObject {
         }
     }
 
+    // MARK: - Approvals
+
+    /// The latest request per app, so the decision model can judge commands against what the user asked for.
+    private var currentRequests: [String: String] = [:]
+
+    /// Applies Settings → Building → "Ask before running commands" to one command.
+    private func approveCommand(_ command: String, for project: ForgeProject, escalated: Bool) async -> Bool {
+        switch CommandApproval.current {
+        case .never:
+            log(project, .status, "Ran: \(command)")
+            return true
+        case .auto where !escalated:
+            if await commandLooksSafe(command, for: project) {
+                log(project, .status, "Ran: \(command)")
+                return true
+            }
+            return await requestApproval(for: project, command: command)
+        default:
+            return await requestApproval(for: project, command: command)
+        }
+    }
+
+    /// For agents without their own classifier (pi): obviously risky commands always go to the user; the rest
+    /// are judged by the decision model against the user's request. No decision model available → ask.
+    private func commandLooksSafe(_ command: String, for project: ForgeProject) async -> Bool {
+        let risky = #"\bsudo\b|\|\s*(ba|z)?sh\b|\brm\s+-[a-zA-Z]*[rf][a-zA-Z]*\s+[~/]|\bgit\s+push\b|\bchmod\s+-R\b|\bkillall\b|\blaunchctl\b|\bdefaults\s+write\b|\bcurl\b[^|]*\|"#
+        if command.range(of: risky, options: .regularExpression) != nil { return false }
+        let state: [String: Any] = [
+            "command": command,
+            "user_request": currentRequests[project.id] ?? "",
+            "working_folder": "The app's own project folder: \(project.dir.path)",
+        ]
+        let question: [String: Any] = [
+            "type": "noul",
+            "instructions": "Is it safe to run `command` without asking the user first, given `user_request`?",
+            "criteria": [
+                "true": "Routine and low-risk for building this app: listing, reading or searching files; git status, log, diff, or cloning a repository the user mentioned; inspecting or converting files inside the working folder; fetching a public web page; running the app's own build or tests.",
+                "false": "Could cause harm or surprise: deleting or overwriting files outside the working folder, needing administrator rights, changing system settings, installing software system-wide, running downloaded scripts, sending files or data somewhere, pushing to a remote, or doing something the user didn't ask for.",
+            ],
+        ]
+        guard let (answers, cost) = try? await AppAI.decide(state: state, questions: ["safe": question]),
+              let probability = (answers["safe"] as? [String: Any])?["noul"] as? Double else { return false }
+        _ = cost
+        return probability >= 0.85
+    }
+
+    /// Waits for the user to allow or deny a shell command. One request per app at a time; others queue.
+    /// There's no timeout: commands wait until the user answers, stops the turn, or the turn ends.
+    func requestApproval(for project: ForgeProject, command: String) async -> Bool {
+        guard !command.trimmed.isEmpty else { return false }
+        if allowAllThisTurn.contains(project.id) {
+            log(project, .detail, "Ran (allowed for this turn): \(command)")
+            return true
+        }
+        while approvals[project.id] != nil { try? await Task.sleep(for: .milliseconds(200)) }
+        guard busy.contains(project.id) else { return false }   // the turn ended while queued
+        NSApp.requestUserAttention(.informationalRequest)
+        return await withCheckedContinuation { continuation in
+            approvals[project.id] = PendingApproval(command: command, answer: continuation)
+        }
+    }
+
+    func answerApproval(for project: ForgeProject, allow: Bool, allowAll: Bool = false) {
+        guard let pending = approvals.removeValue(forKey: project.id) else { return }
+        if allowAll { allowAllThisTurn.insert(project.id) }
+        log(project, .detail, (allow ? "Allowed: " : "Denied: ") + pending.command)
+        pending.answer.resume(returning: allow)
+    }
+
+    /// Ends approvals with the turn: anything still waiting is denied, and "allow all" resets.
+    private func endApprovals(for project: ForgeProject) {
+        answerApproval(for: project, allow: false)
+        allowAllThisTurn.remove(project.id)
+    }
+
     /// Stops the agent working on an app.
     func stop(_ project: ForgeProject) {
         guard let process = running[project.id] else { return }
         stopped.insert(project.id)
+        endApprovals(for: project)   // a command waiting for approval counts as denied
         process.terminate()
     }
 
@@ -1317,9 +1413,10 @@ final class Store: ObservableObject {
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
-        let paths = ["/ai", "/ai/image", "/ai/decide", "/agent/look",
+        let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
+        let paths = ["/ai", "/ai/image", "/ai/decide", "/agent/look", "/agent/approve",
                      "/agent/versions", "/agent/versions/name", "/agent/versions/restore"]
-        guard request.method == "POST", paths.contains(request.path) else {
+        guard request.method == "POST", paths.contains(route) else {
             return (404, ["error": "Not found"])
         }
         let token = request.headers["authorization"]?.replacingOccurrences(of: "Bearer ", with: "") ?? ""
@@ -1330,6 +1427,31 @@ final class Store: ObservableObject {
         guard setup.ready else { return (503, ["error": "Forge isn't set up yet. Open Forge to finish setup."]) }
         if request.path == "/agent/look" { return await look(at: project) }
         if request.path.hasPrefix("/agent/versions") { return await versions(request, of: project) }
+        if route == "/agent/approve" {
+            let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+            // pi's extension sends {"command"}; Claude Code's hook sends {"tool_input": {"command"}}.
+            let input = body["tool_input"] as? [String: Any] ?? [:]
+            let tool = body["tool_name"] as? String ?? "Bash"
+            var command = body["command"] as? String ?? input["command"] as? String ?? ""
+            if command.isEmpty {   // a non-shell tool Claude Code wants permission for (e.g. a write outside the app)
+                let target = input["file_path"] as? String ?? input["url"] as? String ?? input["path"] as? String ?? ""
+                command = target.isEmpty ? tool : "\(tool): \(target)"
+            }
+            // Claude Code already ran its own classifier before asking ("claude-permission"), so ask the user.
+            let escalated = request.path.contains("format=claude-permission")
+            let allowed = await approveCommand(command, for: project, escalated: escalated)
+            let reason = allowed ? "Approved in Forge." : "The user denied this command in Forge."
+            if escalated {
+                let decision: [String: Any] = allowed ? ["behavior": "allow"] : ["behavior": "deny", "message": reason]
+                return (200, ["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": decision]])
+            }
+            if request.path.contains("format=claude") {
+                return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse",
+                                                     "permissionDecision": allowed ? "allow" : "deny",
+                                                     "permissionDecisionReason": reason]])
+            }
+            return (200, ["allow": allowed, "reason": reason])
+        }
         if request.path == "/ai/decide" {
             guard let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any],
                   let state = body["state"], let questions = body["questions"] as? [String: Any], !questions.isEmpty else {

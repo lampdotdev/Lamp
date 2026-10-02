@@ -26,6 +26,40 @@ enum Engine: String, CaseIterable, Identifiable {
     }
 }
 
+/// When the agent needs the user's go-ahead to run a shell command (Settings → Building).
+enum CommandApproval: String, CaseIterable, Identifiable {
+    case auto, always, never
+
+    var id: String { rawValue }
+
+    static var current: CommandApproval {
+        get { CommandApproval(rawValue: UserDefaults.standard.string(forKey: "commandApproval") ?? "") ?? .auto }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "commandApproval") }
+    }
+
+    /// Claude Code's auto mode turned out to be unavailable for this account; use "always" instead.
+    static var claudeAutoUnavailable: Bool {
+        get { UserDefaults.standard.bool(forKey: "claudeAutoUnavailable") }
+        set { UserDefaults.standard.set(newValue, forKey: "claudeAutoUnavailable") }
+    }
+
+    var title: String {
+        switch self {
+        case .auto: "Only when needed"
+        case .always: "Always"
+        case .never: "Never"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .auto: "Routine commands run on their own; Forge asks about anything risky or unexpected. Claude Code uses its safety classifier; other agents use the decision model."
+        case .always: "Forge asks before every command."
+        case .never: "Commands run without asking. They still show in the chat."
+        }
+    }
+}
+
 /// The user's builder choice (Settings → AI). Stored in UserDefaults.
 enum Builder {
     /// pi providers that aren't API keys.
@@ -170,16 +204,53 @@ extension Agent {
         case .pi:
             env["FORGE_LOOK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/look"
             env["FORGE_VERSIONS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/versions"
+            env["FORGE_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve"
             env["FORGE_TOKEN"] = Template.token(for: project)
             return AgentRun(command: command(fileCount: files.count),
                             env: env.merging(environment(prompt: prompt, files: files, session: session ?? "",
                                                          sessionDir: project.dir.appendingPathComponent(".forge/pi-sessions").path)) { $1 })
         case .claude:
-            // No shell tool: Forge builds the app itself. Attachments are listed in the prompt; Claude reads them.
+            // Forge builds the app itself. Attachments are listed in the prompt; Claude reads them.
+            // Isolated from the user's own Claude Code setup: --restricted ignores their settings files (hooks,
+            // permission rules, plugins) while keeping their sign-in and Forge's --settings; --strict-mcp-config
+            // skips their MCP servers and --disable-slash-commands their skills. --tools then lists exactly
+            // what the agent gets.
+            // Shell commands go through a PreToolUse hook that asks Forge and waits for the user's answer; Forge
+            // replies in Claude Code's hook format. If Forge can't be reached the hook fails and the command is denied.
+            env["FORGE_TOKEN"] = Template.token(for: project)
+            // How commands are approved (Settings → Building):
+            // - auto: Claude Code's own classifier (--permission-mode auto) runs routine commands; when it would
+            //   ask, its PermissionRequest hook sends the request to Forge's approval card.
+            // - always: a PreToolUse hook sends every shell command to Forge first.
+            // - never: the shell is allowed outright.
+            // Hooks call Forge's gateway and wait for the user; if Forge can't be reached the hook fails and the
+            // command is denied.
+            var approval = CommandApproval.current
+            if approval == .auto && CommandApproval.claudeAutoUnavailable { approval = .always }
+            let hook = #"{"type":"command","timeout":3600,"command":"curl -sf --max-time 3600 -X POST -H \"Authorization: Bearer $FORGE_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$FORGE_APPROVE_URL\""}"#
+            var permissionMode = "acceptEdits"
+            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch"
+            switch approval {
+            case .auto:
+                permissionMode = "auto"
+                env["FORGE_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-permission"
+                env["FORGE_CLAUDE_SETTINGS"] = #"{"hooks":{"PermissionRequest":[{"matcher":"*","hooks":["# + hook + "]}]}}"
+            case .always:
+                env["FORGE_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude"
+                env["FORGE_CLAUDE_SETTINGS"] = #"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":["# + hook + "]}]}}"
+            case .never:
+                allowed += ",Bash"
+                env["FORGE_CLAUDE_SETTINGS"] = "{}"
+            }
+            env["FORGE_CLAUDE_MODE"] = permissionMode
+            env["FORGE_CLAUDE_ALLOWED"] = allowed
             env["FORGE_TOOL"] = ToolLocator.path(for: .claude) ?? "claude"
             var command = """
             "$FORGE_TOOL" -p "$FORGE_PROMPT" --output-format stream-json --verbose \\
-              --permission-mode acceptEdits --allowedTools 'Read,Edit,Write,Glob,Grep' \\
+              --restricted --strict-mcp-config --disable-slash-commands \\
+              --tools 'Read,Edit,Write,Glob,Grep,Bash,WebFetch,WebSearch' \\
+              --permission-mode "$FORGE_CLAUDE_MODE" --allowedTools "$FORGE_CLAUDE_ALLOWED" \\
+              --settings "$FORGE_CLAUDE_SETTINGS" \\
               --append-system-prompt "$FORGE_SYSTEM"
             """
             if session != nil { command += " --resume \"$FORGE_SESSION\"" }
@@ -197,7 +268,11 @@ extension Agent {
             env["FORGE_TOOL"] = ToolLocator.path(for: .opencode) ?? "opencode"
             env["FORGE_PROMPT"] = "Instructions from Forge (follow these):\n\(systemPrompt)\n\nRequest:\n\(prompt)"
             // Edits allowed, shell and web off: Forge does the building.
-            env["OPENCODE_CONFIG_CONTENT"] = #"{"permission":{"edit":"allow","bash":"deny","webfetch":"deny"}}"#
+            // opencode has no way to ask for approval when run like this, so its shell is on only when the user
+            // chose to never be asked. Reading the web is allowed.
+            env["OPENCODE_CONFIG_CONTENT"] = CommandApproval.current == .never
+                ? #"{"permission":{"edit":"allow","bash":"allow","webfetch":"allow"}}"#
+                : #"{"permission":{"edit":"allow","bash":"deny","webfetch":"allow"}}"#
             var command = "\"$FORGE_TOOL\" run --format json --dir \"$FORGE_DIR\""
             if session != nil { command += " -s \"$FORGE_SESSION\"" }
             command += " \"$FORGE_PROMPT\""
