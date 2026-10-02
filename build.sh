@@ -49,8 +49,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   </dict></array>
 </dict></plist>
 PLIST
-# Sign nested code first (pi and its native module), then the app.
-find "$APP/Contents/Resources/pi" -name '*.node' -exec codesign --force -s - {} \; >/dev/null 2>&1
-codesign --force -s - "$APP/Contents/Resources/pi/pi" >/dev/null 2>&1
-codesign --force -s - "$APP" >/dev/null 2>&1
+# Sign with a stable local identity so macOS sees every rebuild as the same app
+# (Keychain "Always Allow" sticks). Falls back to ad-hoc signing if that isn't possible.
+SIGN_ID="$(./scripts/signing-identity.sh 2>/dev/null || echo -)"
+# Nested code first (pi and its native module), then the app.
+find "$APP/Contents/Resources/pi" -name '*.node' -exec codesign --force -s "$SIGN_ID" {} \; >/dev/null 2>&1
+codesign --force -s "$SIGN_ID" "$APP/Contents/Resources/pi/pi" >/dev/null 2>&1
+codesign --force -s "$SIGN_ID" "$APP" >/dev/null 2>&1
+[ "$SIGN_ID" = "-" ] && echo "Signed ad-hoc (macOS may ask for Keychain access after each rebuild)"
 echo "Built $APP"

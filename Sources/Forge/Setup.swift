@@ -129,6 +129,7 @@ struct SettingsView: View {
     @EnvironmentObject private var store: Store
     @AppStorage("model") private var model = Provider.models[0].id
     @AppStorage("appModel") private var appModel = "haiku"
+    @AppStorage("imageModel") private var imageModel = Icons.artModels[0].id
     @State private var key = ""
     @State private var hasKey = Keychain.openRouterKey != nil
 
@@ -160,6 +161,9 @@ struct SettingsView: View {
                 }
                 Picker("Inside your apps", selection: $appModel) {
                     ForEach(AppAI.models, id: \.id) { Text($0.label).tag($0.id) }
+                }
+                Picker("Icon artwork", selection: $imageModel) {
+                    ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
                 }
             }
         }

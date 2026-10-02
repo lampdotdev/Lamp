@@ -33,7 +33,7 @@ Nothing else needs installing. The coding agent ([pi](https://github.com/badlogi
    open build/Forge.app
    ```
 
-   The first build takes about a minute. It produces `build/Forge.app`, which you can drag into `/Applications` if you like.
+   The first build takes about a minute. It also creates a self-signed **Forge Local Signing** certificate in your login keychain (see `scripts/signing-identity.sh`). That gives every build the same signature, so macOS doesn't re-ask for Keychain access after each rebuild. It's only used to sign Forge on your Mac. It produces `build/Forge.app`, which you can drag into `/Applications` if you like.
 
 3. **Finish setup in the app.** On first launch, Forge checks for anything missing:
    - **App-building tools:** if the Command Line Tools are missing, Forge opens Apple's installer right away (click **Install**, then **Agree**). It then checks every few seconds and carries on by itself when they're installed, so there's no button to press afterwards.
@@ -55,7 +55,7 @@ Nothing else needs installing. The coding agent ([pi](https://github.com/badlogi
 - **Builds fail with "You have not agreed to the Xcode license"** (full Xcode only): run `sudo xcodebuild -license accept`.
 - **`Downloading pi` fails during `./build.sh`**: GitHub must be reachable. The download is cached in `vendor/` afterwards.
 - **Build errors mentioning the SDK, with Xcode installed**: point at it explicitly with `sudo xcode-select -s /Applications/Xcode.app`.
-- **Keychain asks "Forge wants to use your confidential information"**: rebuilding Forge changes its ad-hoc signature, so macOS asks again. Click **Always Allow**.
+- **Keychain asks "Forge wants to use your confidential information"**: that's Forge reading its OpenRouter key. Click **Always Allow** once. Builds are signed with a stable local certificate, so macOS remembers the answer across rebuilds. If the build printed "Signed ad-hoc", the certificate couldn't be created, and macOS will ask after each rebuild.
 - **Apps can't use AI ("Couldn't reach Forge")**: Forge must be running, and port `47811` must be free (check with `lsof -i :47811`).
 - **⇧⌘E opens the wrong Forge**: you have more than one `Forge.app` on disk. Open the one you want once, or delete the old one.
 - **Old icon in the Dock**: run `killall Dock`.

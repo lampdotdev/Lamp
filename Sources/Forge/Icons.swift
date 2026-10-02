@@ -14,7 +14,18 @@ struct IconSpec: Codable, Equatable {
 /// artwork (via an OpenRouter image model) when a key is available. Generated artwork is
 /// cached under .forge/art/ by prompt, so undoing an icon change is instant and free.
 enum Icons {
-    static let artModel = "google/gemini-3.1-flash-image"
+    static let artModels: [(id: String, label: String)] = [
+        ("google/gemini-3.1-flash-image", "Nano Banana 2 (Gemini 3.1 Flash Image)"),
+        ("google/gemini-3-pro-image", "Nano Banana Pro (Gemini 3 Pro Image, pricier)"),
+        ("openai/gpt-5.4-image-2", "GPT Image 2 (OpenAI, pricier)"),
+        ("google/gemini-3.1-flash-lite-image", "Nano Banana 2 Lite (fastest, cheapest)"),
+    ]
+
+    /// The OpenRouter image model used for icon artwork (Settings → "Icon artwork").
+    static var artModel: String {
+        let saved = UserDefaults.standard.string(forKey: "imageModel") ?? ""
+        return artModels.contains { $0.id == saved } ? saved : artModels[0].id
+    }
 
     // MARK: Spec
 
