@@ -136,6 +136,10 @@ struct AppSidebar: View {
                         ProgressView().controlSize(.small)
                     } else if store.unread.contains(project.id) {
                         ReadyDot()
+                    } else if store.isOutdated(project) {
+                        Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                            .foregroundStyle(.orange)
+                            .help("Built with an older version of Forge. Rebuild it to bring it up to date.")
                     }
                 }
                 .tag(project.id)
@@ -212,6 +216,13 @@ struct AppTile: View {
                         ReadyDot(size: 12)
                             .overlay(Circle().strokeBorder(.background, lineWidth: 2))
                             .offset(x: 4, y: -4)
+                    } else if store.isOutdated(project) {
+                        Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                            .font(.caption).foregroundStyle(.orange)
+                            .padding(3)
+                            .background(.regularMaterial, in: Circle())
+                            .offset(x: 6, y: -6)
+                            .help("Built with an older version of Forge. Rebuild it to bring it up to date.")
                     }
                 }
             Text(project.name)
@@ -432,6 +443,10 @@ struct ProjectView: View {
                 }
             }
             Divider()
+            if !busy, let stamp = store.stamps[project.id], stamp.isOutdated {
+                OutdatedBanner(name: project.name, stamp: stamp) { Task { await store.run(project) } }
+                    .padding(.horizontal, 12).padding(.top, 10)
+            }
             if let approval = store.approvals[project.id] {
                 ApprovalCard(command: approval.command, explanation: approval.explanation,
                              onAllow: { store.answerApproval(for: project, allow: true) },
@@ -719,6 +734,11 @@ struct AppInfoView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             Section("App") {
+                if let stamp = store.stamps[project.id] {
+                    LabeledContent("Built with") {
+                        Text(stamp.summary).foregroundStyle(stamp.isOutdated ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    }
+                }
                 LabeledContent("Bundle ID") { Text(project.bundleID).textSelection(.enabled) }
                 Button("Show App in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])

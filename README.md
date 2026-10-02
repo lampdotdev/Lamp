@@ -69,6 +69,7 @@ Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/
 - Attach screenshots, mockups, logos, data files or documents with the paperclip, by dropping them on the chat, or by pasting (a screenshot copied with ⌃⇧⌘4 pastes as an image). The agent sees images and small text files directly. Attachments are saved in the app's `Attachments/` folder and bundled inside the app, where code loads them with `ForgeAssets.url/image/text("name")`. Shared apps include only the attachments the app's code uses; screenshots and documents you attached just for the chat stay on your Mac.
 - In any generated app, press **⇧⌘E** to jump back to its chat in Forge.
 - While an app is open, the toolbar's Play button becomes a Stop button that quits it (**Quit** is also in the app's right-click menu). That's the way to stop a menu bar app, which has no Dock icon to quit from. To bring an open app to the front instead, double-click it in the sidebar.
+- Every app records which Forge built it. When an app was built by an older Forge, it gets an orange badge in the sidebar and a banner above the message box with a **Rebuild** button. The app's info panel shows the version under **Built with**.
 - Generated apps are installed to `~/Applications/Forge Apps/`, so they show up in Spotlight and Launchpad.
 - If you're in another app when Forge finishes, it sends a notification saying the app is ready, has a reply, or needs your attention. Click it to jump to that chat. macOS asks for permission the first time one is sent. Turn notifications off in **Settings → Building**. The Dock icon shows how many chats you haven't seen.
 - Double-click an app in the sidebar to build and open it. A blue dot means its chat has a reply you haven't seen. The buttons at the bottom of the sidebar switch between a list and icon tiles.
@@ -143,6 +144,7 @@ Local models are slower and much less capable than the best cloud models for who
 | `Sources/Forge/LocalModels.swift` | Hugging Face downloads, the bundled llama.cpp server, Ollama / LM Studio detection |
 | `Sources/Forge/Composer.swift` | Chat input (Return / Shift-Return, paste and drop) and attachments |
 | `Sources/Forge/Template.swift` | Scaffold for new apps, including the generated `ForgeSupport.swift` |
+| `Sources/Forge/BuildStamp.swift` | The Forge version stamped on each built app, and the warning for apps built by an older one |
 | `Sources/Forge/Runtime.swift` | What Forge sees of a running app: its log and its crash reports |
 | `Sources/Forge/Gateway.swift` | Local AI gateway and provider calls |
 | `Sources/Forge/Icons.swift` | Icon design, rendering and artwork generation |

@@ -95,6 +95,8 @@ final class Store: ObservableObject {
     @Published var progress: [String: TurnProgress] = [:]
     /// Apps that are open right now, however they were started, so Forge can offer to quit them.
     @Published var openApps: Set<String> = []
+    /// Which Forge built each installed app (see BuildStamp). Missing for apps that aren't built yet.
+    @Published var stamps: [String: BuildStamp] = [:]
     @Published var chatFocusRequest = 0
     @Published var setup = SetupCheck()
     @Published var usage: [String: AppUsage] = [:]
@@ -230,6 +232,7 @@ final class Store: ObservableObject {
                 icons[project.id] = image
             }
         }
+        for project in projects { stamps[project.id] = BuildStamp.read(project.installedURL) }
         for project in projects where logs[project.id] == nil {
             let forge = project.dir.appendingPathComponent(".forge")
             if let data = try? Data(contentsOf: forge.appendingPathComponent("chat.json")),
@@ -262,6 +265,9 @@ final class Store: ObservableObject {
         progress[project.id]?.activity = activity
         progress[project.id]?.currentFile = file
     }
+
+    /// The installed app was built by an older Forge and hasn't been rebuilt since.
+    func isOutdated(_ project: ForgeProject) -> Bool { stamps[project.id]?.isOutdated ?? false }
 
     // MARK: - Drafts
 
@@ -1297,6 +1303,7 @@ final class Store: ObservableObject {
         let status = await Shell.run(Shell.compatibleSDK + "./build.sh", cwd: project.dir) { output.append($0) }
         guard status != 0 else {
             Runtime.markBuilt(project)
+            BuildStamp.write(to: project.builtURL)   // deploy signs the app afterwards
             return nil
         }
         let tail = output.suffix(40).joined(separator: "\n")
@@ -1333,6 +1340,7 @@ final class Store: ObservableObject {
         }
         upgradeIconArt(project)
         refreshOpenApps()
+        stamps[project.id] = BuildStamp.read(project.installedURL)
         return crash
     }
 
