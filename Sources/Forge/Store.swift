@@ -794,7 +794,7 @@ final class Store: ObservableObject {
                 case .plan(let parts):
                     progress[project.id]?.plan = parts
                     progress[project.id]?.tickWrittenParts()
-                case .tool(let text):
+                case .tool(let text, let fullCall):
                     log(project, .tool, text)
                     let call = ToolCall(text)
                     note(TurnProgress.activity(for: call), for: project)
@@ -805,8 +805,9 @@ final class Store: ObservableObject {
                         progress[project.id]?.tickWrittenParts()
                     }
                     toolCalls += 1
-                    repeats = text == lastTool ? repeats + 1 : 1
-                    lastTool = text
+                    // Compared in full: six different searches of one file all read "grep cache.json".
+                    repeats = fullCall == lastTool ? repeats + 1 : 1
+                    lastTool = fullCall
                     if repeats >= 6 || toolCalls > 150, failure == nil {
                         failure = repeats >= 6
                             ? "The model got stuck repeating the same step (\(text)), so Forge stopped it."
