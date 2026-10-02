@@ -41,12 +41,21 @@ struct LogLine: Identifiable, Codable {
     /// Hidden unless Agent Details is on.
     var isDetail: Bool { kind == .detail || kind == .tool || kind == .summary }
 
-    /// Chats saved before tool calls and run summaries had their own kinds logged them as plain details.
+    /// "Worked for 4m 21s · $0.48"
+    static func workSummary(seconds: Double, cost: Double) -> String {
+        let total = Int(seconds.rounded())
+        let time = total < 60 ? "\(total)s" : "\(total / 60)m \(total % 60)s"
+        return String(format: "Worked for %@ · $%.2f", time, cost)
+    }
+
+    /// Older chats logged tool calls and run summaries as plain details, and named the engine in summaries.
     var upgraded: LogLine {
-        guard kind == .detail else { return self }
-        if text.range(of: #"^\S.* (done|error) · \d+s · \$[\d.]+$"#, options: .regularExpression) != nil {
-            return LogLine(id: id, kind: .summary, text: text)
+        guard kind == .detail || kind == .summary else { return self }
+        if let match = text.firstMatch(of: #/^\S.* (?:done|error) · (\d+)s · \$([\d.]+)$/#),
+           let seconds = Double(match.1), let cost = Double(match.2) {
+            return LogLine(id: id, kind: .summary, text: Self.workSummary(seconds: seconds, cost: cost))
         }
+        guard kind == .detail else { return self }
         if ToolCall(text).isKnown { return LogLine(id: id, kind: .tool, text: text) }
         return self
     }
@@ -812,8 +821,7 @@ final class Store: ObservableObject {
             }
         }
         running[project.id] = nil
-        log(project, .summary, String(format: "%@ %@ · %.0fs · $%.2f", engine.title, failure == nil ? "done" : "error",
-                                     Date().timeIntervalSince(started), cost))
+        log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost))
         recordAgent(project, cost: cost)
         if stopped.remove(project.id) != nil {
             log(project, .status, "Stopped. Any changes made so far are kept; press Undo to discard them.")
