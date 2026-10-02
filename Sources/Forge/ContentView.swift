@@ -654,7 +654,8 @@ struct AppInfoView: View {
 
     private var providerName: String {
         switch Builder.piProvider {
-        case Builder.localProvider: "On this Mac"
+        case Builder.localProvider: "Native Mac AI"
+        case let id where id.hasPrefix("ext-"): LocalModels.externalName(id)
         case Builder.myPiProvider: "Your pi setup"
         case let id: Provider.apiProvider(id)?.name ?? id
         }

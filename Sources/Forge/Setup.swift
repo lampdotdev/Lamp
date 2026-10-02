@@ -102,7 +102,7 @@ struct SetupView: View {
                         ForEach(Engine.allCases.filter { $0 != .pi && ToolLocator.path(for: $0) != nil }) { engine in
                             Button(engine.title) { use(engine) }
                         }
-                        Button("A model on this Mac…") { openSettings(tab: "local") }
+                        Button("A model on this Mac…") { openSettings(tab: "providers", sheet: Builder.localProvider) }
                         Button("Other providers…") { openSettings(tab: "building") }
                     }
                     .controlSize(.small)
@@ -116,9 +116,11 @@ struct SetupView: View {
 
     @Environment(\.openSettings) private var openSettingsAction
     @AppStorage("settingsTab") private var settingsTab = "building"
+    @AppStorage("settingsSheet") private var settingsSheet = ""
 
-    private func openSettings(tab: String) {
+    private func openSettings(tab: String, sheet: String = "") {
         settingsTab = tab
+        settingsSheet = sheet
         openSettingsAction()
     }
 
@@ -160,10 +162,12 @@ struct SettingsView: View {
             BuildingSettings().tabItem { Label("Building", systemImage: "hammer") }.tag("building")
             AppsSettings().tabItem { Label("Apps", systemImage: "square.grid.2x2") }.tag("apps")
             ProvidersSettings().tabItem { Label("Providers", systemImage: "cpu") }.tag("providers")
-            LocalModelsSettings().tabItem { Label("Local Models", systemImage: "desktopcomputer") }.tag("local")
         }
         .frame(width: 560)
-        .onAppear { if !["building", "apps", "providers", "local"].contains(tab) { tab = "building" } }
+        .onAppear {
+            if tab == "local" { tab = "providers" }   // Local Models is now Native Mac AI, under Providers
+            if !["building", "apps", "providers"].contains(tab) { tab = "building" }
+        }
     }
 }
 
@@ -227,21 +231,27 @@ struct BuildingSettings: View {
                         Text(option.title + (missing ? " (not installed)" : "")).tag(option.rawValue)
                     }
                 }
-                Text(selectedEngine.detail).font(.caption).foregroundStyle(.secondary)
 
                 if selectedEngine == .pi {
                     Picker("Provider", selection: providerChoice) {
-                        ForEach(addedProviders) { Text($0.name).tag($0.id) }
-                        if !addedProviders.isEmpty { Divider() }
-                        Text("On this Mac (local models)").tag(Builder.localProvider)
-                        ForEach(local.external.keys.sorted(), id: \.self) { Text(LocalModels.externalName($0)).tag($0) }
-                        if FileManager.default.fileExists(atPath: Agent.userConfigDir) {
-                            Text("My pi setup (logins and subscriptions)").tag(Builder.myPiProvider)
+                        let hasPiSetup = FileManager.default.fileExists(atPath: Agent.userConfigDir)
+                        if !addedProviders.isEmpty || hasPiSetup {
+                            Section("Cloud") {
+                                ForEach(addedProviders) { Text($0.name).tag($0.id) }
+                                if hasPiSetup {
+                                    Text("My pi setup (logins and subscriptions)").tag(Builder.myPiProvider)
+                                }
+                            }
+                        }
+                        Section("Local") {
+                            Text("Native Mac AI").tag(Builder.localProvider)
+                            ForEach(local.external.keys.sorted(), id: \.self) { Text(LocalModels.externalName($0)).tag($0) }
                         }
                         Divider()
                         Text("Configure providers…").tag(Self.configure)
                     }
-                    if let api = Provider.apiProvider(provider) {
+                    // Keys are managed in Providers; only ask here if the chosen provider has lost its key.
+                    if let api = Provider.apiProvider(provider), KeyStore.key(for: api.id) == nil {
                         KeyRow(provider: api) { revision += 1; recheck() }
                     }
                     ModelPicker(provider: provider, model: $model, revision: revision)
@@ -269,7 +279,6 @@ struct BuildingSettings: View {
 
 /// The AI, images and decisions that apps use while they run.
 struct AppsSettings: View {
-    @EnvironmentObject private var store: Store
     @AppStorage("appModel") private var appModel = "haiku"
     @AppStorage("imageModel") private var imageModel = Icons.artModels[0].id
     @AppStorage("decisionModel") private var decisionModel = AppAI.decisionModel.id
@@ -281,40 +290,40 @@ struct AppsSettings: View {
                 Picker("Inside your apps", selection: $appModel) {
                     ForEach(AppAI.models, id: \.id) { Text($0.label).tag($0.id) }
                 }
-                Text("Used when you have an OpenRouter key. Without one, apps use the model that builds them.")
-                    .font(.caption).foregroundStyle(.secondary)
                 Picker("Images (icons and in-app)", selection: $imageModel) {
                     ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
                 }
-                if let openRouter = Provider.apiProvider("openrouter") {
-                    KeyRow(provider: openRouter, label: "OpenRouter key") { revision += 1; recheck() }
-                }
-                Text("Image generation and the in-app models above need an OpenRouter key.")
+                let _ = revision   // re-read KeyStore after the TypeSafe key changes
+                Text("Image generation and the in-app models above need an OpenRouter key\(KeyStore.openRouterKey == nil ? ". Add one in Providers." : ".")")
                     .font(.caption).foregroundStyle(.secondary)
 
                 Picker("Decision model", selection: $decisionModel) {
                     ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }
                 }
                 if decisionModel.hasPrefix("typesafe:") {
-                    KeyRow(provider: Provider.typesafe, label: "TypeSafe key") { revision += 1 }
+                    if KeyStore.key(for: Provider.typesafe.id) == nil {
+                        KeyRow(provider: Provider.typesafe, label: "TypeSafe key") { revision += 1 }
+                    }
                 } else if KeyStore.openRouterKey == nil {
-                    Text("Add an OpenRouter key above, or switch to TypeSafe.").font(.caption).foregroundStyle(.orange)
+                    Text("Add an OpenRouter key in Providers, or switch to TypeSafe.").font(.caption).foregroundStyle(.orange)
                 }
                 Text("Fast, cheap typed judgments for apps: yes/no probabilities, picking from options, and rating on a scale, each with a calibrated confidence. Text in, decisions out.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
         .settingsPane()
+        .onAppear { revision += 1 }   // keys may have changed in the Providers tab
     }
-
-    private func recheck() { Task { await store.recheckSetup() } }
 }
 
-/// The providers you've added a key for. Double-click one to change or remove its key.
+/// Native Mac AI, Ollama and LM Studio, then the providers you've added a key for.
+/// Double-click one to see its models or change its key.
 struct ProvidersSettings: View {
     @EnvironmentObject private var store: Store
+    @ObservedObject private var local = LocalModels.shared
+    @AppStorage("settingsSheet") private var pendingSheet = ""   // set by the setup screen
     @State private var selection: String?
-    @State private var editing: PiProvider?
+    @State private var showing: ProviderDetail?
     @State private var removing: PiProvider?
     @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore
 
@@ -328,41 +337,42 @@ struct ProvidersSettings: View {
         return Provider.keyProviders.filter { KeyStore.key(for: $0.id) == nil }
     }
 
+    /// Local first (always there, as are Ollama and LM Studio), then the cloud providers with keys.
+    private var rows: [String] {
+        [Builder.localProvider] + LocalModels.externalIDs + added.map(\.id)
+    }
+
     var body: some View {
         Form {
             Section {
-                if added.isEmpty {
-                    Text("No providers yet. Click + to add one with its API key.")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 60)
-                } else {
-                    List(added, selection: $selection) { provider in
-                        HStack(spacing: 10) {
-                            ProviderLogo(id: provider.id, size: 24)
-                            Text(provider.name)
-                            Spacer()
-                            Text(KeyStore.usesKeychain ? "Key in Keychain" : "Key saved")
-                                .font(.callout).foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 4)
-                        .tag(provider.id)
+                List(rows, id: \.self, selection: $selection) { id in
+                    HStack(spacing: 10) {
+                        ProviderLogo(id: id, size: 24)
+                        Text(ProviderDetail.name(id))
+                        Spacer()
+                        Text(detail(id)).font(.callout).foregroundStyle(.secondary)
                     }
-                    .contextMenu(forSelectionType: String.self) { ids in
-                        if let provider = ids.first.flatMap(Provider.keyProvider) {
-                            Button("Edit…") { editing = provider }
+                    .padding(.vertical, 4)
+                    .tag(id)
+                }
+                .contextMenu(forSelectionType: String.self) { ids in
+                    if let id = ids.first {
+                        Button(Provider.keyProvider(id) == nil ? "Show Models…" : "Edit…") { showing = ProviderDetail(id) }
+                        if let provider = Provider.keyProvider(id) {
                             Button("Remove…", role: .destructive) { removing = provider }
                         }
-                    } primaryAction: { ids in
-                        editing = ids.first.flatMap(Provider.keyProvider)
                     }
-                    .onDeleteCommand { removing = selection.flatMap(Provider.keyProvider) }
-                    .scrollDisabled(true)
-                    .frame(height: CGFloat(added.count) * 40)
+                } primaryAction: { ids in
+                    showing = ids.first.map(ProviderDetail.init)
                 }
+                .onDeleteCommand { removing = selection.flatMap(Provider.keyProvider) }
+                .scrollDisabled(true)
+                .frame(height: CGFloat(rows.count) * 40)
+
                 HStack(spacing: 0) {
                     Menu {
                         ForEach(addable) { provider in
-                            Button(provider.name) { editing = provider }
+                            Button(provider.name) { showing = .key(provider) }
                         }
                     } label: {
                         Image(systemName: "plus").frame(width: 24, height: 20)
@@ -378,17 +388,22 @@ struct ProvidersSettings: View {
                         Image(systemName: "minus").frame(width: 24, height: 20)
                     }
                     .buttonStyle(.borderless)
-                    .disabled(selection == nil)
+                    .disabled(selection.flatMap(Provider.keyProvider) == nil)
+                    .help("Native Mac AI, Ollama and LM Studio can't be removed")
                     Spacer()
                 }
             } footer: {
-                Text("Keys are used to build apps and for the AI inside them. Pick which provider builds apps in Building.")
+                Text("Ollama and LM Studio models show up while those apps are running. Pick which provider builds apps in Building.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
         .settingsPane()
-        .sheet(item: $editing) { provider in
-            ProviderSheet(provider: provider) { changed() }
+        .sheet(item: $showing) { detail in
+            switch detail {
+            case .key(let provider): ProviderSheet(provider: provider) { changed() }
+            case .local: LocalAISheet()
+            case .server(let id): ServerSheet(id: id)
+            }
         }
         .confirmationDialog("Remove \(removing?.name ?? "provider")?", isPresented: Binding(
             get: { removing != nil }, set: { if !$0 { removing = nil } })) {
@@ -400,11 +415,118 @@ struct ProvidersSettings: View {
         } message: {
             Text("Forge forgets its API key. Apps and builds that use it stop working until you add it again.")
         }
+        .onAppear(perform: openPending)
+        .onChange(of: pendingSheet) { openPending() }
+        .task { local.refresh(); await local.detectExternal() }
+    }
+
+    private func detail(_ id: String) -> String {
+        if id == Builder.localProvider {
+            guard !local.installed.isEmpty else { return "No models yet" }
+            let bytes = local.installed.reduce(Int64(0)) { $0 + $1.bytes }
+            return "\(Self.models(local.installed.count)) · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))"
+        }
+        if id.hasPrefix("ext-") {
+            guard let models = local.external[id] else { return "Not running" }
+            return "Running · \(Self.models(models.count))"
+        }
+        return KeyStore.usesKeychain ? "Key in Keychain" : "Key saved"
+    }
+
+    private static func models(_ count: Int) -> String { count == 1 ? "1 model" : "\(count) models" }
+
+    private func openPending() {
+        guard !pendingSheet.isEmpty else { return }
+        showing = ProviderDetail(pendingSheet)
+        pendingSheet = ""
     }
 
     private func changed() {
         revision += 1
         Task { await store.recheckSetup() }
+    }
+}
+
+/// What double-clicking a provider opens.
+private enum ProviderDetail: Identifiable {
+    case key(PiProvider)
+    case local
+    case server(String)
+
+    init(_ id: String) {
+        if id == Builder.localProvider { self = .local }
+        else if let provider = Provider.keyProvider(id) { self = .key(provider) }
+        else { self = .server(id) }
+    }
+
+    var id: String {
+        switch self {
+        case .key(let provider): provider.id
+        case .local: Builder.localProvider
+        case .server(let id): id
+        }
+    }
+
+    static func name(_ id: String) -> String {
+        if id == Builder.localProvider { return "Native Mac AI" }
+        if id.hasPrefix("ext-") { return LocalModels.externalName(id) }
+        return Provider.keyProvider(id)?.name ?? id
+    }
+}
+
+/// Header shared by the provider sheets: logo, name and one line about it.
+private struct ProviderHeader: View {
+    let id: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ProviderLogo(id: id, size: 40)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ProviderDetail.name(id)).font(.headline)
+                Text(detail).font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// Models an Ollama or LM Studio server offers. They're managed in that app, not here.
+private struct ServerSheet: View {
+    let id: String
+    @ObservedObject private var local = LocalModels.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var checking = false
+
+    var body: some View {
+        let name = LocalModels.externalName(id)
+        let models = local.external[id]
+        VStack(alignment: .leading, spacing: 16) {
+            ProviderHeader(id: id, detail: models == nil ? "Not running" : "Running on this Mac")
+            if let models {
+                List(models, id: \.self) { Text($0) }
+                    .frame(height: min(CGFloat(max(models.count, 3)) * 32 + 16, 320))
+                Text("Add or remove models in \(name). Pick one to build apps with in Building.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("Open \(name) with at least one model, and its models show up here and in Building.")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                if models == nil {
+                    Button(checking ? "Checking…" : "Check Again") {
+                        checking = true
+                        Task { await local.detectExternal(); checking = false }
+                    }
+                    .disabled(checking)
+                }
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
     }
 }
 
@@ -486,11 +608,14 @@ struct ProviderLogo: View {
         let shape = RoundedRectangle(cornerRadius: size * 0.225, style: .continuous)
         ZStack {
             shape.fill(.white)
-            if let image {
+            if id == Builder.localProvider {
+                Image(systemName: "desktopcomputer")
+                    .font(.system(size: size * 0.5)).foregroundStyle(.black.opacity(0.75))
+            } else if let image {
                 Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
                     .padding(Self.fullBleed.contains(id) ? 0 : size * 0.18)
             } else {
-                Text(Provider.keyProvider(id)?.name.prefix(1) ?? "?")
+                Text(ProviderDetail.name(id).prefix(1))
                     .font(.system(size: size * 0.5, weight: .semibold)).foregroundStyle(.black.opacity(0.7))
             }
         }
@@ -566,7 +691,7 @@ struct ModelPicker: View {
                     .lineLimit(1).truncationMode(.middle)
             }
             if provider == Builder.localProvider && local.installed.isEmpty {
-                Text("No models downloaded yet. Get one in the Local Models tab.").font(.caption).foregroundStyle(.secondary)
+                Text("No models downloaded yet. Double-click Native Mac AI in Providers to get one.").font(.caption).foregroundStyle(.secondary)
             } else {
                 TextField("Search models", text: $search)
                     .textFieldStyle(.roundedBorder)
@@ -603,9 +728,10 @@ struct ModelPicker: View {
     }
 }
 
-/// Models on this Mac (shared with Local and the Hugging Face cache), plus downloads.
-struct LocalModelsSettings: View {
+/// Native Mac AI: models on this Mac (shared with Local and the Hugging Face cache), plus downloads.
+private struct LocalAISheet: View {
     @EnvironmentObject private var store: Store
+    @Environment(\.dismiss) private var dismiss
     @ObservedObject private var local = LocalModels.shared
     @State private var repo = ""
     @State private var custom: [LocalModelSpec] = []
@@ -616,52 +742,64 @@ struct LocalModelsSettings: View {
         (LocalModels.catalog + custom).filter { !local.isInstalled($0) }
     }
 
+    /// Tall enough for a good look at the list, short enough to leave the screen around it.
+    private var listHeight: CGFloat {
+        min(560, ((NSScreen.main?.visibleFrame.height ?? 800) - 320).rounded())
+    }
+
     var body: some View {
-        Form {
-            Section {
-                Text("Models run privately on this Mac. This Mac has \(LocalModels.ramGB) GB of memory. Local models are slower and less capable than the best cloud models, especially for whole apps.")
-                    .font(.callout).foregroundStyle(.secondary)
-                if local.installed.isEmpty {
-                    Text("No models yet. Download one below.").foregroundStyle(.secondary)
-                }
-                ForEach(local.installed) { installedRow($0) }
-            } header: { Text("On this Mac") } footer: {
-                Text("Includes models in the Hugging Face cache (~/.cache/huggingface/hub) and Local's folder, so they're shared with Local and other tools. GGUF models run on Forge's llama.cpp; MLX models run on mlx-lm\(LocalModels.mlxServerPath == nil ? " (not installed: `uv tool install mlx-lm`)" : "").")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            Section {
-                ForEach(downloadable) { downloadRow($0) }
-                HStack {
-                    TextField("owner/Model-GGUF or a Hugging Face link", text: $repo)
-                    Button("Add") { add() }.disabled(repo.trimmed.isEmpty || adding)
-                }
-                if adding { ProgressView().controlSize(.small) }
-                if let addError { Text(addError).font(.caption).foregroundStyle(.red) }
-            } header: { Text("Download") } footer: {
-                Text("Downloads go into the Hugging Face cache. Any GGUF repo works: Forge picks the Q4_K_M version, plus image support if there is one.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            Section {
-                LabeledContent("Model servers") {
-                    HStack {
-                        Text(local.serverRunning || local.mlxModel != nil ? "Running" : "Start when needed").foregroundStyle(.secondary)
-                        if local.serverRunning || local.mlxModel != nil { Button("Stop") { local.stopServer() } }
+        VStack(alignment: .leading, spacing: 0) {
+            ProviderHeader(id: Builder.localProvider,
+                           detail: "Private and offline. Slower and less capable than the best cloud models, especially for whole apps.")
+                .padding(20)
+            Divider()
+            Form {
+                Section {
+                    if local.installed.isEmpty {
+                        Text("No models yet. Download one below.").foregroundStyle(.secondary)
                     }
-                }
-                if local.external.isEmpty {
-                    Text("Ollama or LM Studio models show up here automatically when they're running.")
+                    ForEach(local.installed) { installedRow($0) }
+                } header: { Text("On this Mac") } footer: {
+                    Text("Shared with Local and other tools through the Hugging Face cache.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                ForEach(local.external.keys.sorted(), id: \.self) { id in
-                    LabeledContent(LocalModels.externalName(id), value: "\(local.external[id]?.count ?? 0) models")
+
+                Section {
+                    ForEach(downloadable) { downloadRow($0) }
+                    HStack {
+                        TextField("owner/Model-GGUF or a Hugging Face link", text: $repo)
+                        Button("Add") { add() }.disabled(repo.trimmed.isEmpty || adding)
+                    }
+                    if adding { ProgressView().controlSize(.small) }
+                    if let addError { Text(addError).font(.caption).foregroundStyle(.red) }
+                } header: { Text("Download") } footer: {
+                    Text("This Mac has \(LocalModels.ramGB) GB of memory. Any GGUF repo works: Forge picks the Q4_K_M version, plus image support if there is one.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                Button("Look Again") { local.refresh(); Task { await local.detectExternal() } }
-            } header: { Text("Servers") }
+
+                Section {
+                    LabeledContent("Model servers") {
+                        HStack {
+                            Text(local.serverRunning || local.mlxModel != nil ? "Running" : "Start when needed").foregroundStyle(.secondary)
+                            if local.serverRunning || local.mlxModel != nil { Button("Stop") { local.stopServer() } }
+                        }
+                    }
+                } header: { Text("Servers") } footer: {
+                    Text("GGUF models run on Forge's llama.cpp; MLX models run on mlx-lm\(LocalModels.mlxServerPath == nil ? " (not installed: `uv tool install mlx-lm`)" : "").")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .formStyle(.grouped)
+            .frame(height: listHeight)
+            Divider()
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            .padding(20)
         }
-        .settingsPane()
-        .task { local.refresh(); await local.detectExternal() }
+        .frame(width: 560)
+        .task { local.refresh() }
     }
 
     private func installedRow(_ model: InstalledModel) -> some View {

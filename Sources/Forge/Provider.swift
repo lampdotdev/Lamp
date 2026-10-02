@@ -70,7 +70,7 @@ enum Provider {
             return "The AI is busy right now. Wait a minute and try again."
         }
         if text.contains("connection refused") || text.contains("econnrefused") {
-            return "Couldn't reach the local model server. Check Settings → Local Models."
+            return "Couldn't reach the local model server. Check Settings → Providers → Native Mac AI."
         }
         if text.contains("requires a newer version") || text.contains("upgrade") {
             return "\(name) needs updating: \(raw.prefix(160))"

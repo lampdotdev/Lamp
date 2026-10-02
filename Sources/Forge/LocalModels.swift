@@ -94,6 +94,9 @@ final class LocalModels: ObservableObject {
         model(id)?.format == .mlx ? mlxProvider : Builder.localProvider
     }
 
+    /// Model servers Forge looks for: Ollama and LM Studio.
+    nonisolated static let externalIDs = ["ext-ollama", "ext-lmstudio"]
+
     nonisolated static func externalName(_ id: String) -> String {
         id == "ext-ollama" ? "Ollama" : id == "ext-lmstudio" ? "LM Studio" : id
     }

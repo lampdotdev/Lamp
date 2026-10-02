@@ -15,15 +15,6 @@ enum Engine: String, CaseIterable, Identifiable {
         }
     }
 
-    var detail: String {
-        switch self {
-        case .pi: "Any provider, a model on this Mac, or your own pi setup."
-        case .claude: "Uses your Claude Code sign-in (Claude Pro/Max or API)."
-        case .codex: "Uses your Codex sign-in (ChatGPT or API)."
-        case .opencode: "Uses your opencode setup and its providers."
-        }
-    }
-
     /// The command-line tool an external engine needs (nil for the bundled pi).
     var tool: String? {
         switch self {
@@ -73,7 +64,7 @@ enum Builder {
             switch piProvider {
             case localProvider:
                 let installed = LocalModels.scan()
-                if installed.isEmpty { return "Download a model in Settings → Local Models." }
+                if installed.isEmpty { return "Download a model in Settings → Providers → Native Mac AI." }
                 if let model = installed.first(where: { $0.id == piModel }), model.format == .mlx, LocalModels.mlxServerPath == nil {
                     return "\(model.name) is an MLX model and needs mlx-lm: run `uv tool install mlx-lm`."
                 }
@@ -97,7 +88,7 @@ enum Builder {
         switch engine {
         case .pi:
             let provider: String = switch piProvider {
-            case localProvider: "this Mac"
+            case localProvider: "Native Mac AI"
             case myPiProvider: "your pi setup"
             case let id where id.hasPrefix("ext-"): LocalModels.externalName(id)
             default: Provider.apiProvider(piProvider)?.name ?? piProvider
