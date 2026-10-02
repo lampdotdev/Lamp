@@ -127,6 +127,8 @@ enum Template {
 
     /// Adds "Edit with Forge…" (⇧⌘E), which jumps back to this app's chat in Forge.
     struct ForgeCommands: Commands {
+        init() { ForgeRuntime.start }
+
         var body: some Commands {
             CommandGroup(after: .appInfo) {
                 Button("Edit with Forge…") {
@@ -135,6 +137,48 @@ enum Template {
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             }
         }
+    }
+
+    /// Saves what this app prints (`print`, `NSLog`, SwiftUI runtime warnings, fatal errors) to a file in its
+    /// Forge project, where Forge's builder reads it to see what happened while the app ran.
+    enum ForgeRuntime {
+        static let folder = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent("Library/Application Support/Forge/Apps/{{SLUG}}/.forge/runtime")
+
+        /// Runs once, at launch. Each launch starts a new log.txt and keeps the one before as previous-log.txt.
+        static let start: Void = {
+            let fm = FileManager.default
+            // Only on a Mac where Forge has this app's project.
+            guard fm.fileExists(atPath: folder.deletingLastPathComponent().path) else { return }
+            try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            let log = folder.appendingPathComponent("log.txt")
+            let previous = folder.appendingPathComponent("previous-log.txt")
+            try? fm.removeItem(at: previous)
+            try? fm.moveItem(at: log, to: previous)
+            guard freopen(log.path, "a", stderr) != nil else { return }
+            dup2(fileno(stderr), STDOUT_FILENO)
+            setvbuf(stdout, nil, _IOLBF, 0)   // so nothing is lost if the app crashes
+            setvbuf(stderr, nil, _IONBF, 0)
+            fputs("Launched \(Date().formatted(date: .abbreviated, time: .standard))\n", stderr)
+            NSSetUncaughtExceptionHandler { exception in
+                fputs("Uncaught exception \(exception.name.rawValue): \(exception.reason ?? "")\n"
+                      + exception.callStackSymbols.prefix(20).joined(separator: "\n") + "\n", stderr)
+            }
+            trimmer.resume()
+        }()
+
+        /// Keeps a chatty app from filling the disk: past 1 MB, the log starts over.
+        private static let trimmer: DispatchSourceTimer = {
+            let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+            timer.schedule(deadline: .now() + 30, repeating: 30)
+            timer.setEventHandler {
+                var info = stat()
+                guard fstat(fileno(stderr), &info) == 0, info.st_size > 1_000_000 else { return }
+                ftruncate(fileno(stderr), 0)
+                fputs("(Earlier output was dropped: the log passed 1 MB.)\n", stderr)
+            }
+            return timer
+        }()
     }
 
     /// Files attached in Forge's chat, bundled inside this app (Contents/Resources/Attachments).
@@ -323,7 +367,9 @@ enum Template {
                     let (data, response) = try await URLSession.shared.data(for: request)
                     let reply = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
                     if (response as? HTTPURLResponse)?.statusCode == 200 { return reply }
-                    throw Failure(message: reply["error"] as? String ?? "The AI request failed.")
+                    let message = reply["error"] as? String ?? "The AI request failed."
+                    fputs("ForgeAI \(path) failed: \(message)\n", stderr)
+                    throw Failure(message: message)
                 } catch let error as URLError where error.code == .cannotConnectToHost && attempt == 0 {
                     // Forge isn't running: start it in the background, then retry once.
                     let config = NSWorkspace.OpenConfiguration()
@@ -334,6 +380,7 @@ enum Template {
                     try await Task.sleep(for: .seconds(3))
                 }
             }
+            fputs("ForgeAI \(path) failed: couldn't reach Forge\n", stderr)
             throw Failure(message: "Couldn't reach Forge. Open Forge and try again.")
         }
 

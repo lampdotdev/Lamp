@@ -70,6 +70,11 @@ enum Agent {
     - Files the user attaches are saved in Attachments/ and bundled inside the app. When the app should use \
     one (a logo, a data file, a sound), load it with `ForgeAssets.url("name")`, `ForgeAssets.image("name")` or \
     `ForgeAssets.text("name")` from ForgeSupport.swift. Screenshots and mockups are usually just references for you.
+    - You can't watch the app run, but Forge saves what it prints (print, NSLog, SwiftUI runtime warnings, \
+    fatal errors, failed ForgeAI calls) in .forge/runtime/log.txt for the latest launch and \
+    .forge/runtime/previous-log.txt for the one before. When the user says something doesn't work, read the log \
+    before guessing. If the code doesn't show the cause, add `print` statements around it: the output will be \
+    there on your next turn, after the user has tried again.
     - Keep APP.md current: what the app does and how the code is organised.
     - Finish with one or two plain sentences describing what changed. Users often don't know what a Mac can \
     do on its own, and assume things like reading text from a photo, cutting a person out of a picture, \
