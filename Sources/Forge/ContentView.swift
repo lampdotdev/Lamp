@@ -989,49 +989,63 @@ struct ApprovalCard: View {
 struct FirstAppView: View {
     @EnvironmentObject private var store: Store
 
-    /// Starting points that show what a Mac app with AI inside can do for a real, recurring job.
+    /// Starting points, each showing something different a Mac app can do. Choosing one fills in the first
+    /// request for the user to edit and send.
     static let examples: [(title: String, symbol: String, blurb: String, prompt: String)] = [
-        ("Downloads Tidy", "folder.badge.gearshape", "Sorts your Downloads folder and suggests clear names.",
-         "Downloads Tidy: a menu bar app that looks at my Downloads folder, groups the files by what they are (receipts, installers, screenshots, documents), and suggests clear names. Nothing moves or gets renamed until I approve it."),
-        ("Screenshot Notes", "camera.viewfinder", "Turns screenshots into a searchable list of what's in them.",
+        ("Downloads Tidy", "folder.badge.gearshape", "Watches Downloads and sorts what lands there, from the menu bar.",
+         "Downloads Tidy: a menu bar app that watches my Downloads folder and groups new files by what they are (receipts, installers, screenshots, documents), suggesting a clear name for each. Nothing moves or gets renamed until I approve it."),
+        ("Screenshot Notes", "camera.viewfinder", "Reads the text in screenshots and makes it searchable.",
          "Screenshot Notes: I drop screenshots on it and it pulls out the text and the key details (who, what, dates, amounts) into a searchable list, with the picture alongside."),
-        ("Reading Queue", "list.star", "Ranks documents and links by what matters to your work.",
+        ("Clipboard Shelf", "list.clipboard", "Remembers what you copy, one shortcut away.",
+         "Clipboard Shelf: keeps the last 200 things I copy (text and images). A shortcut (⌃⌥V) opens a small searchable panel from any app; Return copies the item back so I can paste it. Let me pin items so they stay at the top."),
+        ("Reading Queue", "list.star", "Ranks PDFs and links by what matters to your work.",
          "Reading Queue: I drop in PDFs, documents and links, and it ranks them by how much they matter for what I'm working on, which I describe in a box at the top. Each item gets a one-line summary and why it's ranked there."),
+        ("Focus Timer", "timer", "A menu bar timer with breaks, notifications and daily totals.",
+         "Focus Timer: a menu bar timer for 25-minute focus sessions with 5-minute breaks. It shows the time left in the menu bar, notifies me when a session or break ends, keeps a daily total, and has an Open at Login option in Settings."),
+        ("Photo Studio", "photo.on.rectangle.angled", "Cleans up product photos and makes new versions with AI.",
+         "Photo Studio: I drop in product photos and it puts each one on a clean white background, then lets me ask for variations in plain words (\"on a wooden table\", \"warmer light\"). Show before and after side by side, and export the ones I like."),
     ]
 
     var body: some View {
-        VStack(spacing: 22) {
-            VStack(spacing: 8) {
-                Image(systemName: "hammer").font(.system(size: 40)).foregroundStyle(.secondary)
-                Text("What's your Mac missing?").font(.title.bold())
-                Text("Describe a tool for something you do every week, and Forge builds it as a real Mac app. Keep changing it until it works exactly your way.")
-                    .multilineTextAlignment(.center).foregroundStyle(.secondary)
-                    .frame(maxWidth: 460)
-            }
-            Button("New App") { store.create() }
-                .buttonStyle(.borderedProminent).controlSize(.large)
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Or start from one of these").font(.callout).foregroundStyle(.secondary)
-                ForEach(Self.examples, id: \.title) { example in
-                    Button { store.create(starting: example.prompt) } label: {
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: example.symbol).frame(width: 22).foregroundStyle(.tint)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(example.title).font(.headline)
-                                Text(example.blurb).font(.callout).foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 0)
-                        }
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+        ScrollView {
+            VStack(spacing: 22) {
+                VStack(spacing: 8) {
+                    Image(systemName: "hammer").font(.system(size: 40)).foregroundStyle(.secondary)
+                    Text("What's your Mac missing?").font(.title.bold())
+                    Text("Describe a tool for something you do every week, and Forge builds it as a real Mac app. Keep changing it until it works exactly your way.")
+                        .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                        .frame(maxWidth: 460)
                 }
+                Button("New App") { store.create() }
+                    .buttonStyle(.borderedProminent).controlSize(.large)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Or start from an idea, then make it yours").font(.callout).foregroundStyle(.secondary)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 10)], spacing: 10) {
+                        ForEach(Self.examples, id: \.title) { example in
+                            Button { store.create(draft: example.prompt) } label: {
+                                HStack(alignment: .top, spacing: 10) {
+                                    Image(systemName: example.symbol).frame(width: 22).foregroundStyle(.tint)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(example.title).font(.headline)
+                                        Text(example.blurb).font(.callout).foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(10)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("Fills in the request so you can change it before sending")
+                        }
+                    }
+                }
+                .frame(maxWidth: 620)
             }
-            .frame(maxWidth: 480)
+            .padding(40)
+            .frame(maxWidth: .infinity)
         }
-        .padding(40)
     }
 }
