@@ -225,6 +225,12 @@ enum Shell {
         process.standardError = pipe
         process.standardInput = FileHandle.nullDevice
 
+        // Not waitUntilExit(): off the main thread it can wait forever for a process that has already exited.
+        let (exit, exited) = AsyncStream<Int32>.makeStream()
+        process.terminationHandler = {
+            exited.yield($0.terminationStatus)
+            exited.finish()
+        }
         do {
             try process.run()
         } catch {
@@ -237,7 +243,7 @@ enum Shell {
                 await onLine(line)
             }
         } catch {}
-        process.waitUntilExit()
+        for await status in exit { return status }
         return process.terminationStatus
     }
 }
