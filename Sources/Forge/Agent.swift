@@ -20,7 +20,7 @@ enum Agent {
     /// `bash` only with Forge's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (forgeTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,plan,delete_file,list_versions,name_version,restore_version")
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version")
     }
 
     /// Forge's own tools for pi (Resources/forge-tools.ts): `look_at_app` has Forge build and open the app
@@ -38,6 +38,9 @@ enum Agent {
     and any build errors or crash, so you can check your work instead of guessing. Once your edits are in, use \
     it after changing the interface or after a fix you can't verify from the code, and fix what you see before \
     finishing. Skip it for small changes you're sure of.
+    - `use_app` then uses the open app like a person: clicks at points in its latest picture, types, presses keys \
+    and scrolls, and shows you the result. When the change is about behaviour (sorting, a button's effect, a form, \
+    a flow between screens), try it with `use_app` before saying it works.
     - When you build a new app, call `plan` once, before writing any code, with its 3 to 5 main parts in the \
     user's own words (what they'll be able to do, never file or type names) and, for each part, the files \
     you'll write for it. Forge ticks a part off when its files are written, so the user watches the list \

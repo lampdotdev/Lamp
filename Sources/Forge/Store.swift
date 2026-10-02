@@ -1140,6 +1140,45 @@ final class Store: ObservableObject {
         refreshOpenApps()
     }
 
+    /// The agent's `use_app` tool: hands its clicks, typing and keys to the open app, which performs them on its
+    /// own front window (ForgeDriver in ForgeSupport), then reports what happened with a fresh picture.
+    private func use(_ project: ForgeProject, request body: Data) async -> (Int, [String: Any]) {
+        guard running[project.id] != nil else { return (409, ["error": "Forge isn't working on this app right now."]) }
+        guard let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+              let actions = request["actions"] as? [[String: Any]], !actions.isEmpty,
+              let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
+            return (400, ["error": "use_app needs a list of actions."])
+        }
+        guard NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first != nil else {
+            return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
+        }
+        guard Self.binary(of: project, contains: "dev.forge.use.") else {
+            return (200, ["text": "The open app was built before use_app existed. Call look_at_app to rebuild it, then try again."])
+        }
+        log(project, .detail, "Trying the app: " + actions.compactMap { $0["action"] as? String }.joined(separator: ", "))
+        let asked = Date()
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name("dev.forge.use.\(project.id)"), object: nil,
+            userInfo: ["actions": json, "token": Template.token(for: project)], deliverImmediately: true)
+        let waits = actions.reduce(0.0) { $0 + (($1["action"] as? String) == "wait" ? min($1["amount"] as? Double ?? 1, 10) : 0) }
+        let screenshots = await Runtime.screenshots(of: project, since: asked, waiting: Double(actions.count) * 0.4 + waits + 5)
+        guard !screenshots.isEmpty else {
+            return (200, ["text": "The app didn't answer. It may have no window open, or it may be stuck."])
+        }
+        let report = (try? String(contentsOf: Runtime.folder(project).appendingPathComponent("use.txt"), encoding: .utf8)) ?? ""
+        var text = "What happened:\n\(report)\n\nPictures of its windows follow, frontmost first. Points for the next use_app " +
+            "are pixels in the first picture."
+        if let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
+        return (200, ["text": text, "screenshots": screenshots.map(\.path)])
+    }
+
+    /// Whether the installed app's binary contains a string, which says which Forge features it was built with.
+    private static func binary(of project: ForgeProject, contains marker: String) -> Bool {
+        let binary = project.installedURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
+        guard let data = try? Data(contentsOf: binary, options: .alwaysMapped) else { return false }
+        return data.range(of: Data(marker.utf8)) != nil
+    }
+
     /// Whether the installed app was built with ForgeWindows (its binary contains the message name).
     private static func listensForShowWindow(_ project: ForgeProject) -> Bool {
         let binary = project.installedURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
@@ -1554,7 +1593,7 @@ final class Store: ObservableObject {
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
-        let paths = ["/ai", "/ai/image", "/ai/decide", "/agent/look", "/agent/approve",
+        let paths = ["/ai", "/ai/image", "/ai/decide", "/agent/look", "/agent/use", "/agent/approve",
                      "/agent/versions", "/agent/versions/name", "/agent/versions/restore"]
         guard request.method == "POST", paths.contains(route) else {
             return (404, ["error": "Not found"])
@@ -1566,6 +1605,7 @@ final class Store: ObservableObject {
         }
         guard setup.ready else { return (503, ["error": "Forge isn't set up yet. Open Forge to finish setup."]) }
         if request.path == "/agent/look" { return await look(at: project) }
+        if request.path == "/agent/use" { return await use(project, request: request.body) }
         if request.path.hasPrefix("/agent/versions") { return await versions(request, of: project) }
         if route == "/agent/approve" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]

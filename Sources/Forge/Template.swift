@@ -252,6 +252,12 @@ enum Template {
                 forName: Notification.Name("dev.forge.snapshot.{{SLUG}}"), object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { snapshot() }
             }
+            // ...and clicks, types and presses keys in it when the builder wants to try something (ForgeDriver).
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("dev.forge.use.{{SLUG}}"), object: nil, queue: .main) { note in
+                let actions = note.userInfo?["actions"] as? String, token = note.userInfo?["token"] as? String
+                MainActor.assumeIsolated { ForgeDriver.perform(actions, token: token) }
+            }
             let log = folder.appendingPathComponent("log.txt")
             let previous = folder.appendingPathComponent("previous-log.txt")
             try? fm.removeItem(at: previous)
@@ -272,9 +278,7 @@ enum Template {
         /// The app draws its own windows, so this needs no screen recording permission.
         @MainActor
         static func snapshot() {
-            let windows = NSApp.orderedWindows.filter {
-                $0.isVisible && !$0.isMiniaturized && $0.frame.width > 40 && $0.frame.height > 40
-            }
+            let windows = windowsOnScreen
             guard !windows.isEmpty else { return }   // nothing on screen: keep the last pictures
             for index in 0..<3 {
                 let url = folder.appendingPathComponent(index == 0 ? "screenshot.png" : "screenshot-\(index + 1).png")
@@ -286,12 +290,25 @@ enum Template {
             }
         }
 
-        /// The window with its title bar, at most 1600 pixels on the long side.
+        /// Open windows, frontmost first.
+        @MainActor
+        static var windowsOnScreen: [NSWindow] {
+            NSApp.orderedWindows.filter { $0.isVisible && !$0.isMiniaturized && $0.frame.width > 40 && $0.frame.height > 40 }
+        }
+
+        /// Picture pixels per window point: at most 1400 pixels on the long side, a size models see unscaled.
+        @MainActor
+        static func scale(of window: NSWindow) -> CGFloat {
+            let size = (window.contentView?.superview ?? window.contentView)?.bounds.size ?? window.frame.size
+            return min(window.backingScaleFactor, 1400 / max(size.width, size.height))
+        }
+
+        /// The window with its title bar, at most 1400 pixels on the long side.
         @MainActor
         private static func picture(of window: NSWindow) -> Data? {
             guard let view = window.contentView?.superview ?? window.contentView else { return nil }
             let size = view.bounds.size
-            let scale = min(window.backingScaleFactor, 1600 / max(size.width, size.height))
+            let scale = scale(of: window)
             guard let bitmap = NSBitmapImageRep(
                 bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
                 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -620,6 +637,151 @@ enum Template {
                     alert.runModal()
                 }
             }
+        }
+    }
+
+    /// Lets Forge's builder use the app the way a person would: it clicks, types and presses keys in the front
+    /// window, from inside the app, so no Accessibility permission is needed. Points are pixels in the latest
+    /// picture of that window (ForgeRuntime.snapshot), so the builder aims at what it saw. What happened goes to
+    /// .forge/runtime/use.txt, then a fresh picture is taken.
+    @MainActor
+    enum ForgeDriver {
+        struct Action: Decodable {
+            let action: String          // click, double_click, type, key, scroll, wait
+            var x: Double?
+            var y: Double?
+            var text: String?
+            var key: String?            // "return", "escape", "cmd+a", "down"…
+            var amount: Double?         // scroll: points, positive is down; wait: seconds
+        }
+
+        static func perform(_ json: String?, token: String?) {
+            guard token == "{{TOKEN}}", let data = json?.data(using: .utf8),
+                  let actions = try? JSONDecoder().decode([Action].self, from: data) else { return }
+            var report: [String] = []
+            func step(_ index: Int) {
+                guard index < actions.count else {
+                    // Let the app react, then show the result.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        try? report.joined(separator: "\n").write(to: ForgeRuntime.folder.appendingPathComponent("use.txt"),
+                                                                    atomically: true, encoding: .utf8)
+                        ForgeRuntime.snapshot()
+                    }
+                    return
+                }
+                let action = actions[index]
+                report.append(run(action))
+                let pause = action.action == "wait" ? min(action.amount ?? 1, 10) : 0.35
+                DispatchQueue.main.asyncAfter(deadline: .now() + pause) { step(index + 1) }
+            }
+            step(0)
+        }
+
+        private static func run(_ action: Action) -> String {
+            guard let window = ForgeRuntime.windowsOnScreen.first, let frame = window.contentView?.superview else {
+                return "\(action.action): the app has no window open"
+            }
+            switch action.action {
+            case "click", "double_click":
+                guard let x = action.x, let y = action.y else { return "\(action.action): needs x and y" }
+                // Pictures run top-down in pixels; windows run bottom-up in points.
+                let scale = ForgeRuntime.scale(of: window)
+                let point = NSPoint(x: x / scale, y: frame.bounds.height - y / scale)
+                return "\(action.action) at \(Int(x)), \(Int(y)): " + click(at: point, in: window, count: action.action == "click" ? 1 : 2)
+            case "type":
+                let text = action.text ?? ""
+                for character in text { send(String(character), code: 0, flags: [], to: window) }
+                return "typed \"\(text)\""
+            case "key":
+                let name = action.key ?? ""
+                guard let (characters, code, flags) = key(name) else { return "key \(name): not a key I know" }
+                send(characters, code: code, flags: flags, to: window)
+                return "pressed \(name)"
+            case "scroll":
+                let scale = ForgeRuntime.scale(of: window)
+                let point = NSPoint(x: (action.x ?? 0) / scale, y: frame.bounds.height - (action.y ?? 0) / scale)
+                guard let view = frame.hitTest(point), let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                                                                         wheel1: Int32(-(action.amount ?? 200)), wheel2: 0, wheel3: 0),
+                      let event = NSEvent(cgEvent: cg) else { return "scroll: nothing to scroll there" }
+                (view.enclosingScrollView ?? view).scrollWheel(with: event)
+                return "scrolled \(Int(action.amount ?? 200)) points"
+            case "wait":
+                return "waited \(action.amount ?? 1) s"
+            default:
+                return "\(action.action): not an action I know"
+            }
+        }
+
+        private static func click(at point: NSPoint, in window: NSWindow, count: Int) -> String {
+            guard let frame = window.contentView?.superview, let view = frame.hitTest(point) else { return "nothing there" }
+            let swiftUI = String(describing: type(of: view)).contains("HostingView")
+            for n in 1...count {
+                func event(_ type: NSEvent.EventType) -> NSEvent? {
+                    NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                       windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: n,
+                                       pressure: type == .leftMouseDown ? 1 : 0)
+                }
+                guard let down = event(.leftMouseDown), let up = event(.leftMouseUp) else { return "couldn't click" }
+                // Straight to the view: through the window, a click on an inactive window would only activate it.
+                if swiftUI {
+                    // SwiftUI's own views (plain buttons, toggles, tap gestures) take the mouse-up directly.
+                    view.mouseDown(with: down)
+                    view.mouseUp(with: up)
+                } else {
+                    // AppKit controls (buttons, fields, tables and their headers) track the mouse and read the
+                    // mouse-up from the event queue.
+                    NSApp.postEvent(up, atStart: false)
+                    view.mouseDown(with: down)
+                }
+            }
+            return describe(view, at: point)
+        }
+
+        /// A short name for what was clicked, when AppKit can say.
+        private static func describe(_ view: NSView, at point: NSPoint) -> String {
+            switch view {
+            case let button as NSButton: return button.title.isEmpty ? "a button" : "the \"\(button.title)\" button"
+            case is NSTextField, is NSTextView: return "a text field"
+            case is NSTableHeaderView: return "a column header"
+            case let table as NSTableView:
+                let row = table.row(at: table.convert(point, from: nil))
+                return row >= 0 ? "row \(row + 1) of a list" : "a list"
+            default: return "the app's content"
+            }
+        }
+
+        private static func send(_ characters: String, code: UInt16, flags: NSEvent.ModifierFlags, to window: NSWindow) {
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags,
+                                                   timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                   context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                                                   isARepeat: false, keyCode: code) else { continue }
+                window.sendEvent(event)
+            }
+        }
+
+        /// "cmd+shift+z" → characters, key code and modifier flags.
+        private static func key(_ name: String) -> (String, UInt16, NSEvent.ModifierFlags)? {
+            var parts = name.lowercased().split(separator: "+").map(String.init)
+            guard let last = parts.popLast() else { return nil }
+            var flags: NSEvent.ModifierFlags = []
+            for part in parts {
+                switch part {
+                case "cmd", "command": flags.insert(.command)
+                case "shift": flags.insert(.shift)
+                case "option", "alt": flags.insert(.option)
+                case "ctrl", "control": flags.insert(.control)
+                default: return nil
+                }
+            }
+            func scalar(_ value: Int) -> String { String(UnicodeScalar(UInt32(value))!) }
+            let keys: [String: (String, UInt16)] = [
+                "return": ("\r", 36), "enter": ("\r", 36), "tab": ("\t", 48), "space": (" ", 49), "delete": (scalar(127), 51),
+                "escape": (scalar(27), 53), "left": (scalar(NSLeftArrowFunctionKey), 123), "right": (scalar(NSRightArrowFunctionKey), 124),
+                "down": (scalar(NSDownArrowFunctionKey), 125), "up": (scalar(NSUpArrowFunctionKey), 126),
+            ]
+            if let (characters, code) = keys[last] { return (characters, code, flags) }
+            return last.count == 1 ? (last, 0, flags) : nil
         }
     }
 
