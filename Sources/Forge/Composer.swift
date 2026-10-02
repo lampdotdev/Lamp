@@ -153,20 +153,32 @@ final class ComposerTextView: NSTextView {
         super.paste(sender)
     }
 
+    /// Images and files count as pasteable. A plain-text view otherwise disables Paste when the clipboard
+    /// holds only an image (a screenshot copied with ⌃⇧⌘4), and `paste` is never called.
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        super.readablePasteboardTypes + [.png, .tiff, .fileURL]
+    }
+
     /// Don't be a drop target: drops fall through to the chat view's drop handler (`Attachments.load`),
     /// which handles files and images from Finder, browsers, Photos and screenshot thumbnails alike.
     override func updateDragTypeRegistration() {
         unregisterDraggedTypes()
     }
 
-    /// Copied files attach. A bare image (e.g. a screenshot copied with ⌃⇧⌘4) is saved as a PNG and attached.
+    /// Copied files attach. A copied image (a screenshot copied with ⌃⇧⌘4, or Copy Image in a browser or
+    /// Preview) is saved as a PNG and attached.
     private func attachFiles(from pasteboard: NSPasteboard) -> Bool {
         let urls = fileURLs(in: pasteboard)
         if !urls.isEmpty {
             onFiles?(urls)
             return true
         }
-        guard pasteboard.string(forType: .string) == nil, let image = NSImage(pasteboard: pasteboard),
+        // Only real image data counts, not a link to a picture. Text that comes with a rendering of itself
+        // (a spreadsheet's cells) pastes as text; an image that comes with just its address is an image.
+        let hasImage = pasteboard.types?.contains { UTType($0.rawValue)?.conforms(to: .image) == true } ?? false
+        let text = pasteboard.string(forType: .string)?.trimmed ?? ""
+        let textIsItsAddress = !text.contains(where: \.isWhitespace) && URL(string: text)?.scheme?.hasPrefix("http") == true
+        guard hasImage, text.isEmpty || textIsItsAddress, let image = NSImage(pasteboard: pasteboard),
               let file = Self.savePasted(image) else { return false }
         onFiles?([file])
         return true
@@ -183,7 +195,13 @@ final class ComposerTextView: NSTextView {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let stamp = Date().formatted(.dateTime.year().month(.twoDigits).day(.twoDigits).hour().minute().second())
             .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: ".")
-        let url = folder.appendingPathComponent("Pasted image \(stamp).png")
+        // Two pastes within a second mustn't land on the same file.
+        var url = folder.appendingPathComponent("Pasted image \(stamp).png")
+        var n = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = folder.appendingPathComponent("Pasted image \(stamp) \(n).png")
+            n += 1
+        }
         return (try? png.write(to: url)) == nil ? nil : url
     }
 
