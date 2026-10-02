@@ -1,47 +1,84 @@
 import Foundation
 import Security
 
-/// Everything AI goes through OpenRouter: the builder agent (pi), ForgeAI in generated apps, and icon artwork.
+/// An API-key provider pi supports out of the box.
+struct PiProvider: Identifiable, Hashable {
+    let id: String          // pi's provider id (`--provider`)
+    let name: String
+    let envVar: String      // where pi reads the key
+    let keyURL: String      // where to get one
+}
+
+/// Who builds apps (see Engines.swift), plus the OpenRouter defaults that in-app AI and images use.
 enum Provider {
+    /// OpenRouter key present: needed for image generation and the default in-app AI.
     static var hasKey: Bool { KeyStore.openRouterKey != nil }
 
+    static let apiProviders: [PiProvider] = [
+        PiProvider(id: "openrouter", name: "OpenRouter", envVar: "OPENROUTER_API_KEY", keyURL: "https://openrouter.ai/keys"),
+        PiProvider(id: "anthropic", name: "Anthropic", envVar: "ANTHROPIC_API_KEY", keyURL: "https://console.anthropic.com/settings/keys"),
+        PiProvider(id: "openai", name: "OpenAI", envVar: "OPENAI_API_KEY", keyURL: "https://platform.openai.com/api-keys"),
+        PiProvider(id: "google", name: "Google Gemini", envVar: "GEMINI_API_KEY", keyURL: "https://aistudio.google.com/apikey"),
+        PiProvider(id: "deepseek", name: "DeepSeek", envVar: "DEEPSEEK_API_KEY", keyURL: "https://platform.deepseek.com/api_keys"),
+        PiProvider(id: "mistral", name: "Mistral", envVar: "MISTRAL_API_KEY", keyURL: "https://console.mistral.ai/api-keys"),
+        PiProvider(id: "xai", name: "xAI (Grok)", envVar: "XAI_API_KEY", keyURL: "https://console.x.ai"),
+        PiProvider(id: "groq", name: "Groq", envVar: "GROQ_API_KEY", keyURL: "https://console.groq.com/keys"),
+        PiProvider(id: "cerebras", name: "Cerebras", envVar: "CEREBRAS_API_KEY", keyURL: "https://cloud.cerebras.ai"),
+        PiProvider(id: "together", name: "Together AI", envVar: "TOGETHER_API_KEY", keyURL: "https://api.together.ai/settings/api-keys"),
+        PiProvider(id: "fireworks", name: "Fireworks", envVar: "FIREWORKS_API_KEY", keyURL: "https://fireworks.ai/account/api-keys"),
+        PiProvider(id: "huggingface", name: "Hugging Face", envVar: "HF_TOKEN", keyURL: "https://huggingface.co/settings/tokens"),
+        PiProvider(id: "vercel-ai-gateway", name: "Vercel AI Gateway", envVar: "AI_GATEWAY_API_KEY", keyURL: "https://vercel.com/dashboard/ai-gateway"),
+        PiProvider(id: "moonshotai", name: "Moonshot (Kimi)", envVar: "MOONSHOT_API_KEY", keyURL: "https://platform.moonshot.ai"),
+        PiProvider(id: "zai", name: "Z.ai (GLM)", envVar: "ZAI_API_KEY", keyURL: "https://z.ai/manage-apikey/apikey-list"),
+        PiProvider(id: "minimax", name: "MiniMax", envVar: "MINIMAX_API_KEY", keyURL: "https://www.minimax.io"),
+        PiProvider(id: "nvidia", name: "NVIDIA", envVar: "NVIDIA_API_KEY", keyURL: "https://build.nvidia.com"),
+    ]
+
+    static func apiProvider(_ id: String) -> PiProvider? { apiProviders.first { $0.id == id } }
+
+    /// Suggested building models when using OpenRouter (any model from the full list also works).
     static let models: [(id: String, label: String)] = [
         ("anthropic/claude-opus-5.5", "Best quality (Claude Opus)"),
         ("anthropic/claude-sonnet-5.5", "Faster & cheaper (Claude Sonnet)"),
     ]
 
-    /// The OpenRouter model that builds apps.
+    /// The OpenRouter model used to review shared apps and as the default builder.
     static var model: String {
-        let saved = UserDefaults.standard.string(forKey: "model") ?? ""
-        return models.contains { $0.id == saved } ? saved : models[0].id
+        if Builder.engine == .pi, Builder.piProvider == "openrouter", !Builder.piModel.isEmpty { return Builder.piModel }
+        return models[0].id
     }
 
     static func friendlyError(_ raw: String) -> String {
         let text = raw.lowercased()
-        if text.contains("401") || text.contains("authenticat") || text.contains("api key") {
-            return hasKey
-                ? "Your OpenRouter key didn't work. Check it in Forge → Settings (⌘,)."
-                : "Forge needs an OpenRouter key. Add one in Forge → Settings (⌘,)."
+        let name = Builder.engine == .pi ? (apiProvider(Builder.piProvider)?.name ?? "AI provider") : Builder.engine.title
+        if text.contains("401") || text.contains("authenticat") || text.contains("api key") || text.contains("unauthorized") {
+            return "Your \(name) key or sign-in didn't work. Check it in Forge → Settings (⌘,)."
         }
-        if text.contains("402") || text.contains("credit") || text.contains("insufficient") {
-            return "Your OpenRouter account is out of credit. Top it up at openrouter.ai/credits, then try again."
+        if text.contains("402") || text.contains("credit") || text.contains("insufficient") || text.contains("quota") {
+            return "Your \(name) account is out of credit or quota. Top it up, or pick another provider in Settings."
         }
         if text.contains("429") || text.contains("rate limit") {
             return "The AI is busy right now. Wait a minute and try again."
         }
-        return "Something went wrong talking to the AI. Try again in a moment."
+        if text.contains("connection refused") || text.contains("econnrefused") {
+            return "Couldn't reach the local model server. Check Settings → Local Models."
+        }
+        if text.contains("requires a newer version") || text.contains("upgrade") {
+            return "\(name) needs updating: \(raw.prefix(160))"
+        }
+        return "Something went wrong talking to the AI: \(raw.prefix(160))"
     }
 }
 
-/// Stores the OpenRouter key.
+/// Stores API keys, one per provider.
 ///
 /// Builds signed with an Apple Team ID (Developer ID releases) use the login Keychain. Local builds
 /// have no Team ID, and macOS ties Keychain approval to each exact build, so every rebuild would ask
-/// again. Those builds keep the key in a file only your user account can read instead:
-/// ~/Library/Application Support/Forge/openrouter-key. Either way it's read once per launch.
+/// again. Those builds keep keys in a file only your user account can read instead:
+/// ~/Library/Application Support/Forge/keys.json. Keys are read once per launch.
 enum KeyStore {
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var cached: String??
+    nonisolated(unsafe) private static var cache: [String: String?] = [:]
 
     /// True when this copy of Forge is signed with an Apple Team ID.
     static let usesKeychain: Bool = {
@@ -55,88 +92,99 @@ enum KeyStore {
         return !team.isEmpty
     }()
 
-    static var openRouterKey: String? {
+    static var openRouterKey: String? { key(for: "openrouter") }
+
+    static func key(for provider: String) -> String? {
         lock.lock()
         defer { lock.unlock() }
-        if let cached { return cached }
+        if let cached = cache[provider] { return cached }
+        let value: String?
         if usesKeychain {
-            let (status, key) = KeychainItem.read()
+            let (status, key) = KeychainItem.read(provider)
+            value = key
             // Don't cache a denied or cancelled prompt, so the next use can ask again.
-            if status == errSecSuccess || status == errSecItemNotFound { cached = .some(key) }
-            return key
+            guard status == errSecSuccess || status == errSecItemNotFound else { return key }
+        } else {
+            value = KeyFile.read()[provider]
         }
-        if let key = KeyFile.read() {
-            cached = .some(key)
-            return key
-        }
-        // Moving from an older build that kept the key in the Keychain: copy it over once.
-        let (status, key) = KeychainItem.read()
-        if let key {
-            KeyFile.write(key)
-            KeychainItem.delete()
-        }
-        if status == errSecSuccess || status == errSecItemNotFound { cached = .some(key) }
-        return key
+        cache[provider] = .some(value)
+        return value
     }
 
-    static func setOpenRouterKey(_ key: String?) {
+    static func setKey(_ key: String?, for provider: String) {
         lock.lock()
         defer { lock.unlock() }
-        let key = key?.trimmed.isEmpty == false ? key!.trimmed : nil
-        cached = .some(key)
+        let key = key?.trimmed.nilIfEmpty
+        cache[provider] = .some(key)
         if usesKeychain {
-            KeychainItem.delete()
-            if let key { KeychainItem.write(key) }
+            KeychainItem.delete(provider)
+            if let key { KeychainItem.write(key, provider) }
         } else {
-            KeyFile.delete()
-            if let key { KeyFile.write(key) }
+            var all = KeyFile.read()
+            all[provider] = key
+            KeyFile.write(all)
         }
     }
+
+    static func setOpenRouterKey(_ key: String?) { setKey(key, for: "openrouter") }
 
     private enum KeychainItem {
-        static let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "dev.forge.host",
-            kSecAttrAccount as String: "openrouter",
-        ]
-
-        static func read() -> (OSStatus, String?) {
-            var item: CFTypeRef?
-            var q = query
-            q[kSecReturnData as String] = true
-            let status = SecItemCopyMatching(q as CFDictionary, &item)
-            let key = (item as? Data).flatMap { String(data: $0, encoding: .utf8) }.flatMap { $0.isEmpty ? nil : $0 }
-            return (status, key)
+        static func query(_ account: String) -> [String: Any] {
+            [kSecClass as String: kSecClassGenericPassword,
+             kSecAttrService as String: "dev.forge.host",
+             kSecAttrAccount as String: account]
         }
 
-        static func write(_ key: String) {
-            var q = query
+        static func read(_ account: String) -> (OSStatus, String?) {
+            var item: CFTypeRef?
+            var q = query(account)
+            q[kSecReturnData as String] = true
+            let status = SecItemCopyMatching(q as CFDictionary, &item)
+            return (status, (item as? Data).flatMap { String(data: $0, encoding: .utf8) }?.nilIfEmpty)
+        }
+
+        static func write(_ key: String, _ account: String) {
+            var q = query(account)
             q[kSecValueData as String] = Data(key.utf8)
             SecItemAdd(q as CFDictionary, nil)
         }
 
-        static func delete() { SecItemDelete(query as CFDictionary) }
+        static func delete(_ account: String) { SecItemDelete(query(account) as CFDictionary) }
     }
 
+    /// keys.json, readable only by this user. Also migrates the older single-key file and Keychain item.
     private enum KeyFile {
-        static let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Forge/openrouter-key")
+        static let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Forge")
+        static let url = folder.appendingPathComponent("keys.json")
+        static let legacy = folder.appendingPathComponent("openrouter-key")
 
-        static func read() -> String? {
-            (try? String(contentsOf: url, encoding: .utf8))?.trimmed.nilIfEmpty
+        static func read() -> [String: String] {
+            if let data = try? Data(contentsOf: url),
+               let keys = try? JSONDecoder().decode([String: String].self, from: data) { return keys }
+            var keys: [String: String] = [:]
+            if let old = (try? String(contentsOf: legacy, encoding: .utf8))?.trimmed.nilIfEmpty {
+                keys["openrouter"] = old
+            } else if let old = KeychainItem.read("openrouter").1 {
+                keys["openrouter"] = old
+                KeychainItem.delete("openrouter")
+            }
+            if !keys.isEmpty {
+                write(keys)
+                try? FileManager.default.removeItem(at: legacy)
+            }
+            return keys
         }
 
-        static func write(_ key: String) {
+        static func write(_ keys: [String: String]) {
             let fm = FileManager.default
-            let folder = url.deletingLastPathComponent()
             try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            // Create it private first, then write, so the key is never briefly readable by others.
-            fm.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
+            // Create it private first, then write, so keys are never briefly readable by others.
+            if !fm.fileExists(atPath: url.path) {
+                fm.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
+            }
             try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-            try? Data(key.utf8).write(to: url, options: [])
+            try? JSONEncoder().encode(keys).write(to: url)
         }
-
-        static func delete() { try? FileManager.default.removeItem(at: url) }
     }
 }
 

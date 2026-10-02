@@ -44,6 +44,8 @@ final class Store: ObservableObject {
     @Published var usage: [String: AppUsage] = [:]
     @Published var icons: [String: NSImage] = [:]
     @Published var pendingImport: PendingImport?
+    private var running: [String: Process] = [:]    // project id → agent process, for Stop
+    private var stopped: Set<String> = []
     private var artInProgress: Set<String> = []
     private var tokens: [String: String] = [:]   // gateway token → project id
     private var gateway: Gateway?
@@ -62,7 +64,13 @@ final class Store: ObservableObject {
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
-        Task { await recheckSetup() }
+        // Finding Claude Code / Codex / opencode means asking the login shell for PATH; do it off the main thread.
+        Task.detached(priority: .utility) { _ = ToolLocator.userPath }
+        Task {
+            LocalModels.shared.refresh()
+            await LocalModels.shared.detectExternal()
+            await recheckSetup()
+        }
     }
 
     private var pollingSetup = false
@@ -352,26 +360,67 @@ final class Store: ObservableObject {
     /// Returns false when the agent couldn't run at all (bad key, no credit, …), after telling the user why.
     private func runAgent(_ prompt: String, files: [String] = [], on project: ForgeProject) async -> Bool {
         try? Template.writeSupport(for: project)
+        if let problem = Builder.problem() {
+            log(project, .error, "\(problem) Open Forge → Settings (⌘,) to fix it.")
+            return false
+        }
+        let engine = Builder.engine
+        if engine == .pi && Builder.piProvider == Builder.localProvider {
+            do {
+                try await LocalModels.shared.ensureServer()
+            } catch {
+                log(project, .error, error.localizedDescription)
+                return false
+            }
+        }
         let started = Date()
         var cost = 0.0
         var failure: String?
-        let env = Agent.environment(prompt: prompt, files: files, session: Self.agentSession(for: project),
-                                    sessionDir: project.dir.appendingPathComponent(".forge/pi-sessions").path)
-        let status = await Shell.run(Agent.command(fileCount: files.count), cwd: project.dir, env: env) { [weak self] line in
+        // Guard against runaway agents (small local models can loop): stop after the same step 6 times
+        // in a row, or 150 tool calls in one turn.
+        var lastTool = ""
+        var repeats = 0
+        var toolCalls = 0
+        stopped.remove(project.id)
+        let sessionFile = Self.sessionFile(for: project, engine: engine)
+        let run = Agent.run(prompt: prompt, files: files, project: project,
+                            session: engine == .pi ? Self.piSession(for: project) : Self.savedSession(sessionFile))
+        let status = await Shell.run(run.command, cwd: project.dir, env: run.env,
+                                     started: { [weak self] in self?.running[project.id] = $0 }) { [weak self] line in
             guard let self else { return }
-            for event in Agent.parse(line) {
+            for event in Agent.parseLine(line) {
                 switch event {
                 case .text(let text): log(project, .agent, text)
-                case .tool(let text): log(project, .detail, text)
+                case .tool(let text):
+                    log(project, .detail, text)
+                    toolCalls += 1
+                    repeats = text == lastTool ? repeats + 1 : 1
+                    lastTool = text
+                    if repeats >= 6 || toolCalls > 150, failure == nil {
+                        failure = repeats >= 6
+                            ? "The model got stuck repeating the same step (\(text)), so Forge stopped it."
+                            : "The model made over 150 changes in one go, so Forge stopped it."
+                        running[project.id]?.terminate()
+                    }
                 case .cost(let amount): cost += amount
                 case .failed(let text): failure = text
                 case .raw(let text): log(project, .detail, text)
+                case .session(let id): if engine != .pi { try? id.write(to: sessionFile, atomically: true, encoding: .utf8) }
                 }
             }
         }
-        log(project, .detail, String(format: "Agent %@ · %.0fs · $%.2f", failure == nil ? "done" : "error",
+        running[project.id] = nil
+        log(project, .detail, String(format: "%@ %@ · %.0fs · $%.2f", engine.title, failure == nil ? "done" : "error",
                                      Date().timeIntervalSince(started), cost))
-        if status != 0 && failure == nil { failure = "Agent exited with status \(status)" }
+        if stopped.remove(project.id) != nil {
+            log(project, .status, "Stopped. Any changes made so far are kept; press Undo to discard them.")
+            return false
+        }
+        if let failure, failure.hasPrefix("The model ") {
+            log(project, .error, failure + " Try again, or pick a stronger model in Settings.")
+            return false
+        }
+        if status != 0 && failure == nil { failure = "\(engine.title) exited with status \(status)" }
         guard let failure else { return true }
         log(project, .detail, failure)
         log(project, .error, Provider.friendlyError(failure))
@@ -379,12 +428,28 @@ final class Store: ObservableObject {
     }
 
     /// One pi conversation per app, so the agent remembers earlier requests. Undo starts a new one.
-    private static func agentSession(for project: ForgeProject) -> String {
+    private static func piSession(for project: ForgeProject) -> String {
         let url = project.dir.appendingPathComponent(".forge/pi-session")
         if let id = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !id.isEmpty { return id }
         let id = "forge-" + UUID().uuidString.lowercased()
         try? id.write(to: url, atomically: true, encoding: .utf8)
         return id
+    }
+
+    /// External engines report their own conversation ids; Forge keeps one per engine per app.
+    private static func sessionFile(for project: ForgeProject, engine: Engine) -> URL {
+        project.dir.appendingPathComponent(".forge/session-\(engine.rawValue)")
+    }
+
+    private static func savedSession(_ url: URL) -> String? {
+        (try? String(contentsOf: url, encoding: .utf8))?.trimmed.nilIfEmpty
+    }
+
+    /// Stops the agent working on an app.
+    func stop(_ project: ForgeProject) {
+        guard let process = running[project.id] else { return }
+        stopped.insert(project.id)
+        process.terminate()
     }
 
     func run(_ project: ForgeProject) async {
@@ -408,6 +473,9 @@ final class Store: ObservableObject {
         }
         // The agent's conversation still remembers the reverted change, so start fresh.
         try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".forge/pi-session"))
+        for engine in Engine.allCases {
+            try? FileManager.default.removeItem(at: Self.sessionFile(for: project, engine: engine))
+        }
         log(project, .status, "Undid the last change")
         if await build(project) == nil { await install(project) }
     }

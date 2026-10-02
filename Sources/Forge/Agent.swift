@@ -6,6 +6,7 @@ enum AgentEvent {
     case cost(Double)
     case failed(String)
     case raw(String)
+    case session(String)   // an external engine's conversation id, to resume next turn
 }
 
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
@@ -56,7 +57,7 @@ enum Agent {
     static func command(fileCount: Int) -> String {
         let files = (0..<fileCount).map { "\"@$FORGE_FILE_\($0)\"" }.joined(separator: " ")
         return """
-        "$FORGE_PI" --mode json --provider openrouter --model "$FORGE_MODEL" --tools \(tools) \\
+        "$FORGE_PI" --mode json --provider "$FORGE_PROVIDER" --model "$FORGE_MODEL" --tools \(tools) \\
           --no-extensions --no-skills --no-prompt-templates --no-context-files --no-approve \\
           --session-dir "$FORGE_SESSION_DIR" --session-id "$FORGE_SESSION" \\
           --append-system-prompt "$FORGE_SYSTEM" -- \(files) "$FORGE_PROMPT"
@@ -66,18 +67,50 @@ enum Agent {
     static func environment(prompt: String, files: [String] = [], session: String, sessionDir: String) -> [String: String] {
         var env = [
             "FORGE_PI": executable?.path ?? "pi",
-            "FORGE_MODEL": Provider.model,
+            "FORGE_PROVIDER": Builder.piProvider == Builder.myPiProvider ? myPiProvider : Builder.piProvider,
+            "FORGE_MODEL": Builder.piProvider == Builder.myPiProvider ? myPiModel : Builder.piModel,
             "FORGE_SESSION": session,
             "FORGE_SESSION_DIR": sessionDir,
             "FORGE_SYSTEM": systemPrompt,
             "FORGE_PROMPT": prompt,
-            "OPENROUTER_API_KEY": KeyStore.openRouterKey ?? "",
-            "PI_CODING_AGENT_DIR": configDir,
+            // "My pi setup" uses the user's own pi config (their logins); everything else uses Forge's.
+            "PI_CODING_AGENT_DIR": Builder.piProvider == Builder.myPiProvider ? userConfigDir : configDir,
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_TELEMETRY": "0",
         ]
         for (index, file) in files.enumerated() { env["FORGE_FILE_\(index)"] = file }
+        if let provider = Provider.apiProvider(Builder.piProvider), let key = KeyStore.key(for: provider.id) {
+            env[provider.envVar] = key
+        }
         return env
+    }
+
+    /// "My pi setup" models are stored as "provider/model" (e.g. "anthropic/claude-opus-5-5").
+    static var myPiProvider: String { String(Builder.piModel.split(separator: "/", maxSplits: 1).first ?? "") }
+    static var myPiModel: String {
+        let parts = Builder.piModel.split(separator: "/", maxSplits: 1)
+        return parts.count == 2 ? String(parts[1]) : Builder.piModel
+    }
+
+    /// Models pi can use for a provider, from `pi --list-models` (offline, from pi's catalog).
+    /// For "My pi setup" the result is "provider/model" for every provider signed in there.
+    static func listModels(provider: String) async -> [String] {
+        guard let pi = executable else { return [] }
+        var env = ["PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0", "PI_OFFLINE": "1",
+                   "PI_CODING_AGENT_DIR": provider == Builder.myPiProvider ? userConfigDir : configDir]
+        if let api = Provider.apiProvider(provider) { env[api.envVar] = KeyStore.key(for: api.id) ?? "placeholder" }
+        var rows: [String] = []
+        _ = await Shell.run("\"$FORGE_PI\" --list-models", cwd: URL(fileURLWithPath: NSTemporaryDirectory()),
+                            env: env.merging(["FORGE_PI": pi.path]) { $1 }) { line in
+            let columns = line.split(separator: " ", omittingEmptySubsequences: true)
+            guard columns.count >= 2, columns[0] != "provider" else { return }
+            if provider == Builder.myPiProvider {
+                rows.append("\(columns[0])/\(columns[1])")
+            } else if columns[0] == provider {
+                rows.append(String(columns[1]))
+            }
+        }
+        return rows
     }
 
     /// Parses one line of pi's JSONL event stream (stderr is merged in, so non-JSON lines are diagnostics).
@@ -128,6 +161,7 @@ enum Shell {
         _ command: String,
         cwd: URL,
         env: [String: String] = [:],
+        started: (@MainActor (Process) -> Void)? = nil,
         onLine: @escaping @MainActor (String) -> Void
     ) async -> Int32 {
         let process = Process()
@@ -148,6 +182,7 @@ enum Shell {
             await onLine("Could not start process: \(error.localizedDescription)")
             return -1
         }
+        await started?(process)
         do {
             for try await line in pipe.fileHandleForReading.bytes.lines {
                 await onLine(line)

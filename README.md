@@ -10,9 +10,10 @@ A Mac app that builds Mac apps. Describe what you want, and Forge has an AI agen
 |---|---|---|
 | macOS 14 (Sonoma) or later | Forge and the apps it generates target macOS 14 | |
 | Apple's Command Line Tools (Xcode 15 or later) | Swift compiler, the macOS SDK and `git` | Free. **The full Xcode app is not required**, but works too. With Xcode 26, icons get native Liquid Glass rendering on macOS 26. |
-| An [OpenRouter](https://openrouter.ai/keys) key | Pays for the AI: the agent that writes apps, AI features inside apps, and icon artwork | Added in Forge's welcome screen and stored privately (see below) |
+| An AI to build with | Writes the apps | An [OpenRouter](https://openrouter.ai/keys) key is easiest. You can also use ~20 other providers, Claude Code, Codex or opencode if installed, or a model running on your Mac. See [Choosing the AI](#choosing-the-ai). |
+| An OpenRouter key (optional) | Image generation, icon artwork, and the fast in-app AI models | Without one, apps' text AI uses whatever builds them |
 
-Nothing else needs installing. The coding agent ([pi](https://github.com/badlogic/pi-mono)) is bundled inside `Forge.app`, and `build.sh` downloads a pinned, checksum-verified copy (about 30 MB). No Apple developer account, signing certificate or notarization is needed. Forge and every app it builds are ad-hoc signed and run only on your own Mac.
+Nothing else needs installing. The coding agent ([pi](https://github.com/badlogic/pi-mono)) and llama.cpp's model server are bundled inside `Forge.app`; `build.sh` downloads pinned, checksum-verified copies (about 40 MB together). No Apple developer account, signing certificate or notarization is needed. Forge and every app it builds are ad-hoc signed and run only on your own Mac.
 
 ## Setup
 
@@ -37,7 +38,7 @@ Nothing else needs installing. The coding agent ([pi](https://github.com/badlogi
 
 3. **Finish setup in the app.** On first launch, Forge checks for anything missing:
    - **App-building tools:** if the Command Line Tools are missing, Forge opens Apple's installer right away (click **Install**, then **Agree**). It then checks every few seconds and carries on by itself when they're installed, so there's no button to press afterwards.
-   - **OpenRouter key:** paste a key from [openrouter.ai/keys](https://openrouter.ai/keys) while the tools install. Releases signed with an Apple Developer ID store it in your login Keychain. Local builds have no Team ID, and macOS would ask for Keychain access again after every rebuild, so they store it in `~/Library/Application Support/Forge/openrouter-key`, readable only by your user account. A key from an older build is moved over automatically, which may cause one last Keychain prompt.
+   - **The AI that builds your apps:** paste an OpenRouter key from [openrouter.ai/keys](https://openrouter.ai/keys) while the tools install. Alternatively, click Claude Code, Codex or opencode if they're installed, **A model on this Mac…**, or **Other providers…**. Keys are stored per provider. Releases signed with an Apple Developer ID keep them in your login Keychain. Local builds have no Team ID, and macOS would ask for Keychain access again after every rebuild, so they keep them in `~/Library/Application Support/Forge/keys.json`, readable only by your user account.
 
    You can change the key and models later in **Forge → Settings (⌘,)**.
 
@@ -61,6 +62,21 @@ The recipient double-clicks the file, or uses **File → Import Shared App… (�
 
 High-risk apps default to **Cancel**. When imported, the shared code is rebuilt with Forge's own `Package.swift`, `build.sh` and `ForgeSupport.swift`, so nothing in the file runs during the build. The app runs only when opened, and becomes a normal app the recipient can keep editing. The review is a guide, not a guarantee: only open apps from people you trust.
 
+## Choosing the AI
+
+**Forge → Settings (⌘,) → AI** chooses what builds your apps:
+
+- **Forge's built-in agent (pi)** with any of these:
+  - **An API key** for OpenRouter, Anthropic, OpenAI, Google Gemini, DeepSeek, Mistral, xAI, Groq, Cerebras, Together, Fireworks, Hugging Face, Vercel AI Gateway, Moonshot, Z.ai, MiniMax or NVIDIA. Pick any model from that provider's list; it's searchable.
+  - **On this Mac (local models).** Download a model in **Settings → Local Models**. The list is sized to your Mac's memory, and any GGUF repo on Hugging Face works too. Forge runs the models with its bundled llama.cpp server on `127.0.0.1:47812`, which starts when needed and loads models on demand. Models are stored in `~/Library/Application Support/Forge/Models`.
+  - **Ollama or LM Studio**, if they're running. Their models appear automatically.
+  - **My pi setup:** your own `~/.pi/agent`, including any subscriptions you've signed into with pi's `/login` (Claude Pro/Max, ChatGPT, GitHub Copilot and others).
+- **Claude Code, Codex or opencode**, if installed. Forge uses their existing sign-in. It runs them with file editing allowed and the shell turned off (sandboxed, for Codex), and builds the app itself.
+
+With pi, Forge's rules go in the system prompt. Claude Code gets them through `--append-system-prompt`, and Codex and opencode get them at the top of each request. Attachments are passed natively where the tool supports it.
+
+Local models are slower and much less capable than the best cloud models for whole apps; small ones can loop. Forge stops an agent that repeats the same step 6 times or makes more than 150 tool calls in one turn, and **Stop** cancels a turn at any time.
+
 ## Troubleshooting
 
 - **`xcrun: error: invalid active developer path`**: the Command Line Tools are missing or broken after a macOS update. Run `xcode-select --install`.
@@ -68,6 +84,8 @@ High-risk apps default to **Cancel**. When imported, the shared code is rebuilt 
 - **`Downloading pi` fails during `./build.sh`**: GitHub must be reachable. The download is cached in `vendor/` afterwards.
 - **Build errors mentioning the SDK, with Xcode installed**: point at it explicitly with `sudo xcode-select -s /Applications/Xcode.app`.
 - **Keychain asks "Forge wants to access key dev.forge.host"**: Forge is moving an OpenRouter key saved by an older build out of the Keychain. Allow it once. Local builds don't use the Keychain after that.
+- **A local model won't start**: check `~/Library/Logs/Forge/llama-server.log`. The model may need more memory than the Mac has; pick a smaller one.
+- **Claude Code, Codex or opencode errors**: Forge shows their message. Make sure the tool works on its own in Terminal first: you're signed in, and it's up to date (an old Codex can't use new models, and opencode's free tier only works inside opencode).
 - **Apps can't use AI ("Couldn't reach Forge")**: Forge must be running, and port `47811` must be free (check with `lsof -i :47811`).
 - **⇧⌘E opens the wrong Forge**: you have more than one `Forge.app` on disk. Open the one you want once, or delete the old one.
 - **Old icon in the Dock**: run `killall Dock`.
@@ -78,7 +96,7 @@ High-risk apps default to **Cancel**. When imported, the shared code is rebuilt 
 - **Live editing:** every generated app has an **Edit with Forge** command (⇧⌘E) that jumps back to its chat.
 - **AI inside apps:** Forge runs a local gateway on `127.0.0.1:47811`. Generated apps call it through `ForgeAI.ask(...)` (text, images, typed JSON) and `ForgeAI.makeImage(...)` / `editImage(...)` / `editImages(...)` (create, edit or combine pictures with the image model from Settings) with a per-app token, so the API key never leaves Forge. Per-app usage shows in Forge.
 - **Icons:** icons follow Apple's layered structure: one object on a calm background. The AI only chooses the object (`icon.json`: a `subject`, an SF Symbol and a background from a fixed palette). Forge controls the grid, margins and lighting. The icon starts as the SF Symbol. Forge then generates three artwork candidates of the object alone, cuts each out with Vision on the device, and has a vision model choose the one that best fits the guidelines. If the full **Xcode 26** app is installed, Forge also writes an Icon Composer document (`.forge/AppIcon.icon`) and compiles it with `actool`, so macOS 26 shows the icon in Liquid Glass with dark and tinted variants. With only the Command Line Tools, Forge draws the layers itself.
-- **Provider:** everything goes through OpenRouter with one OpenRouter key. pi uses its own config folder (`~/Library/Application Support/Forge/pi`), with update checks and telemetry off, so it never touches a pi you run yourself.
+- **Providers:** see [Choosing the AI](#choosing-the-ai). pi uses its own config folder (`~/Library/Application Support/Forge/pi`), with update checks and telemetry off, so it never touches a pi you run yourself (unless you choose **My pi setup**). Forge registers local and Ollama/LM Studio models with pi through that folder's `models.json`. In-app AI uses OpenRouter when there's a key, and otherwise falls back to the building model: through llama.cpp, Ollama or LM Studio directly, or a one-shot pi call. Image generation needs OpenRouter.
 
 ## Layout
 
@@ -86,13 +104,16 @@ High-risk apps default to **Cancel**. When imported, the shared code is rebuilt 
 |---|---|
 | `Sources/Forge/Store.swift` | App state and the build / install / undo loop |
 | `Sources/Forge/Agent.swift` | pi invocation, system prompt, JSON event parsing, shell helper |
+| `Sources/Forge/Engines.swift` | Engine choice (pi, Claude Code, Codex, opencode), commands and parsers, finding installed tools |
+| `Sources/Forge/LocalModels.swift` | Hugging Face downloads, the bundled llama.cpp server, Ollama / LM Studio detection |
+| `Sources/Forge/Composer.swift` | Chat input (Return / Shift-Return, paste and drop) and attachments |
 | `Sources/Forge/Template.swift` | Scaffold for new apps, including the generated `ForgeSupport.swift` |
 | `Sources/Forge/Gateway.swift` | Local AI gateway and provider calls |
 | `Sources/Forge/Icons.swift` | Icon design, rendering and artwork generation |
-| `Sources/Forge/Provider.swift` | OpenRouter models, friendly errors, key storage (Keychain or private file) |
+| `Sources/Forge/Provider.swift` | Provider catalog, friendly errors, per-provider key storage (Keychain or private file) |
 | `Sources/Forge/Setup.swift` | First-run setup and Settings |
 | `Sources/Forge/Sharing.swift` | `.forgeapp` export and import, and the import review (checklist + AI) |
 | `Resources/make-icon.swift` | Draws Forge's own icon |
-| `Resources/THIRD_PARTY_NOTICES.md` | Licence for the bundled pi agent (MIT) |
+| `Resources/THIRD_PARTY_NOTICES.md` | Licences for the bundled pi agent and llama.cpp (both MIT) |
 
 Generated apps live in `~/Library/Application Support/Forge/Apps/<app>/`, each with its own git history.

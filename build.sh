@@ -12,6 +12,21 @@ case "$(uname -m)" in
   *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 PI_TARBALL="vendor/pi-$PI_VERSION-darwin-$PI_ARCH.tar.gz"
+
+# llama.cpp's server runs downloaded models on this Mac (MIT, github.com/ggml-org/llama.cpp).
+LLAMA_BUILD="b11346"
+case "$(uname -m)" in
+  arm64)  LLAMA_ARCH="arm64"; LLAMA_SHA256="25cefd22cf708a14eacea623327a2320fa07493a29b4c37bf3376623de581553" ;;
+  x86_64) LLAMA_ARCH="x64";   LLAMA_SHA256="1f91f85611d1573c53409c99d96d43451cd89e928ce1882b6739fd1cf7befaf2" ;;
+esac
+LLAMA_TARBALL="vendor/llama-$LLAMA_BUILD-bin-macos-$LLAMA_ARCH.tar.gz"
+if [ ! -f "$LLAMA_TARBALL" ] || ! echo "$LLAMA_SHA256  $LLAMA_TARBALL" | shasum -a 256 -c - >/dev/null 2>&1; then
+  mkdir -p vendor
+  echo "Downloading llama.cpp $LLAMA_BUILD ($LLAMA_ARCH)…"
+  curl -fL --progress-bar -o "$LLAMA_TARBALL" \
+    "https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_BUILD/llama-$LLAMA_BUILD-bin-macos-$LLAMA_ARCH.tar.gz"
+  echo "$LLAMA_SHA256  $LLAMA_TARBALL" | shasum -a 256 -c - >/dev/null || { echo "llama.cpp checksum mismatch" >&2; rm -f "$LLAMA_TARBALL"; exit 1; }
+fi
 if [ ! -f "$PI_TARBALL" ] || ! echo "$PI_SHA256  $PI_TARBALL" | shasum -a 256 -c - >/dev/null 2>&1; then
   mkdir -p vendor
   echo "Downloading pi $PI_VERSION ($PI_ARCH)…"
@@ -30,6 +45,10 @@ cp "$BIN" "$APP/Contents/MacOS/Forge"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp Resources/THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
+# Only the server and its libraries (symlinks kept), not llama.cpp's other tools.
+mkdir -p "$APP/Contents/Resources/llama"
+tar xzf "$LLAMA_TARBALL" -C "$APP/Contents/Resources/llama" --strip-components 1 \
+  --include "llama-$LLAMA_BUILD/llama-server" --include "llama-$LLAMA_BUILD/LICENSE" --include "llama-$LLAMA_BUILD/*.dylib"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -71,6 +90,7 @@ PLIST
 SIGN_ID="$(./scripts/signing-identity.sh 2>/dev/null || echo -)"
 # Nested code first (pi and its native module), then the app.
 find "$APP/Contents/Resources/pi" -name '*.node' -exec codesign --force -s "$SIGN_ID" {} \; >/dev/null 2>&1
+find "$APP/Contents/Resources/llama" -type f \( -name '*.dylib' -o -name 'llama-server' \) -exec codesign --force -s "$SIGN_ID" {} \; >/dev/null 2>&1
 codesign --force -s "$SIGN_ID" "$APP/Contents/Resources/pi/pi" >/dev/null 2>&1
 codesign --force -s "$SIGN_ID" "$APP" >/dev/null 2>&1
 [ "$SIGN_ID" = "-" ] && echo "Signed ad-hoc (macOS may ask for Keychain access after each rebuild)"

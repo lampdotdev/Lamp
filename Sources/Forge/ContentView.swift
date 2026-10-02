@@ -144,6 +144,10 @@ struct ProjectView: View {
                 if busy {
                     ProgressView().controlSize(.small)
                     Text("Working…").foregroundStyle(.secondary)
+                    Button { store.stop(project) } label: { Image(systemName: "stop.circle.fill").font(.title2) }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Stop")
                 } else {
                     Button(action: send) {
                         Image(systemName: "arrow.up.circle.fill").font(.title2)

@@ -106,12 +106,96 @@ enum AppAI {
                          model: String? = nil) async throws -> (String, Double) {
         var system = system
         if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
-        guard Provider.hasKey else {
-            throw Failure(message: "Forge needs an OpenRouter key before apps can use AI. Add one in Forge → Settings (⌘,).")
-        }
-        let (text, cost) = try await viaOpenRouter(prompt: prompt, images: images, system: system,
+        let (text, cost): (String, Double)
+        if Provider.hasKey {
+            (text, cost) = try await viaOpenRouter(prompt: prompt, images: images, system: system,
                                                    model: model ?? Self.model.openRouter)
+        } else if Builder.engine == .pi {
+            // No OpenRouter key: use whatever builds apps.
+            switch Builder.piProvider {
+            case Builder.localProvider:
+                try await LocalModels.shared.ensureServer()
+                (text, cost) = try await viaOpenAICompatible("\(LocalModels.baseURL)/v1/chat/completions", key: nil,
+                                                             prompt: prompt, images: images, system: system, model: Builder.piModel)
+            case "ext-ollama", "ext-lmstudio":
+                let port = Builder.piProvider == "ext-ollama" ? 11434 : 1234
+                (text, cost) = try await viaOpenAICompatible("http://127.0.0.1:\(port)/v1/chat/completions", key: nil,
+                                                             prompt: prompt, images: images, system: system, model: Builder.piModel)
+            default:
+                (text, cost) = try await viaPi(prompt: prompt, images: images, system: system)
+            }
+        } else {
+            throw Failure(message: "Apps' AI features need an OpenRouter key, or Forge's built-in agent with any provider. Set one up in Forge → Settings (⌘,).")
+        }
         return (json ? stripFences(text) : text, cost)
+    }
+
+    /// One-shot pi call (no tools, no session) with the builder's provider and model. Covers every
+    /// provider pi supports, including "My pi setup" subscriptions.
+    private static func viaPi(prompt: String, images: [Image], system: String) async throws -> (String, Double) {
+        guard Agent.executable != nil else { throw Failure(message: "Forge's AI builder is missing. Download Forge again.") }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("forge-ai-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var files: [String] = []
+        for (index, image) in images.enumerated() {
+            guard let data = Data(base64Encoded: image.data) else { continue }
+            let name = "image\(index).\(image.mediaType.hasSuffix("png") ? "png" : "jpg")"
+            try data.write(to: folder.appendingPathComponent(name))
+            files.append(name)
+        }
+        var env = Agent.environment(prompt: prompt, files: files, session: "", sessionDir: folder.path)
+        env["FORGE_SYSTEM"] = system.isEmpty ? "You are a helpful assistant inside a Mac app." : system
+        let fileArgs = files.indices.map { "\"@$FORGE_FILE_\($0)\"" }.joined(separator: " ")
+        let command = """
+        "$FORGE_PI" --mode json --provider "$FORGE_PROVIDER" --model "$FORGE_MODEL" --no-tools --no-session \\
+          --no-extensions --no-skills --no-prompt-templates --no-context-files --no-approve \\
+          --system-prompt "$FORGE_SYSTEM" -- \(fileArgs) "$FORGE_PROMPT"
+        """
+        var text = ""
+        var cost = 0.0
+        var failure: String?
+        _ = await Shell.run(command, cwd: folder, env: env) { line in
+            for event in Agent.parse(line) {
+                switch event {
+                case .text(let chunk): text = text.isEmpty ? chunk : text + "\n" + chunk
+                case .cost(let amount): cost += amount
+                case .failed(let message): failure = message
+                default: break
+                }
+            }
+        }
+        if let failure { throw Failure(message: Provider.friendlyError(failure)) }
+        guard !text.isEmpty else { throw Failure(message: "The AI didn't answer.") }
+        return (text, cost)
+    }
+
+    /// Chat completion against any OpenAI-compatible endpoint (the local llama.cpp server, Ollama, LM Studio).
+    private static func viaOpenAICompatible(_ endpoint: String, key: String?, prompt: String, images: [Image],
+                                            system: String, model: String) async throws -> (String, Double) {
+        var request = URLRequest(url: URL(string: endpoint)!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 600   // local models may need to load first
+        if let key { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var messages: [[String: Any]] = []
+        if !system.trimmed.isEmpty { messages.append(["role": "system", "content": system]) }
+        let content: [[String: Any]] = [["type": "text", "text": prompt]] + images.map {
+            ["type": "image_url", "image_url": ["url": "data:\($0.mediaType);base64,\($0.data)"]]
+        }
+        messages.append(["role": "user", "content": content])
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["model": model, "messages": messages] as [String: Any])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let choices = obj["choices"] as? [[String: Any]],
+              let text = (choices.first?["message"] as? [String: Any])?["content"] as? String else {
+            let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "The local model didn't answer."
+            throw Failure(message: message)
+        }
+        // Reasoning models may wrap their thinking in <think>…</think>; apps only want the answer.
+        let answer = text.replacingOccurrences(of: #"(?s)<think>.*?</think>"#, with: "", options: .regularExpression)
+        return (answer.trimmed, 0)
     }
 
     /// Creates or edits an image with the image model from Settings, via OpenRouter's image API.
