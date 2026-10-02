@@ -542,14 +542,15 @@ final class Store: ObservableObject {
                 project = await bootstrap(project, brief: messages.map(\.text).joined(separator: "\n\n"))
                 if project.id != untitled.id { progress[project.id] = progress.removeValue(forKey: untitled.id) }
             }
+            var worked = false
             defer {
                 // A new app's card stays, showing the result; a later turn's activity line goes away.
-                if first { progress[project.id]?.finished = Date() } else { progress[project.id] = nil }
+                if first { progress[project.id]?.finish(worked: worked) } else { progress[project.id] = nil }
                 if selection != project.id || !NSApp.isActive { unread.insert(project.id) }
                 finish(project)
             }
-            await turn(messages, attachments: saved, on: project)
-            if first { await showResult(of: project) }
+            worked = await turn(messages, attachments: saved, on: project)
+            if first && worked { await showResult(of: project) }
         }
     }
 
@@ -580,19 +581,20 @@ final class Store: ObservableObject {
     }
 
     /// One turn of the loop: agent edits → build (agent fixes failures) → commit → relaunch.
-    private func turn(_ messages: [QueuedMessage], attachments saved: [String], on project: ForgeProject) async {
+    /// False when it ended without a working app: the agent couldn't run, or the app won't build or open.
+    private func turn(_ messages: [QueuedMessage], attachments saved: [String], on project: ForgeProject) async -> Bool {
         let prompt = messages.map(\.text).joined(separator: "\n\n")
 
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
         let notes = Attachments.note(for: saved) + Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project)
         looks[project.id] = Look()
-        guard await runAgent(prompt + notes, files: files, on: project) else { return }
+        guard await runAgent(prompt + notes, files: files, on: project) else { return false }
         // Only build when something changed: not after a question, and not again when the agent's last
         // look already built and opened exactly this code.
         try? Template.writeSupport(for: project)
         let changed = Runtime.sourcesChanged(project)
         if changed {
-            guard await buildFixingErrors(project) else { return }
+            guard await buildFixingErrors(project) else { return false }
         }
         // Nothing is committed when the agent changed no files.
         var committed = await Shell.run("git add -A && \(Self.commit) -qm \"$FORGE_PROMPT\"", cwd: project.dir,
@@ -617,7 +619,7 @@ final class Store: ObservableObject {
             log(project, .status, "Fixing the crash…")
             guard await runAgent("The app builds, but it quit right after launching. Find the cause and fix it.\n\n\(crash!)",
                                  on: project),
-                  await buildFixingErrors(project) else { return }
+                  await buildFixingErrors(project) else { return false }
             let commit = committed ? "-q --amend --no-edit" : "-qm 'Fix a crash on launch'"
             if await Shell.run("git add -A && \(Self.commit) \(commit)", cwd: project.dir) { _ in } == 0 { committed = true }
             crash = await install(project)
@@ -625,6 +627,7 @@ final class Store: ObservableObject {
         if crash != nil {
             log(project, .error, "\(project.name) still quits right after opening. Try describing the change differently, or press Undo.")
         }
+        return crash == nil
     }
 
     /// Builds the app, sending compiler errors back to the agent up to three times. False when it still doesn't build.
@@ -688,7 +691,9 @@ final class Store: ObservableObject {
                     guard streamingArguments.count < 600 else { break }
                     streamingArguments += piece
                     note(TurnProgress.activity(tool: streamingTool, partialArguments: streamingArguments), for: project)
-                case .plan(let parts): progress[project.id]?.plan = parts
+                case .plan(let parts):
+                    progress[project.id]?.plan = parts
+                    progress[project.id]?.tickWrittenParts()
                 case .tool(let text):
                     log(project, .tool, text)
                     let call = ToolCall(text)
@@ -697,6 +702,7 @@ final class Store: ObservableObject {
                        progress[project.id]?.files.last != call.argument {
                         progress[project.id]?.files.removeAll { $0 == call.argument }
                         progress[project.id]?.files.append(call.argument)
+                        progress[project.id]?.tickWrittenParts()
                     }
                     toolCalls += 1
                     repeats = text == lastTool ? repeats + 1 : 1

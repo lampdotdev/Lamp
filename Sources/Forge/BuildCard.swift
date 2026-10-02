@@ -5,6 +5,9 @@ struct PlanPart: Identifiable, Equatable {
     let id: Int
     var title: String
     var done: Bool
+    /// The files the agent said it would write for this part. Forge ticks the part when they're written,
+    /// so progress doesn't depend on the agent stopping to report it.
+    var files: [String] = []
 }
 
 /// What Forge knows about the turn in progress, for showing the user something better than a spinner.
@@ -13,6 +16,8 @@ struct TurnProgress {
     let newApp: Bool
     let started = Date()
     var finished: Date?
+    /// The turn ended without a working app.
+    var failed = false
     /// What's happening right now, in plain words: "Writing Scanner.swift", "Building…".
     var activity = "Getting started"
     var plan: [PlanPart] = []
@@ -21,8 +26,23 @@ struct TurnProgress {
     /// The app's window once it has opened: the card's last frame.
     var screenshot: NSImage?
 
+    /// Ticks every part whose files have all been written.
+    mutating func tickWrittenParts() {
+        let written = Set(files)
+        for index in plan.indices where !plan[index].done && !plan[index].files.isEmpty {
+            plan[index].done = written.isSuperset(of: plan[index].files)
+        }
+    }
+
+    /// The turn is over. When the app was built and opened, everything planned is done.
+    mutating func finish(worked: Bool) {
+        finished = Date()
+        failed = !worked
+        if worked { for index in plan.indices { plan[index].done = true } }
+    }
+
     var stage: String {
-        if finished != nil { return "Ready" }
+        if finished != nil { return failed ? "Not finished" : "Ready" }
         if activity.hasPrefix("Building") || activity.hasPrefix("Fixing a build") { return "Building" }
         if activity.hasPrefix("Opening") { return "Opening" }
         return plan.isEmpty && files.isEmpty ? "Planning" : "Writing code"
@@ -87,10 +107,14 @@ struct BuildCard: View {
             HStack(spacing: 8) {
                 if progress.finished == nil {
                     ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 14, height: 14)
+                } else if progress.failed {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 } else {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                 }
-                Text(progress.finished == nil ? progress.activity : "\(project.name) is ready").lineLimit(1)
+                Text(progress.finished == nil ? progress.activity
+                     : progress.failed ? "This didn't finish. See the messages above." : "\(project.name) is ready")
+                    .lineLimit(1)
                 Spacer()
                 Elapsed(from: progress.started, to: progress.finished)
             }
