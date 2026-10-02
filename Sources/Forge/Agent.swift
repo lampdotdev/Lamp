@@ -62,7 +62,7 @@ enum Agent {
             "FORGE_SESSION_DIR": sessionDir,
             "FORGE_SYSTEM": systemPrompt,
             "FORGE_PROMPT": prompt,
-            "OPENROUTER_API_KEY": Keychain.openRouterKey ?? "",
+            "OPENROUTER_API_KEY": KeyStore.openRouterKey ?? "",
             "PI_CODING_AGENT_DIR": configDir,
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_TELEMETRY": "0",

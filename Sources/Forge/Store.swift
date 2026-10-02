@@ -190,6 +190,24 @@ final class Store: ObservableObject {
         importApp(from: url)
     }
 
+    /// Puts the app's .forgeapp file on the clipboard, ready to paste into Slack, Messages, Mail or Finder.
+    func copyAppFile(_ project: ForgeProject) {
+        do {
+            let exported = try Sharing.export(project)
+            let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Forge/Shared", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let file = folder.appendingPathComponent(exported.lastPathComponent)
+            try? FileManager.default.removeItem(at: file)
+            try FileManager.default.moveItem(at: exported, to: file)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.writeObjects([file as NSURL])
+            log(project, .status, "Copied \(file.lastPathComponent). Paste it into Slack, Messages, Mail or a Finder window.")
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
     func chooseExport(_ project: ForgeProject) {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.forgeApp]

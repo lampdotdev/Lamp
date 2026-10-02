@@ -191,7 +191,7 @@ enum Icons {
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/images")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 180
-        request.setValue("Bearer \(Keychain.openRouterKey ?? "")", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(KeyStore.openRouterKey ?? "")", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Forge", forHTTPHeaderField: "X-Title")
         request.httpBody = try JSONSerialization.data(withJSONObject: [

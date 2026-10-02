@@ -10,7 +10,7 @@ A Mac app that builds Mac apps. Describe what you want, and Forge has an AI agen
 |---|---|---|
 | macOS 14 (Sonoma) or later | Forge and the apps it generates target macOS 14 | |
 | Apple's Command Line Tools (Xcode 15 or later) | Swift compiler, the macOS SDK and `git` | Free. **The full Xcode app is not required**, but works too. |
-| An [OpenRouter](https://openrouter.ai/keys) key | Pays for the AI: the agent that writes apps, AI features inside apps, and icon artwork | Added in Forge's welcome screen, stored in the Keychain |
+| An [OpenRouter](https://openrouter.ai/keys) key | Pays for the AI: the agent that writes apps, AI features inside apps, and icon artwork | Added in Forge's welcome screen and stored privately (see below) |
 
 Nothing else needs installing. The coding agent ([pi](https://github.com/badlogic/pi-mono)) is bundled inside `Forge.app`, and `build.sh` downloads a pinned, checksum-verified copy (about 30 MB). No Apple developer account, signing certificate or notarization is needed. Forge and every app it builds are ad-hoc signed and run only on your own Mac.
 
@@ -33,11 +33,11 @@ Nothing else needs installing. The coding agent ([pi](https://github.com/badlogi
    open build/Forge.app
    ```
 
-   The first build takes about a minute. It also creates a self-signed **Forge Local Signing** certificate in your login keychain (see `scripts/signing-identity.sh`). That gives every build the same signature, so macOS doesn't re-ask for Keychain access after each rebuild. It's only used to sign Forge on your Mac. It produces `build/Forge.app`, which you can drag into `/Applications` if you like.
+   The first build takes about a minute. It also creates a self-signed **Forge Local Signing** certificate in your login keychain (see `scripts/signing-identity.sh`). That gives every build the same signature. It's only used to sign Forge on your Mac. It produces `build/Forge.app`, which you can drag into `/Applications` if you like.
 
 3. **Finish setup in the app.** On first launch, Forge checks for anything missing:
    - **App-building tools:** if the Command Line Tools are missing, Forge opens Apple's installer right away (click **Install**, then **Agree**). It then checks every few seconds and carries on by itself when they're installed, so there's no button to press afterwards.
-   - **OpenRouter key:** paste a key from [openrouter.ai/keys](https://openrouter.ai/keys) while the tools install. It's stored in your login Keychain.
+   - **OpenRouter key:** paste a key from [openrouter.ai/keys](https://openrouter.ai/keys) while the tools install. Releases signed with an Apple Developer ID store it in your login Keychain. Local builds have no Team ID, and macOS would ask for Keychain access again after every rebuild, so they store it in `~/Library/Application Support/Forge/openrouter-key`, readable only by your user account. A key from an older build is moved over automatically, which may cause one last Keychain prompt.
 
    You can change the key and models later in **Forge → Settings (⌘,)**.
 
@@ -66,7 +66,7 @@ High-risk apps default to **Cancel**. When imported, the shared code is rebuilt 
 - **Builds fail with "You have not agreed to the Xcode license"** (full Xcode only): run `sudo xcodebuild -license accept`.
 - **`Downloading pi` fails during `./build.sh`**: GitHub must be reachable. The download is cached in `vendor/` afterwards.
 - **Build errors mentioning the SDK, with Xcode installed**: point at it explicitly with `sudo xcode-select -s /Applications/Xcode.app`.
-- **Keychain asks "Forge wants to use your confidential information"**: that's Forge reading its OpenRouter key. Click **Always Allow** once. Builds are signed with a stable local certificate, so macOS remembers the answer across rebuilds. If the build printed "Signed ad-hoc", the certificate couldn't be created, and macOS will ask after each rebuild.
+- **Keychain asks "Forge wants to access key dev.forge.host"**: Forge is moving an OpenRouter key saved by an older build out of the Keychain. Allow it once. Local builds don't use the Keychain after that.
 - **Apps can't use AI ("Couldn't reach Forge")**: Forge must be running, and port `47811` must be free (check with `lsof -i :47811`).
 - **⇧⌘E opens the wrong Forge**: you have more than one `Forge.app` on disk. Open the one you want once, or delete the old one.
 - **Old icon in the Dock**: run `killall Dock`.
@@ -77,7 +77,7 @@ High-risk apps default to **Cancel**. When imported, the shared code is rebuilt 
 - **Live editing:** every generated app has an **Edit with Forge** command (⇧⌘E) that jumps back to its chat.
 - **AI inside apps:** Forge runs a local gateway on `127.0.0.1:47811`. Generated apps call it through `ForgeAI.ask(...)` (text, images, typed JSON) with a per-app token, so the API key never leaves Forge. Per-app usage shows in Forge.
 - **Icons:** the AI designs `icon.json` (SF Symbol and gradient). Forge renders it instantly and, with an OpenRouter key, swaps in generated artwork.
-- **Provider:** everything goes through OpenRouter with the one key in the Keychain. pi uses its own config folder (`~/Library/Application Support/Forge/pi`), with update checks and telemetry off, so it never touches a pi you run yourself.
+- **Provider:** everything goes through OpenRouter with one OpenRouter key. pi uses its own config folder (`~/Library/Application Support/Forge/pi`), with update checks and telemetry off, so it never touches a pi you run yourself.
 
 ## Layout
 
@@ -88,7 +88,7 @@ High-risk apps default to **Cancel**. When imported, the shared code is rebuilt 
 | `Sources/Forge/Template.swift` | Scaffold for new apps, including the generated `ForgeSupport.swift` |
 | `Sources/Forge/Gateway.swift` | Local AI gateway and provider calls |
 | `Sources/Forge/Icons.swift` | Icon design, rendering and artwork generation |
-| `Sources/Forge/Provider.swift` | OpenRouter models, friendly errors, Keychain |
+| `Sources/Forge/Provider.swift` | OpenRouter models, friendly errors, key storage (Keychain or private file) |
 | `Sources/Forge/Setup.swift` | First-run setup and Settings |
 | `Sources/Forge/Sharing.swift` | `.forgeapp` export and import, and the import review (checklist + AI) |
 | `Resources/make-icon.swift` | Draws Forge's own icon |

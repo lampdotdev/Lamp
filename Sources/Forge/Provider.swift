@@ -3,7 +3,7 @@ import Security
 
 /// Everything AI goes through OpenRouter: the builder agent (pi), ForgeAI in generated apps, and icon artwork.
 enum Provider {
-    static var hasKey: Bool { Keychain.openRouterKey != nil }
+    static var hasKey: Bool { KeyStore.openRouterKey != nil }
 
     static let models: [(id: String, label: String)] = [
         ("anthropic/claude-opus-5.5", "Best quality (Claude Opus)"),
@@ -33,28 +33,48 @@ enum Provider {
     }
 }
 
-/// Stores the OpenRouter key in the login Keychain. It's read once per launch and kept in memory,
-/// so macOS asks for Keychain access at most once (and never again after "Always Allow").
-enum Keychain {
-    private static let query: [String: Any] = [
-        kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: "dev.forge.host",
-        kSecAttrAccount as String: "openrouter",
-    ]
-
+/// Stores the OpenRouter key.
+///
+/// Builds signed with an Apple Team ID (Developer ID releases) use the login Keychain. Local builds
+/// have no Team ID, and macOS ties Keychain approval to each exact build, so every rebuild would ask
+/// again. Those builds keep the key in a file only your user account can read instead:
+/// ~/Library/Application Support/Forge/openrouter-key. Either way it's read once per launch.
+enum KeyStore {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var cached: String??
+
+    /// True when this copy of Forge is signed with an Apple Team ID.
+    static let usesKeychain: Bool = {
+        var code: SecCode?
+        var info: CFDictionary?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let code,
+              let staticCode = { var s: SecStaticCode?; SecCodeCopyStaticCode(code, [], &s); return s }(),
+              SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let team = (info as? [String: Any])?[kSecCodeInfoTeamIdentifier as String] as? String
+        else { return false }
+        return !team.isEmpty
+    }()
 
     static var openRouterKey: String? {
         lock.lock()
         defer { lock.unlock() }
         if let cached { return cached }
-        var item: CFTypeRef?
-        var q = query
-        q[kSecReturnData as String] = true
-        let status = SecItemCopyMatching(q as CFDictionary, &item)
-        let key = (item as? Data).flatMap { String(data: $0, encoding: .utf8) }.flatMap { $0.isEmpty ? nil : $0 }
-        // Don't cache a denied or cancelled prompt, so the next use can ask again.
+        if usesKeychain {
+            let (status, key) = KeychainItem.read()
+            // Don't cache a denied or cancelled prompt, so the next use can ask again.
+            if status == errSecSuccess || status == errSecItemNotFound { cached = .some(key) }
+            return key
+        }
+        if let key = KeyFile.read() {
+            cached = .some(key)
+            return key
+        }
+        // Moving from an older build that kept the key in the Keychain: copy it over once.
+        let (status, key) = KeychainItem.read()
+        if let key {
+            KeyFile.write(key)
+            KeychainItem.delete()
+        }
         if status == errSecSuccess || status == errSecItemNotFound { cached = .some(key) }
         return key
     }
@@ -62,12 +82,64 @@ enum Keychain {
     static func setOpenRouterKey(_ key: String?) {
         lock.lock()
         defer { lock.unlock() }
-        SecItemDelete(query as CFDictionary)
-        let key = key?.trimmed
-        cached = .some(key?.isEmpty == false ? key : nil)
-        guard let key, !key.isEmpty else { return }
-        var q = query
-        q[kSecValueData as String] = Data(key.utf8)
-        SecItemAdd(q as CFDictionary, nil)
+        let key = key?.trimmed.isEmpty == false ? key!.trimmed : nil
+        cached = .some(key)
+        if usesKeychain {
+            KeychainItem.delete()
+            if let key { KeychainItem.write(key) }
+        } else {
+            KeyFile.delete()
+            if let key { KeyFile.write(key) }
+        }
     }
+
+    private enum KeychainItem {
+        static let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "dev.forge.host",
+            kSecAttrAccount as String: "openrouter",
+        ]
+
+        static func read() -> (OSStatus, String?) {
+            var item: CFTypeRef?
+            var q = query
+            q[kSecReturnData as String] = true
+            let status = SecItemCopyMatching(q as CFDictionary, &item)
+            let key = (item as? Data).flatMap { String(data: $0, encoding: .utf8) }.flatMap { $0.isEmpty ? nil : $0 }
+            return (status, key)
+        }
+
+        static func write(_ key: String) {
+            var q = query
+            q[kSecValueData as String] = Data(key.utf8)
+            SecItemAdd(q as CFDictionary, nil)
+        }
+
+        static func delete() { SecItemDelete(query as CFDictionary) }
+    }
+
+    private enum KeyFile {
+        static let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Forge/openrouter-key")
+
+        static func read() -> String? {
+            (try? String(contentsOf: url, encoding: .utf8))?.trimmed.nilIfEmpty
+        }
+
+        static func write(_ key: String) {
+            let fm = FileManager.default
+            let folder = url.deletingLastPathComponent()
+            try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            // Create it private first, then write, so the key is never briefly readable by others.
+            fm.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
+            try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            try? Data(key.utf8).write(to: url, options: [])
+        }
+
+        static func delete() { try? FileManager.default.removeItem(at: url) }
+    }
+}
+
+extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

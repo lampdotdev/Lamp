@@ -103,7 +103,7 @@ struct SetupView: View {
     }
 
     private func saveKey() {
-        Keychain.setOpenRouterKey(key)
+        KeyStore.setOpenRouterKey(key)
         key = ""
         Task { await store.recheckSetup() }
     }
@@ -131,24 +131,24 @@ struct SettingsView: View {
     @AppStorage("appModel") private var appModel = "haiku"
     @AppStorage("imageModel") private var imageModel = Icons.artModels[0].id
     @State private var key = ""
-    @State private var hasKey = Keychain.openRouterKey != nil
+    @State private var hasKey = KeyStore.openRouterKey != nil
 
     var body: some View {
         Form {
             Section("OpenRouter") {
                 if hasKey {
-                    LabeledContent("API key", value: "Saved in Keychain")
+                    LabeledContent("API key", value: KeyStore.usesKeychain ? "Saved in Keychain" : "Saved")
                     Button("Remove Key", role: .destructive) {
-                        Keychain.setOpenRouterKey(nil)
+                        KeyStore.setOpenRouterKey(nil)
                         hasKey = false
                         Task { await store.recheckSetup() }
                     }
                 } else {
                     SecureField("API key", text: $key, prompt: Text("sk-or-…"))
                     Button("Save") {
-                        Keychain.setOpenRouterKey(key)
+                        KeyStore.setOpenRouterKey(key)
                         key = ""
-                        hasKey = Keychain.openRouterKey != nil
+                        hasKey = KeyStore.openRouterKey != nil
                         Task { await store.recheckSetup() }
                     }
                     .disabled(key.trimmed.isEmpty)

@@ -118,7 +118,7 @@ enum AppAI {
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 120
-        request.setValue("Bearer \(Keychain.openRouterKey ?? "")", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(KeyStore.openRouterKey ?? "")", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Forge", forHTTPHeaderField: "X-Title")
         var messages: [[String: Any]] = []
