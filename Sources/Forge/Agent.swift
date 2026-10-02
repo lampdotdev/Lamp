@@ -101,7 +101,9 @@ enum Agent {
     static func environment(prompt: String, files: [String] = [], session: String, sessionDir: String) -> [String: String] {
         var env = [
             "FORGE_PI": executable?.path ?? "pi",
-            "FORGE_PROVIDER": Builder.piProvider == Builder.myPiProvider ? myPiProvider : Builder.piProvider,
+            "FORGE_PROVIDER": Builder.piProvider == Builder.myPiProvider ? myPiProvider
+                : Builder.piProvider == Builder.localProvider ? LocalModels.piProvider(for: Builder.piModel)
+                : Builder.piProvider,
             "FORGE_MODEL": Builder.piProvider == Builder.myPiProvider ? myPiModel : Builder.piModel,
             "FORGE_SESSION": session,
             "FORGE_SESSION_DIR": sessionDir,

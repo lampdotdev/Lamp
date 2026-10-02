@@ -353,7 +353,7 @@ struct ModelPicker: View {
         loading = true
         defer { loading = false }
         switch provider {
-        case Builder.localProvider: models = local.installed
+        case Builder.localProvider: models = local.installed.map(\.id)
         case let id where id.hasPrefix("ext-"): models = local.external[id] ?? []
         default: models = await Agent.listModels(provider: provider)
         }
@@ -365,7 +365,7 @@ struct ModelPicker: View {
     }
 }
 
-/// Download and manage models that run on this Mac.
+/// Models on this Mac (shared with Local and the Hugging Face cache), plus downloads.
 struct LocalModelsSettings: View {
     @EnvironmentObject private var store: Store
     @ObservedObject private var local = LocalModels.shared
@@ -374,38 +374,42 @@ struct LocalModelsSettings: View {
     @State private var adding = false
     @State private var addError: String?
 
-    private var specs: [LocalModelSpec] {
-        let known = LocalModels.catalog + custom
-        let extra = local.installed.filter { id in !known.contains { $0.id == id } }.map {
-            LocalModelSpec(id: $0, name: $0, repo: "", files: [], sizeGB: 0, minRAMGB: 0, blurb: "Downloaded")
-        }
-        return known + extra
+    private var downloadable: [LocalModelSpec] {
+        (LocalModels.catalog + custom).filter { !local.isInstalled($0) }
     }
 
     var body: some View {
         Form {
             Section {
-                Text("Models run privately on this Mac with llama.cpp. This Mac has \(LocalModels.ramGB) GB of memory. Local models are slower and less capable than the best cloud models, especially for whole apps.")
+                Text("Models run privately on this Mac. This Mac has \(LocalModels.ramGB) GB of memory. Local models are slower and less capable than the best cloud models, especially for whole apps.")
                     .font(.callout).foregroundStyle(.secondary)
-                ForEach(specs) { spec in row(spec) }
-            } header: { Text("Models") }
+                if local.installed.isEmpty {
+                    Text("No models yet. Download one below.").foregroundStyle(.secondary)
+                }
+                ForEach(local.installed) { installedRow($0) }
+            } header: { Text("On this Mac") } footer: {
+                Text("Includes models in the Hugging Face cache (~/.cache/huggingface/hub) and Local's folder, so they're shared with Local and other tools. GGUF models run on Forge's llama.cpp; MLX models run on mlx-lm\(LocalModels.mlxServerPath == nil ? " (not installed: `uv tool install mlx-lm`)" : "").")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
 
             Section {
+                ForEach(downloadable) { downloadRow($0) }
                 HStack {
                     TextField("owner/Model-GGUF or a Hugging Face link", text: $repo)
                     Button("Add") { add() }.disabled(repo.trimmed.isEmpty || adding)
                 }
                 if adding { ProgressView().controlSize(.small) }
                 if let addError { Text(addError).font(.caption).foregroundStyle(.red) }
-                Text("Any GGUF model on Hugging Face works. Forge picks the Q4_K_M version, plus image support if there is one.")
+            } header: { Text("Download") } footer: {
+                Text("Downloads go into the Hugging Face cache. Any GGUF repo works: Forge picks the Q4_K_M version, plus image support if there is one.")
                     .font(.caption).foregroundStyle(.secondary)
-            } header: { Text("Add from Hugging Face") }
+            }
 
             Section {
-                LabeledContent("Forge's model server") {
+                LabeledContent("Model servers") {
                     HStack {
-                        Text(local.serverRunning ? "Running" : "Starts when needed").foregroundStyle(.secondary)
-                        if local.serverRunning { Button("Stop") { local.stopServer() } }
+                        Text(local.serverRunning || local.mlxModel != nil ? "Running" : "Start when needed").foregroundStyle(.secondary)
+                        if local.serverRunning || local.mlxModel != nil { Button("Stop") { local.stopServer() } }
                     }
                 }
                 if local.external.isEmpty {
@@ -415,39 +419,50 @@ struct LocalModelsSettings: View {
                 ForEach(local.external.keys.sorted(), id: \.self) { id in
                     LabeledContent(LocalModels.externalName(id), value: "\(local.external[id]?.count ?? 0) models")
                 }
-                Button("Look Again") { Task { await local.detectExternal() } }
+                Button("Look Again") { local.refresh(); Task { await local.detectExternal() } }
             } header: { Text("Servers") }
         }
         .formStyle(.grouped)
         .task { local.refresh(); await local.detectExternal() }
     }
 
-    @ViewBuilder private func row(_ spec: LocalModelSpec) -> some View {
-        let installed = local.installed.contains(spec.id)
-        let inUse = Builder.engine == .pi && Builder.piProvider == Builder.localProvider && Builder.piModel == spec.id
-        HStack(alignment: .top) {
+    private func installedRow(_ model: InstalledModel) -> some View {
+        let inUse = Builder.engine == .pi && Builder.piProvider == Builder.localProvider && Builder.piModel == model.id
+        let needsMLX = model.format == .mlx && LocalModels.mlxServerPath == nil
+        return HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
-                    Text(spec.name).font(.headline)
+                    Text(model.name).font(.headline)
+                    Text(model.format == .mlx ? "MLX" : "GGUF").font(.caption2).padding(.horizontal, 5)
+                        .background(.quaternary, in: Capsule())
                     if inUse { Text("In use").font(.caption).padding(.horizontal, 6).background(.green.opacity(0.2), in: Capsule()) }
                 }
+                Text("\(ByteCountFormatter.string(fromByteCount: model.bytes, countStyle: .file)) · \(model.source)\(model.vision ? " · sees images" : "")")
+                    .font(.caption).foregroundStyle(.secondary)
+                if needsMLX { Text("Needs mlx-lm: `uv tool install mlx-lm`").font(.caption).foregroundStyle(.orange) }
+            }
+            Spacer()
+            if !inUse { Button("Use") { use(model.id) }.disabled(needsMLX) }
+            if model.deletable { Button("Delete", role: .destructive) { local.delete(model.id) } }
+        }
+    }
+
+    private func downloadRow(_ spec: LocalModelSpec) -> some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(spec.name).font(.headline)
                 Text(spec.blurb).font(.caption).foregroundStyle(.secondary)
-                if spec.sizeGB > 0 {
-                    let tight = spec.minRAMGB > LocalModels.ramGB
-                    Text(String(format: "%.1f GB download · needs %d GB memory%@", spec.sizeGB, spec.minRAMGB,
-                                tight ? " (more than this Mac has)" : ""))
-                        .font(.caption).foregroundStyle(tight ? .orange : .secondary)
-                }
+                let tight = spec.minRAMGB > LocalModels.ramGB
+                Text(String(format: "%.1f GB download · needs %d GB memory%@", spec.sizeGB, spec.minRAMGB,
+                            tight ? " (more than this Mac has)" : ""))
+                    .font(.caption).foregroundStyle(tight ? .orange : .secondary)
                 if let error = local.errors[spec.id] { Text(error).font(.caption).foregroundStyle(.red) }
             }
             Spacer()
             if let progress = local.progress[spec.id] {
                 ProgressView(value: progress).frame(width: 90)
                 Button("Cancel") { local.cancel(spec.id) }
-            } else if installed {
-                if !inUse { Button("Use") { use(spec.id) } }
-                Button("Delete", role: .destructive) { local.delete(spec.id) }
-            } else if !spec.files.isEmpty {
+            } else {
                 Button("Download") { local.download(spec) }
             }
         }
@@ -468,7 +483,7 @@ struct LocalModelsSettings: View {
             defer { adding = false }
             do {
                 let spec = try await local.spec(forRepo: repo)
-                if !custom.contains(spec) && !LocalModels.catalog.contains(where: { $0.id == spec.id }) { custom.append(spec) }
+                if !custom.contains(spec) && !LocalModels.catalog.contains(where: { $0.repo == spec.repo }) { custom.append(spec) }
                 repo = ""
                 local.download(spec)
             } catch {

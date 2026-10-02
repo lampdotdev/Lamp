@@ -454,7 +454,7 @@ final class Store: ObservableObject {
         let engine = Builder.engine
         if engine == .pi && Builder.piProvider == Builder.localProvider {
             do {
-                try await LocalModels.shared.ensureServer()
+                try await LocalModels.shared.ensureServer(for: Builder.piModel)
             } catch {
                 log(project, .error, error.localizedDescription)
                 return false

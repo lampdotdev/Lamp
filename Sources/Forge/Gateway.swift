@@ -114,8 +114,8 @@ enum AppAI {
             // No OpenRouter key: use whatever builds apps.
             switch Builder.piProvider {
             case Builder.localProvider:
-                try await LocalModels.shared.ensureServer()
-                (text, cost) = try await viaOpenAICompatible("\(LocalModels.baseURL)/v1/chat/completions", key: nil,
+                let base = try await LocalModels.shared.ensureServer(for: Builder.piModel)
+                (text, cost) = try await viaOpenAICompatible("\(base)/v1/chat/completions", key: nil,
                                                              prompt: prompt, images: images, system: system, model: Builder.piModel)
             case "ext-ollama", "ext-lmstudio":
                 let port = Builder.piProvider == "ext-ollama" ? 11434 : 1234

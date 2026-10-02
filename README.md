@@ -71,7 +71,10 @@ High-risk apps default to **Cancel**. When imported, the shared code is rebuilt 
 
 - **Forge's built-in agent (pi)** with any of these:
   - **An API key** for OpenRouter, Anthropic, OpenAI, Google Gemini, DeepSeek, Mistral, xAI, Groq, Cerebras, Together, Fireworks, Hugging Face, Vercel AI Gateway, Moonshot, Z.ai, MiniMax or NVIDIA. Pick any model from that provider's list; it's searchable.
-  - **On this Mac (local models).** Download a model in **Settings → Local Models**. The list is sized to your Mac's memory, and any GGUF repo on Hugging Face works too. Forge runs the models with its bundled llama.cpp server on `127.0.0.1:47812`, which starts when needed and loads models on demand. Models are stored in `~/Library/Application Support/Forge/Models`.
+  - **On this Mac (local models).** **Settings → Local Models** lists every model Forge can run. These include models already in the shared Hugging Face cache (`~/.cache/huggingface/hub`) or in Local's folder, so models downloaded for Local show up without downloading again. Forge's own downloads (a list sized to your Mac's memory, or any GGUF repo) go into that same cache, in the standard `huggingface_hub` layout.
+    - **GGUF models** run on Forge's bundled llama.cpp server (`127.0.0.1:47812`, router mode, loading models on demand). It reads them through a folder of symlinks (`~/Library/Application Support/Forge/Router`), so nothing is copied.
+    - **MLX models** (like the ones Local uses) run on `mlx_lm.server` (`127.0.0.1:47813`) if it's installed (`uv tool install mlx-lm`).
+    - Servers start when needed and stop when Forge quits.
   - **Ollama or LM Studio**, if they're running. Their models appear automatically.
   - **My pi setup:** your own `~/.pi/agent`, including any subscriptions you've signed into with pi's `/login` (Claude Pro/Max, ChatGPT, GitHub Copilot and others).
 - **Claude Code, Codex or opencode**, if installed. Forge uses their existing sign-in. It runs them with file editing allowed and the shell turned off (sandboxed, for Codex), and builds the app itself.
@@ -88,7 +91,7 @@ Local models are slower and much less capable than the best cloud models for who
 - **`Downloading pi` fails during `./build.sh`**: GitHub must be reachable. The download is cached in `vendor/` afterwards.
 - **Build errors mentioning the SDK, with Xcode installed**: point at it explicitly with `sudo xcode-select -s /Applications/Xcode.app`.
 - **Keychain asks "Forge wants to access key dev.forge.host"**: Forge is moving an OpenRouter key saved by an older build out of the Keychain. Allow it once. Local builds don't use the Keychain after that.
-- **A local model won't start**: check `~/Library/Logs/Forge/llama-server.log`. The model may need more memory than the Mac has; pick a smaller one.
+- **A local model won't start**: check `~/Library/Logs/Forge/llama-server.log` (GGUF) or `mlx-server.log` (MLX). The model may need more memory than the Mac has; pick a smaller one.
 - **Claude Code, Codex or opencode errors**: Forge shows their message. Make sure the tool works on its own in Terminal first: you're signed in, and it's up to date (an old Codex can't use new models, and opencode's free tier only works inside opencode).
 - **Apps can't use AI ("Couldn't reach Forge")**: Forge must be running, and port `47811` must be free (check with `lsof -i :47811`).
 - **⇧⌘E opens the wrong Forge**: you have more than one `Forge.app` on disk. Open the one you want once, or delete the old one.

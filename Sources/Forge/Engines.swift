@@ -72,7 +72,11 @@ enum Builder {
             if Agent.executable == nil { return "Forge's AI builder is missing from the app. Download Forge again." }
             switch piProvider {
             case localProvider:
-                if LocalModels.installedIDs().isEmpty { return "Download a model in Settings → Local Models." }
+                let installed = LocalModels.scan()
+                if installed.isEmpty { return "Download a model in Settings → Local Models." }
+                if let model = installed.first(where: { $0.id == piModel }), model.format == .mlx, LocalModels.mlxServerPath == nil {
+                    return "\(model.name) is an MLX model and needs mlx-lm: run `uv tool install mlx-lm`."
+                }
             case myPiProvider:
                 if !FileManager.default.fileExists(atPath: Agent.userConfigDir) { return "No pi setup found in ~/.pi/agent." }
             case let id where id.hasPrefix("ext-"):
@@ -140,7 +144,10 @@ enum ToolLocator {
     }
 
     static func path(for engine: Engine) -> String? {
-        guard let tool = engine.tool else { return nil }
+        engine.tool.flatMap(path(named:))
+    }
+
+    static func path(named tool: String) -> String? {
         for dir in userPath.split(separator: ":") {
             let candidate = "\(dir)/\(tool)"
             if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
