@@ -270,6 +270,7 @@ struct ProjectView: View {
         (store.logs[project.id] ?? []).filter { showDetails || $0.kind != .detail }
     }
     private var busy: Bool { store.busy.contains(project.id) }
+    private var queued: [QueuedMessage] { store.queued[project.id] ?? [] }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -281,11 +282,15 @@ struct ProjectView: View {
                                 .foregroundStyle(.secondary)
                         }
                         ForEach(lines) { LogRow(line: $0, dir: project.dir) }
+                        ForEach(queued) { message in
+                            QueuedRow(message: message) { store.unqueue(message, from: project) }
+                        }
                         Color.clear.frame(height: 1).id("bottom")
                     }
                     .padding()
                 }
                 .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
+                .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
             Divider()
             if !attachments.isEmpty {
@@ -305,7 +310,7 @@ struct ProjectView: View {
                     .help("Attach files. You can also paste or drop images and files here.")
                     .padding(.bottom, 2)
                 Composer(text: $draft, height: $composerHeight,
-                         placeholder: busy ? "Working…" : "Describe a change…",
+                         placeholder: busy ? "Working… describe the next change" : "Describe a change…",
                          isEnabled: true, focusRequest: focusRequest,
                          onSubmit: send, onFiles: { attachments.append(contentsOf: $0) })
                     .frame(height: composerHeight)
@@ -318,19 +323,18 @@ struct ProjectView: View {
                 .help(dictation.isListening ? "Stop dictation" : "Dictate a change")
                 .padding(.bottom, 2)
                 if busy {
-                    ProgressView().controlSize(.small)
-                    Text("Working…").foregroundStyle(.secondary)
+                    ProgressView().controlSize(.small).padding(.bottom, 4)
                     Button { store.stop(project) } label: { Image(systemName: "stop.circle.fill").font(.title2) }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
                         .help("Stop")
-                } else {
-                    Button(action: send) {
-                        Image(systemName: "arrow.up.circle.fill").font(.title2)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(draft.trimmed.isEmpty && attachments.isEmpty)
                 }
+                Button(action: send) {
+                    Image(systemName: "arrow.up.circle.fill").font(.title2)
+                }
+                .buttonStyle(.plain)
+                .disabled(draft.trimmed.isEmpty && attachments.isEmpty)
+                .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
             }
             .padding(12)
         }
@@ -448,12 +452,12 @@ struct ProjectView: View {
 
     private func send() {
         let text = draft.trimmed
-        guard !text.isEmpty || !attachments.isEmpty, !busy else { return }
+        guard !text.isEmpty || !attachments.isEmpty else { return }
         dictation.cancel()
         let files = attachments
         draft = ""
         attachments = []
-        Task { await store.send(text.isEmpty ? "Use the attached files." : text, attachments: files, to: project) }
+        store.send(text.isEmpty ? "Use the attached files." : text, attachments: files, to: project)
     }
 
     private func chooseFiles() {
@@ -554,6 +558,33 @@ struct AppInfoView: View {
     private func runs(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
     private func label(_ models: [(id: String, label: String)], _ id: String) -> String {
         models.first { $0.id == id }?.label ?? id
+    }
+}
+
+/// A message waiting for the current change to finish. It can still be taken back.
+struct QueuedRow: View {
+    let message: QueuedMessage
+    let onRemove: () -> Void
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            if !message.attachments.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(message.attachments, id: \.self) { AttachmentChip(url: $0) }
+                }
+            }
+            HStack(spacing: 6) {
+                Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                    .buttonStyle(.plain)
+                    .help("Remove from the queue")
+                Text(message.text)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                    .foregroundStyle(.secondary)
+            }
+            Label("Queued", systemImage: "clock").font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
 

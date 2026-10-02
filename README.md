@@ -46,6 +46,7 @@ Nothing else needs installing. The coding agent ([pi](https://github.com/badlogi
 
 - Click **New App** at the bottom of the app list, give the app a name and (optionally) describe it. Forge builds it and opens it, usually in under a minute.
 - Type changes into the chat. Each change rebuilds and relaunches the app. **Undo** reverts the last change. **Return** sends, and **Shift-Return** starts a new line.
+- You can keep typing while Forge works. Messages sent in the meantime wait in the chat (click the ✕ to take one back) and go out together as the next change.
 - Attach screenshots, mockups, logos, data files or documents with the paperclip, by dropping them on the chat, or by pasting (a screenshot copied with ⌃⇧⌘4 pastes as an image). The agent sees images and small text files directly. Attachments are saved in the app's `Attachments/` folder and bundled inside the app, where code loads them with `ForgeAssets.url/image/text("name")`. Shared apps include them.
 - In any generated app, press **⇧⌘E** to jump back to its chat in Forge.
 - Generated apps are installed to `~/Applications/Forge Apps/`, so they show up in Spotlight and Launchpad.

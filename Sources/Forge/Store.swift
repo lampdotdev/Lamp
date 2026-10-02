@@ -36,6 +36,13 @@ struct LogLine: Identifiable, Codable {
     var attachments: [String]? = nil   // names in the app's Attachments/ folder
 }
 
+/// A message typed while the app was busy. It waits in the chat until the current work finishes.
+struct QueuedMessage: Identifiable {
+    let id = UUID()
+    let text: String
+    var attachments: [URL] = []
+}
+
 @MainActor
 final class Store: ObservableObject {
     static let shared = Store()
@@ -46,6 +53,7 @@ final class Store: ObservableObject {
     @Published var unread: Set<String> = []
     @Published var logs: [String: [LogLine]] = [:]
     @Published var busy: Set<String> = []
+    @Published var queued: [String: [QueuedMessage]] = [:]
     @Published var chatFocusRequest = 0
     @Published var setup = SetupCheck()
     @Published var usage: [String: AppUsage] = [:]
@@ -183,7 +191,7 @@ final class Store: ObservableObject {
             if brief.trimmed.isEmpty {
                 await run(project)
             } else {
-                await send(brief.trimmed, to: project)
+                send(brief.trimmed, to: project)
             }
         }
     }
@@ -344,15 +352,45 @@ final class Store: ObservableObject {
         }
     }
 
-    /// One turn of the loop: agent edits → build (agent fixes failures) → commit → relaunch.
-    func send(_ prompt: String, attachments: [URL] = [], to project: ForgeProject) async {
-        guard busy.insert(project.id).inserted else { return }
-        defer {
-            busy.remove(project.id)
-            if selection != project.id || !NSApp.isActive { unread.insert(project.id) }
+    /// Sends a message, or queues it while the app is busy. Everything queued goes out together
+    /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
+    func send(_ prompt: String, attachments: [URL] = [], to project: ForgeProject) {
+        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: attachments))
+        startQueued(project)
+    }
+
+    func unqueue(_ message: QueuedMessage, from project: ForgeProject) {
+        queued[project.id]?.removeAll { $0.id == message.id }
+    }
+
+    private func startQueued(_ project: ForgeProject) {
+        guard let messages = queued[project.id], !messages.isEmpty,
+              busy.insert(project.id).inserted else { return }
+        queued[project.id] = nil
+        Task {
+            defer {
+                if selection != project.id || !NSApp.isActive { unread.insert(project.id) }
+                finish(project)
+            }
+            await turn(messages, on: project)
         }
-        let saved = Attachments.save(attachments, to: project)
-        log(project, .user, prompt, attachments: saved.isEmpty ? nil : saved)
+    }
+
+    /// Marks the app idle again, then starts anything queued while it was busy.
+    private func finish(_ project: ForgeProject) {
+        busy.remove(project.id)
+        startQueued(project)
+    }
+
+    /// One turn of the loop: agent edits → build (agent fixes failures) → commit → relaunch.
+    private func turn(_ messages: [QueuedMessage], on project: ForgeProject) async {
+        var saved: [String] = []
+        for message in messages {
+            let names = Attachments.save(message.attachments, to: project)
+            log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
+            saved += names
+        }
+        let prompt = messages.map(\.text).joined(separator: "\n\n")
 
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
         guard await runAgent(prompt + Attachments.note(for: saved), files: files, on: project) else { return }
@@ -470,7 +508,7 @@ final class Store: ObservableObject {
 
     func run(_ project: ForgeProject) async {
         guard busy.insert(project.id).inserted else { return }
-        defer { busy.remove(project.id) }
+        defer { finish(project) }
         if await build(project) == nil {
             await install(project)
         } else {
@@ -480,7 +518,7 @@ final class Store: ObservableObject {
 
     func undo(_ project: ForgeProject) async {
         guard busy.insert(project.id).inserted else { return }
-        defer { busy.remove(project.id) }
+        defer { finish(project) }
         let status = await Shell.run(
             "test $(git rev-list --count HEAD) -gt 1 && git reset -q --hard HEAD~1", cwd: project.dir) { _ in }
         guard status == 0 else {
@@ -625,7 +663,7 @@ final class Store: ObservableObject {
     /// Designs a fresh icon (different from the current one) and applies it without restarting the app.
     func newIcon(_ project: ForgeProject) async {
         guard busy.insert(project.id).inserted else { return }
-        defer { busy.remove(project.id) }
+        defer { finish(project) }
         log(project, .status, "Designing a new icon…")
         let spec = await Icons.design(for: project, avoiding: Icons.load(project))
         Icons.save(spec, for: project)
