@@ -5,8 +5,17 @@ import Speech
 /// so audio never leaves the machine and there's no time limit.
 @MainActor
 final class Dictation: ObservableObject {
+    /// Something the user needs to know (and usually fix) before dictation can work.
+    struct Problem {
+        var title: String
+        var message: String
+        /// A System Settings page that fixes it, if there is one, and the button that opens it.
+        var settingsURL: URL?
+        var settingsButton = "Open System Settings"
+    }
+
     @Published private(set) var isListening = false
-    @Published var error: String?
+    @Published var problem: Problem?
 
     private let engine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -17,12 +26,12 @@ final class Dictation: ObservableObject {
     /// Starts listening; `onText` receives the full transcription so far, every time it changes.
     func start(onText: @escaping (String) -> Void) async {
         guard !isListening else { return }
-        guard await Self.authorize() else {
-            error = "Forge needs Microphone and Speech Recognition access to take dictation. You can turn them on in System Settings → Privacy & Security."
+        if let denied = await Self.authorize() {
+            problem = denied
             return
         }
         guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
-            error = "Speech recognition isn't available right now."
+            problem = Problem(title: "Dictation Isn't Available", message: "Speech recognition isn't available right now. Try again in a moment.")
             return
         }
         let request = SFSpeechAudioBufferRecognitionRequest()
@@ -37,7 +46,7 @@ final class Dictation: ObservableObject {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
-            self.error = "Couldn't start the microphone: \(error.localizedDescription)"
+            problem = Problem(title: "Couldn't Start the Microphone", message: error.localizedDescription)
             return
         }
         self.request = request
@@ -68,10 +77,51 @@ final class Dictation: ObservableObject {
         isListening = false
     }
 
-    private func finished() {
+    private func finished(_ failure: Error?) {
         if isListening { stopAudio() }
         task = nil
         request = nil
+        if let failure = failure as NSError?, !Self.isBenign(failure) {
+            NSLog("Dictation failed: %@", failure)
+            problem = Self.problem(for: failure)
+        }
+    }
+
+    /// Errors that just mean "stopped" or "heard nothing", not that something's wrong.
+    private static func isBenign(_ error: NSError) -> Bool {
+        switch (error.domain, error.code) {
+        case ("kAFAssistantErrorDomain", 203), // no speech recognized
+             ("kAFAssistantErrorDomain", 216), // canceled
+             ("kAFAssistantErrorDomain", 1110), // no speech detected
+             ("kLSRErrorDomain", 301): // canceled
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func problem(for error: NSError) -> Problem {
+        switch (error.domain, error.code) {
+        // macOS refuses all speech recognition while system Dictation is off.
+        case ("kAFAssistantErrorDomain", 1101), ("kAFAssistantErrorDomain", 1700),
+             ("kLSRErrorDomain", 201), ("kLSRErrorDomain", 102):
+            return Problem(
+                title: "Turn On Dictation to Use the Mic",
+                message: """
+                    macOS only turns speech into text while Dictation is on. To turn it on:
+
+                    1. Click Open Keyboard Settings.
+                    2. Scroll down to Dictation and turn it on.
+                    3. Click Enable when macOS asks.
+
+                    Then click the mic in Forge again. Speech is processed on your Mac.
+                    """,
+                settingsURL: URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension"),
+                settingsButton: "Open Keyboard Settings")
+        default:
+            return Problem(title: "Dictation Stopped",
+                           message: "\(error.localizedDescription) (\(error.domain) \(error.code))")
+        }
     }
 
     // The audio tap and recognition callbacks run off the main thread, so they're built outside the actor.
@@ -89,16 +139,33 @@ final class Dictation: ObservableObject {
             Task { @MainActor in
                 guard let dictation, dictation.session == session else { return }
                 if let text { onText(text) }
-                if done { dictation.finished() }
+                if done { dictation.finished(error) }
             }
         }
     }
 
-    nonisolated private static func authorize() async -> Bool {
+    /// Asks for speech and microphone access; returns what's missing, or nil when both are granted.
+    nonisolated private static func authorize() async -> Problem? {
         let speech = await withCheckedContinuation { continuation in
             SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0 == .authorized) }
         }
-        guard speech else { return false }
-        return await AVCaptureDevice.requestAccess(for: .audio)
+        if !speech { return accessProblem("Speech Recognition", anchor: "Privacy_SpeechRecognition") }
+        if await !AVCaptureDevice.requestAccess(for: .audio) { return accessProblem("Microphone", anchor: "Privacy_Microphone") }
+        return nil
+    }
+
+    nonisolated private static func accessProblem(_ name: String, anchor: String) -> Problem {
+        Problem(
+            title: "Allow \(name) Access",
+            message: """
+                Forge needs \(name) access to take dictation. To allow it:
+
+                1. Click Open Privacy Settings.
+                2. Turn on Forge in the list.
+
+                Then click the mic in Forge again.
+                """,
+            settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)"),
+            settingsButton: "Open Privacy Settings")
     }
 }

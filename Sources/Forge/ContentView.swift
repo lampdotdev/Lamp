@@ -195,6 +195,19 @@ struct ProjectView: View {
             .help("Show what the agent is doing under the hood")
         }
         .onAppear { focusRequest += 1 }
+        .onDisappear { dictation.cancel() }
+        .alert(dictation.problem?.title ?? "Dictation",
+               isPresented: Binding(get: { dictation.problem != nil }, set: { if !$0 { dictation.problem = nil } }),
+               presenting: dictation.problem) { problem in
+            if let url = problem.settingsURL {
+                Button(problem.settingsButton) { NSWorkspace.shared.open(url) }
+                Button("Not Now", role: .cancel) {}
+            } else {
+                Button("OK") {}
+            }
+        } message: { problem in
+            Text(problem.message)
+        }
         .onChange(of: store.chatFocusRequest) { focusRequest += 1 }
     }
 
