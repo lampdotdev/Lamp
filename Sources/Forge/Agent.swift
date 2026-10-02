@@ -306,8 +306,12 @@ enum Shell {
         }
         await started?(process)
         for await line in lines { await onLine(line) }
-        for await status in exit { return status }
-        return process.terminationStatus
+        // In its own task so a cancelled caller (e.g. a SwiftUI .task restarting) still waits for the exit,
+        // instead of reading terminationStatus from a process that's still running, which throws.
+        return await Task {
+            for await status in exit { return status }
+            return -1
+        }.value
     }
 
     /// Splits a pipe's output into lines as it arrives.
