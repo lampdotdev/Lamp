@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import QuickLook
 
 struct ContentView: View {
     @EnvironmentObject private var store: Store
@@ -20,63 +21,236 @@ struct ContentView: View {
 
     private var main: some View {
         NavigationSplitView {
-            List(store.projects, selection: $store.selection) { project in
-                HStack {
-                    Label {
-                        Text(project.name)
-                    } icon: {
-                        if let icon = store.icons[project.id] {
-                            Image(nsImage: icon).resizable().frame(width: 20, height: 20)
-                        } else {
-                            Image(systemName: "app.dashed")
-                        }
-                    }
-                    Spacer()
-                    if store.busy.contains(project.id) { ProgressView().controlSize(.mini) }
-                }
-                .tag(project.id)
-                .contextMenu {
-                    Button("New Icon") { Task { await store.newIcon(project) } }
-                        .disabled(store.busy.contains(project.id))
-                    Button("Show in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
-                    }
-                    Divider()
-                    Button("Copy App File") { store.copyAppFile(project) }
-                    ShareLink("Share…", item: SharedApp(project: project),
-                              preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
-                    Button("Export…") { store.chooseExport(project) }
-                }
-            }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-            .overlay {
-                if store.projects.isEmpty {
-                    ContentUnavailableView("No apps yet", systemImage: "hammer",
-                                           description: Text("Click + to forge one."))
-                }
-            }
-            .toolbar {
-                Button { showingNew = true } label: { Label("New App", systemImage: "plus") }
-            }
-            .safeAreaInset(edge: .bottom) {
-                HStack {
-                    SettingsLink { Label("Settings", systemImage: "gearshape") }
-                        .buttonStyle(.borderless)
-                        .help("Settings (⌘,)")
-                    Spacer()
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-            }
+            AppSidebar(showingNew: $showingNew)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 230)
         } detail: {
             if let project = store.selected {
                 ProjectView(project: project).id(project.id)
+            } else if store.projects.isEmpty {
+                ContentUnavailableView {
+                    Label("No apps yet", systemImage: "hammer")
+                } description: {
+                    Text("Describe an app and Forge builds it for you.")
+                } actions: {
+                    Button("New App") { showingNew = true }
+                }
             } else {
                 ContentUnavailableView("Select an app", systemImage: "sidebar.left")
             }
         }
         .sheet(isPresented: $showingNew) { NewAppSheet() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            store.markRead()
+        }
     }
+}
+
+/// The app list, as rows or as icon tiles. Double-click an app to build and open it.
+struct AppSidebar: View {
+    enum Layout: String { case list, tiles }
+
+    @EnvironmentObject private var store: Store
+    @Binding var showingNew: Bool
+    @AppStorage("sidebarLayout") private var layout = Layout.list
+
+    var body: some View {
+        Group {
+            switch layout {
+            case .list: list
+            case .tiles: tiles
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(SidebarMaterial().ignoresSafeArea())
+        .safeAreaInset(edge: .bottom) {
+            HStack {
+                SettingsLink { Label("Settings", systemImage: "gearshape") }
+                    .buttonStyle(.borderless)
+                    .help("Settings (⌘,)")
+                Spacer()
+                Picker("Layout", selection: $layout) {
+                    Image(systemName: "list.bullet").help("Show as List").tag(Layout.list)
+                    Image(systemName: "square.grid.2x2").help("Show as Tiles").tag(Layout.tiles)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+            .labelStyle(.iconOnly)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+        }
+    }
+
+    private var list: some View {
+        List(selection: $store.selection) {
+            ForEach(store.projects) { project in
+                HStack(spacing: 8) {
+                    Label {
+                        Text(project.name)
+                    } icon: {
+                        AppIcon(project: project, size: 24)
+                    }
+                    Spacer()
+                    if store.busy.contains(project.id) {
+                        ProgressView().controlSize(.small)
+                    } else if store.unread.contains(project.id) {
+                        ReadyDot()
+                    }
+                }
+                .tag(project.id)
+            }
+            Button { showingNew = true } label: {
+                Label {
+                    Text("New App")
+                } icon: {
+                    Image(systemName: "plus").frame(width: 24, height: 24)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .padding(.top, store.projects.isEmpty ? 0 : 12)
+        }
+        .listStyle(.sidebar)
+        .environment(\.sidebarRowSize, .large)
+        .contextMenu(forSelectionType: String.self) { ids in
+            if let id = ids.first, let project = store.projects.first(where: { $0.id == id }) {
+                AppMenu(project: project)
+            }
+        } primaryAction: { ids in
+            for project in store.projects where ids.contains(project.id) {
+                Task { await store.run(project) }
+            }
+        }
+    }
+
+    private var tiles: some View {
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 84, maximum: 110), spacing: 4)], spacing: 8) {
+                ForEach(store.projects) { project in
+                    AppTile(project: project, selected: store.selection == project.id)
+                        .onTapGesture(count: 2) { Task { await store.run(project) } }
+                        .simultaneousGesture(TapGesture().onEnded { store.selection = project.id })
+                        .contextMenu { AppMenu(project: project) }
+                }
+                Button { showingNew = true } label: {
+                    VStack(spacing: 6) {
+                        Image(systemName: "plus")
+                            .font(.title)
+                            .frame(width: 56, height: 56)
+                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                        Text("New App").font(.callout)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+            .padding(10)
+        }
+    }
+}
+
+struct AppTile: View {
+    @EnvironmentObject private var store: Store
+    let project: ForgeProject
+    let selected: Bool
+
+    var body: some View {
+        VStack(spacing: 6) {
+            AppIcon(project: project, size: 56)
+                .overlay(alignment: .topTrailing) {
+                    if store.busy.contains(project.id) {
+                        ProgressView().controlSize(.small)
+                            .padding(3)
+                            .background(.regularMaterial, in: Circle())
+                            .offset(x: 6, y: -6)
+                    } else if store.unread.contains(project.id) {
+                        ReadyDot(size: 12)
+                            .overlay(Circle().strokeBorder(.background, lineWidth: 2))
+                            .offset(x: 4, y: -4)
+                    }
+                }
+            Text(project.name)
+                .font(.callout)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(selected ? Color.white : Color.primary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(selected ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 4))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(6)
+        .background(selected ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 10))
+        .contentShape(Rectangle())
+        .help(project.name)
+    }
+}
+
+struct AppIcon: View {
+    @EnvironmentObject private var store: Store
+    let project: ForgeProject
+    let size: CGFloat
+
+    var body: some View {
+        if let icon = store.icons[project.id] {
+            Image(nsImage: icon).resizable().interpolation(.high).frame(width: size, height: size)
+        } else {
+            Image(systemName: "app.dashed")
+                .resizable().scaledToFit().fontWeight(.light)
+                .foregroundStyle(.secondary)
+                .padding(size * 0.08)
+                .frame(width: size, height: size)
+        }
+    }
+}
+
+/// Shown next to an app when its chat has a finished reply you haven't seen.
+struct ReadyDot: View {
+    var size: CGFloat = 9
+    var body: some View {
+        Circle().fill(Color.accentColor).frame(width: size, height: size)
+            .help("Ready")
+            .accessibilityLabel("Ready")
+    }
+}
+
+struct AppMenu: View {
+    @EnvironmentObject private var store: Store
+    let project: ForgeProject
+
+    var body: some View {
+        let busy = store.busy.contains(project.id)
+        Button("Run") { Task { await store.run(project) } }
+            .disabled(busy)
+        Divider()
+        Button("New Icon") { Task { await store.newIcon(project) } }
+            .disabled(busy)
+        Button("Show in Finder") {
+            NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
+        }
+        Divider()
+        Button("Copy App File") { store.copyAppFile(project) }
+        ShareLink("Share…", item: SharedApp(project: project),
+                  preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
+        Button("Export…") { store.chooseExport(project) }
+    }
+}
+
+/// The translucent, behind-window sidebar material System Settings uses.
+struct SidebarMaterial: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
 
 struct ProjectView: View {
@@ -89,6 +263,8 @@ struct ProjectView: View {
     @State private var dropTargeted = false
     @StateObject private var dictation = Dictation()
     @AppStorage("showDetails") private var showDetails = false
+    @AppStorage("showInfo") private var showInfo = false
+    @State private var iconPreview: URL?
 
     private var lines: [LogLine] {
         (store.logs[project.id] ?? []).filter { showDetails || $0.kind != .detail }
@@ -168,32 +344,14 @@ struct ProjectView: View {
             Attachments.load(providers) { attachments.append(contentsOf: $0) }
             return true
         }
+        .background(Color(nsColor: .textBackgroundColor))
+        .inspector(isPresented: $showInfo) {
+            AppInfoView(project: project)
+                .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
+        }
         .navigationTitle(project.name)
         .navigationSubtitle(usageSummary)
-        .toolbar {
-            Button { Task { await store.run(project) } } label: {
-                Label("Open App", systemImage: "play.fill")
-            }
-            .disabled(busy)
-            Menu {
-                Button("Copy App File") { store.copyAppFile(project) }
-                    .keyboardShortcut("c", modifiers: [.command, .shift])
-                ShareLink("Share…", item: SharedApp(project: project),
-                          preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
-                Button("Export…") { store.chooseExport(project) }
-            } label: {
-                Label("Share App", systemImage: "square.and.arrow.up")
-            }
-            .help("Send this app to someone with Forge")
-            Button { Task { await store.undo(project) } } label: {
-                Label("Undo Last Change", systemImage: "arrow.uturn.backward")
-            }
-            .disabled(busy)
-            Toggle(isOn: $showDetails) {
-                Label("Show Details", systemImage: "terminal")
-            }
-            .help("Show what the agent is doing under the hood")
-        }
+        .toolbar { toolbar }
         .onAppear { focusRequest += 1 }
         .onDisappear { dictation.cancel() }
         .alert(dictation.problem?.title ?? "Dictation",
@@ -209,6 +367,69 @@ struct ProjectView: View {
             Text(problem.message)
         }
         .onChange(of: store.chatFocusRequest) { focusRequest += 1 }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        if #available(macOS 26, *) {
+            ToolbarItem(placement: .navigation) { titleIcon }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .navigation) { titleIcon }
+        }
+        ToolbarItem {
+            Button { Task { await store.run(project) } } label: {
+                Label("Open App", systemImage: "play.fill")
+            }
+            .disabled(busy)
+        }
+        gap
+        ToolbarItemGroup {
+            Button { Task { await store.undo(project) } } label: {
+                Label("Undo Last Change", systemImage: "arrow.uturn.backward")
+            }
+            .disabled(busy)
+            Menu {
+                Button("Copy App File") { store.copyAppFile(project) }
+                    .keyboardShortcut("c", modifiers: [.command, .shift])
+                ShareLink("Share…", item: SharedApp(project: project),
+                          preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
+                Button("Export…") { store.chooseExport(project) }
+            } label: {
+                Label("Share App", systemImage: "square.and.arrow.up")
+            }
+            .help("Send this app to someone with Forge")
+        }
+        gap
+        ToolbarItemGroup {
+            Toggle(isOn: $showDetails) {
+                Label("Agent Details", systemImage: "wrench.and.screwdriver")
+            }
+            .help("Agent details")
+            Toggle(isOn: $showInfo) {
+                Label("App Info", systemImage: "info.circle")
+            }
+            .help("Show usage, cost and models for this app")
+        }
+    }
+
+    /// Separates the toolbar's groups. macOS 26 has a native spacer; earlier versions get a little blank space.
+    @ToolbarContentBuilder
+    private var gap: some ToolbarContent {
+        if #available(macOS 26, *) {
+            ToolbarSpacer(.fixed)
+        } else {
+            ToolbarItem { Color.clear.frame(width: 8, height: 1) }
+        }
+    }
+
+    private var titleIcon: some View {
+        Button { iconPreview = Icons.largePreview(project) } label: {
+            AppIcon(project: project, size: 30)
+        }
+        .buttonStyle(.plain)
+        .help("Show \(project.name)'s icon")
+        .quickLookPreview($iconPreview)
     }
 
     private var usageSummary: String {
@@ -241,6 +462,98 @@ struct ProjectView: View {
         panel.canChooseDirectories = false
         panel.message = "Attach screenshots, mockups, images, data or documents"
         if panel.runModal() == .OK { attachments.append(contentsOf: panel.urls) }
+    }
+}
+
+/// The info panel: what an app has cost, which models it uses, and where it lives.
+struct AppInfoView: View {
+    @EnvironmentObject private var store: Store
+    let project: ForgeProject
+    @AppStorage("appModel") private var appModel = AppAI.model.id
+    @AppStorage("imageModel") private var imageModel = Icons.artModel
+    /// Bumped when Settings changes the builder, whose model lives under a per-provider key.
+    @State private var settingsRevision = 0
+
+    private var usage: AppUsage { store.usage[project.id] ?? AppUsage() }
+    private var requests: Int { (store.logs[project.id] ?? []).filter { $0.kind == .user }.count }
+    private var lastBuilt: Date? {
+        try? project.installedURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                VStack(spacing: 8) {
+                    AppIcon(project: project, size: 64)
+                    Text(project.name).font(.headline)
+                    if let lastBuilt {
+                        Text("Built \(lastBuilt, format: .relative(presentation: .named))")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            Section("Usage") {
+                LabeledContent("Total cost", value: dollars(usage.totalCost))
+                LabeledContent("Changes requested", value: "\(requests)")
+                LabeledContent("Building the app") {
+                    Text(runs(usage.agentRuns ?? 0, "agent run") + " · " + dollars(usage.agentCost ?? 0))
+                }
+                LabeledContent("AI inside the app") {
+                    Text(runs(usage.calls, "call") + " · " + dollars(usage.cost))
+                }
+            }
+            Section {
+                let _ = settingsRevision
+                LabeledContent("Agent", value: Builder.engine.title)
+                if Builder.engine == .pi {
+                    LabeledContent("Provider", value: providerName)
+                    if !Builder.piModel.isEmpty { LabeledContent("Building with", value: buildModel) }
+                }
+                LabeledContent("Inside your apps", value: Provider.hasKey
+                               ? AppAI.models.first { $0.id == appModel }?.label ?? appModel
+                               : "Same as building")
+                LabeledContent("Images", value: label(Icons.artModels, imageModel))
+            } header: {
+                Text("Models")
+            } footer: {
+                SettingsLink { Text("Change in Settings…") }
+                    .buttonStyle(.link)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Section("App") {
+                LabeledContent("Bundle ID") { Text(project.bundleID).textSelection(.enabled) }
+                Button("Show App in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
+                }
+                Button("Show Source Code in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([project.dir])
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+            settingsRevision += 1
+        }
+    }
+
+    private var providerName: String {
+        switch Builder.piProvider {
+        case Builder.localProvider: "On this Mac"
+        case Builder.myPiProvider: "Your pi setup"
+        case let id: Provider.apiProvider(id)?.name ?? id
+        }
+    }
+
+    private var buildModel: String {
+        let id = Builder.piModel
+        return Builder.piProvider == "openrouter" ? label(Provider.models, id) : id
+    }
+
+    private func dollars(_ amount: Double) -> String { String(format: "$%.2f", amount) }
+    private func runs(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+    private func label(_ models: [(id: String, label: String)], _ id: String) -> String {
+        models.first { $0.id == id }?.label ?? id
     }
 }
 

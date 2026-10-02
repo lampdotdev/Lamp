@@ -118,6 +118,22 @@ enum Icons {
     static func documentURL(_ project: ForgeProject) -> URL { project.dir.appendingPathComponent(".forge/AppIcon.icon") }
     static func previewURL(_ project: ForgeProject) -> URL { project.dir.appendingPathComponent(".forge/icon.png") }
 
+    /// The icon at its largest size (1024px) as a PNG for Quick Look, named after the app so the panel's title reads well.
+    /// Falls back to the small sidebar preview when there's no .icns yet.
+    static func largePreview(_ project: ForgeProject) -> URL? {
+        let fm = FileManager.default
+        let folder = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Forge/Icons", isDirectory: true)
+        let target = folder.appendingPathComponent("\(project.name).png")
+        let largest = NSImage(contentsOf: icnsURL(project))?.representations
+            .compactMap { $0 as? NSBitmapImageRep }.max { $0.pixelsWide < $1.pixelsWide }
+        if let png = largest?.representation(using: .png, properties: [:]) {
+            try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            if (try? png.write(to: target)) != nil { return target }
+        }
+        return fm.fileExists(atPath: previewURL(project).path) ? previewURL(project) : nil
+    }
+
     static func load(_ project: ForgeProject) -> IconSpec? {
         guard let data = try? Data(contentsOf: specURL(project)) else { return nil }
         return try? JSONDecoder().decode(IconSpec.self, from: data)

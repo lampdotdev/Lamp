@@ -19,8 +19,13 @@ struct ProjectMeta: Codable {
 }
 
 struct AppUsage: Codable {
-    var calls = 0
+    var calls = 0       // AI calls made by the app itself
     var cost = 0.0
+    // Optional so usage.json files from before these were tracked still decode.
+    var agentRuns: Int?
+    var agentCost: Double?
+
+    var totalCost: Double { cost + (agentCost ?? 0) }
 }
 
 struct LogLine: Identifiable, Codable {
@@ -36,7 +41,9 @@ final class Store: ObservableObject {
     static let shared = Store()
 
     @Published var projects: [ForgeProject] = []
-    @Published var selection: String?
+    @Published var selection: String? { didSet { markRead() } }
+    /// Apps whose chat finished a turn while you were looking elsewhere.
+    @Published var unread: Set<String> = []
     @Published var logs: [String: [LogLine]] = [:]
     @Published var busy: Set<String> = []
     @Published var chatFocusRequest = 0
@@ -104,6 +111,11 @@ final class Store: ObservableObject {
     }
 
     var selected: ForgeProject? { projects.first { $0.id == selection } }
+
+    /// Clears the "ready" dot for the app on screen. Also called when Forge comes back to the front.
+    func markRead() {
+        if let selection, NSApp?.isActive ?? true { unread.remove(selection) }
+    }
 
     func reload() {
         let dirs = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
@@ -335,7 +347,10 @@ final class Store: ObservableObject {
     /// One turn of the loop: agent edits → build (agent fixes failures) → commit → relaunch.
     func send(_ prompt: String, attachments: [URL] = [], to project: ForgeProject) async {
         guard busy.insert(project.id).inserted else { return }
-        defer { busy.remove(project.id) }
+        defer {
+            busy.remove(project.id)
+            if selection != project.id || !NSApp.isActive { unread.insert(project.id) }
+        }
         let saved = Attachments.save(attachments, to: project)
         log(project, .user, prompt, attachments: saved.isEmpty ? nil : saved)
 
@@ -412,6 +427,7 @@ final class Store: ObservableObject {
         running[project.id] = nil
         log(project, .detail, String(format: "%@ %@ · %.0fs · $%.2f", engine.title, failure == nil ? "done" : "error",
                                      Date().timeIntervalSince(started), cost))
+        recordAgent(project, cost: cost)
         if stopped.remove(project.id) != nil {
             log(project, .status, "Stopped. Any changes made so far are kept; press Undo to discard them.")
             return false
@@ -694,6 +710,18 @@ final class Store: ObservableObject {
     private func record(_ project: ForgeProject, cost: Double) {
         usage[project.id, default: AppUsage()].calls += 1
         usage[project.id, default: AppUsage()].cost += cost
+        saveUsage(project)
+    }
+
+    private func recordAgent(_ project: ForgeProject, cost: Double) {
+        var current = usage[project.id] ?? AppUsage()
+        current.agentRuns = (current.agentRuns ?? 0) + 1
+        current.agentCost = (current.agentCost ?? 0) + cost
+        usage[project.id] = current
+        saveUsage(project)
+    }
+
+    private func saveUsage(_ project: ForgeProject) {
         if let data = try? JSONEncoder().encode(usage[project.id]) {
             try? data.write(to: project.dir.appendingPathComponent(".forge/usage.json"))
         }
