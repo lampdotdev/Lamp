@@ -208,6 +208,34 @@ final class Store: ObservableObject {
         if let current = progress[project.id], current.activity != activity { progress[project.id]?.activity = activity }
     }
 
+    // MARK: - Drafts
+
+    /// What's typed but not sent in an app's chat.
+    struct Draft {
+        var text = ""
+        var attachments: [URL] = []
+    }
+
+    private var drafts: [String: Draft] = [:]
+
+    /// Each app keeps its own draft, so it's still there after switching apps. The text also survives a
+    /// restart (.forge/draft.txt); attached files are only remembered while Forge runs.
+    func draft(for project: ForgeProject) -> Draft {
+        if let draft = drafts[project.id] { return draft }
+        let text = try? String(contentsOf: project.dir.appendingPathComponent(".forge/draft.txt"), encoding: .utf8)
+        return Draft(text: text ?? "")
+    }
+
+    func saveDraft(_ draft: Draft, for project: ForgeProject) {
+        drafts[project.id] = draft
+        let file = project.dir.appendingPathComponent(".forge/draft.txt")
+        if draft.text.isEmpty {
+            try? FileManager.default.removeItem(at: file)
+        } else {
+            try? draft.text.write(to: file, atomically: true, encoding: .utf8)
+        }
+    }
+
     func handle(url: URL) {
         if url.isFileURL && url.pathExtension == "forgeapp" {
             importApp(from: url)

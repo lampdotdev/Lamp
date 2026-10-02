@@ -458,7 +458,14 @@ struct ProjectView: View {
                 .disabled(busy)
         }
         .toolbar { toolbar }
-        .onAppear { focusRequest += 1 }
+        .onAppear {
+            focusRequest += 1
+            let saved = store.draft(for: project)
+            draft = saved.text
+            attachments = saved.attachments
+        }
+        .onChange(of: draft) { store.saveDraft(Store.Draft(text: draft, attachments: attachments), for: project) }
+        .onChange(of: attachments) { store.saveDraft(Store.Draft(text: draft, attachments: attachments), for: project) }
         .onDisappear { dictation.cancel() }
         .alert(dictation.problem?.title ?? "Dictation",
                isPresented: Binding(get: { dictation.problem != nil }, set: { if !$0 { dictation.problem = nil } }),
