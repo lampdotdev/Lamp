@@ -169,6 +169,7 @@ extension Agent {
         switch Builder.engine {
         case .pi:
             env["FORGE_LOOK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/look"
+            env["FORGE_VERSIONS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/versions"
             env["FORGE_TOKEN"] = Template.token(for: project)
             return AgentRun(command: command(fileCount: files.count),
                             env: env.merging(environment(prompt: prompt, files: files, session: session ?? "",

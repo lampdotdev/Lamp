@@ -17,11 +17,12 @@ enum AgentEvent {
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
 /// pi only gets file tools: Forge does the building and feeds compiler errors back.
 enum Agent {
-    static var tools: String { "read,edit,write,grep,find,ls" + (forgeTools == nil ? "" : ",look_at_app,plan,delete_file") }
+    static var tools: String { "read,edit,write,grep,find,ls" + (forgeTools == nil ? "" : ",look_at_app,plan,delete_file,list_versions,name_version,restore_version") }
 
     /// Forge's own tools for pi (Resources/forge-tools.ts): `look_at_app` has Forge build and open the app
     /// mid-turn and shows the agent the result; `plan` is the checklist on the build card; `delete_file`
-    /// removes a file, which pi's own tools can't. Other engines don't have them.
+    /// removes a file, which pi's own tools can't; the version tools list, name and restore the app's saved
+    /// versions. Other engines don't have them.
     static var forgeTools: URL? {
         let url = Bundle.main.resourceURL?.appendingPathComponent("forge-tools.ts")
         return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
@@ -39,6 +40,11 @@ enum Agent {
     fill in while they wait. Give every file to exactly one part. Don't use it for small changes.
     - `delete_file` removes a file the app no longer needs, for example after moving its code elsewhere or \
     removing a screen. Never leave an emptied file behind instead.
+    - Forge saves a version of the app after every request. `name_version` names one so the user can find it \
+    later: name the version this request makes after a milestone the user is happy with, or name the current \
+    one (its id from `list_versions`) before a big or risky change, e.g. “Before the redesign”. \
+    `restore_version` brings back an earlier version's files: use it only when the user asks to go back, \
+    never to undo your own attempt, and find the version with `list_versions` first.
     """
 
     /// pi ships inside Forge.app (see build.sh).

@@ -145,6 +145,8 @@ struct Transcript: View {
     let lines: [LogLine]
     let dir: URL
     let busy: Bool
+    /// Goes back to the version a request made, or (true) to the one before it.
+    var goBack: ((LogLine, Bool) -> Void)?
 
     var body: some View {
         let items = ChatItem.items(lines)
@@ -153,7 +155,7 @@ struct Transcript: View {
             let isLast = index == items.count - 1
             Group {
                 switch item {
-                case .line(let line): LogRow(line: line, dir: dir)
+                case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack)
                 case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy)
                 case .statuses(let lines): StatusGroup(lines: lines, running: isLast && busy)
                 }
@@ -183,6 +185,9 @@ struct Transcript: View {
 struct LogRow: View {
     let line: LogLine
     let dir: URL
+    var busy = false
+    var goBack: ((LogLine, Bool) -> Void)?
+    @State private var hovered = false
 
     var body: some View {
         switch line.kind {
@@ -204,14 +209,32 @@ struct LogRow: View {
                         }
                     }
                 }
-                Text(line.text)
-                    .textSelection(.enabled)
-                    .lineSpacing(2)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
-                    .frame(maxWidth: 480, alignment: .trailing)
+                HStack(alignment: .center, spacing: 6) {
+                    if line.version != nil, let goBack {
+                        Menu {
+                            Button("Go Back to After This Change") { goBack(line, false) }
+                            Button("Go Back to Before This Change") { goBack(line, true) }
+                        } label: {
+                            Image(systemName: "clock.arrow.circlepath")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .foregroundStyle(.secondary)
+                        .disabled(busy)
+                        .opacity(hovered ? 1 : 0)
+                        .help("Go back to how the app was around this request")
+                    }
+                    Text(line.text)
+                        .textSelection(.enabled)
+                        .lineSpacing(2)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
+                        .frame(maxWidth: 480, alignment: .trailing)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
+            .onHover { hovered = $0 }
         case .agent:
             Text(Self.prose(line.text))
                 .lineSpacing(4)

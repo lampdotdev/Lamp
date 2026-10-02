@@ -5,6 +5,7 @@ import QuickLook
 struct ContentView: View {
     @EnvironmentObject private var store: Store
     @State private var newName = ""
+    @State private var versionName = ""
 
     var body: some View {
         Group {
@@ -47,6 +48,19 @@ struct ContentView: View {
             .disabled(newName.trimmed.isEmpty)
             Button("Cancel", role: .cancel) {}
         }
+        .alert(store.naming?.version.name == nil ? "Name This Version" : "Rename This Version", isPresented: Binding(
+            get: { store.naming != nil }, set: { if !$0 { store.naming = nil } })) {
+            TextField("Name", text: $versionName)
+            Button("Save") {
+                if let naming = store.naming {
+                    Task { await store.name(naming.version, of: naming.project, as: versionName) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("A name makes this version easy to find, and to go back to later.")
+        }
+        .onChange(of: store.naming) { versionName = store.naming?.version.name ?? "" }
         .confirmationDialog("Delete “\(store.deleting?.name ?? "")”?", isPresented: Binding(
             get: { store.deleting != nil }, set: { if !$0 { store.deleting = nil } })) {
             Button("Move to Trash", role: .destructive) {
@@ -338,6 +352,7 @@ struct ProjectView: View {
     @AppStorage("showDetails") private var showDetails = false
     @AppStorage("showInfo") private var showInfo = false
     @State private var iconPreview: URL?
+    @AppStorage("showVersions") private var showVersions = false
     @State private var suggestion: String?
     @State private var dismissedSuggestion: String?
 
@@ -361,7 +376,9 @@ struct ProjectView: View {
                         if lines.isEmpty && queued.isEmpty {
                             NewAppIntro(project: project)
                         }
-                        Transcript(lines: lines, dir: project.dir, busy: busy)
+                        Transcript(lines: lines, dir: project.dir, busy: busy) { line, before in
+                            Task { await store.restore(project, toVersionOf: line, before: before) }
+                        }
                         if let progress = store.progress[project.id] {
                             if progress.newApp {
                                 BuildCard(project: project, progress: progress).padding(.top, 16)
@@ -447,9 +464,12 @@ struct ProjectView: View {
             return true
         }
         .background(Color(nsColor: .textBackgroundColor))
-        .inspector(isPresented: $showInfo) {
-            AppInfoView(project: project)
-                .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
+        .inspector(isPresented: Binding(get: { showInfo || showVersions },
+                                        set: { if !$0 { showInfo = false; showVersions = false } })) {
+            Group {
+                if showVersions { VersionsView(project: project) } else { AppInfoView(project: project) }
+            }
+            .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
         }
         .navigationTitle(project.name)
         .navigationSubtitle(usageSummary)
@@ -458,6 +478,7 @@ struct ProjectView: View {
                 .disabled(busy)
         }
         .toolbar { toolbar }
+        .task { await store.linkOldRequests(project) }
         .onAppear {
             focusRequest += 1
             let saved = store.draft(for: project)
@@ -507,6 +528,7 @@ struct ProjectView: View {
                 Label("Undo Last Change", systemImage: "arrow.uturn.backward")
             }
             .disabled(busy)
+            .help("Go back to the version before this one")
             Button { store.deleting = project } label: {
                 Label("Delete App", systemImage: "trash")
             }
@@ -528,7 +550,12 @@ struct ProjectView: View {
                 Label("Agent Details", systemImage: "wrench.and.screwdriver")
             }
             .help("Agent details")
-            Toggle(isOn: $showInfo) {
+            // Versions and App Info share the side panel: showing one hides the other.
+            Toggle(isOn: Binding(get: { showVersions }, set: { showVersions = $0; if $0 { showInfo = false } })) {
+                Label("Versions", systemImage: "clock.arrow.circlepath")
+            }
+            .help("See earlier versions of this app, name them, and go back to one")
+            Toggle(isOn: Binding(get: { showInfo }, set: { showInfo = $0; if $0 { showVersions = false } })) {
                 Label("App Info", systemImage: "info.circle")
             }
             .help("Show usage, cost and models for this app")

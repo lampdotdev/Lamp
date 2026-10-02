@@ -21,6 +21,13 @@ struct ForgeApp: App {
                 Button("Import Shared App…") { store.chooseImport() }
                     .keyboardShortcut("o")
             }
+            CommandGroup(replacing: .saveItem) {
+                Button("Name This Version…") {
+                    if let project = store.selected { Task { await store.nameCurrentVersion(of: project) } }
+                }
+                .keyboardShortcut("s")
+                .disabled(store.selected == nil)
+            }
         }
         Settings {
             SettingsView().environmentObject(store)

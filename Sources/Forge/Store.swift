@@ -37,6 +37,7 @@ struct LogLine: Identifiable, Codable {
     let kind: Kind
     let text: String
     var attachments: [String]? = nil   // names in the app's Attachments/ folder
+    var version: String? = nil         // for a request: the version it made
 
     /// Hidden unless Agent Details is on.
     var isDetail: Bool { kind == .detail || kind == .tool || kind == .summary }
@@ -101,9 +102,17 @@ final class Store: ObservableObject {
     @Published var renaming: ForgeProject?
     /// The app whose Delete confirmation is showing.
     @Published var deleting: ForgeProject?
+    /// The version whose Name… alert is showing.
+    @Published var naming: VersionNaming?
+    /// Bumped when a version is named, so open version lists reload.
+    @Published var versionsRevision = 0
     private var running: [String: Process] = [:]    // project id → agent process, for Stop
     private var stopped: Set<String> = []
     private var looks: [String: Look] = [:]         // project id → the agent's looks at the app this turn
+    /// A name the agent gave the version its current request will make, applied once that's committed.
+    private var pendingNames: [String: String] = [:]
+    /// Apps whose versions are getting titles, so only one run at a time asks the model.
+    private var titling: Set<String> = []
 
     /// What the agent's `look_at_app` tool has done during the current turn.
     private struct Look {
@@ -217,6 +226,10 @@ final class Store: ObservableObject {
     func log(_ project: ForgeProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil) {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
+        saveChat(project)
+    }
+
+    private func saveChat(_ project: ForgeProject) {
         if let data = try? JSONEncoder().encode(logs[project.id]) {
             try? data.write(to: project.dir.appendingPathComponent(".forge/chat.json"))
         }
@@ -589,6 +602,7 @@ final class Store: ObservableObject {
         Task {
             var project = project
             let saved = post(messages, to: project)
+            let asked = (logs[project.id] ?? []).filter { $0.kind == .user }.suffix(messages.count).map(\.id)
             if first {
                 let untitled = project
                 project = await bootstrap(project, brief: messages.map(\.text).joined(separator: "\n\n"))
@@ -604,7 +618,7 @@ final class Store: ObservableObject {
                 if !result.watched, (queued[project.id] ?? []).isEmpty { notify(project, after: result.end) }
                 finish(project)
             }
-            result = await turn(messages, attachments: saved, on: project)
+            result = await turn(messages, attachments: saved, asked: asked, on: project)
             worked = result.end != .failed
             if first && worked { await showResult(of: project) }
         }
@@ -677,12 +691,16 @@ final class Store: ObservableObject {
     }
 
     /// One turn of the loop: agent edits → build (agent fixes failures) → commit → relaunch.
-    private func turn(_ messages: [QueuedMessage], attachments saved: [String], on project: ForgeProject) async -> TurnResult {
+    /// `asked` are the chat lines of the requests, which are linked to the version the turn makes.
+    private func turn(_ messages: [QueuedMessage], attachments saved: [String], asked: [UUID],
+                      on project: ForgeProject) async -> TurnResult {
         let prompt = messages.map(\.text).joined(separator: "\n\n")
 
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
-        let notes = Attachments.note(for: saved) + Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project)
+        let notes = Attachments.note(for: saved) + Versions.note(for: project) + Runtime.crashNote(for: project)
+            + Runtime.screenshotNote(for: project)
         looks[project.id] = Look()
+        pendingNames[project.id] = nil
         guard await runAgent(prompt + notes, files: files, on: project) else {
             return TurnResult(end: .failed, watched: isWatching(project.id))
         }
@@ -726,6 +744,16 @@ final class Store: ObservableObject {
         }
         if crash != nil {
             log(project, .error, "\(project.name) still quits right after opening. Try describing the change differently, or press Undo.")
+        }
+        // After the crash fixes, which amend the commit, so the name and the links stay on the version that's kept.
+        if committed || pendingNames[project.id] != nil, let head = await Versions.head(project) {
+            if let name = pendingNames.removeValue(forKey: project.id) { await Versions.name(project, head, name) }
+            if committed {
+                link(asked, to: head, in: project)
+                if crash == nil { keepPicture(of: project, version: head) }
+                titleVersions(project, limit: 1)
+            }
+            versionsRevision += 1
         }
         return TurnResult(end: crash != nil ? .failed : edited ? .changed : .replied, watched: watched)
     }
@@ -839,7 +867,7 @@ final class Store: ObservableObject {
         return false
     }
 
-    /// One pi conversation per app, so the agent remembers earlier requests. Undo starts a new one.
+    /// One pi conversation per app, so the agent remembers earlier requests, including ones that were undone.
     private static func piSession(for project: ForgeProject) -> String {
         let url = project.dir.appendingPathComponent(".forge/pi-session")
         if let id = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !id.isEmpty { return id }
@@ -946,22 +974,139 @@ final class Store: ObservableObject {
         }
     }
 
+    /// Goes back to the version before the current one. Like any restore, this is itself a new version.
     func undo(_ project: ForgeProject) async {
         guard busy.insert(project.id).inserted else { return }
         defer { finish(project) }
-        let status = await Shell.run(
-            "test $(git rev-list --count HEAD) -gt 1 && git reset -q --hard HEAD~1", cwd: project.dir) { _ in }
-        guard status == 0 else {
+        let versions = await Versions.list(project)
+        // A turn that was stopped, or never got the app building, leaves its changes unsaved: Undo discards those first.
+        if let current = versions.first, await Versions.hasUnsavedChanges(project) {
+            _ = await Versions.restoreFiles(project, to: current)
+            log(project, .status, "Discarded the unfinished change")
+            if await build(project) == nil { await installReportingCrash(project) }
+            return
+        }
+        guard let (undoing, target) = Versions.undoTarget(in: versions),
+              await Versions.restore(project, to: target, message: "Undid “\(undoing.label)”",
+                                     trailer: "Forge-Undid: \(undoing.id)") else {
             log(project, .status, "Nothing to undo")
             return
         }
-        // The agent's conversation still remembers the reverted change, so start fresh.
-        try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".forge/pi-session"))
-        for engine in Engine.allCases {
-            try? FileManager.default.removeItem(at: Self.sessionFile(for: project, engine: engine))
+        Versions.remember(project, restoredTo: target.label, from: target.date)
+        log(project, .status, "Undid “\(undoing.label)”")
+        await rebuild(project, restoredFrom: target)
+    }
+
+    /// Brings back an earlier version's files as a new version, so the restore can be undone too.
+    func restore(_ project: ForgeProject, to version: AppVersion) async {
+        guard busy.insert(project.id).inserted else { return }
+        defer { finish(project) }
+        guard await Versions.restore(project, to: version, message: "Restored to “\(version.label)”") else {
+            log(project, .status, "The app is already like “\(version.label)”")
+            return
         }
-        log(project, .status, "Undid the last change")
-        if await build(project) == nil { await installReportingCrash(project) }
+        Versions.remember(project, restoredTo: version.label, from: version.date)
+        log(project, .status, "Restored to “\(version.label)”")
+        await rebuild(project, restoredFrom: version)
+    }
+
+    /// Goes back to the version a request in the chat made, or to the one before it.
+    func restore(_ project: ForgeProject, toVersionOf line: LogLine, before: Bool) async {
+        let versions = await Versions.list(project)
+        guard let made = line.version.flatMap({ id in versions.first { $0.id == id } }),
+              let target = before ? made.parent.flatMap({ id in versions.first { $0.id == id } }) : made else { return }
+        await restore(project, to: target)
+    }
+
+    /// After a restore: the new version looks like the old one, so it starts with its picture until the app
+    /// takes a fresh one.
+    private func rebuild(_ project: ForgeProject, restoredFrom version: AppVersion) async {
+        guard let head = await Versions.head(project) else { return }
+        Versions.copyPicture(in: project, from: version.id, to: head)
+        versionsRevision += 1
+        if await build(project) == nil {
+            await installReportingCrash(project)
+            keepPicture(of: project, version: head)
+        }
+    }
+
+    /// Chats from before requests were linked to versions: matches each request to the version whose
+    /// message is its text, in order. Requests that made no change, or went out together, stay unlinked.
+    func linkOldRequests(_ project: ForgeProject) async {
+        guard var chat = logs[project.id], chat.contains(where: { $0.kind == .user && $0.version == nil }) else { return }
+        func plain(_ text: String) -> String { text.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        let versions = await Versions.list(project).reversed()
+        let linked = Set(chat.compactMap(\.version))
+        var index = chat.startIndex
+        var changed = false
+        for version in versions where !linked.contains(version.id) {
+            let message = plain(version.message)
+            guard let match = chat[index...].firstIndex(where: {
+                $0.kind == .user && $0.version == nil && plain($0.text) == message
+            }) else { continue }
+            chat[match].version = version.id
+            index = chat.index(after: match)
+            changed = true
+        }
+        guard changed, logs[project.id]?.count == chat.count else { return }
+        logs[project.id] = chat
+        saveChat(project)
+    }
+
+    /// Gives the newest versions without one a short title from what changed, one at a time. Runs on its
+    /// own, so the Versions panel reloading as titles arrive doesn't cancel it.
+    func titleVersions(_ project: ForgeProject, limit: Int = 40) {
+        guard titling.insert(project.id).inserted else { return }
+        Task {
+            defer { titling.remove(project.id) }
+            for version in await Versions.list(project).prefix(limit) where version.title == nil && !version.isForgeNote {
+                guard let title = await VersionTitles.make(for: version, in: project) else { return }
+                VersionTitles.save(title, for: version.id, in: project)
+                versionsRevision += 1
+            }
+        }
+    }
+
+    /// Apps from before pictures were kept: the current version gets the picture of the current build.
+    func fillCurrentPicture(_ project: ForgeProject, current: AppVersion) async {
+        guard !FileManager.default.fileExists(atPath: Versions.pictureURL(in: project, for: current.id).path),
+              let screenshot = Runtime.currentScreenshot(of: project), !busy.contains(project.id),
+              await !Versions.hasUnsavedChanges(project) else { return }
+        Versions.savePicture(screenshot, in: project, for: current.id)
+        versionsRevision += 1
+    }
+
+    /// Links requests in the chat to the version they made.
+    private func link(_ lines: [UUID], to version: String, in project: ForgeProject) {
+        guard var chat = logs[project.id] else { return }
+        for index in chat.indices where lines.contains(chat[index].id) { chat[index].version = version }
+        logs[project.id] = chat
+        saveChat(project)
+    }
+
+    /// Keeps the picture the app takes of itself shortly after opening, to show with its version.
+    private func keepPicture(of project: ForgeProject, version: String) {
+        Task {
+            for _ in 0..<40 {
+                if let screenshot = Runtime.currentScreenshot(of: project) {
+                    Versions.savePicture(screenshot, in: project, for: version)
+                    versionsRevision += 1
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+    }
+
+    /// Shows the Name… alert for the version the app is at now.
+    func nameCurrentVersion(of project: ForgeProject) async {
+        guard let current = await Versions.list(project).first else { return }
+        naming = VersionNaming(project: project, version: current)
+    }
+
+    func name(_ version: AppVersion, of project: ForgeProject, as name: String) async {
+        await Versions.name(project, version.id, name)
+        versionsRevision += 1
     }
 
     /// Returns nil on success, or the tail of the compiler output on failure.
@@ -1172,7 +1317,9 @@ final class Store: ObservableObject {
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
-        guard request.method == "POST", ["/ai", "/ai/image", "/ai/decide", "/agent/look"].contains(request.path) else {
+        let paths = ["/ai", "/ai/image", "/ai/decide", "/agent/look",
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore"]
+        guard request.method == "POST", paths.contains(request.path) else {
             return (404, ["error": "Not found"])
         }
         let token = request.headers["authorization"]?.replacingOccurrences(of: "Bearer ", with: "") ?? ""
@@ -1182,6 +1329,7 @@ final class Store: ObservableObject {
         }
         guard setup.ready else { return (503, ["error": "Forge isn't set up yet. Open Forge to finish setup."]) }
         if request.path == "/agent/look" { return await look(at: project) }
+        if request.path.hasPrefix("/agent/versions") { return await versions(request, of: project) }
         if request.path == "/ai/decide" {
             guard let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any],
                   let state = body["state"], let questions = body["questions"] as? [String: Any], !questions.isEmpty else {
@@ -1221,6 +1369,43 @@ final class Store: ObservableObject {
             return (502, ["error": failure.message])
         } catch {
             return (502, ["error": "Couldn't reach the AI: \(error.localizedDescription)"])
+        }
+    }
+
+    /// The agent's version tools: `list_versions`, `name_version` and `restore_version`.
+    private func versions(_ request: Gateway.Request, of project: ForgeProject) async -> (Int, [String: Any]) {
+        // Only for the agent Forge is running right now: the app knows the same token, and must not be
+        // able to change its own history.
+        guard running[project.id] != nil else { return (409, ["error": "Forge isn't working on this app right now."]) }
+        let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+        let versions = await Versions.list(project)
+        let id = (body["version"] as? String)?.trimmed.nilIfEmpty
+        let version = id.flatMap { Versions.find($0, in: versions) }
+        if id != nil && version == nil {
+            return (404, ["error": "There's no version \(id!). Call list_versions for the ids."])
+        }
+        switch request.path {
+        case "/agent/versions/name":
+            guard let name = (body["name"] as? String)?.trimmed.nilIfEmpty else { return (400, ["error": "A name is needed."]) }
+            guard let version else {
+                pendingNames[project.id] = name
+                return (200, ["text": "Forge will name the version this request makes “\(name)”."])
+            }
+            await Versions.name(project, version.id, name)
+            versionsRevision += 1
+            return (200, ["text": "Named \(version.shortID) “\(name)”."])
+        case "/agent/versions/restore":
+            guard let version else { return (400, ["error": "Say which version to restore."]) }
+            guard await Versions.restoreFiles(project, to: version) else {
+                return (500, ["error": "Forge couldn't restore that version."])
+            }
+            log(project, .status, "Restored to “\(version.label)”")
+            return (200, ["text": """
+                The app's files are now as they were in “\(version.label)”. Your changes earlier in this request \
+                are gone too. Read files again before editing them. Forge builds and opens the app when you finish.
+                """])
+        default:
+            return (200, ["text": Versions.describe(versions)])
         }
     }
 
@@ -1298,7 +1483,7 @@ final class Store: ObservableObject {
 
     private static let lsregister =
         "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-    private static let commit = "git -c user.name=Forge -c user.email=forge@localhost commit"
+    private static let commit = Versions.commit
 }
 
 extension String {

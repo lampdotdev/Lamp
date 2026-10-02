@@ -77,6 +77,16 @@ enum Runtime {
         """
     }
 
+    /// The picture of the app's front window, if it was taken of the current build.
+    static func currentScreenshot(of project: ForgeProject) -> URL? {
+        func modified(_ url: URL) -> Date? {
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        }
+        let url = folder(project).appendingPathComponent("screenshot.png")
+        guard let built = modified(builtURL(project)), let taken = modified(url), taken > built else { return nil }
+        return url
+    }
+
     /// Asks the running app to save fresh pictures of its windows now (see `ForgeRuntime` in the app).
     static func requestScreenshots(of project: ForgeProject) {
         DistributedNotificationCenter.default().postNotificationName(
