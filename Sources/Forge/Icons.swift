@@ -23,7 +23,7 @@ enum Icons {
         ("google/gemini-3.1-flash-lite-image", "Nano Banana 2 Lite (fastest, cheapest)"),
     ]
 
-    /// The OpenRouter image model used for icon artwork (Settings → "Icon artwork").
+    /// The OpenRouter image model for icon artwork and for images inside apps (Settings → "Images").
     static var artModel: String {
         let saved = UserDefaults.standard.string(forKey: "imageModel") ?? ""
         return artModels.contains { $0.id == saved } ? saved : artModels[0].id
@@ -188,33 +188,7 @@ enum Icons {
         entire canvas edge to edge. Polished, modern, soft lighting. No text, no letters, no border, no frame, \
         no rounded corners, no device mockup, no white margins.
         """
-        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/images")!)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 180
-        request.setValue("Bearer \(KeyStore.openRouterKey ?? "")", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Forge", forHTTPHeaderField: "X-Title")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": artModel,
-            "prompt": prompt,
-            "n": 1,
-            "aspect_ratio": "1:1",
-            "output_format": "png",
-        ] as [String: Any])
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else {
-            let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-            throw AppAI.Failure(message: Provider.friendlyError("\(status) \(message)"))
-        }
-        let images = obj["data"] as? [[String: Any]] ?? []
-        guard let base64 = images.first?["b64_json"] as? String,
-              let decoded = Data(base64Encoded: base64), NSImage(data: decoded) != nil else {
-            throw AppAI.Failure(message: "The image model didn't return a picture.")
-        }
-        return decoded
+        return try await AppAI.image(prompt: prompt, references: [], aspectRatio: "1:1").0
     }
 
     private static func color(hex: String) -> NSColor? {

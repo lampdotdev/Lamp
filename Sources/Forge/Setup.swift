@@ -162,7 +162,7 @@ struct SettingsView: View {
                 Picker("Inside your apps", selection: $appModel) {
                     ForEach(AppAI.models, id: \.id) { Text($0.label).tag($0.id) }
                 }
-                Picker("Icon artwork", selection: $imageModel) {
+                Picker("Images (icons and in-app)", selection: $imageModel) {
                     ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
                 }
             }

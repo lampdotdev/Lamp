@@ -149,7 +149,14 @@ enum Template {
     ///
     ///     let verdict = try await ForgeAI.ask("What's in this photo?", images: [photo])
     ///
-    /// Calls take a few seconds: show a ProgressView, and show `error.localizedDescription` on failure.
+    /// Create or edit pictures with an image model:
+    ///
+    ///     let poster = try await ForgeAI.makeImage("a retro travel poster of Lisbon", aspectRatio: "3:4")
+    ///     let edited = try await ForgeAI.editImage(photo, "turn this into a watercolour painting")
+    ///     let combined = try await ForgeAI.editImages([person, beach], "put the person from the first photo on this beach")
+    ///
+    /// Text calls take a few seconds; image calls 10–60 seconds. Show a ProgressView, and show
+    /// `error.localizedDescription` on failure. Aspect ratios look like "1:1", "16:9", "3:4".
     enum ForgeAI {
         struct Failure: LocalizedError {
             let message: String
@@ -171,24 +178,55 @@ enum Template {
             }
         }
 
+        /// Creates a new picture from a description.
+        static func makeImage(_ description: String, aspectRatio: String = "1:1") async throws -> NSImage {
+            try await image(prompt: description, images: [], aspectRatio: aspectRatio)
+        }
+
+        /// Changes a picture following an instruction, e.g. "remove the background" or "make it night time".
+        /// Leave `aspectRatio` nil to keep the original shape where the model allows.
+        static func editImage(_ image: NSImage, _ instruction: String, aspectRatio: String? = nil) async throws -> NSImage {
+            try await self.image(prompt: instruction, images: [image], aspectRatio: aspectRatio)
+        }
+
+        /// Combines or edits several pictures following an instruction that can refer to them in order.
+        static func editImages(_ images: [NSImage], _ instruction: String, aspectRatio: String? = nil) async throws -> NSImage {
+            try await image(prompt: instruction, images: images, aspectRatio: aspectRatio)
+        }
+
+        private static func image(prompt: String, images: [NSImage], aspectRatio: String?) async throws -> NSImage {
+            var body: [String: Any] = ["prompt": prompt, "images": images.compactMap(encode)]
+            if let aspectRatio { body["aspect_ratio"] = aspectRatio }
+            let reply = try await post("/ai/image", body)
+            guard let base64 = reply["image"] as? String, let data = Data(base64Encoded: base64),
+                  let picture = NSImage(data: data) else {
+                throw Failure(message: "The image model didn't return a picture.")
+            }
+            return picture
+        }
+
         private static func call(prompt: String, images: [NSImage], system: String?, json: Bool) async throws -> String {
-            var request = URLRequest(url: URL(string: "http://127.0.0.1:{{PORT}}/ai")!)
+            let reply = try await post("/ai", [
+                "prompt": prompt, "system": system ?? "", "json": json, "images": images.compactMap(encode),
+            ])
+            guard let text = reply["text"] as? String else { throw Failure(message: "The AI request failed.") }
+            return text
+        }
+
+        private static func post(_ path: String, _ body: [String: Any]) async throws -> [String: Any] {
+            var request = URLRequest(url: URL(string: "http://127.0.0.1:{{PORT}}" + path)!)
             request.httpMethod = "POST"
-            request.timeoutInterval = 180
+            request.timeoutInterval = 240
             request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: [
-                "prompt": prompt, "system": system ?? "", "json": json, "images": images.compactMap(encode),
-            ] as [String: Any])
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
             for attempt in 0..<2 {
                 do {
                     let (data, response) = try await URLSession.shared.data(for: request)
-                    let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-                    if (response as? HTTPURLResponse)?.statusCode == 200, let text = body["text"] as? String {
-                        return text
-                    }
-                    throw Failure(message: body["error"] as? String ?? "The AI request failed.")
+                    let reply = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+                    if (response as? HTTPURLResponse)?.statusCode == 200 { return reply }
+                    throw Failure(message: reply["error"] as? String ?? "The AI request failed.")
                 } catch let error as URLError where error.code == .cannotConnectToHost && attempt == 0 {
                     // Forge isn't running: start it in the background, then retry once.
                     let config = NSWorkspace.OpenConfiguration()

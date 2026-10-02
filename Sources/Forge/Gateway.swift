@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Network
 
 /// A tiny HTTP server on 127.0.0.1 that lets generated apps use Forge's AI
@@ -111,6 +112,41 @@ enum AppAI {
         let (text, cost) = try await viaOpenRouter(prompt: prompt, images: images, system: system,
                                                    model: model ?? Self.model.openRouter)
         return (json ? stripFences(text) : text, cost)
+    }
+
+    /// Creates or edits an image with the image model from Settings, via OpenRouter's image API.
+    /// `references` are input images to edit or combine. Returns PNG data and the cost in USD.
+    static func image(prompt: String, references: [Image], aspectRatio: String?) async throws -> (Data, Double) {
+        guard Provider.hasKey else {
+            throw Failure(message: "Forge needs an OpenRouter key before apps can use AI. Add one in Forge → Settings (⌘,).")
+        }
+        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/images")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 240
+        request.setValue("Bearer \(KeyStore.openRouterKey ?? "")", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Forge", forHTTPHeaderField: "X-Title")
+        var body: [String: Any] = ["model": Icons.artModel, "prompt": prompt, "n": 1, "output_format": "png"]
+        if let aspectRatio { body["aspect_ratio"] = aspectRatio }
+        if !references.isEmpty {
+            body["input_references"] = references.map {
+                ["type": "image_url", "image_url": ["url": "data:\($0.mediaType);base64,\($0.data)"]]
+            }
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
+            throw Failure(message: Provider.friendlyError("\(status) \(message)"))
+        }
+        guard let base64 = (obj["data"] as? [[String: Any]])?.first?["b64_json"] as? String,
+              let decoded = Data(base64Encoded: base64), NSImage(data: decoded) != nil else {
+            throw Failure(message: "The image model didn't return a picture.")
+        }
+        return (decoded, (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0)
     }
 
     private static func viaOpenRouter(prompt: String, images: [Image], system: String,

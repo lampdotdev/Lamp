@@ -38,7 +38,8 @@ enum Agent {
     - For any AI feature (summarising, extracting, classifying, rewriting, generating text), use \
     `ForgeAI.ask(...)` from ForgeSupport.swift. Read its doc comment for usage. Never call AI APIs directly, \
     never ask the user for API keys. It accepts `images: [NSImage]` when the AI needs to look at photos or \
-    screenshots. Show a ProgressView while waiting and show errors in the UI.
+    screenshots. To create or edit pictures, use `ForgeAI.makeImage(...)`, `ForgeAI.editImage(...)` or \
+    `ForgeAI.editImages(...)`; these take 10–60 seconds. Show a ProgressView while waiting and show errors in the UI.
     - The app icon is defined in icon.json: `symbol` (an SF Symbol name), `background` (two hex colours, \
     top-to-bottom gradient), `foreground` (symbol colour) and `art_prompt` (one sentence describing illustrated \
     artwork). To change the icon, edit icon.json; Forge redraws it. Never create icon files yourself.

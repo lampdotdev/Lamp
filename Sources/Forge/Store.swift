@@ -558,7 +558,9 @@ final class Store: ObservableObject {
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
-        guard request.method == "POST", request.path == "/ai" else { return (404, ["error": "Not found"]) }
+        guard request.method == "POST", request.path == "/ai" || request.path == "/ai/image" else {
+            return (404, ["error": "Not found"])
+        }
         let token = request.headers["authorization"]?.replacingOccurrences(of: "Bearer ", with: "") ?? ""
         if tokens[token] == nil { reload() }   // app may have been created since the last reload
         guard let id = tokens[token], let project = projects.first(where: { $0.id == id }) else {
@@ -573,6 +575,12 @@ final class Store: ObservableObject {
             let images = (body["images"] as? [[String: String]] ?? []).compactMap { image -> AppAI.Image? in
                 guard let type = image["media_type"], let data = image["data"] else { return nil }
                 return AppAI.Image(mediaType: type, data: data)
+            }
+            if request.path == "/ai/image" {
+                let (png, cost) = try await AppAI.image(prompt: prompt, references: images,
+                                                        aspectRatio: body["aspect_ratio"] as? String)
+                record(project, cost: cost)
+                return (200, ["image": png.base64EncodedString(), "media_type": "image/png"])
             }
             let (text, cost) = try await AppAI.complete(prompt: prompt, images: images,
                                                          system: body["system"] as? String ?? "",

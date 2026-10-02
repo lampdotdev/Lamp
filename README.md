@@ -75,7 +75,7 @@ High-risk apps default to **Cancel**. When imported, the shared code is rebuilt 
 
 - **Agent loop:** each message runs the bundled [pi](https://github.com/badlogic/pi-mono) agent in JSON mode in the app's folder, with file tools only (read, edit, write, grep, find, ls) and no shell. Forge then runs `./build.sh` itself and sends any compiler errors back to pi, up to three times. After that it commits to the app's git repo, installs the app and relaunches it. Each app keeps one pi conversation, so the agent remembers earlier requests. **Undo** is `git reset` and starts a fresh conversation.
 - **Live editing:** every generated app has an **Edit with Forge** command (⇧⌘E) that jumps back to its chat.
-- **AI inside apps:** Forge runs a local gateway on `127.0.0.1:47811`. Generated apps call it through `ForgeAI.ask(...)` (text, images, typed JSON) with a per-app token, so the API key never leaves Forge. Per-app usage shows in Forge.
+- **AI inside apps:** Forge runs a local gateway on `127.0.0.1:47811`. Generated apps call it through `ForgeAI.ask(...)` (text, images, typed JSON) and `ForgeAI.makeImage(...)` / `editImage(...)` / `editImages(...)` (create, edit or combine pictures with the image model from Settings) with a per-app token, so the API key never leaves Forge. Per-app usage shows in Forge.
 - **Icons:** the AI designs `icon.json` (SF Symbol and gradient). Forge renders it instantly and, with an OpenRouter key, swaps in generated artwork.
 - **Provider:** everything goes through OpenRouter with one OpenRouter key. pi uses its own config folder (`~/Library/Application Support/Forge/pi`), with update checks and telemetry off, so it never touches a pi you run yourself.
 
