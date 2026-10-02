@@ -93,6 +93,8 @@ final class Store: ObservableObject {
     /// The turn in progress for each app. A new app's first turn stays here after it finishes, so its
     /// build card can show the result until the next message.
     @Published var progress: [String: TurnProgress] = [:]
+    /// Apps that are open right now, however they were started, so Forge can offer to quit them.
+    @Published var openApps: Set<String> = []
     @Published var chatFocusRequest = 0
     @Published var setup = SetupCheck()
     @Published var usage: [String: AppUsage] = [:]
@@ -157,6 +159,7 @@ final class Store: ObservableObject {
         for project in projects { discardIfUnused(project.id) }
         selection = projects.first?.id
         startGateway()
+        watchOpenApps()
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
@@ -1115,6 +1118,7 @@ final class Store: ObservableObject {
         } catch {
             log(project, .error, "Couldn't open the app: \(error.localizedDescription)")
         }
+        refreshOpenApps()
     }
 
     /// Whether the installed app was built with ForgeWindows (its binary contains the message name).
@@ -1320,6 +1324,7 @@ final class Store: ObservableObject {
             log(project, .error, "Couldn't open the app: \(error.localizedDescription)")
         }
         upgradeIconArt(project)
+        refreshOpenApps()
         return crash
     }
 
@@ -1460,6 +1465,35 @@ final class Store: ObservableObject {
             }
             upgradeIconArt(project)
         }
+    }
+
+    /// Keeps `openApps` current as apps launch and quit. Menu bar apps don't always announce themselves,
+    /// so it's also checked whenever Forge comes to the front and after Forge opens or quits one.
+    private func watchOpenApps() {
+        refreshOpenApps()
+        let workspace = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            workspace.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { Store.shared.refreshOpenApps() }
+            }
+        }
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { Store.shared.refreshOpenApps() }
+        }
+    }
+
+    private func refreshOpenApps() {
+        let prefix = "dev.forge.app."
+        let ids = NSWorkspace.shared.runningApplications
+            .compactMap { $0.isTerminated ? nil : $0.bundleIdentifier }
+            .filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
+        if Set(ids) != openApps { openApps = Set(ids) }
+    }
+
+    /// Quits the app, for the Stop button. Asks it nicely first, then insists.
+    func quitApp(_ project: ForgeProject) async {
+        await quit(project)
+        refreshOpenApps()
     }
 
     private func quit(_ project: ForgeProject) async {
