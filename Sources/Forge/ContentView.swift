@@ -128,7 +128,7 @@ struct ProjectView: View {
                     .help("Attach files. You can also paste or drop images and files here.")
                     .padding(.bottom, 2)
                 Composer(text: $draft, height: $composerHeight,
-                         placeholder: busy ? "Working…" : "Describe a change…  (Shift-Return for a new line)",
+                         placeholder: busy ? "Working…" : "Describe a change…",
                          isEnabled: true, focusRequest: focusRequest,
                          onSubmit: send, onFiles: { attachments.append(contentsOf: $0) })
                     .frame(height: composerHeight)
@@ -151,12 +151,8 @@ struct ProjectView: View {
                     .allowsHitTesting(false)
             }
         }
-        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
-            for provider in providers {
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    if let url { DispatchQueue.main.async { attachments.append(url) } }
-                }
-            }
+        .onDrop(of: Attachments.dropTypes, isTargeted: $dropTargeted) { providers in
+            Attachments.load(providers) { attachments.append(contentsOf: $0) }
             return true
         }
         .navigationTitle(project.name)

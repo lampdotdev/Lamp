@@ -41,7 +41,6 @@ struct Composer: NSViewRepresentable {
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
-        textView.registerForDraggedTypes([.fileURL])
 
         scroll.documentView = textView
         context.coordinator.textView = textView
@@ -117,15 +116,10 @@ final class ComposerTextView: NSTextView {
         super.paste(sender)
     }
 
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        fileURLs(in: sender.draggingPasteboard).isEmpty ? super.draggingEntered(sender) : .copy
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let urls = fileURLs(in: sender.draggingPasteboard)
-        guard !urls.isEmpty else { return super.performDragOperation(sender) }
-        onFiles?(urls)
-        return true
+    /// Don't be a drop target: drops fall through to the chat view's drop handler (`Attachments.load`),
+    /// which handles files and images from Finder, browsers, Photos and screenshot thumbnails alike.
+    override func updateDragTypeRegistration() {
+        unregisterDraggedTypes()
     }
 
     /// Copied files attach. A bare image (e.g. a screenshot copied with ⌃⇧⌘4) is saved as a PNG and attached.
@@ -205,6 +199,44 @@ struct AttachmentThumbnail: View {
 
 /// Where attachments live in an app's folder and how they're described to the agent.
 enum Attachments {
+    /// Item types the chat accepts when something is dropped on it.
+    static let dropTypes: [UTType] = [.fileURL, .image]
+
+    /// Turns dropped items into local files: files as-is, and images (from browsers, Photos,
+    /// screenshot thumbnails) copied to a temporary file. Calls `completion` on the main thread.
+    static func load(_ providers: [NSItemProvider], completion: @escaping ([URL]) -> Void) {
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var urls: [URL] = []
+        func add(_ url: URL) { lock.lock(); urls.append(url); lock.unlock() }
+
+        for provider in providers {
+            group.enter()
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    if let url, url.isFileURL { add(url) }
+                    group.leave()
+                }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                let name = provider.suggestedName
+                provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { file, _ in
+                    // The provided file is deleted when this closure returns, so copy it out first.
+                    if let file {
+                        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("forge-dropped-\(UUID().uuidString)")
+                        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                        var target = folder.appendingPathComponent(name.map { ($0 as NSString).deletingPathExtension } ?? "Dropped image")
+                        target.appendPathExtension(file.pathExtension.isEmpty ? "png" : file.pathExtension)
+                        if (try? FileManager.default.copyItem(at: file, to: target)) != nil { add(target) }
+                    }
+                    group.leave()
+                }
+            } else {
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { completion(urls) }
+    }
+
     static let folder = "Attachments"
     static let imageTypes: Set<String> = ["png", "jpg", "jpeg", "gif", "webp"]
 
