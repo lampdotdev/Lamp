@@ -143,6 +143,9 @@ async function askForge(command: string, signal?: AbortSignal): Promise<string |
 /** Files and folders Forge generates or depends on: never the agent's to delete. */
 const protectedPaths = [".forge", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/ForgeSupport.swift"];
 
+/** Files written or edited since this agent run started, as absolute paths. */
+const writtenThisRun = new Set<string>();
+
 const deleteFile = defineTool({
 	name: "delete_file",
 	label: "Delete file",
@@ -152,6 +155,9 @@ const deleteFile = defineTool({
 		"It can't delete folders, files outside the app's folder, or the files Forge generates.",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path of the file, relative to the app's folder, e.g. Sources/CardsView.swift" }),
+		confirm: Type.Optional(
+			Type.Boolean({ description: "Set to true to delete a file you wrote or edited earlier in this request" }),
+		),
 	}),
 
 	async execute(_toolCallId, params) {
@@ -172,7 +178,15 @@ const deleteFile = defineTool({
 		if (folder !== root && !folder.startsWith(root + path.sep)) {
 			throw new Error("Only files inside the app's folder can be deleted.");
 		}
+		// The usual mistake: deleting a "leftover" file that was in fact already replaced with new code.
+		if (writtenThisRun.has(target) && !params.confirm) {
+			throw new Error(
+				`You wrote or edited ${relative} earlier in this request, so it holds your new code. ` +
+					"It was not deleted. If it really should go, call delete_file again with confirm: true.",
+			);
+		}
 		await rm(target);
+		writtenThisRun.delete(target);
 		return { content: [{ type: "text", text: `Deleted ${relative}.` }], details: undefined };
 	},
 });
@@ -243,6 +257,14 @@ export default function (pi: ExtensionAPI) {
 		if (event.toolName !== "bash") return undefined;
 		const reason = await askForge(String((event.input as { command?: unknown }).command ?? ""), ctx.signal);
 		return reason ? { block: true, reason } : undefined;
+	});
+	// Which files this run has written, for delete_file's check.
+	pi.on("tool_call", async (event) => {
+		const file = (event.input as { path?: unknown }).path;
+		if ((event.toolName === "write" || event.toolName === "edit") && typeof file === "string") {
+			writtenThisRun.add(path.resolve(await realpath(process.cwd()), file));
+		}
+		return undefined;
 	});
 	pi.registerTool(webFetch);
 	pi.registerTool(lookAtApp);
