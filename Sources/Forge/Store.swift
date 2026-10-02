@@ -310,8 +310,7 @@ final class Store: ObservableObject {
     // MARK: - Actions
 
     /// New App: an untitled app, straight into its chat. Its first message names it and designs its icon.
-    /// A new app, optionally with its first request filled in (not sent) for the user to edit.
-    func create(draft: String? = nil) {
+    func create() {
         let project: ForgeProject
         do {
             project = try Template.scaffold(name: uniqueName("Untitled"), untitled: true, in: root)
@@ -319,7 +318,6 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return
         }
-        if let draft { saveDraft(Draft(text: draft), for: project) }
         reload()
         selection = project.id
         chatFocusRequest += 1

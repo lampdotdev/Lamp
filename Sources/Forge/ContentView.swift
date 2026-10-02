@@ -28,7 +28,13 @@ struct ContentView: View {
             if let project = store.selected {
                 ProjectView(project: project).id(project.id)
             } else if store.projects.isEmpty {
-                FirstAppView()
+                ContentUnavailableView {
+                    Label("No apps yet", systemImage: "hammer")
+                } description: {
+                    Text("Describe an app and Forge builds it for you.")
+                } actions: {
+                    Button("New App") { store.create() }
+                }
             } else {
                 ContentUnavailableView("Select an app", systemImage: "sidebar.left")
             }
@@ -379,7 +385,7 @@ struct ProjectView: View {
                         LazyVStack(alignment: .leading, spacing: 0,
                                    pinnedViews: building != nil && area.size.height >= Self.roomToPinCard ? [.sectionHeaders] : []) {
                             if lines.isEmpty && queued.isEmpty {
-                                NewAppIntro(project: project)
+                                NewAppIntro(project: project, draft: $draft)
                             }
                             if let card = store.progress[project.id], card.newApp,
                                let request = lines.lastIndex(where: { $0.kind == .user }) {
@@ -772,7 +778,9 @@ struct QueuedRow: View {
 struct NewAppIntro: View {
     @EnvironmentObject private var store: Store
     let project: ForgeProject
+    @Binding var draft: String
     @State private var name = ""
+    @State private var fresh = false   // nothing built yet (not, say, an imported app)
     @FocusState private var editingName: Bool
 
     private var busy: Bool { store.busy.contains(project.id) }
@@ -798,10 +806,21 @@ struct NewAppIntro: View {
             Text("While using the app, press ⇧⌘E to come back here and ask for changes.")
                 .font(.callout).foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
+            if fresh && draft.trimmed.isEmpty {
+                StarterIdeas { prompt in
+                    draft = prompt
+                    store.chatFocusRequest += 1
+                }
+                .padding(.top, 18)
+                .padding(.horizontal, 24)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 60)
-        .onAppear { name = project.untitled ? "" : project.name }
+        .onAppear {
+            name = project.untitled ? "" : project.name
+            fresh = Template.isScaffold(project)
+        }
         .onChange(of: editingName) { if !editingName { commit() } }
     }
 
@@ -985,9 +1004,10 @@ struct ApprovalCard: View {
     }
 }
 
-/// Shown before the first app: what Forge is for, with a few apps to start from.
-struct FirstAppView: View {
-    @EnvironmentObject private var store: Store
+/// Apps to start from, under a new app's empty chat. Choosing one fills in the request (it isn't sent) so the
+/// user can make it theirs first.
+struct StarterIdeas: View {
+    let choose: (String) -> Void
 
     /// Starting points, each showing something different a Mac app can do. Choosing one fills in the first
     /// request for the user to edit and send.
@@ -1007,45 +1027,30 @@ struct FirstAppView: View {
     ]
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 22) {
-                VStack(spacing: 8) {
-                    Image(systemName: "hammer").font(.system(size: 40)).foregroundStyle(.secondary)
-                    Text("What's your Mac missing?").font(.title.bold())
-                    Text("Describe a tool for something you do every week, and Forge builds it as a real Mac app. Keep changing it until it works exactly your way.")
-                        .multilineTextAlignment(.center).foregroundStyle(.secondary)
-                        .frame(maxWidth: 460)
-                }
-                Button("New App") { store.create() }
-                    .buttonStyle(.borderedProminent).controlSize(.large)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Or start from an idea, then make it yours").font(.callout).foregroundStyle(.secondary)
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 10)], spacing: 10) {
-                        ForEach(Self.examples, id: \.title) { example in
-                            Button { store.create(draft: example.prompt) } label: {
-                                HStack(alignment: .top, spacing: 10) {
-                                    Image(systemName: example.symbol).frame(width: 22).foregroundStyle(.tint)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(example.title).font(.headline)
-                                        Text(example.blurb).font(.callout).foregroundStyle(.secondary)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                    }
-                                    Spacer(minLength: 0)
-                                }
-                                .padding(10)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-                                .contentShape(Rectangle())
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Need an idea? Pick one, then change it to suit you.").font(.callout).foregroundStyle(.secondary)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
+                ForEach(Self.examples, id: \.title) { example in
+                    Button { choose(example.prompt) } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: example.symbol).frame(width: 20).foregroundStyle(.tint)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(example.title).font(.subheadline.weight(.semibold))
+                                Text(example.blurb).font(.caption).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
-                            .buttonStyle(.plain)
-                            .help("Fills in the request so you can change it before sending")
+                            Spacer(minLength: 0)
                         }
+                        .padding(8)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .help("Fills in the request so you can change it before sending")
                 }
-                .frame(maxWidth: 620)
             }
-            .padding(40)
-            .frame(maxWidth: .infinity)
         }
+        .frame(maxWidth: 600)
     }
 }
