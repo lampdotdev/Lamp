@@ -75,6 +75,9 @@ final class Store: ObservableObject {
     @Published var logs: [String: [LogLine]] = [:]
     @Published var busy: Set<String> = []
     @Published var queued: [String: [QueuedMessage]] = [:]
+    /// The turn in progress for each app. A new app's first turn stays here after it finishes, so its
+    /// build card can show the result until the next message.
+    @Published var progress: [String: TurnProgress] = [:]
     @Published var chatFocusRequest = 0
     @Published var setup = SetupCheck()
     @Published var usage: [String: AppUsage] = [:]
@@ -194,9 +197,15 @@ final class Store: ObservableObject {
 
     func log(_ project: ForgeProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil) {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments))
+        if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
         if let data = try? JSONEncoder().encode(logs[project.id]) {
             try? data.write(to: project.dir.appendingPathComponent(".forge/chat.json"))
         }
+    }
+
+    /// Updates what the app's turn is doing right now, for the build card and the activity line.
+    private func note(_ activity: String, for project: ForgeProject) {
+        if let current = progress[project.id], current.activity != activity { progress[project.id]?.activity = activity }
     }
 
     func handle(url: URL) {
@@ -524,16 +533,33 @@ final class Store: ObservableObject {
               busy.insert(project.id).inserted else { return }
         queued[project.id] = nil
         let first = !(logs[project.id] ?? []).contains { $0.kind == .user }
+        progress[project.id] = TurnProgress(newApp: first)
         Task {
             var project = project
             let saved = post(messages, to: project)
-            if first { project = await bootstrap(project, brief: messages.map(\.text).joined(separator: "\n\n")) }
+            if first {
+                let untitled = project
+                project = await bootstrap(project, brief: messages.map(\.text).joined(separator: "\n\n"))
+                if project.id != untitled.id { progress[project.id] = progress.removeValue(forKey: untitled.id) }
+            }
             defer {
+                // A new app's card stays, showing the result; a later turn's activity line goes away.
+                if first { progress[project.id]?.finished = Date() } else { progress[project.id] = nil }
                 if selection != project.id || !NSApp.isActive { unread.insert(project.id) }
                 finish(project)
             }
             await turn(messages, attachments: saved, on: project)
+            if first { await showResult(of: project) }
         }
+    }
+
+    /// Puts the app's real window on its build card, once it has opened and saved a picture of itself.
+    private func showResult(of project: ForgeProject) async {
+        guard let started = progress[project.id]?.started,
+              NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first != nil,
+              let picture = await Runtime.screenshots(of: project, since: started, waiting: 4).first,
+              let image = NSImage(contentsOf: picture) else { return }
+        progress[project.id]?.screenshot = image
     }
 
     /// Marks the app idle again, then starts anything queued while it was busy.
@@ -640,6 +666,9 @@ final class Store: ObservableObject {
         var lastTool = ""
         var repeats = 0
         var toolCalls = 0
+        // The tool call the model is writing at the moment, for the activity shown to the user.
+        var streamingTool = ""
+        var streamingArguments = ""
         stopped.remove(project.id)
         let sessionFile = Self.sessionFile(for: project, engine: engine)
         let run = Agent.run(prompt: prompt, files: files, project: project,
@@ -650,8 +679,25 @@ final class Store: ObservableObject {
             for event in Agent.parseLine(line) {
                 switch event {
                 case .text(let text): log(project, .agent, text)
+                case .step(let tool):
+                    streamingTool = tool
+                    streamingArguments = ""
+                    note(TurnProgress.activity(tool: tool, partialArguments: ""), for: project)
+                case .stepArgs(let piece):
+                    // The file name is among the first arguments; the rest is the file itself.
+                    guard streamingArguments.count < 600 else { break }
+                    streamingArguments += piece
+                    note(TurnProgress.activity(tool: streamingTool, partialArguments: streamingArguments), for: project)
+                case .plan(let parts): progress[project.id]?.plan = parts
                 case .tool(let text):
                     log(project, .tool, text)
+                    let call = ToolCall(text)
+                    note(TurnProgress.activity(for: call), for: project)
+                    if call.action == .write || call.action == .edit, !call.argument.isEmpty,
+                       progress[project.id]?.files.last != call.argument {
+                        progress[project.id]?.files.removeAll { $0 == call.argument }
+                        progress[project.id]?.files.append(call.argument)
+                    }
                     toolCalls += 1
                     repeats = text == lastTool ? repeats + 1 : 1
                     lastTool = text
@@ -840,6 +886,7 @@ final class Store: ObservableObject {
         }
         let config = NSWorkspace.OpenConfiguration()
         config.activates = inFront
+        note("Opening \(project.name)…", for: project)
         var crash: String?
         do {
             let app = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)

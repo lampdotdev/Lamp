@@ -362,6 +362,14 @@ struct ProjectView: View {
                             NewAppIntro(project: project)
                         }
                         Transcript(lines: lines, dir: project.dir, busy: busy)
+                        if let progress = store.progress[project.id] {
+                            if progress.newApp {
+                                BuildCard(project: project, progress: progress).padding(.top, 16)
+                            } else if busy, !(lines.last.map { $0.kind == .status && $0.text.hasSuffix("…") } ?? false) {
+                                // Not next to a status like "Building…", which says the same thing.
+                                ActivityRow(progress: progress).padding(.top, 12)
+                            }
+                        }
                         ForEach(queued) { message in
                             QueuedRow(message: message) { store.unqueue(message, from: project) }
                                 .padding(.top, lines.isEmpty ? 0 : 32)
@@ -377,6 +385,8 @@ struct ProjectView: View {
                 .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
                 .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
                 .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
+                .onChange(of: store.progress[project.id]?.plan.count) { proxy.scrollTo("bottom", anchor: .bottom) }
+                .onChange(of: store.progress[project.id]?.screenshot != nil) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
             Divider()
             if !attachments.isEmpty {

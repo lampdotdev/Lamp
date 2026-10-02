@@ -33,7 +33,7 @@ struct ToolCall {
         "grep": .search, "glob": .search, "find": .search, "search": .search,
         "ls": .list, "list": .list,
         "webfetch": .web, "websearch": .web,
-        "todowrite": .plan, "task": .delegate,
+        "todowrite": .plan, "plan": .plan, "task": .delegate,
     ]
 
     var icon: String {

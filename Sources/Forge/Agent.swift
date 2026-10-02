@@ -7,26 +7,33 @@ enum AgentEvent {
     case failed(String)
     case raw(String)
     case session(String)   // an external engine's conversation id, to resume next turn
+    case step(String)      // the model has started on a tool call (its name), or on text ("")
+    case stepArgs(String)  // a piece of that call's arguments, as they stream in
+    case plan([PlanPart])  // the agent's checklist for the build card
 }
 
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
 /// pi only gets file tools: Forge does the building and feeds compiler errors back.
 enum Agent {
-    static var tools: String { "read,edit,write,grep,find,ls" + (lookTool == nil ? "" : ",look_at_app") }
+    static var tools: String { "read,edit,write,grep,find,ls" + (forgeTools == nil ? "" : ",look_at_app,plan") }
 
-    /// The `look_at_app` tool (Resources/look-tool.ts): lets pi ask Forge to build and open the app
-    /// mid-turn and see the result. Other engines don't have it.
-    static var lookTool: URL? {
-        let url = Bundle.main.resourceURL?.appendingPathComponent("look-tool.ts")
+    /// Forge's own tools for pi (Resources/forge-tools.ts): `look_at_app` has Forge build and open the app
+    /// mid-turn and shows the agent the result; `plan` is the checklist on the build card. Other engines
+    /// don't have them.
+    static var forgeTools: URL? {
+        let url = Bundle.main.resourceURL?.appendingPathComponent("forge-tools.ts")
         return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
     }
 
-    static let lookRule = """
+    static let toolRules = """
 
     - `look_at_app` builds the app with your changes, opens it, and shows you its windows, what it printed \
     and any build errors or crash, so you can check your work instead of guessing. Once your edits are in, use \
     it after changing the interface or after a fix you can't verify from the code, and fix what you see before \
     finishing. Skip it for small changes you're sure of.
+    - When you build a new app, call `plan` before writing any code, with its 3 to 5 main parts in the user's \
+    own words: what they'll be able to do, never file or type names. Call it again with the same parts as you \
+    finish each one. The user watches this list while they wait. Don't use it for small changes.
     """
 
     /// pi ships inside Forge.app (see build.sh).
@@ -119,7 +126,7 @@ enum Agent {
         let files = (0..<fileCount).map { "\"@$FORGE_FILE_\($0)\"" }.joined(separator: " ")
         return """
         "$FORGE_PI" --mode json --provider "$FORGE_PROVIDER" --model "$FORGE_MODEL" --tools \(tools) \\
-          --no-extensions\(lookTool == nil ? "" : " -e \"$FORGE_LOOK_TOOL\"") --no-skills --no-prompt-templates --no-context-files --no-approve \\
+          --no-extensions\(forgeTools == nil ? "" : " -e \"$FORGE_TOOLS\"") --no-skills --no-prompt-templates --no-context-files --no-approve \\
           --session-dir "$FORGE_SESSION_DIR" --session-id "$FORGE_SESSION" \\
           --append-system-prompt "$FORGE_SYSTEM" -- \(files) "$FORGE_PROMPT"
         """
@@ -134,9 +141,9 @@ enum Agent {
             "FORGE_MODEL": Builder.piProvider == Builder.myPiProvider ? myPiModel : Builder.piModel,
             "FORGE_SESSION": session,
             "FORGE_SESSION_DIR": sessionDir,
-            "FORGE_SYSTEM": systemPrompt + (lookTool == nil ? "" : lookRule),
+            "FORGE_SYSTEM": systemPrompt + (forgeTools == nil ? "" : toolRules),
             "FORGE_PROMPT": prompt,
-            "FORGE_LOOK_TOOL": lookTool?.path ?? "",
+            "FORGE_TOOLS": forgeTools?.path ?? "",
             // "My pi setup" uses the user's own pi config (their logins); everything else uses Forge's.
             "PI_CODING_AGENT_DIR": Builder.piProvider == Builder.myPiProvider ? userConfigDir : configDir,
             "PI_SKIP_VERSION_CHECK": "1",
@@ -185,8 +192,26 @@ enum Agent {
         else { return line.trimmed.isEmpty ? [] : [.raw(line)] }
 
         switch type {
+        case "message_update":
+            // What the model is writing right now, long before the tool runs: a `write` call's file name
+            // arrives seconds into a response that then streams the whole file.
+            let update = obj["assistantMessageEvent"] as? [String: Any] ?? [:]
+            switch update["type"] as? String {
+            case "toolcall_start": return [.step(update["toolName"] as? String ?? "")]
+            case "toolcall_delta": return [.stepArgs(update["delta"] as? String ?? "")]
+            case "text_start", "thinking_start": return [.step("")]
+            default: return []
+            }
         case "tool_execution_start":
-            return [.tool(describe(obj["toolName"] as? String ?? "tool", obj["args"] as? [String: Any] ?? [:]))]
+            let name = obj["toolName"] as? String ?? "tool"
+            let args = obj["args"] as? [String: Any] ?? [:]
+            var events: [AgentEvent] = [.tool(describe(name, args))]
+            if name == "plan", let parts = args["parts"] as? [[String: Any]] {
+                events.append(.plan(parts.enumerated().compactMap { index, part in
+                    (part["title"] as? String).map { PlanPart(id: index, title: $0, done: part["done"] as? Bool ?? false) }
+                }))
+            }
+            return events
         case "message_end":
             guard let message = obj["message"] as? [String: Any], message["role"] as? String == "assistant" else { return [] }
             var events: [AgentEvent] = []
