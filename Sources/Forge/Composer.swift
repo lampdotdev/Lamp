@@ -5,10 +5,13 @@ import UniformTypeIdentifiers
 /// The chat input: a native text view so Forge controls the keys and the clipboard.
 /// Return sends, Shift/Option/Control-Return insert a new line, and pasting or dropping
 /// files or images (e.g. a screenshot) attaches them instead of inserting text.
+/// A `suggestion` replaces the placeholder while the composer is empty: Tab accepts it, Escape dismisses it.
 struct Composer: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
     var placeholder: String
+    var suggestion: String? = nil
+    var onDismissSuggestion: () -> Void = {}
     var isEnabled: Bool
     var focusRequest: Int
     var onSubmit: () -> Void
@@ -55,7 +58,11 @@ struct Composer: NSViewRepresentable {
             textView.string = text
             coordinator.updateHeight()
         }
-        textView.placeholder = placeholder
+        textView.placeholder = suggestion ?? placeholder
+        textView.suggestion = suggestion
+        textView.onDismissSuggestion = onDismissSuggestion
+        textView.setAccessibilityPlaceholderValue(textView.placeholder)
+        textView.setAccessibilityHelp(suggestion == nil ? nil : "Press Tab to use the suggestion, or Escape to dismiss it.")
         textView.isEditable = isEnabled
         textView.onSubmit = onSubmit
         textView.onFiles = onFiles
@@ -95,10 +102,22 @@ struct Composer: NSViewRepresentable {
 
 final class ComposerTextView: NSTextView {
     var placeholder = ""
+    var suggestion: String?
+    var onDismissSuggestion: (() -> Void)?
     var onSubmit: (() -> Void)?
     var onFiles: (([URL]) -> Void)?
 
+    private var showsSuggestion: Bool { string.isEmpty && suggestion != nil }
+
     override func keyDown(with event: NSEvent) {
+        if showsSuggestion, !hasMarkedText(),
+           event.modifierFlags.intersection([.shift, .option, .control, .command]).isEmpty {
+            switch event.keyCode {
+            case 48: acceptSuggestion(); return            // Tab
+            case 53: onDismissSuggestion?(); return        // Escape
+            default: break
+            }
+        }
         let isReturn = event.keyCode == 36 || event.keyCode == 76
         if isReturn && !hasMarkedText() {   // leave Return alone while an input method is composing
             if event.modifierFlags.intersection([.shift, .option, .control]).isEmpty {
@@ -109,6 +128,21 @@ final class ComposerTextView: NSTextView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if showsSuggestion, hintRect.contains(convert(event.locationInWindow, from: nil)) {
+            window?.makeFirstResponder(self)
+            acceptSuggestion()
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    /// Inserts the suggestion as if typed, so it can be undone and edited before sending.
+    private func acceptSuggestion() {
+        guard let suggestion, string.isEmpty else { return }
+        insertText(suggestion, replacementRange: NSRange(location: 0, length: 0))
     }
 
     override func paste(_ sender: Any?) {
@@ -150,13 +184,47 @@ final class ComposerTextView: NSTextView {
         return (try? png.write(to: url)) == nil ? nil : url
     }
 
+    private static let hint = "⇥ to accept"
+    private static let hintAttributes: [NSAttributedString.Key: Any] = [
+        .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize - 1, weight: .medium),
+        .foregroundColor: NSColor.secondaryLabelColor,
+    ]
+
+    private var lineHeight: CGFloat {
+        layoutManager?.defaultLineHeight(for: font ?? .systemFont(ofSize: NSFont.systemFontSize)) ?? 17
+    }
+
+    /// The "⇥ to accept" key cap at the right end of the first line.
+    private var hintRect: NSRect {
+        let size = (Self.hint as NSString).size(withAttributes: Self.hintAttributes)
+        let width = ceil(size.width) + 10, height = ceil(size.height) + 2
+        return NSRect(x: bounds.maxX - width - 2, y: textContainerInset.height + (lineHeight - height) / 2,
+                      width: width, height: height)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard string.isEmpty, !placeholder.isEmpty else { return }
         let padding = textContainer?.lineFragmentPadding ?? 5
-        placeholder.draw(at: NSPoint(x: textContainerInset.width + padding, y: textContainerInset.height),
-                         withAttributes: [.font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
-                                          .foregroundColor: NSColor.placeholderTextColor])
+        let x = textContainerInset.width + padding
+        var right = bounds.maxX - x
+        if suggestion != nil {
+            let pill = hintRect
+            let path = NSBezierPath(roundedRect: pill.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
+            NSColor.quaternaryLabelColor.setFill()
+            path.fill()
+            NSColor.tertiaryLabelColor.setStroke()
+            path.stroke()
+            (Self.hint as NSString).draw(at: NSPoint(x: pill.minX + 5, y: pill.minY + 1), withAttributes: Self.hintAttributes)
+            right = pill.minX - 8
+        }
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        placeholder.draw(with: NSRect(x: x, y: textContainerInset.height, width: max(right - x, 0), height: lineHeight),
+                         options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                         attributes: [.font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                                      .foregroundColor: NSColor.placeholderTextColor,
+                                      .paragraphStyle: style])
     }
 }
 

@@ -265,12 +265,20 @@ struct ProjectView: View {
     @AppStorage("showDetails") private var showDetails = false
     @AppStorage("showInfo") private var showInfo = false
     @State private var iconPreview: URL?
+    @State private var suggestion: String?
+    @State private var dismissedSuggestion: String?
 
     private var lines: [LogLine] {
         (store.logs[project.id] ?? []).filter { showDetails || $0.kind != .detail }
     }
     private var busy: Bool { store.busy.contains(project.id) }
     private var queued: [QueuedMessage] { store.queued[project.id] ?? [] }
+    /// The finished agent turn a suggestion follows up on. Nil while working, so none shows mid-turn.
+    private var suggestionTurn: UUID? { busy ? nil : NextStep.turn(in: store.logs[project.id] ?? []) }
+    private var shownSuggestion: String? {
+        guard suggestionTurn != nil, let suggestion, suggestion != dismissedSuggestion else { return nil }
+        return suggestion
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -311,6 +319,7 @@ struct ProjectView: View {
                     .padding(.bottom, 2)
                 Composer(text: $draft, height: $composerHeight,
                          placeholder: busy ? "Working… describe the next change" : "Describe a change…",
+                         suggestion: shownSuggestion, onDismissSuggestion: { dismissedSuggestion = suggestion },
                          isEnabled: true, focusRequest: focusRequest,
                          onSubmit: send, onFiles: { attachments.append(contentsOf: $0) })
                     .frame(height: composerHeight)
@@ -371,6 +380,11 @@ struct ProjectView: View {
             Text(problem.message)
         }
         .onChange(of: store.chatFocusRequest) { focusRequest += 1 }
+        .task(id: suggestionTurn) {
+            suggestion = nil
+            guard suggestionTurn != nil else { return }
+            suggestion = await NextStep.suggest(for: project, lines: store.logs[project.id] ?? [])
+        }
     }
 
     @ToolbarContentBuilder
