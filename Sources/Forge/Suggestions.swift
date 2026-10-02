@@ -80,3 +80,28 @@ enum NextStep {
         return text
     }
 }
+
+/// Names an app from the first thing its user asked for. Fails soft: nil keeps it untitled.
+@MainActor
+enum AppName {
+    private static let prompt = """
+    Name a small Mac app from what its user asked for. Pick a name in the spirit of Apple's own apps: \
+    one or two plain, friendly words that say what it is or evoke it (Notes, Stopwatch, Calendar, Photo Booth, \
+    Night Shift). No "App", "Pro" or "AI" suffix, no made-up portmanteaus, no emoji, and not the name of an \
+    existing product or brand. If the user already names the app in their message, use that name.
+
+    Respond with JSON: {"name": "..."}
+    """
+
+    static func suggest(for brief: String) async -> String? {
+        let request = "\(prompt)\n\nThe user asked for:\n\(brief.prefix(4000))"
+        guard let (text, _) = try? await AppAI.complete(prompt: request, images: [], system: "", json: true,
+                                                         model: AppAI.models[0].openRouter),
+              let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+              let raw = object["name"] as? String else { return nil }
+        let name = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”‘’."))
+        guard !name.isEmpty, name.split(separator: " ").count <= 3, name.count <= 24 else { return nil }
+        return name
+    }
+}

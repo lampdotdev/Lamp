@@ -4,7 +4,7 @@ import QuickLook
 
 struct ContentView: View {
     @EnvironmentObject private var store: Store
-    @State private var showingNew = false
+    @State private var newName = ""
 
     var body: some View {
         Group {
@@ -21,7 +21,7 @@ struct ContentView: View {
 
     private var main: some View {
         NavigationSplitView {
-            AppSidebar(showingNew: $showingNew)
+            AppSidebar()
                 .navigationSplitViewColumnWidth(min: 200, ideal: 230)
         } detail: {
             if let project = store.selected {
@@ -32,13 +32,22 @@ struct ContentView: View {
                 } description: {
                     Text("Describe an app and Forge builds it for you.")
                 } actions: {
-                    Button("New App") { showingNew = true }
+                    Button("New App") { store.create() }
                 }
             } else {
                 ContentUnavailableView("Select an app", systemImage: "sidebar.left")
             }
         }
-        .sheet(isPresented: $showingNew) { NewAppSheet() }
+        .alert("Rename “\(store.renaming?.name ?? "")”", isPresented: Binding(
+            get: { store.renaming != nil }, set: { if !$0 { store.renaming = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Rename") {
+                if let project = store.renaming { Task { await store.rename(project, to: newName) } }
+            }
+            .disabled(newName.trimmed.isEmpty)
+            Button("Cancel", role: .cancel) {}
+        }
+        .onChange(of: store.renaming) { newName = store.renaming.map { $0.untitled ? "" : $0.name } ?? "" }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             store.markRead()
         }
@@ -50,7 +59,6 @@ struct AppSidebar: View {
     enum Layout: String { case list, tiles }
 
     @EnvironmentObject private var store: Store
-    @Binding var showingNew: Bool
     @AppStorage("sidebarLayout") private var layout = Layout.list
 
     var body: some View {
@@ -100,7 +108,7 @@ struct AppSidebar: View {
                 }
                 .tag(project.id)
             }
-            Button { showingNew = true } label: {
+            Button { store.create() } label: {
                 Label {
                     Text("New App")
                 } icon: {
@@ -134,7 +142,7 @@ struct AppSidebar: View {
                         .simultaneousGesture(TapGesture().onEnded { store.selection = project.id })
                         .contextMenu { AppMenu(project: project) }
                 }
-                Button { showingNew = true } label: {
+                Button { store.create() } label: {
                     VStack(spacing: 6) {
                         Image(systemName: "plus")
                             .font(.title)
@@ -200,12 +208,54 @@ struct AppIcon: View {
         if let icon = store.icons[project.id] {
             Image(nsImage: icon).resizable().interpolation(.high).frame(width: size, height: size)
         } else {
-            Image(systemName: "app.dashed")
-                .resizable().scaledToFit().fontWeight(.light)
-                .foregroundStyle(.secondary)
-                .padding(size * 0.08)
-                .frame(width: size, height: size)
+            BlueprintIcon(letter: project.untitled ? nil : project.name.first, size: size)
         }
+    }
+}
+
+/// The stand-in icon until the real one is designed: a blueprint of an app icon, with Apple's icon grid
+/// drawn on it and the app's initial in the middle.
+struct BlueprintIcon: View {
+    let letter: Character?
+    let size: CGFloat
+
+    var body: some View {
+        // Same footprint as a real macOS icon: an 824pt tile on a 1024pt canvas.
+        let side = size * 824 / 1024
+        let shape = RoundedRectangle(cornerRadius: side * 0.225, style: .continuous)
+        ZStack {
+            shape.fill(LinearGradient(colors: [Color(red: 0.20, green: 0.46, blue: 0.86),
+                                               Color(red: 0.10, green: 0.30, blue: 0.66)],
+                                      startPoint: .top, endPoint: .bottom))
+            Canvas { context, canvas in
+                let w = canvas.width
+                let thin = max(0.5, w / 400)
+                var grid = Path()
+                for i in 1..<8 {
+                    let p = w * CGFloat(i) / 8
+                    grid.move(to: CGPoint(x: p, y: 0)); grid.addLine(to: CGPoint(x: p, y: w))
+                    grid.move(to: CGPoint(x: 0, y: p)); grid.addLine(to: CGPoint(x: w, y: p))
+                }
+                if w > 40 { context.stroke(grid, with: .color(.white.opacity(0.12)), lineWidth: thin) }
+                var guides = Path()
+                guides.move(to: .zero); guides.addLine(to: CGPoint(x: w, y: w))
+                guides.move(to: CGPoint(x: w, y: 0)); guides.addLine(to: CGPoint(x: 0, y: w))
+                for r in [0.19, 0.31] { guides.addEllipse(in: CGRect(x: w * (0.5 - r), y: w * (0.5 - r), width: w * r * 2, height: w * r * 2)) }
+                guides.addRect(CGRect(x: w * 0.16, y: w * 0.16, width: w * 0.68, height: w * 0.68))
+                context.stroke(guides, with: .color(.white.opacity(0.28)), lineWidth: thin * 1.5)
+            }
+            .clipShape(shape)
+            shape.strokeBorder(.white.opacity(0.35), lineWidth: max(0.5, side / 160))
+            if let letter {
+                Text(String(letter).uppercased())
+                    .font(.system(size: side * 0.48, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.15), radius: side / 60, y: side / 120)
+            }
+        }
+        .frame(width: side, height: side)
+        .shadow(color: .black.opacity(0.18), radius: size / 60, y: size / 80)
+        .frame(width: size, height: size)
     }
 }
 
@@ -228,8 +278,10 @@ struct AppMenu: View {
         Button("Run") { Task { await store.run(project) } }
             .disabled(busy)
         Divider()
-        Button("New Icon") { Task { await store.newIcon(project) } }
+        Button("Rename…") { store.renaming = project }
             .disabled(busy)
+        Button("New Icon") { Task { await store.newIcon(project) } }
+            .disabled(busy || project.untitled)
         Button("Show in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
         }
@@ -285,9 +337,8 @@ struct ProjectView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        if lines.isEmpty {
-                            Text("Describe what \(project.name) should do, or what to change. Forge builds it and opens it for you. While using the app, press ⇧⌘E to come back here and ask for changes.")
-                                .foregroundStyle(.secondary)
+                        if lines.isEmpty && queued.isEmpty {
+                            NewAppIntro(project: project)
                         }
                         Transcript(lines: lines, dir: project.dir, busy: busy)
                         ForEach(queued) { message in
@@ -370,6 +421,10 @@ struct ProjectView: View {
         }
         .navigationTitle(project.name)
         .navigationSubtitle(usageSummary)
+        .toolbarTitleMenu {
+            Button("Rename…") { store.renaming = project }
+                .disabled(busy)
+        }
         .toolbar { toolbar }
         .onAppear { focusRequest += 1 }
         .onDisappear { dictation.cancel() }
@@ -610,32 +665,47 @@ struct QueuedRow: View {
     }
 }
 
-struct NewAppSheet: View {
+/// An app's empty chat: its icon, its name (editable), and what to do next.
+struct NewAppIntro: View {
     @EnvironmentObject private var store: Store
-    @Environment(\.dismiss) private var dismiss
+    let project: ForgeProject
     @State private var name = ""
-    @State private var brief = ""
+    @FocusState private var editingName: Bool
+
+    private var busy: Bool { store.busy.contains(project.id) }
 
     var body: some View {
-        Form {
-            TextField("Name", text: $name, prompt: Text("Standup Notes"))
-            TextField("What should it do?", text: $brief,
-                      prompt: Text("Optional: a menu of today's meetings with a notes field for each"),
-                      axis: .vertical)
-                .lineLimit(3...8)
+        VStack(spacing: 14) {
+            AppIcon(project: project, size: 112)
+            TextField("Name", text: $name, prompt: Text(project.untitled ? "Untitled" : project.name))
+                .textFieldStyle(.plain)
+                .font(.title.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .focused($editingName)
+                .onSubmit(commit)
+                .disabled(busy)
+                .frame(maxWidth: 360)
+                .help("Rename this app")
+            Text(project.untitled
+                 ? "Describe the app you want below. Forge names it, designs an icon and builds it, unless you name it here first."
+                 : "Describe what \(project.name) should do. Forge builds it and opens it for you.")
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 400)
+            Text("While using the app, press ⇧⌘E to come back here and ask for changes.")
+                .font(.callout).foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
         }
-        .formStyle(.grouped)
-        .frame(width: 440)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Create") {
-                    store.create(name: name, brief: brief)
-                    dismiss()
-                }
-                .disabled(name.trimmed.isEmpty)
-            }
-        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 60)
+        .onAppear { name = project.untitled ? "" : project.name }
+        .onChange(of: editingName) { if !editingName { commit() } }
+    }
+
+    private func commit() {
+        let typed = name.trimmed
+        guard !typed.isEmpty, typed != project.name || project.untitled else { return }
+        Task { await store.rename(project, to: typed) }
     }
 }
 

@@ -2,7 +2,7 @@ import Foundation
 
 /// The scaffold every generated app starts from.
 enum Template {
-    static func scaffold(name rawName: String, in root: URL) throws -> ForgeProject {
+    static func scaffold(name rawName: String, untitled: Bool = false, in root: URL) throws -> ForgeProject {
         let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
         let exe = identifier(from: name)
         var slug = exe.lowercased()
@@ -12,7 +12,7 @@ enum Template {
             n += 1
         }
         let project = ForgeProject(id: slug, name: name.isEmpty ? exe : name, exe: exe,
-                                   dir: root.appendingPathComponent(slug))
+                                   dir: root.appendingPathComponent(slug), untitled: untitled)
 
         let files: [String: String] = [
             "Package.swift": packageSwift,
@@ -37,7 +37,7 @@ enum Template {
 
         let forgeDir = project.dir.appendingPathComponent(".forge")
         try FileManager.default.createDirectory(at: forgeDir, withIntermediateDirectories: true)
-        try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe))
+        try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: untitled ? true : nil))
             .write(to: forgeDir.appendingPathComponent("meta.json"))
         try writeSupport(for: project)
         return project

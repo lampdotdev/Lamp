@@ -156,9 +156,11 @@ enum Icons {
         NSImage(contentsOf: artURL(project, spec: spec))
     }
 
-    /// Asks the in-app AI model to design an icon from the app's name and APP.md.
-    static func design(for project: ForgeProject, avoiding current: IconSpec? = nil) async -> IconSpec {
-        let about = (try? String(contentsOf: project.dir.appendingPathComponent("APP.md"), encoding: .utf8)) ?? ""
+    /// Asks the in-app AI model to design an icon from the app's name and APP.md, or, for a brand-new app,
+    /// from the first thing its user asked for.
+    static func design(for project: ForgeProject, brief: String? = nil, avoiding current: IconSpec? = nil) async -> IconSpec {
+        let about = brief.map { "Its user asked for: \($0)" }
+            ?? (try? String(contentsOf: project.dir.appendingPathComponent("APP.md"), encoding: .utf8)) ?? ""
         let names = backgrounds.map(\.name).joined(separator: ", ")
         var prompt = """
         Design a macOS app icon for an app called "\(project.name)". About the app:

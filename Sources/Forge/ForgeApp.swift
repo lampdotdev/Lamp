@@ -13,6 +13,10 @@ struct ForgeApp: App {
                 .frame(minWidth: 760, minHeight: 480)
         }
         .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("New App") { store.create() }
+                    .keyboardShortcut("n")
+            }
             CommandGroup(after: .newItem) {
                 Button("Import Shared App…") { store.chooseImport() }
                     .keyboardShortcut("o")

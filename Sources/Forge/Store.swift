@@ -6,6 +6,8 @@ struct ForgeProject: Identifiable, Hashable {
     let name: String    // display name
     let exe: String     // Swift target / executable name
     let dir: URL
+    /// Made with New App and not named yet. The first message names it.
+    var untitled = false
 
     var bundleID: String { "dev.forge.app.\(id)" }
     var builtURL: URL { dir.appendingPathComponent("build/\(exe).app") }
@@ -16,6 +18,7 @@ struct ForgeProject: Identifiable, Hashable {
 struct ProjectMeta: Codable {
     var name: String
     var exe: String
+    var untitled: Bool?
 }
 
 struct AppUsage: Codable {
@@ -61,7 +64,12 @@ final class Store: ObservableObject {
     static let shared = Store()
 
     @Published var projects: [ForgeProject] = []
-    @Published var selection: String? { didSet { markRead() } }
+    @Published var selection: String? {
+        didSet {
+            markRead()
+            if let oldValue, oldValue != selection { discardIfUnused(oldValue) }
+        }
+    }
     /// Apps whose chat finished a turn while you were looking elsewhere.
     @Published var unread: Set<String> = []
     @Published var logs: [String: [LogLine]] = [:]
@@ -72,9 +80,12 @@ final class Store: ObservableObject {
     @Published var usage: [String: AppUsage] = [:]
     @Published var icons: [String: NSImage] = [:]
     @Published var pendingImport: PendingImport?
+    /// The app whose Rename… alert is showing.
+    @Published var renaming: ForgeProject?
     private var running: [String: Process] = [:]    // project id → agent process, for Stop
     private var stopped: Set<String> = []
     private var artInProgress: Set<String> = []
+    private var iconDesigns: [String: Task<Void, Never>] = [:]   // icons designed from the first message
     private var tokens: [String: String] = [:]   // gateway token → project id
     private var gateway: Gateway?
 
@@ -87,6 +98,7 @@ final class Store: ObservableObject {
     private init() {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         reload()
+        for project in projects { discardIfUnused(project.id) }
         selection = projects.first?.id
         startGateway()
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
@@ -143,7 +155,8 @@ final class Store: ObservableObject {
         projects = dirs.compactMap { dir in
             guard let data = try? Data(contentsOf: dir.appendingPathComponent(".forge/meta.json")),
                   let meta = try? JSONDecoder().decode(ProjectMeta.self, from: data) else { return nil }
-            return ForgeProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir)
+            return ForgeProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
+                                untitled: meta.untitled ?? false)
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
@@ -189,29 +202,125 @@ final class Store: ObservableObject {
 
     // MARK: - Actions
 
-    func create(name: String, brief: String) {
+    /// New App: an untitled app, straight into its chat. Its first message names it and designs its icon.
+    func create() {
         let project: ForgeProject
         do {
-            project = try Template.scaffold(name: uniqueName(name), in: root)
+            project = try Template.scaffold(name: uniqueName("Untitled"), untitled: true, in: root)
         } catch {
             NSAlert(error: error).runModal()
             return
         }
         reload()
         selection = project.id
-        Task {
-            _ = await Shell.run("git init -q && git add -A && \(Self.commit) -qm 'Scaffold'", cwd: project.dir) { _ in }
-            if brief.trimmed.isEmpty {
-                await run(project)
-            } else {
-                send(brief.trimmed, to: project)
+        chatFocusRequest += 1
+        Task { await initRepo(project, message: "Scaffold") }
+    }
+
+    private func initRepo(_ project: ForgeProject, message: String) async {
+        _ = await Shell.run("git init -q && git add -A && \(Self.commit) -qm \"$FORGE_MESSAGE\"", cwd: project.dir,
+                            env: ["FORGE_MESSAGE": message]) { _ in }
+    }
+
+    /// An untitled app you left without ever using is deleted, so trying New App leaves nothing behind.
+    private func discardIfUnused(_ id: String) {
+        guard let project = projects.first(where: { $0.id == id }), project.untitled,
+              (logs[id] ?? []).isEmpty, queued[id] == nil, !busy.contains(id),
+              !FileManager.default.fileExists(atPath: project.builtURL.path) else { return }
+        try? FileManager.default.removeItem(at: project.dir)
+        projects.removeAll { $0.id == id }
+    }
+
+    /// Nothing has happened in the app but its scaffold, so it can still change its folder and executable name.
+    private func isPristine(_ project: ForgeProject) async -> Bool {
+        var output: [String] = []
+        let status = await Shell.run("test $(git rev-list --count HEAD) -eq 1 && git status --porcelain -- . ':!\(Attachments.folder)'",
+                                     cwd: project.dir) { output.append($0) }
+        return status == 0 && output.allSatisfy { $0.trimmed.isEmpty }
+    }
+
+    /// Renames an app. Before any work happens it is scaffolded afresh under the new name, so its folder,
+    /// executable and bundle ID match. After that only the display name changes: the bundle ID stays,
+    /// so the app keeps its settings and data. Returns the app as it is now.
+    func rename(_ project: ForgeProject, to name: String) async {
+        guard busy.insert(project.id).inserted else { return }
+        finish(await performRename(project, to: name))
+    }
+
+    /// Renames while the app is marked busy, so nothing else starts on it meanwhile.
+    private func performRename(_ project: ForgeProject, to rawName: String) async -> ForgeProject {
+        let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
+        guard !name.isEmpty, name != project.name || project.untitled,
+              let current = projects.first(where: { $0.id == project.id }) else { return project }
+        let unique = uniqueName(name, ignoring: current.id)
+        if await isPristine(current) {
+            return await rescaffold(current, as: unique)
+        }
+
+        let fm = FileManager.default
+        let renamed = ForgeProject(id: current.id, name: unique, exe: current.exe, dir: current.dir)
+        try? JSONEncoder().encode(ProjectMeta(name: unique, exe: current.exe))
+            .write(to: current.dir.appendingPathComponent(".forge/meta.json"))
+        if fm.fileExists(atPath: current.installedURL.path) {
+            try? fm.moveItem(at: current.installedURL, to: renamed.installedURL)
+            _ = await Shell.run(Self.lsregister + " -f \"$FORGE_APP\"", cwd: current.dir,
+                                env: ["FORGE_APP": renamed.installedURL.path]) { _ in }
+        }
+        // The old name in window titles and APP.md. Anything subtler is left for the agent.
+        let sources = current.dir.appendingPathComponent("Sources")
+        let files = (fm.enumerator(at: sources, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
+            .filter { $0.pathExtension == "swift" && $0.lastPathComponent != "ForgeSupport.swift" }
+        for file in files {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let updated = text.replacingOccurrences(of: "\"\(current.name)\"", with: "\"\(unique)\"")
+            if updated != text { try? updated.write(to: file, atomically: true, encoding: .utf8) }
+        }
+        let appMd = current.dir.appendingPathComponent("APP.md")
+        if let text = try? String(contentsOf: appMd, encoding: .utf8), text.hasPrefix("# \(current.name)\n") {
+            try? ("# \(unique)\n" + text.dropFirst(current.name.count + 3)).write(to: appMd, atomically: true, encoding: .utf8)
+        }
+        _ = await Shell.run("git add -A && \(Self.commit) -qm \"$FORGE_MESSAGE\"", cwd: current.dir,
+                            env: ["FORGE_MESSAGE": "Rename to \(unique)"]) { _ in }
+        reload()
+        log(renamed, .status, "Renamed to \(unique)")
+        return renamed
+    }
+
+    /// Replaces an untouched app with a fresh scaffold under its new name, carrying over its chat and queue.
+    private func rescaffold(_ old: ForgeProject, as name: String) async -> ForgeProject {
+        let fm = FileManager.default
+        let project: ForgeProject
+        do {
+            project = try Template.scaffold(name: name, in: root)
+        } catch {
+            NSAlert(error: error).runModal()
+            return old
+        }
+        for path in [".forge/chat.json", ".forge/usage.json", Attachments.folder] {
+            let from = old.dir.appendingPathComponent(path)
+            if fm.fileExists(atPath: from.path) {
+                try? fm.copyItem(at: from, to: project.dir.appendingPathComponent(path))
             }
         }
+        await initRepo(project, message: "Scaffold")
+        await quit(old)
+        try? fm.removeItem(at: old.installedURL)
+        try? fm.removeItem(at: old.dir)
+
+        logs[project.id] = logs.removeValue(forKey: old.id)
+        usage[project.id] = usage.removeValue(forKey: old.id)
+        queued[project.id] = queued.removeValue(forKey: old.id)
+        if busy.remove(old.id) != nil { busy.insert(project.id) }
+        if unread.remove(old.id) != nil { unread.insert(project.id) }
+        tokens = tokens.filter { $0.value != old.id }
+        reload()
+        if selection == old.id { selection = project.id }
+        return project
     }
 
     /// Display names must be unique: each app installs as "<name>.app" in ~/Applications/Forge Apps.
-    private func uniqueName(_ name: String) -> String {
-        let taken = Set(projects.map { $0.name.lowercased() })
+    private func uniqueName(_ name: String, ignoring id: String? = nil) -> String {
+        let taken = Set(projects.filter { $0.id != id }.map { $0.name.lowercased() })
         let base = name.trimmed
         var candidate = base
         var n = 2
@@ -372,6 +481,27 @@ final class Store: ObservableObject {
         startQueued(project)
     }
 
+    /// The first message bootstraps the app: it names an untitled app, then designs the icon
+    /// while the agent builds the first version. Returns the app as it is now.
+    private func bootstrap(_ project: ForgeProject, brief: String) async -> ForgeProject {
+        var project = project
+        if project.untitled, let name = await AppName.suggest(for: brief) {
+            project = await performRename(project, to: name)
+        }
+        if Icons.load(project) == nil {
+            let designing = project
+            iconDesigns[project.id] = Task {
+                let spec = await Icons.design(for: designing, brief: brief)
+                if Icons.load(designing) == nil {
+                    Icons.save(spec, for: designing)
+                    await renderIcon(designing, spec: spec)
+                }
+                iconDesigns[designing.id] = nil
+            }
+        }
+        return project
+    }
+
     func unqueue(_ message: QueuedMessage, from project: ForgeProject) {
         queued[project.id]?.removeAll { $0.id == message.id }
     }
@@ -380,12 +510,16 @@ final class Store: ObservableObject {
         guard let messages = queued[project.id], !messages.isEmpty,
               busy.insert(project.id).inserted else { return }
         queued[project.id] = nil
+        let first = !(logs[project.id] ?? []).contains { $0.kind == .user }
         Task {
+            var project = project
+            let saved = post(messages, to: project)
+            if first { project = await bootstrap(project, brief: messages.map(\.text).joined(separator: "\n\n")) }
             defer {
                 if selection != project.id || !NSApp.isActive { unread.insert(project.id) }
                 finish(project)
             }
-            await turn(messages, on: project)
+            await turn(messages, attachments: saved, on: project)
         }
     }
 
@@ -395,14 +529,19 @@ final class Store: ObservableObject {
         startQueued(project)
     }
 
-    /// One turn of the loop: agent edits → build (agent fixes failures) → commit → relaunch.
-    private func turn(_ messages: [QueuedMessage], on project: ForgeProject) async {
+    /// Puts the messages in the chat and their files in Attachments/. Returns the saved file names.
+    private func post(_ messages: [QueuedMessage], to project: ForgeProject) -> [String] {
         var saved: [String] = []
         for message in messages {
             let names = Attachments.save(message.attachments, to: project)
             log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
             saved += names
         }
+        return saved
+    }
+
+    /// One turn of the loop: agent edits → build (agent fixes failures) → commit → relaunch.
+    private func turn(_ messages: [QueuedMessage], attachments saved: [String], on project: ForgeProject) async {
         let prompt = messages.map(\.text).joined(separator: "\n\n")
 
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
@@ -629,6 +768,8 @@ final class Store: ObservableObject {
         // Added here rather than in build.sh so apps made before this change get them too.
         _ = await Shell.run("""
             P="$FORGE_APP/Contents/Info.plist"
+            plutil -replace CFBundleName -string "$FORGE_NAME" "$P" && \
+            plutil -replace CFBundleDisplayName -string "$FORGE_NAME" "$P" && \
             plutil -replace NSMicrophoneUsageDescription -string "$FORGE_NAME listens to your microphone." "$P" && \
             plutil -replace NSSpeechRecognitionUsageDescription -string "$FORGE_NAME turns your speech into text." "$P" && \
             plutil -replace NSCameraUsageDescription -string "$FORGE_NAME uses your camera." "$P"
@@ -667,7 +808,7 @@ final class Store: ObservableObject {
         // Nudge Finder, the Dock and Launchpad to pick up the new icon.
         try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: project.installedURL.path)
         _ = await Shell.run(
-            "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f \"$FORGE_APP\"",
+            Self.lsregister + " -f \"$FORGE_APP\"",
             cwd: project.dir, env: ["FORGE_APP": project.installedURL.path]) { _ in }
     }
 
@@ -675,7 +816,9 @@ final class Store: ObservableObject {
 
     /// Makes sure icon.json exists, then renders it (with cached artwork if there is any).
     private func prepareIcon(_ project: ForgeProject) async {
+        await iconDesigns[project.id]?.value
         var spec = Icons.load(project)
+        if spec == nil && project.untitled { return }   // keeps its placeholder until the first message
         if spec == nil {
             log(project, .status, "Designing an icon…")
             spec = await Icons.design(for: project)
@@ -841,6 +984,8 @@ final class Store: ObservableObject {
         }
     }
 
+    private static let lsregister =
+        "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
     private static let commit = "git -c user.name=Forge -c user.email=forge@localhost commit"
 }
 
