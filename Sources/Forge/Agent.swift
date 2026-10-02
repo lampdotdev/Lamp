@@ -2,7 +2,9 @@ import Foundation
 
 enum AgentEvent {
     case text(String)
-    case tool(String)
+    /// A tool call as shown in the chat ("grep cache.json"), and the whole call with its arguments,
+    /// which is what tells a repeated call from a similar one.
+    case tool(String, call: String)
     case cost(Double)
     case failed(String)
     case raw(String)
@@ -208,7 +210,7 @@ enum Agent {
         case "tool_execution_start":
             let name = obj["toolName"] as? String ?? "tool"
             let args = obj["args"] as? [String: Any] ?? [:]
-            var events: [AgentEvent] = [.tool(describe(name, args))]
+            var events: [AgentEvent] = [.tool(describe(name, args), call: callKey(name, args))]
             if name == "plan", let parts = args["parts"] as? [[String: Any]] {
                 events.append(.plan(parts.enumerated().compactMap { index, part in
                     (part["title"] as? String).map {
@@ -236,6 +238,12 @@ enum Agent {
             break
         }
         return []
+    }
+
+    /// A tool call in full: its name and every argument, in a stable order.
+    static func callKey(_ name: String, _ args: [String: Any]) -> String {
+        let json = (try? JSONSerialization.data(withJSONObject: args, options: .sortedKeys)).map { String(decoding: $0, as: UTF8.self) }
+        return "\(name) \(json ?? "")"
     }
 
     private static func describe(_ name: String, _ args: [String: Any]) -> String {

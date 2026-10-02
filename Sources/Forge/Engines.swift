@@ -238,7 +238,9 @@ extension Agent {
             return content.compactMap { block in
                 switch block["type"] as? String {
                 case "text": (block["text"] as? String)?.trimmed.nilIfEmpty.map(AgentEvent.text)
-                case "tool_use": .tool(tool(block["name"] as? String ?? "Tool", block["input"] as? [String: Any] ?? [:]))
+                case "tool_use":
+                    .tool(tool(block["name"] as? String ?? "Tool", block["input"] as? [String: Any] ?? [:]),
+                          call: callKey(block["name"] as? String ?? "Tool", block["input"] as? [String: Any] ?? [:]))
                 default: nil
                 }
             }
@@ -261,10 +263,14 @@ extension Agent {
         case ("item.completed", "agent_message"):
             return (item["text"] as? String)?.trimmed.nilIfEmpty.map { [.text($0)] } ?? []
         case ("item.started", "command_execution"):
-            return [.tool("Run: \(item["command"] as? String ?? "")")]
+            let command = "Run: \(item["command"] as? String ?? "")"
+            return [.tool(command, call: command)]
         case ("item.completed", "file_change"):
             let paths = (item["changes"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String }
-            return [.tool("Edit \(paths.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))")]
+            // Codex doesn't say what an edit changed, so two edits to one file can't be told apart:
+            // each counts as its own step.
+            return [.tool("Edit \(paths.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))",
+                          call: item["id"] as? String ?? UUID().uuidString)]
         case ("error", _), ("turn.failed", _):
             let raw = obj["message"] as? String ?? ((obj["error"] as? [String: Any])?["message"] as? String) ?? "Codex failed."
             // Codex nests the API error as JSON text; surface its message.
@@ -285,7 +291,8 @@ extension Agent {
             if let text = (part["text"] as? String)?.trimmed.nilIfEmpty { events.append(.text(text)) }
         case "tool_use":
             let state = part["state"] as? [String: Any] ?? [:]
-            events.append(.tool(tool(part["tool"] as? String ?? "tool", state["input"] as? [String: Any] ?? [:])))
+            events.append(.tool(tool(part["tool"] as? String ?? "tool", state["input"] as? [String: Any] ?? [:]),
+                                call: callKey(part["tool"] as? String ?? "tool", state["input"] as? [String: Any] ?? [:])))
         case "step_finish":
             if let cost = part["cost"] as? Double, cost > 0 { events.append(.cost(cost)) }
         case "error":
