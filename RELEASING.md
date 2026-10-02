@@ -60,6 +60,14 @@ copied out of the DMG. Then it packages a drag-to-Applications DMG, notarizes an
 verifies both with Gatekeeper. `SKIP_NOTARIZE=1` stops after the signed DMG,
 which is useful for checking signing without submitting to Apple.
 
+## Version numbers
+
+A release's version is its tag: `v0.3.1` builds Forge 0.3.1. Nothing bumps it automatically; the person
+tagging picks the next number.
+
+A local `./build.sh` takes its version from git, so it says which release it's ahead of: `0.3.1` on the
+tag itself, `0.3.1+6` six commits later. Without git or without the tags fetched it falls back to `0.1`.
+
 ## Release from CI
 
 `.github/workflows/mac-release.yml` builds, signs, notarizes and publishes on every `v*` tag:
