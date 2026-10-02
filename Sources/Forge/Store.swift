@@ -618,7 +618,9 @@ final class Store: ObservableObject {
               busy.insert(project.id).inserted else { return }
         queued[project.id] = nil
         let first = !(logs[project.id] ?? []).contains { $0.kind == .user }
-        progress[project.id] = TurnProgress(newApp: first)
+        // An imported app's first message isn't a new app: it has already been built.
+        let newApp = first && Template.isScaffold(project)
+        progress[project.id] = TurnProgress(newApp: newApp)
         Task {
             var project = project
             let saved = post(messages, to: project)
@@ -632,7 +634,7 @@ final class Store: ObservableObject {
             var result = TurnResult(end: .failed, watched: true)
             defer {
                 // A new app's card stays, showing the result; a later turn's activity line goes away.
-                if first { progress[project.id]?.finish(worked: worked) } else { progress[project.id] = nil }
+                if newApp { progress[project.id]?.finish(worked: worked) } else { progress[project.id] = nil }
                 if selection != project.id || !NSApp.isActive { unread.insert(project.id) }
                 // Messages queued meanwhile start the next turn straight away; tell the user once it's all done.
                 if !result.watched, (queued[project.id] ?? []).isEmpty { notify(project, after: result.end) }
@@ -640,7 +642,7 @@ final class Store: ObservableObject {
             }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
             worked = result.end != .failed
-            if first && worked { await showResult(of: project) }
+            if newApp && worked { await showResult(of: project) }
         }
     }
 
