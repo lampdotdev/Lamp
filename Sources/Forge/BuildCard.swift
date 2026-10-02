@@ -56,6 +56,7 @@ struct TurnProgress {
         case .read: return file.hasPrefix("screenshot") ? "Looking at the app" : file.isEmpty ? "Reading the code" : "Reading \(file)"
         case .write: return file.isEmpty ? "Writing a file" : "Writing \(file)"
         case .edit: return file.isEmpty ? "Editing a file" : "Editing \(file)"
+        case .delete: return file.isEmpty ? "Deleting a file" : "Deleting \(file)"
         case .run: return "Running a command"
         case .search: return "Searching the code"
         case .list: return "Looking through the files"

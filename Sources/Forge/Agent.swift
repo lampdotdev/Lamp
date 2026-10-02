@@ -15,11 +15,11 @@ enum AgentEvent {
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
 /// pi only gets file tools: Forge does the building and feeds compiler errors back.
 enum Agent {
-    static var tools: String { "read,edit,write,grep,find,ls" + (forgeTools == nil ? "" : ",look_at_app,plan") }
+    static var tools: String { "read,edit,write,grep,find,ls" + (forgeTools == nil ? "" : ",look_at_app,plan,delete_file") }
 
     /// Forge's own tools for pi (Resources/forge-tools.ts): `look_at_app` has Forge build and open the app
-    /// mid-turn and shows the agent the result; `plan` is the checklist on the build card. Other engines
-    /// don't have them.
+    /// mid-turn and shows the agent the result; `plan` is the checklist on the build card; `delete_file`
+    /// removes a file, which pi's own tools can't. Other engines don't have them.
     static var forgeTools: URL? {
         let url = Bundle.main.resourceURL?.appendingPathComponent("forge-tools.ts")
         return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
@@ -35,6 +35,8 @@ enum Agent {
     user's own words (what they'll be able to do, never file or type names) and, for each part, the files \
     you'll write for it. Forge ticks a part off when its files are written, so the user watches the list \
     fill in while they wait. Give every file to exactly one part. Don't use it for small changes.
+    - `delete_file` removes a file the app no longer needs, for example after moving its code elsewhere or \
+    removing a screen. Never leave an emptied file behind instead.
     """
 
     /// pi ships inside Forge.app (see build.sh).

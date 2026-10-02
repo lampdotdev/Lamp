@@ -3,7 +3,7 @@ import SwiftUI
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, run, search, list, web, plan, delegate, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, other }
 
     let name: String
     let argument: String
@@ -31,6 +31,7 @@ struct ToolCall {
         "edit": .edit, "multiedit": .edit, "patch": .edit, "apply_patch": .edit, "notebookedit": .edit,
         "bash": .run, "run": .run, "shell": .run,
         "grep": .search, "glob": .search, "find": .search, "search": .search,
+        "delete_file": .delete,
         "ls": .list, "list": .list,
         "webfetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
@@ -41,6 +42,7 @@ struct ToolCall {
         case .read: "doc.text"
         case .write: "square.and.pencil"
         case .edit: "pencil"
+        case .delete: "trash"
         case .run: "terminal"
         case .search: "magnifyingglass"
         case .list: "folder"
@@ -56,6 +58,7 @@ struct ToolCall {
         case .read: "Read"
         case .write: "Wrote"
         case .edit: "Edited"
+        case .delete: "Deleted"
         case .run: "Ran"
         case .search: "Searched"
         case .list: "Listed"
@@ -73,6 +76,7 @@ struct ToolCall {
         case .read: "read \(n("file", "files"))"
         case .write: "wrote \(n("file", "files"))"
         case .edit: "edited \(n("file", "files"))"
+        case .delete: "deleted \(n("file", "files"))"
         case .run: "ran \(n("command", "commands"))"
         case .search: "ran \(n("search", "searches"))"
         case .list: "listed \(n("folder", "folders"))"
