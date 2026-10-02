@@ -29,11 +29,24 @@ struct AppUsage: Codable {
 }
 
 struct LogLine: Identifiable, Codable {
-    enum Kind: String, Codable { case user, agent, status, error, detail }
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary }
     var id = UUID()
     let kind: Kind
     let text: String
     var attachments: [String]? = nil   // names in the app's Attachments/ folder
+
+    /// Hidden unless Agent Details is on.
+    var isDetail: Bool { kind == .detail || kind == .tool || kind == .summary }
+
+    /// Chats saved before tool calls and run summaries had their own kinds logged them as plain details.
+    var upgraded: LogLine {
+        guard kind == .detail else { return self }
+        if text.range(of: #"^\S.* (done|error) · \d+s · \$[\d.]+$"#, options: .regularExpression) != nil {
+            return LogLine(id: id, kind: .summary, text: text)
+        }
+        if ToolCall(text).isKnown { return LogLine(id: id, kind: .tool, text: text) }
+        return self
+    }
 }
 
 /// A message typed while the app was busy. It waits in the chat until the current work finishes.
@@ -144,7 +157,7 @@ final class Store: ObservableObject {
             let forge = project.dir.appendingPathComponent(".forge")
             if let data = try? Data(contentsOf: forge.appendingPathComponent("chat.json")),
                let saved = try? JSONDecoder().decode([LogLine].self, from: data) {
-                logs[project.id] = saved
+                logs[project.id] = saved.map(\.upgraded)
             }
             if let data = try? Data(contentsOf: forge.appendingPathComponent("usage.json")),
                let saved = try? JSONDecoder().decode(AppUsage.self, from: data) {
@@ -466,7 +479,7 @@ final class Store: ObservableObject {
                 switch event {
                 case .text(let text): log(project, .agent, text)
                 case .tool(let text):
-                    log(project, .detail, text)
+                    log(project, .tool, text)
                     toolCalls += 1
                     repeats = text == lastTool ? repeats + 1 : 1
                     lastTool = text
@@ -484,7 +497,7 @@ final class Store: ObservableObject {
             }
         }
         running[project.id] = nil
-        log(project, .detail, String(format: "%@ %@ · %.0fs · $%.2f", engine.title, failure == nil ? "done" : "error",
+        log(project, .summary, String(format: "%@ %@ · %.0fs · $%.2f", engine.title, failure == nil ? "done" : "error",
                                      Date().timeIntervalSince(started), cost))
         recordAgent(project, cost: cost)
         if stopped.remove(project.id) != nil {

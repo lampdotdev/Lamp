@@ -269,7 +269,7 @@ struct ProjectView: View {
     @State private var dismissedSuggestion: String?
 
     private var lines: [LogLine] {
-        (store.logs[project.id] ?? []).filter { showDetails || $0.kind != .detail }
+        (store.logs[project.id] ?? []).filter { showDetails || !$0.isDetail }
     }
     private var busy: Bool { store.busy.contains(project.id) }
     private var queued: [QueuedMessage] { store.queued[project.id] ?? [] }
@@ -284,18 +284,22 @@ struct ProjectView: View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         if lines.isEmpty {
                             Text("Describe what \(project.name) should do, or what to change. Forge builds it and opens it for you. While using the app, press ⇧⌘E to come back here and ask for changes.")
                                 .foregroundStyle(.secondary)
                         }
-                        ForEach(lines) { LogRow(line: $0, dir: project.dir) }
+                        Transcript(lines: lines, dir: project.dir, busy: busy)
                         ForEach(queued) { message in
                             QueuedRow(message: message) { store.unqueue(message, from: project) }
+                                .padding(.top, lines.isEmpty ? 0 : 32)
                         }
                         Color.clear.frame(height: 1).id("bottom")
                     }
-                    .padding()
+                    // A readable line length; wide windows get margins instead of longer lines.
+                    .frame(maxWidth: 640)
+                    .padding(.horizontal, 20).padding(.vertical, 16)
+                    .frame(maxWidth: .infinity)
                 }
                 .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
                 .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
@@ -594,64 +598,15 @@ struct QueuedRow: View {
                     .buttonStyle(.plain)
                     .help("Remove from the queue")
                 Text(message.text)
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                    .lineSpacing(2)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+                    .frame(maxWidth: 480, alignment: .trailing)
                     .foregroundStyle(.secondary)
             }
             Label("Queued", systemImage: "clock").font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
-    }
-}
-
-struct LogRow: View {
-    let line: LogLine
-    let dir: URL
-
-    var body: some View {
-        switch line.kind {
-        case .user:
-            VStack(alignment: .trailing, spacing: 6) {
-                if let names = line.attachments, !names.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(names, id: \.self) { name in
-                            let url = dir.appendingPathComponent(Attachments.folder).appendingPathComponent(name)
-                            Button { NSWorkspace.shared.open(url) } label: {
-                                if Attachments.isImage(url) {
-                                    AttachmentThumbnail(url: url, size: 72)
-                                } else {
-                                    AttachmentChip(url: url)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .help(name)
-                        }
-                    }
-                }
-                Text(line.text)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
-        case .agent:
-            Text((try? AttributedString(markdown: line.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-                 ?? AttributedString(line.text))
-                .textSelection(.enabled)
-        case .status:
-            Label(line.text, systemImage: "checkmark.circle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case .error:
-            Label(line.text, systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
-        case .detail:
-            Text(line.text)
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .lineLimit(12)
-        }
     }
 }
 
