@@ -1588,7 +1588,8 @@ final class Store: ObservableObject {
                 return (400, ["error": "A decision needs `state` and at least one question."])
             }
             do {
-                let (answers, cost) = try await AppAI.decide(state: state, questions: questions)
+                let (answers, cost) = try await AppAI.decide(state: state, questions: questions,
+                                                             model: AppModels.load(project).decision)
                 record(project, cost: cost)
                 return (200, ["answers": answers])
             } catch let failure as AppAI.Failure {
@@ -1608,13 +1609,15 @@ final class Store: ObservableObject {
             }
             if request.path == "/ai/image" {
                 let (png, cost) = try await AppAI.image(prompt: prompt, references: images,
-                                                        aspectRatio: body["aspect_ratio"] as? String)
+                                                        aspectRatio: body["aspect_ratio"] as? String,
+                                                        model: AppModels.load(project).image)
                 record(project, cost: cost)
                 return (200, ["image": png.base64EncodedString(), "media_type": "image/png"])
             }
             let (text, cost) = try await AppAI.complete(prompt: prompt, images: images,
                                                          system: body["system"] as? String ?? "",
-                                                         json: body["json"] as? Bool ?? false)
+                                                         json: body["json"] as? Bool ?? false,
+                                                         appModel: AppModels.load(project).text)
             record(project, cost: cost)
             return (200, ["text": text])
         } catch let failure as AppAI.Failure {
@@ -1740,4 +1743,25 @@ final class Store: ObservableObject {
 
 extension String {
     var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+}
+
+/// One app's own choice of models for its AI features, in .forge/models.json. nil uses Forge's default
+/// from Settings → Apps.
+struct AppModels: Codable, Equatable {
+    var text: String?       // an id from AppAI.models
+    var image: String?      // an id from Icons.artModels
+    var decision: String?   // an id from AppAI.decisionModels
+
+    private static func url(_ project: ForgeProject) -> URL { project.dir.appendingPathComponent(".forge/models.json") }
+
+    static func load(_ project: ForgeProject) -> AppModels {
+        (try? Data(contentsOf: url(project))).flatMap { try? JSONDecoder().decode(AppModels.self, from: $0) } ?? AppModels()
+    }
+
+    func save(_ project: ForgeProject) {
+        let url = Self.url(project)
+        if self == AppModels() { try? FileManager.default.removeItem(at: url); return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? JSONEncoder().encode(self).write(to: url)
+    }
 }

@@ -85,11 +85,17 @@ enum AppAI {
     static let models: [(id: String, label: String, openRouter: String)] = [
         ("haiku", "Fast & cheap (Claude Haiku)", "anthropic/claude-haiku-4.5"),
         ("sonnet", "Smarter (Claude Sonnet)", "anthropic/claude-sonnet-5.5"),
+        ("opus", "Smartest (Claude Opus, pricier)", "anthropic/claude-opus-5.5"),
     ]
 
     static var model: (id: String, label: String, openRouter: String) {
         let id = UserDefaults.standard.string(forKey: "appModel") ?? "haiku"
         return models.first { $0.id == id } ?? models[0]
+    }
+
+    /// The text model for one app: its own choice (info panel), or the default from Settings.
+    static func model(for choice: String?) -> (id: String, label: String, openRouter: String) {
+        models.first { $0.id == choice } ?? model
     }
 
     struct Failure: Error { let message: String }
@@ -107,14 +113,16 @@ enum AppAI {
     }
 
     /// `model` overrides the in-app model (an OpenRouter model ID), e.g. for Forge's own import review.
+    /// `appModel` is an app's own text model (an id from `models`), when it has one.
     static func complete(prompt: String, images: [Image], system: String, json: Bool,
-                         model: String? = nil) async throws -> (String, Double) {
+                         model: String? = nil, appModel: String? = nil) async throws -> (String, Double) {
+        let chosen = Self.model(for: appModel)
         var system = system
         if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
         let (text, cost): (String, Double)
         if Provider.hasKey {
             (text, cost) = try await viaOpenRouter(prompt: prompt, images: images, system: system,
-                                                   model: model ?? Self.model.openRouter)
+                                                   model: model ?? chosen.openRouter)
         } else if Builder.engine == .pi {
             // No OpenRouter key: use whatever builds apps.
             switch Builder.piProvider {
@@ -131,7 +139,8 @@ enum AppAI {
             }
         } else if ToolLocator.path(for: Builder.engine) != nil {
             // No OpenRouter key: use the Claude Code, Codex or opencode sign-in that builds apps.
-            (text, cost) = try await viaEngine(Builder.engine, prompt: prompt, images: images, system: system)
+            (text, cost) = try await viaEngine(Builder.engine, prompt: prompt, images: images, system: system,
+                                               model: chosen.id)
         } else {
             throw Failure(message: "Apps' AI features need an OpenRouter key, or a working builder. Set one up in Forge → Settings (⌘,).")
         }
@@ -181,7 +190,7 @@ enum AppAI {
     /// One-shot answer from an external coding agent, using the user's own sign-in (and so their subscription).
     /// Isolated from their setup like a build turn, with no tools except reading the images it's given.
     private static func viaEngine(_ engine: Engine, prompt: String, images: [Image],
-                                  system: String) async throws -> (String, Double) {
+                                  system: String, model: String) async throws -> (String, Double) {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("forge-ai-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -201,7 +210,7 @@ enum AppAI {
         case .claude:
             // Claude Code takes images by reading them, so it gets the Read tool and their names.
             if !files.isEmpty { env["FORGE_PROMPT"] = prompt + "\n\n(Images: " + files.joined(separator: ", ") + ". Read them.)" }
-            env["FORGE_MODEL"] = model.id   // "haiku" or "sonnet": Claude Code's own aliases
+            env["FORGE_MODEL"] = model   // "haiku", "sonnet" or "opus": Claude Code's own aliases
             command = """
             "$FORGE_TOOL" -p "$FORGE_PROMPT" --output-format stream-json --verbose --no-session-persistence \\
               --restricted --strict-mcp-config --disable-slash-commands \\
@@ -289,8 +298,9 @@ enum AppAI {
 
     /// Sends `state` and typed `questions` (TypeSafe's System One format) to the decision model.
     /// Returns the answers keyed like the questions, and the cost in USD.
-    static func decide(state: Any, questions: [String: Any]) async throws -> ([String: Any], Double) {
-        let choice = decisionModel
+    static func decide(state: Any, questions: [String: Any],
+                       model appChoice: String? = nil) async throws -> ([String: Any], Double) {
+        let choice = decisionModels.first { $0.id == appChoice } ?? decisionModel
         guard let key = KeyStore.key(for: choice.provider) else {
             let name = choice.provider == "typesafe" ? "a TypeSafe" : "an OpenRouter"
             throw Failure(message: "Decisions need \(name) key. Add one in Forge → Settings (⌘,) → AI.")
@@ -330,7 +340,8 @@ enum AppAI {
 
     /// Creates or edits an image with the image model from Settings, via OpenRouter's image API.
     /// `references` are input images to edit or combine. Returns PNG data and the cost in USD.
-    static func image(prompt: String, references: [Image], aspectRatio: String?) async throws -> (Data, Double) {
+    static func image(prompt: String, references: [Image], aspectRatio: String?,
+                      model appChoice: String? = nil) async throws -> (Data, Double) {
         guard Provider.hasKey else {
             throw Failure(message: "Forge needs an OpenRouter key before apps can use AI. Add one in Forge → Settings (⌘,).")
         }
@@ -340,7 +351,8 @@ enum AppAI {
         request.setValue("Bearer \(KeyStore.openRouterKey ?? "")", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Forge", forHTTPHeaderField: "X-Title")
-        var body: [String: Any] = ["model": Icons.artModel, "prompt": prompt, "n": 1, "output_format": "png"]
+        let imageModel = Icons.artModels.contains { $0.id == appChoice } ? appChoice! : Icons.artModel
+        var body: [String: Any] = ["model": imageModel, "prompt": prompt, "n": 1, "output_format": "png"]
         if let aspectRatio { body["aspect_ratio"] = aspectRatio }
         if !references.isEmpty {
             body["input_references"] = references.map {

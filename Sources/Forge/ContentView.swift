@@ -681,9 +681,14 @@ struct ProjectView: View {
 struct AppInfoView: View {
     @EnvironmentObject private var store: Store
     let project: ForgeProject
-    @AppStorage("appModel") private var appModel = AppAI.model.id
-    @AppStorage("imageModel") private var imageModel = Icons.artModel
-    /// Bumped when Settings changes the builder, whose model lives under a per-provider key.
+    /// This app's own model choices; nil fields follow Settings.
+    @State private var models: AppModels
+
+    init(project: ForgeProject) {
+        self.project = project
+        _models = State(initialValue: AppModels.load(project))
+    }
+    /// Bumped when Settings changes, so the defaults shown are current.
     @State private var settingsRevision = 0
 
     private var usage: AppUsage { store.usage[project.id] ?? AppUsage() }
@@ -717,17 +722,36 @@ struct AppInfoView: View {
             }
             Section {
                 let _ = settingsRevision
+                Picker("Text and pictures", selection: choice(\.text)) {
+                    Text("Default: \(Self.short(AppAI.model.label))").tag("")
+                    Divider()
+                    ForEach(AppAI.models, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
+                }
+                Picker("Making images", selection: choice(\.image)) {
+                    Text("Default: \(Self.short(label(Icons.artModels, Icons.artModel)))").tag("")
+                    Divider()
+                    ForEach(Icons.artModels, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
+                }
+                Picker("Decisions", selection: choice(\.decision)) {
+                    Text("Default: \(AppAI.decisionModel.label)").tag("")
+                    Divider()
+                    ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }
+                }
+            } header: {
+                Text("AI inside this app")
+            } footer: {
+                Text(Provider.hasKey ? "Applies straight away, without rebuilding." : "Without an OpenRouter key, text uses whatever builds your apps.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                let _ = settingsRevision
                 LabeledContent("Agent", value: Builder.engine.title)
                 if Builder.engine == .pi {
                     LabeledContent("Provider", value: providerName)
                     if !Builder.piModel.isEmpty { LabeledContent("Building with", value: buildModel) }
                 }
-                LabeledContent("Inside your apps", value: Provider.hasKey
-                               ? AppAI.models.first { $0.id == appModel }?.label ?? appModel
-                               : "Same as building")
-                LabeledContent("Images", value: label(Icons.artModels, imageModel))
             } header: {
-                Text("Models")
+                Text("Building")
             } footer: {
                 SettingsLink { Text("Change in Settings…") }
                     .buttonStyle(.link)
@@ -752,6 +776,23 @@ struct AppInfoView: View {
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
             settingsRevision += 1
         }
+        .onChange(of: project.id) { models = AppModels.load(project) }
+    }
+
+    /// A model's name without the description Settings shows: "Fast & cheap (Claude Haiku)" → "Claude Haiku",
+    /// "Nano Banana 2 (Gemini 3.1 Flash Image)" → "Nano Banana 2". The panel is narrow.
+    static func short(_ label: String) -> String {
+        guard let open = label.firstIndex(of: "(") else { return label }
+        let inside = String(label[label.index(after: open)...].prefix { $0 != ")" }).components(separatedBy: ",")[0]
+        return inside.hasPrefix("Claude") ? inside : String(label[..<open]).trimmed
+    }
+
+    /// One of this app's model choices, with "" for Forge's default.
+    private func choice(_ field: WritableKeyPath<AppModels, String?>) -> Binding<String> {
+        Binding(get: { models[keyPath: field] ?? "" }, set: {
+            models[keyPath: field] = $0.isEmpty ? nil : $0
+            models.save(project)
+        })
     }
 
     private var providerName: String {
