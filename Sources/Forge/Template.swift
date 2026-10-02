@@ -130,7 +130,10 @@ enum Template {
 
     /// Adds "Edit with Forge…" (⇧⌘E), which jumps back to this app's chat in Forge.
     struct ForgeCommands: Commands {
-        init() { ForgeRuntime.start }
+        init() {
+            ForgeRuntime.start
+            ForgeWindows.start
+        }
 
         var body: some Commands {
             CommandGroup(after: .appInfo) {
@@ -139,6 +142,40 @@ enum Template {
                 }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             }
+        }
+    }
+
+    /// Lets Forge's Play button bring this app back with a window: macOS's "reopen" request doesn't make a
+    /// SwiftUI app open one when another app asks, so Forge sends this message instead.
+    enum ForgeWindows {
+        static let start: Void = {
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("dev.forge.showWindow"), object: Bundle.main.bundleIdentifier, queue: .main
+            ) { _ in
+                MainActor.assumeIsolated { show() }
+            }
+        }()
+
+        @MainActor static func show() {
+            NSApp.unhide(nil)
+            let windows = NSApp.windows.filter { $0.canBecomeMain }
+            if let minimized = windows.first(where: \.isMiniaturized), !windows.contains(where: \.isVisible) {
+                minimized.deminiaturize(nil)
+            } else if !windows.contains(where: \.isVisible), let item = newWindowItem(in: NSApp.mainMenu),
+                      let menu = item.menu {
+                // SwiftUI's File ▸ New … Window (⌘N).
+                menu.performActionForItem(at: menu.index(of: item))
+            }
+            NSApp.activate()
+            NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+        }
+
+        private static func newWindowItem(in menu: NSMenu?) -> NSMenuItem? {
+            for item in menu?.items ?? [] {
+                if item.keyEquivalent == "n", item.keyEquivalentModifierMask == .command, item.isEnabled { return item }
+                if let found = newWindowItem(in: item.submenu) { return found }
+            }
+            return nil
         }
     }
 

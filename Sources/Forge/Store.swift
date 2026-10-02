@@ -745,8 +745,17 @@ final class Store: ObservableObject {
     /// nothing installed yet (or the installed copy was deleted).
     func open(_ project: ForgeProject) async {
         if let running = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first {
+            // Ask the app to show a window (opening a new one if all were closed); see ForgeWindows.
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name("dev.forge.showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
             running.activate()
-            return
+            // Apps built before this listener existed ignore the message: if one has no window on screen, relaunch it.
+            guard !Self.listensForShowWindow(project) else { return }
+            try? await Task.sleep(for: .seconds(1))
+            guard !Self.hasWindow(running.processIdentifier) else { return }
+            running.terminate()
+            for _ in 0..<30 where !running.isTerminated { try? await Task.sleep(for: .milliseconds(100)) }
+            if !running.isTerminated { running.forceTerminate() }
         }
         guard FileManager.default.fileExists(atPath: project.installedURL.path) else {
             await run(project)
@@ -759,6 +768,19 @@ final class Store: ObservableObject {
         } catch {
             log(project, .error, "Couldn't open the app: \(error.localizedDescription)")
         }
+    }
+
+    /// Whether the installed app was built with ForgeWindows (its binary contains the message name).
+    private static func listensForShowWindow(_ project: ForgeProject) -> Bool {
+        let binary = project.installedURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
+        guard let data = try? Data(contentsOf: binary, options: .alwaysMapped) else { return false }
+        return data.range(of: Data("dev.forge.showWindow".utf8)) != nil
+    }
+
+    /// Whether a process has a normal window on screen (window list metadata needs no permission).
+    private static func hasWindow(_ pid: pid_t) -> Bool {
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        return windows.contains { ($0[kCGWindowOwnerPID as String] as? pid_t) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }
     }
 
     /// Rebuilds the app from its code, reinstalls it and relaunches it.
