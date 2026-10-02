@@ -487,8 +487,8 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Sends a message, or queues it while the app is busy. Everything queued goes out together
-    /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
+    /// Sends a message, or queues it while the app is busy. Queued messages get a turn each, in the
+    /// order they were sent, so every one is answered before the next starts.
     func send(_ prompt: String, attachments: [URL] = [], to project: ForgeProject) {
         queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: attachments))
         startQueued(project)
@@ -520,19 +520,18 @@ final class Store: ObservableObject {
     }
 
     private func startQueued(_ project: ForgeProject) {
-        guard let messages = queued[project.id], !messages.isEmpty,
-              busy.insert(project.id).inserted else { return }
-        queued[project.id] = nil
+        guard let message = queued[project.id]?.first, busy.insert(project.id).inserted else { return }
+        queued[project.id]?.removeFirst()
         let first = !(logs[project.id] ?? []).contains { $0.kind == .user }
         Task {
             var project = project
-            let saved = post(messages, to: project)
-            if first { project = await bootstrap(project, brief: messages.map(\.text).joined(separator: "\n\n")) }
+            let saved = post(message, to: project)
+            if first { project = await bootstrap(project, brief: message.text) }
             defer {
                 if selection != project.id || !NSApp.isActive { unread.insert(project.id) }
                 finish(project)
             }
-            await turn(messages, attachments: saved, on: project)
+            await turn(message.text, attachments: saved, on: project)
         }
     }
 
@@ -542,20 +541,15 @@ final class Store: ObservableObject {
         startQueued(project)
     }
 
-    /// Puts the messages in the chat and their files in Attachments/. Returns the saved file names.
-    private func post(_ messages: [QueuedMessage], to project: ForgeProject) -> [String] {
-        var saved: [String] = []
-        for message in messages {
-            let names = Attachments.save(message.attachments, to: project)
-            log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
-            saved += names
-        }
+    /// Puts the message in the chat and its files in Attachments/. Returns the saved file names.
+    private func post(_ message: QueuedMessage, to project: ForgeProject) -> [String] {
+        let saved = Attachments.save(message.attachments, to: project)
+        log(project, .user, message.text, attachments: saved.isEmpty ? nil : saved)
         return saved
     }
 
     /// One turn of the loop: agent edits → build (agent fixes failures) → commit → relaunch.
-    private func turn(_ messages: [QueuedMessage], attachments saved: [String], on project: ForgeProject) async {
-        let prompt = messages.map(\.text).joined(separator: "\n\n")
+    private func turn(_ prompt: String, attachments saved: [String], on project: ForgeProject) async {
 
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
         let notes = Attachments.note(for: saved) + Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project)
