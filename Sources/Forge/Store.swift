@@ -393,21 +393,42 @@ final class Store: ObservableObject {
         let prompt = messages.map(\.text).joined(separator: "\n\n")
 
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
-        guard await runAgent(prompt + Attachments.note(for: saved), files: files, on: project) else { return }
+        guard await runAgent(prompt + Attachments.note(for: saved) + Runtime.crashNote(for: project),
+                             files: files, on: project),
+              await buildFixingErrors(project) else { return }
+        // Nothing is committed when the agent changed no files.
+        var committed = await Shell.run("git add -A && \(Self.commit) -qm \"$FORGE_PROMPT\"", cwd: project.dir,
+                                        env: ["FORGE_PROMPT": prompt]) { _ in } == 0
+        var crash = await install(project)
+        // Like build errors, a crash on launch goes back to the agent. The fix joins this turn's commit,
+        // so Undo still reverts the whole change.
+        for _ in 0..<2 where crash != nil {
+            log(project, .status, "Fixing the crash…")
+            guard await runAgent("The app builds, but it quit right after launching. Find the cause and fix it.\n\n\(crash!)",
+                                 on: project),
+                  await buildFixingErrors(project) else { return }
+            let commit = committed ? "-q --amend --no-edit" : "-qm 'Fix a crash on launch'"
+            if await Shell.run("git add -A && \(Self.commit) \(commit)", cwd: project.dir) { _ in } == 0 { committed = true }
+            crash = await install(project)
+        }
+        if crash != nil {
+            log(project, .error, "\(project.name) still quits right after opening. Try describing the change differently, or press Undo.")
+        }
+    }
+
+    /// Builds the app, sending compiler errors back to the agent up to three times. False when it still doesn't build.
+    private func buildFixingErrors(_ project: ForgeProject) async -> Bool {
         var errors = await build(project)
         for _ in 0..<3 where errors != nil {
             log(project, .status, "Fixing a build problem…")
             guard await runAgent("The app failed to build. Fix these compiler errors:\n\n\(errors!)",
-                                 on: project) else { return }
+                                 on: project) else { return false }
             errors = await build(project)
         }
-        guard errors == nil else {
+        if errors != nil {
             log(project, .error, "Sorry, I couldn't get that change working. Try describing it differently, or press Undo.")
-            return
         }
-        _ = await Shell.run("git add -A && \(Self.commit) -qm \"$FORGE_PROMPT\"", cwd: project.dir,
-                            env: ["FORGE_PROMPT": prompt]) { _ in }
-        await install(project)
+        return errors == nil
     }
 
     /// Returns false when the agent couldn't run at all (bad key, no credit, …), after telling the user why.
@@ -510,7 +531,7 @@ final class Store: ObservableObject {
         guard busy.insert(project.id).inserted else { return }
         defer { finish(project) }
         if await build(project) == nil {
-            await install(project)
+            await installReportingCrash(project)
         } else {
             log(project, .error, "This app doesn't build right now. Describe a change and I'll fix it, or press Undo.")
         }
@@ -531,7 +552,7 @@ final class Store: ObservableObject {
             try? FileManager.default.removeItem(at: Self.sessionFile(for: project, engine: engine))
         }
         log(project, .status, "Undid the last change")
-        if await build(project) == nil { await install(project) }
+        if await build(project) == nil { await installReportingCrash(project) }
     }
 
     /// Returns nil on success, or the tail of the compiler output on failure.
@@ -540,30 +561,49 @@ final class Store: ObservableObject {
         try? Template.writeSupport(for: project)
         var output: [String] = []
         let status = await Shell.run(Shell.compatibleSDK + "./build.sh", cwd: project.dir) { output.append($0) }
-        guard status != 0 else { return nil }
+        guard status != 0 else {
+            Runtime.markBuilt(project)
+            return nil
+        }
         let tail = output.suffix(40).joined(separator: "\n")
         log(project, .detail, "Build failed:\n" + tail)
         return tail
     }
 
-    private func install(_ project: ForgeProject) async {
+    /// Installs and opens the app. Returns what's known about the failure if it died straight away.
+    private func install(_ project: ForgeProject) async -> String? {
         await prepareIcon(project)
         await quit(project)
         do {
             try await deploy(project)
         } catch {
             log(project, .error, "Couldn't install the app: \(error.localizedDescription)")
-            return
+            return nil
         }
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
+        var crash: String?
         do {
-            _ = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
-            log(project, .status, "\(project.name) is ready")
+            let app = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
+            if await Runtime.diedOnLaunch(app) {
+                log(project, .status, "\(project.name) quit right after opening. Looking at why…")
+                crash = await Runtime.launchReport(project)
+                log(project, .detail, crash!)
+            } else {
+                log(project, .status, "\(project.name) is ready")
+            }
         } catch {
             log(project, .error, "Couldn't open the app: \(error.localizedDescription)")
         }
         upgradeIconArt(project)
+        return crash
+    }
+
+    /// For Open App and Undo, where no agent is running to fix a crash.
+    private func installReportingCrash(_ project: ForgeProject) async {
+        if await install(project) != nil {
+            log(project, .error, "\(project.name) crashes when it opens. Ask me to fix the crash, or press Undo.")
+        }
     }
 
     /// Puts the icon into the freshly built bundle, re-signs it, and swaps it into ~/Applications/Forge Apps.
