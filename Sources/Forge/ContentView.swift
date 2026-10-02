@@ -87,6 +87,7 @@ struct ProjectView: View {
     @State private var composerHeight: CGFloat = 24
     @State private var focusRequest = 0
     @State private var dropTargeted = false
+    @StateObject private var dictation = Dictation()
     @AppStorage("showDetails") private var showDetails = false
 
     private var lines: [LogLine] {
@@ -132,6 +133,14 @@ struct ProjectView: View {
                          isEnabled: true, focusRequest: focusRequest,
                          onSubmit: send, onFiles: { attachments.append(contentsOf: $0) })
                     .frame(height: composerHeight)
+                Button(action: toggleDictation) {
+                    Image(systemName: dictation.isListening ? "mic.fill" : "mic").font(.title3)
+                        .symbolEffect(.pulse, isActive: dictation.isListening)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(dictation.isListening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                .help(dictation.isListening ? "Stop dictation" : "Dictate a change")
+                .padding(.bottom, 2)
                 if busy {
                     ProgressView().controlSize(.small)
                     Text("Working…").foregroundStyle(.secondary)
@@ -190,9 +199,19 @@ struct ProjectView: View {
         return String(format: "AI: %d call%@ · $%.2f", usage.calls, usage.calls == 1 ? "" : "s", usage.cost)
     }
 
+    /// Dictated words are appended to whatever was already typed.
+    private func toggleDictation() {
+        if dictation.isListening { return dictation.stop() }
+        let typed = draft
+        let separator = typed.isEmpty || typed.last!.isWhitespace ? "" : " "
+        focusRequest += 1
+        Task { await dictation.start { draft = typed + separator + $0 } }
+    }
+
     private func send() {
         let text = draft.trimmed
         guard !text.isEmpty || !attachments.isEmpty, !busy else { return }
+        dictation.cancel()
         let files = attachments
         draft = ""
         attachments = []

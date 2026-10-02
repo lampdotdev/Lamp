@@ -58,6 +58,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSHandlerRank</key><string>Owner</string>
     <key>LSItemContentTypes</key><array><string>dev.forge.forgeapp</string></array>
   </dict></array>
+  <key>NSMicrophoneUsageDescription</key><string>Forge listens to your microphone when you dictate a change.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>Forge turns your dictation into text for the prompt box.</string>
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLName</key><string>dev.forge.host</string>
     <key>CFBundleURLSchemes</key><array><string>forge</string></array>
