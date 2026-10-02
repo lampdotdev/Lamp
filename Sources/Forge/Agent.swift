@@ -80,6 +80,20 @@ enum Agent {
     permission settings anywhere else: Forge is the only place they can approve anything.
     - Write code that compiles first time: only use Apple frameworks (SwiftUI, AppKit, Foundation, etc.), \
     no third-party packages, and APIs available on macOS 14.
+    - ForgeSupport.swift has tested building blocks for common Mac jobs. Use them instead of writing your own: \
+    `ForgeFolderWatcher(folder) { changedURLs in }` (files added or changed in a folder; keep it alive) and \
+    `ForgeFolders` (downloads, desktop, documents, screenshots, `files(in:)` newest first); \
+    `ForgeHotKey("cmd+shift+space") { }` (a shortcut that works from any app; keep it alive); \
+    `ForgeLoginItem.isEnabled` (open at login: offer it as a toggle in Settings, never turn it on silently); \
+    `await ForgeText.read(url)` (text from PDFs, scanned PDFs, images and screenshots via Live Text, RTF, Word, \
+    HTML, plain text, all on the Mac and free; use it before sending documents to ForgeAI) and \
+    `await ForgeText.recognize(in: nsImage)`; `.forgeDropFiles { urls in }` on any view and `ForgeDropZone("Drop \
+    screenshots here") { urls in }` for an empty state (Finder files, images from other apps, links); \
+    `ForgeClipboardWatcher { item in }` (item.text / image / fileURLs; keep it alive) and \
+    `ForgeClipboardWatcher.copy(text)`; `ForgeNotifications.send("Title", body: "…")`. For an app that lives in \
+    the menu bar, use SwiftUI's `MenuBarExtra` scene (with `.menuBarExtraStyle(.window)` for a panel), and add \
+    `NSApp.setActivationPolicy(.accessory)` only if the user wants no Dock icon. Make the most of being on the \
+    Mac: local files, drag and drop, the menu bar, keyboard shortcuts, and fitting into what the user already does.
     - Keep the user's data with ForgeStore (in ForgeSupport.swift), backed by SQLite. Settings and small state: \
     `ForgeStore.load(T.self, from: "name")` / `ForgeStore.save(value, to: "name")`. Lists of things (notes, tasks, \
     files seen, history): `ForgeStore.collection("notes", of: Note.self)` with `put`, `get`, `delete`, `count` and \

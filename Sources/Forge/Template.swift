@@ -148,6 +148,13 @@ enum Template {
     import SwiftUI
     import AppKit
     import SQLite3
+    import Carbon.HIToolbox
+    import CoreServices
+    import PDFKit
+    import ServiceManagement
+    import UniformTypeIdentifiers
+    import UserNotifications
+    @preconcurrency import Vision
 
     /// Adds "Edit with Forge…" (⇧⌘E), which jumps back to this app's chat in Forge.
     struct ForgeCommands: Commands {
@@ -862,6 +869,373 @@ enum Template {
             score = json["score"] as? Double
             probabilities = json["probabilities"] as? [String: Double] ?? [:]
             confidence = json["confidence"] as? Double
+        }
+    }
+
+    // MARK: - Mac building blocks
+
+    /// Tells you when files in a folder (and its subfolders) are added, changed, renamed or removed.
+    /// Keep the watcher alive (e.g. in a @State or a model object); it stops when released.
+    ///
+    ///     @State private var watcher: ForgeFolderWatcher?
+    ///     watcher = ForgeFolderWatcher(ForgeFolders.downloads) { changed in reload(changed) }
+    final class ForgeFolderWatcher {
+        private var stream: FSEventStreamRef?
+        private let handler: ([URL]) -> Void
+
+        /// `handler` runs on the main thread with the changed files, batched over `latency` seconds.
+        init(_ folder: URL, latency: TimeInterval = 0.5, handler: @escaping ([URL]) -> Void) {
+            self.handler = handler
+            var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(),
+                                               retain: nil, release: nil, copyDescription: nil)
+            let callback: FSEventStreamCallback = { _, info, count, paths, _, _ in
+                guard let info else { return }
+                let watcher = Unmanaged<ForgeFolderWatcher>.fromOpaque(info).takeUnretainedValue()
+                let list = unsafeBitCast(paths, to: NSArray.self) as? [String] ?? []
+                let urls = Array(Set(list.prefix(count))).sorted().map { URL(fileURLWithPath: $0) }
+                watcher.handler(urls)
+            }
+            let flags = UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes
+                               | kFSEventStreamCreateFlagNoDefer)
+            stream = FSEventStreamCreate(nil, callback, &context, [folder.path] as CFArray,
+                                         FSEventStreamEventId(kFSEventStreamEventIdSinceNow), latency, flags)
+            if let stream {
+                FSEventStreamSetDispatchQueue(stream, .main)
+                FSEventStreamStart(stream)
+            }
+        }
+
+        deinit {
+            guard let stream else { return }
+            FSEventStreamStop(stream)
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+        }
+    }
+
+    /// The user's usual folders.
+    enum ForgeFolders {
+        static var home: URL { URL(fileURLWithPath: NSHomeDirectory()) }
+        static var downloads: URL { FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0] }
+        static var desktop: URL { FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0] }
+        static var documents: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0] }
+
+        /// Where screenshots are saved (the Desktop unless the user changed it in the Screenshot app).
+        static var screenshots: URL {
+            if let path = UserDefaults(suiteName: "com.apple.screencapture")?.string(forKey: "location") {
+                return URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            }
+            return desktop
+        }
+
+        /// Files directly in a folder, newest first, skipping hidden ones.
+        static func files(in folder: URL) -> [URL] {
+            let keys: [URLResourceKey] = [.contentModificationDateKey, .isRegularFileKey]
+            let items = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys,
+                                                                       options: [.skipsHiddenFiles])) ?? []
+            func date(_ url: URL) -> Date { (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast }
+            return items.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
+                .sorted { date($0) > date($1) }
+        }
+    }
+
+    /// A keyboard shortcut that works from any app, with no permission needed. Keep the returned value alive.
+    ///
+    ///     @State private var hotKey = ForgeHotKey("cmd+shift+space") { ForgeWindows.show() }
+    ///
+    /// Keys: a–z, 0–9, space, return, tab, escape, delete, up, down, left, right, f1–f12, and - = [ ] ; ' , . / `
+    /// Modifiers: cmd, shift, option (or alt), control (or ctrl). Returns nil if the key isn't recognised
+    /// or another app already uses the shortcut.
+    final class ForgeHotKey {
+        private var ref: EventHotKeyRef?
+        private let id: UInt32
+        private let action: () -> Void
+
+        nonisolated(unsafe) private static var actions: [UInt32: () -> Void] = [:]
+        nonisolated(unsafe) private static var nextID: UInt32 = 1
+        nonisolated(unsafe) private static var handlerInstalled = false
+
+        init?(_ shortcut: String, action: @escaping () -> Void) {
+            var modifiers: UInt32 = 0
+            var key: UInt32?
+            for part in shortcut.lowercased().split(separator: "+").map({ $0.trimmingCharacters(in: .whitespaces) }) {
+                switch part {
+                case "cmd", "command", "⌘": modifiers |= UInt32(cmdKey)
+                case "shift", "⇧": modifiers |= UInt32(shiftKey)
+                case "option", "opt", "alt", "⌥": modifiers |= UInt32(optionKey)
+                case "control", "ctrl", "⌃": modifiers |= UInt32(controlKey)
+                default: key = Self.keyCodes[part]
+                }
+            }
+            guard let key else { print("ForgeHotKey: unknown key in \"\(shortcut)\""); return nil }
+            self.action = action
+            self.id = Self.nextID
+            Self.nextID += 1
+            Self.installHandler()
+            let hotKeyID = EventHotKeyID(signature: OSType(0x46524745), id: id)   // "FRGE"
+            guard RegisterEventHotKey(key, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref) == noErr else {
+                print("ForgeHotKey: \"\(shortcut)\" is already in use")
+                return nil
+            }
+            Self.actions[id] = action
+        }
+
+        deinit {
+            if let ref { UnregisterEventHotKey(ref) }
+            Self.actions[id] = nil
+        }
+
+        private static func installHandler() {
+            guard !handlerInstalled else { return }
+            handlerInstalled = true
+            var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+            InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
+                var hotKeyID = EventHotKeyID()
+                GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                                  nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
+                let id = hotKeyID.id
+                DispatchQueue.main.async { ForgeHotKey.actions[id]?() }
+                return noErr
+            }, 1, &spec, nil, nil)
+        }
+
+        private static let keyCodes: [String: UInt32] = {
+            var codes: [String: UInt32] = [
+                "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12,
+                "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23,
+                "=": 24, "9": 25, "7": 26, "-": 27, "8": 28, "0": 29, "]": 30, "o": 31, "u": 32, "[": 33, "i": 34,
+                "p": 35, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42, ",": 43, "/": 44, "n": 45, "m": 46,
+                ".": 47, "`": 50, "return": 36, "enter": 36, "tab": 48, "space": 49, "delete": 51, "escape": 53, "esc": 53,
+                "left": 123, "right": 124, "down": 125, "up": 126,
+            ]
+            let fKeys: [UInt32] = [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111]
+            for (index, code) in fKeys.enumerated() { codes["f\(index + 1)"] = code }
+            return codes
+        }()
+    }
+
+    /// Opening the app when the user logs in. Show it as a toggle in Settings, not something turned on silently.
+    ///
+    ///     Toggle("Open at Login", isOn: Binding(get: { ForgeLoginItem.isEnabled }, set: { ForgeLoginItem.isEnabled = $0 }))
+    enum ForgeLoginItem {
+        static var isEnabled: Bool {
+            get { SMAppService.mainApp.status == .enabled }
+            set {
+                do {
+                    if newValue { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+                } catch {
+                    print("ForgeLoginItem: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    /// Text from files and pictures, read on this Mac (no AI call, free and private): PDFs (with recognition for
+    /// scanned pages), images and screenshots (Apple's Live Text), and plain-text, RTF, Word and HTML documents.
+    ///
+    ///     let text = await ForgeText.read(url)               // any supported file; "" if there's no text
+    ///     let lines = await ForgeText.recognize(in: image)   // NSImage → lines of text, top to bottom
+    enum ForgeText {
+        static func read(_ url: URL) async -> String {
+            let type = UTType(filenameExtension: url.pathExtension) ?? .data
+            if type.conforms(to: .pdf) { return await readPDF(url) }
+            if type.conforms(to: .image), let image = NSImage(contentsOf: url) {
+                return await recognize(in: image).joined(separator: "\n")
+            }
+            if type.conforms(to: .plainText) || type.conforms(to: .sourceCode) || type.conforms(to: .json) {
+                return (try? String(contentsOf: url, encoding: .utf8)) ?? (try? String(contentsOf: url, encoding: .isoLatin1)) ?? ""
+            }
+            // RTF, Word (.doc, .docx), HTML, OpenDocument: AppKit's document readers.
+            if let text = try? NSAttributedString(url: url, options: [:], documentAttributes: nil) { return text.string }
+            return ""
+        }
+
+        /// Each page's text; pages with no text layer (scans) are recognised from their image.
+        static func readPDF(_ url: URL) async -> String {
+            guard let document = PDFDocument(url: url) else { return "" }
+            var pages: [String] = []
+            for index in 0..<document.pageCount {
+                guard let page = document.page(at: index) else { continue }
+                let text = page.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if text.count > 20 {
+                    pages.append(text)
+                } else {
+                    let bounds = page.bounds(for: .mediaBox)
+                    let scale = 2000 / max(bounds.width, bounds.height, 1)
+                    let image = page.thumbnail(of: NSSize(width: bounds.width * scale, height: bounds.height * scale), for: .mediaBox)
+                    pages.append(await recognize(in: image).joined(separator: "\n"))
+                }
+            }
+            return pages.joined(separator: "\n\n")
+        }
+
+        /// Lines of text in a picture, top to bottom.
+        static func recognize(in image: NSImage) async -> [String] {
+            guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return [] }
+            return await withCheckedContinuation { continuation in
+                let request = VNRecognizeTextRequest { request, _ in
+                    let lines = (request.results as? [VNRecognizedTextObservation] ?? [])
+                        .compactMap { $0.topCandidates(1).first?.string }
+                    continuation.resume(returning: lines)
+                }
+                request.recognitionLevel = .accurate
+                request.usesLanguageCorrection = true
+                request.automaticallyDetectsLanguage = true
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        try VNImageRequestHandler(cgImage: cgImage).perform([request])
+                    } catch {
+                        continuation.resume(returning: [])
+                    }
+                }
+            }
+        }
+    }
+
+    /// Accepts files dragged onto a view: Finder files and folders, images from other apps (saved to temporary
+    /// files), and URLs. Highlights while something is over it.
+    ///
+    ///     List(items) { ... }
+    ///         .forgeDropFiles { urls in add(urls) }
+    ///     ForgeDropZone("Drop screenshots here") { urls in add(urls) }   // an empty-state drop target
+    extension View {
+        func forgeDropFiles(_ handler: @escaping ([URL]) -> Void) -> some View {
+            modifier(ForgeDropModifier(handler: handler))
+        }
+    }
+
+    struct ForgeDropModifier: ViewModifier {
+        let handler: ([URL]) -> Void
+        @State private var targeted = false
+
+        func body(content: Content) -> some View {
+            content
+                .overlay {
+                    if targeted {
+                        RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor, lineWidth: 3)
+                            .background(Color.accentColor.opacity(0.08)).allowsHitTesting(false)
+                    }
+                }
+                .onDrop(of: [.fileURL, .image, .url], isTargeted: $targeted) { providers in
+                    ForgeDrop.load(providers) { urls in if !urls.isEmpty { handler(urls) } }
+                    return true
+                }
+        }
+    }
+
+    struct ForgeDropZone: View {
+        let title: String
+        let handler: ([URL]) -> Void
+
+        init(_ title: String = "Drop files here", handler: @escaping ([URL]) -> Void) {
+            self.title = title
+            self.handler = handler
+        }
+
+        var body: some View {
+            VStack(spacing: 10) {
+                Image(systemName: "square.and.arrow.down").font(.system(size: 34)).foregroundStyle(.secondary)
+                Text(title).font(.title3).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(30)
+            .background(RoundedRectangle(cornerRadius: 12).strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [8]))
+                .foregroundStyle(.tertiary))
+            .padding()
+            .forgeDropFiles(handler)
+        }
+    }
+
+    enum ForgeDrop {
+        /// Resolves dropped items to file URLs (images without a file become temporary PNGs), in drop order.
+        static func load(_ providers: [NSItemProvider], completion: @escaping ([URL]) -> Void) {
+            var results = [URL?](repeating: nil, count: providers.count)
+            let group = DispatchGroup()
+            for (index, provider) in providers.enumerated() {
+                group.enter()
+                if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in results[index] = url; group.leave() }
+                } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                    provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                        if let data, let image = NSImage(data: data), let tiff = image.tiffRepresentation,
+                           let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                            let url = FileManager.default.temporaryDirectory.appendingPathComponent("Dropped \(UUID().uuidString.prefix(8)).png")
+                            if (try? png.write(to: url)) != nil { results[index] = url }
+                        }
+                        group.leave()
+                    }
+                } else if provider.canLoadObject(ofClass: URL.self) {
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in results[index] = url; group.leave() }
+                } else {
+                    group.leave()
+                }
+            }
+            group.notify(queue: .main) { completion(results.compactMap { $0 }) }
+        }
+    }
+
+    /// Tells you when something new is copied, from any app. Keep the watcher alive.
+    ///
+    ///     @State private var clipboard = ForgeClipboardWatcher { item in if let text = item.text { history.insert(text, at: 0) } }
+    final class ForgeClipboardWatcher {
+        struct Item {
+            let text: String?
+            let image: NSImage?
+            let fileURLs: [URL]
+        }
+
+        private var timer: Timer?
+        private var lastChange = NSPasteboard.general.changeCount
+
+        /// `handler` runs on the main thread. Copies made by this app itself are included.
+        init(handler: @escaping (Item) -> Void) {
+            timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                let board = NSPasteboard.general
+                guard let self, board.changeCount != self.lastChange else { return }
+                self.lastChange = board.changeCount
+                let files = (board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+                handler(Item(text: board.string(forType: .string),
+                             image: files.isEmpty ? NSImage(pasteboard: board) : nil,
+                             fileURLs: files))
+            }
+        }
+
+        deinit { timer?.invalidate() }
+
+        /// Puts text on the clipboard.
+        static func copy(_ text: String) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
+    }
+
+    /// Mac notifications. Asks permission the first time.
+    ///
+    ///     ForgeNotifications.send("Export finished", body: "Saved 12 files to Documents")
+    enum ForgeNotifications {
+        /// Shows notifications even while this app is in front (macOS hides them otherwise).
+        private final class Presenter: NSObject, UNUserNotificationCenterDelegate {
+            func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                        withCompletionHandler completion: @escaping (UNNotificationPresentationOptions) -> Void) {
+                completion([.banner, .sound, .list])
+            }
+        }
+        private static let presenter = Presenter()
+
+        static func send(_ title: String, body: String = "", sound: Bool = true) {
+            let center = UNUserNotificationCenter.current()
+            if center.delegate == nil { center.delegate = presenter }
+            center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+                guard granted else {
+                    print("ForgeNotifications: not allowed\(error.map { " (\($0.localizedDescription))" } ?? "")")
+                    return
+                }
+                let content = UNMutableNotificationContent()
+                content.title = title
+                content.body = body
+                if sound { content.sound = .default }
+                center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+            }
         }
     }
 
