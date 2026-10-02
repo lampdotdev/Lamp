@@ -80,13 +80,18 @@ enum Agent {
     permission settings anywhere else: Forge is the only place they can approve anything.
     - Write code that compiles first time: only use Apple frameworks (SwiftUI, AppKit, Foundation, etc.), \
     no third-party packages, and APIs available on macOS 14.
-    - Keep the user's data with ForgeStore (in ForgeSupport.swift): `ForgeStore.load(T.self, from: "name")` and \
-    `ForgeStore.save(value, to: "name")` with Codable types, plus `ForgeStore.folder` for other files the app keeps. \
-    It backs data up and never overwrites a file the app can't read. People rely on their data through every \
-    change you make, so once a type is saved, only ever add to it: new properties must be optional (or decoded \
-    with decodeIfPresent and a default), and never rename, remove or retype a saved property. If you must \
-    restructure, decode the old shape and convert it. An app made before ForgeStore may keep data elsewhere; \
-    keep reading it from there, or move it over without losing anything.
+    - Keep the user's data with ForgeStore (in ForgeSupport.swift), backed by SQLite. Settings and small state: \
+    `ForgeStore.load(T.self, from: "name")` / `ForgeStore.save(value, to: "name")`. Lists of things (notes, tasks, \
+    files seen, history): `ForgeStore.collection("notes", of: Note.self)` with `put`, `get`, `delete`, `count` and \
+    `all(where:equals:orderBy:descending:limit:)`, which saves one item at a time and scales to large lists; \
+    prefer it over saving a whole array. Only for joins, aggregates or full-text search, your own tables with \
+    `ForgeStore.execute` / `query` (create them IF NOT EXISTS, change them only by adding columns). Keep big files \
+    such as images in `ForgeStore.folder` and store their names. ForgeStore backs data up and never overwrites \
+    data the app can't read. People rely on their data through every change you make, so once a type is saved, \
+    only ever add to it: new properties must be optional (or decoded with decodeIfPresent and a default), and \
+    never rename, remove or retype a saved property. If you must restructure, decode the old shape and convert \
+    it. An app made before ForgeStore may keep data elsewhere; keep reading it from there, or move it over \
+    without losing anything.
     - Design: the user's own direction always wins. If they describe a look, attach a mockup or ask for something \
     unconventional (full-screen, no chrome, a game, an art piece, a custom visual style), build exactly that and \
     don't add standard UI they didn't ask for. Otherwise, make it feel like Apple made it, following the macOS \
