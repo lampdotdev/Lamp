@@ -20,11 +20,28 @@ struct TurnProgress {
     var failed = false
     /// What's happening right now, in plain words: "Writing Scanner.swift", "Building…".
     var activity = "Getting started"
+    /// The file being written or edited right now, if that's what the agent is doing.
+    var currentFile: String?
     var plan: [PlanPart] = []
     /// Files written so far, newest last. Shown when the agent gave no plan.
     var files: [String] = []
     /// The app's window once it has opened: the card's last frame.
     var screenshot: NSImage?
+
+    enum PartState { case open, started, active, done }
+
+    /// Where a part of the plan stands. Parts finish in the order the agent writes their files, which
+    /// isn't always the order they're listed in.
+    func state(of part: PlanPart) -> PartState {
+        let working = finished == nil
+        // Being written now, even if that completes it: the tick shows once the agent moves on.
+        if working, let currentFile, part.files.contains(currentFile) { return .active }
+        if part.done { return .done }
+        if part.files.contains(where: files.contains) { return .started }
+        // A plan with no files listed: the first part still open is the one in progress.
+        if working, plan.allSatisfy(\.files.isEmpty), part.id == plan.first(where: { !$0.done })?.id { return .active }
+        return .open
+    }
 
     /// Ticks every part whose files have all been written.
     mutating func tickWrittenParts() {
@@ -70,8 +87,18 @@ struct TurnProgress {
     /// The same, from a tool call that is still streaming in: its name and the arguments so far.
     static func activity(tool: String, partialArguments: String) -> String {
         guard !tool.isEmpty else { return "Thinking" }
+        return activity(for: call(tool: tool, partialArguments: partialArguments))
+    }
+
+    /// The call so far, as the engines log it: "write Scanner.swift".
+    static func call(tool: String, partialArguments: String) -> ToolCall {
         let path = partialArguments.firstMatch(of: #/"(?:path|file_path)"\s*:\s*"([^"]+)"/#).map { String($0.1) } ?? ""
-        return activity(for: ToolCall("\(tool) \((path as NSString).lastPathComponent)"))
+        return ToolCall("\(tool) \((path as NSString).lastPathComponent)")
+    }
+
+    /// The file a call writes or edits, if it does.
+    static func file(changedBy call: ToolCall) -> String? {
+        (call.action == .write || call.action == .edit) && !call.argument.isEmpty ? call.argument : nil
     }
 }
 
@@ -129,18 +156,22 @@ struct BuildCard: View {
         .animation(.easeInOut(duration: 0.5), value: progress.screenshot != nil)
     }
 
+    private static let symbols: [TurnProgress.PartState: String] = [
+        .open: "circle", .started: "circle.lefthalf.filled", .active: "circle.dotted", .done: "checkmark.circle.fill",
+    ]
+
     /// The agent's plan with ticks, the files written when there's no plan, or blank bars before either.
     @ViewBuilder
     private var outline: some View {
         if !progress.plan.isEmpty {
-            let current = progress.plan.first { !$0.done }?.id
             VStack(alignment: .leading, spacing: 9) {
                 ForEach(progress.plan) { part in
+                    let state = progress.state(of: part)
                     HStack(alignment: .firstTextBaseline, spacing: 9) {
-                        Image(systemName: part.done ? "checkmark.circle.fill" : part.id == current ? "circle.dotted" : "circle")
-                            .foregroundStyle(part.done ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
-                            .symbolEffect(.pulse, isActive: part.id == current && progress.finished == nil)
-                        Text(part.title).foregroundStyle(part.done || part.id == current ? .primary : .secondary)
+                        Image(systemName: Self.symbols[state] ?? "circle")
+                            .foregroundStyle(state == .done ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+                            .symbolEffect(.pulse, isActive: state == .active)
+                        Text(part.title).foregroundStyle(state == .open ? .secondary : .primary)
                     }
                 }
             }
