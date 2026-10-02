@@ -30,7 +30,22 @@ BUILD_DIR="$DIST/build" APP_VERSION="$VERSION" SIGN_IDENTITY="$SIGN_IDENTITY" "$
 mv "$DIST/build/Forge.app" "$DIST/" && rmdir "$DIST/build"
 codesign --verify --deep --strict "$DIST/Forge.app"
 
-# 2. Package as a DMG with a drag-to-Applications layout
+notarize() {
+  xcrun notarytool submit "$1" --keychain-profile "$NOTARY_PROFILE" --wait | tee "$DIST/notary.log"
+  grep -q "status: Accepted" "$DIST/notary.log" || { echo "Notarization failed for $1. Details: xcrun notarytool log <id> --keychain-profile $NOTARY_PROFILE"; exit 1; }
+  rm "$DIST/notary.log"
+}
+
+# 2. Notarize the app itself and staple its ticket, so Forge.app opens without a network check
+#    even after it's copied out of the DMG.
+if [[ "${SKIP_NOTARIZE:-}" != 1 ]]; then
+  ditto -c -k --keepParent "$DIST/Forge.app" "$DIST/Forge-notarize.zip"
+  notarize "$DIST/Forge-notarize.zip"
+  rm "$DIST/Forge-notarize.zip"
+  xcrun stapler staple "$DIST/Forge.app"
+fi
+
+# 3. Package as a DMG with a drag-to-Applications layout
 STAGE=$(mktemp -d)
 cp -R "$DIST/Forge.app" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
@@ -43,12 +58,14 @@ if [[ "${SKIP_NOTARIZE:-}" == 1 ]]; then
   exit 0
 fi
 
-# 3. Notarize with Apple and staple the ticket so it opens offline without warnings
-xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+# 4. Notarize the DMG too and staple it, so the download itself opens offline without warnings
+notarize "$DMG"
 xcrun stapler staple "$DMG"
 
-# 4. Verify Gatekeeper accepts it
+# 5. Verify Gatekeeper accepts both, with the tickets stapled
 spctl --assess --type open --context context:primary-signature -v "$DMG"
+spctl --assess --type execute -v "$DIST/Forge.app"
+xcrun stapler validate "$DIST/Forge.app"
 echo
 echo "Release ready: $DMG"
 echo "Publish:  gh release create v$VERSION \"$DMG\" --title \"Forge $VERSION\" --generate-notes"

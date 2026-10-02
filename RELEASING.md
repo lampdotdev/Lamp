@@ -54,8 +54,10 @@ If you already have a profile from another app (such as Local's `local-assistant
 gh release create v0.2.0 dist/Forge-0.2.0.dmg --title "Forge 0.2.0" --generate-notes
 ```
 
-`release.sh` builds and signs, packages a drag-to-Applications DMG, notarizes with Apple (usually 2 to 10
-minutes), staples the ticket, and verifies with Gatekeeper. `SKIP_NOTARIZE=1` stops after the signed DMG,
+`release.sh` builds and signs, then notarizes twice with Apple (each usually 2 to 10 minutes). First it
+notarizes the app and staples its ticket, so Forge.app opens without a network check even after it's
+copied out of the DMG. Then it packages a drag-to-Applications DMG, notarizes and staples that, and
+verifies both with Gatekeeper. `SKIP_NOTARIZE=1` stops after the signed DMG,
 which is useful for checking signing without submitting to Apple.
 
 ## Release from CI
