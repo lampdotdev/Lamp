@@ -28,13 +28,7 @@ struct ContentView: View {
             if let project = store.selected {
                 ProjectView(project: project).id(project.id)
             } else if store.projects.isEmpty {
-                ContentUnavailableView {
-                    Label("No apps yet", systemImage: "hammer")
-                } description: {
-                    Text("Describe an app and Forge builds it for you.")
-                } actions: {
-                    Button("New App") { store.create() }
-                }
+                FirstAppView()
             } else {
                 ContentUnavailableView("Select an app", systemImage: "sidebar.left")
             }
@@ -983,5 +977,56 @@ struct ApprovalCard: View {
         .background(riskColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(riskColor.opacity(0.35)))
         .onAppear { showCommand = false }
+    }
+}
+
+/// Shown before the first app: what Forge is for, with a few apps to start from.
+struct FirstAppView: View {
+    @EnvironmentObject private var store: Store
+
+    /// Starting points that show what a Mac app with AI inside can do for a real, recurring job.
+    static let examples: [(title: String, symbol: String, blurb: String, prompt: String)] = [
+        ("Downloads Tidy", "folder.badge.gearshape", "Sorts your Downloads folder and suggests clear names.",
+         "Downloads Tidy: a menu bar app that looks at my Downloads folder, groups the files by what they are (receipts, installers, screenshots, documents), and suggests clear names. Nothing moves or gets renamed until I approve it."),
+        ("Screenshot Notes", "camera.viewfinder", "Turns screenshots into a searchable list of what's in them.",
+         "Screenshot Notes: I drop screenshots on it and it pulls out the text and the key details (who, what, dates, amounts) into a searchable list, with the picture alongside."),
+        ("Reading Queue", "list.star", "Ranks documents and links by what matters to your work.",
+         "Reading Queue: I drop in PDFs, documents and links, and it ranks them by how much they matter for what I'm working on, which I describe in a box at the top. Each item gets a one-line summary and why it's ranked there."),
+    ]
+
+    var body: some View {
+        VStack(spacing: 22) {
+            VStack(spacing: 8) {
+                Image(systemName: "hammer").font(.system(size: 40)).foregroundStyle(.secondary)
+                Text("What's your Mac missing?").font(.title.bold())
+                Text("Describe a tool for something you do every week, and Forge builds it as a real Mac app. Keep changing it until it works exactly your way.")
+                    .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                    .frame(maxWidth: 460)
+            }
+            Button("New App") { store.create() }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Or start from one of these").font(.callout).foregroundStyle(.secondary)
+                ForEach(Self.examples, id: \.title) { example in
+                    Button { store.create(starting: example.prompt) } label: {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: example.symbol).frame(width: 22).foregroundStyle(.tint)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(example.title).font(.headline)
+                                Text(example.blurb).font(.callout).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .frame(maxWidth: 480)
+        }
+        .padding(40)
     }
 }

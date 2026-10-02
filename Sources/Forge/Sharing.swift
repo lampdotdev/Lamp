@@ -10,8 +10,8 @@ extension UTType {
 
 /// Exporting and importing `.forgeapp` files.
 ///
-/// A shared app carries only what's needed to rebuild it: Swift sources, APP.md, icon.json and the
-/// icon artwork. Never the sender's chat, tokens, agent sessions or git history. On import, Forge
+/// A shared app carries only what's needed to rebuild it: Swift sources, APP.md, icon.json, the
+/// icon artwork, and the attached files the code uses. Never the sender's chat, tokens, agent sessions or git history. On import, Forge
 /// writes its own Package.swift, build.sh and ForgeSupport.swift, so nothing in the file runs at
 /// build time; the code only runs when the app is opened, after the recipient agrees.
 enum Sharing {
@@ -37,9 +37,10 @@ enum Sharing {
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
         }
-        // Attached files (regular files only), capped so shared apps stay small enough to send.
+        // Attached files the app itself uses (through ForgeAssets), capped so shared apps stay small enough
+        // to send. The rest were only for the chat, such as screenshots or reference documents, and stay private.
         var attachedBytes = 0
-        for file in regularFiles(in: project.dir.appendingPathComponent(Attachments.folder)) {
+        for file in usedAttachments(of: project) {
             attachedBytes += (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             guard attachedBytes <= 100_000_000 else {
                 throw ImportError("This app's attached files are over 100 MB, too big to share.")
@@ -63,6 +64,17 @@ enum Sharing {
         let output = work.appendingPathComponent("\(project.name).forgeapp")
         try run("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage.path, output.path])
         return output
+    }
+
+    /// Attached files the app's code uses: those it names, or all of them if it lists them with `ForgeAssets.names`.
+    static func usedAttachments(of project: ForgeProject) -> [URL] {
+        let code = swiftSources(in: project.dir.appendingPathComponent("Sources"))
+            .filter { $0.lastPathComponent != "ForgeSupport.swift" }
+            .compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+            .joined(separator: "\n")
+        let files = regularFiles(in: project.dir.appendingPathComponent(Attachments.folder))
+        if code.contains("ForgeAssets.names") { return files }
+        return files.filter { code.contains($0.lastPathComponent) }
     }
 
     /// The contents of a `.forgeapp`, unpacked and checked, ready to become a project.
@@ -180,8 +192,8 @@ extension Sharing {
 
         var review = ImportReview(summary: "", capabilities: [], concerns: [], risk: "unknown", detected: detected)
         if truncated { review.concerns.append("This app is too large for Forge to check all of its code.") }
-        guard Provider.hasKey else {
-            review.note = "Add an OpenRouter key to have Forge's AI check what this app does."
+        guard AppAI.canAnswer else {
+            review.note = "Set up AI in Forge → Settings to have it check what this app does."
             return review
         }
 

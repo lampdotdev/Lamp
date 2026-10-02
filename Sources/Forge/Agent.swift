@@ -80,7 +80,13 @@ enum Agent {
     permission settings anywhere else: Forge is the only place they can approve anything.
     - Write code that compiles first time: only use Apple frameworks (SwiftUI, AppKit, Foundation, etc.), \
     no third-party packages, and APIs available on macOS 14.
-    - Persist user data (JSON in ~/Library/Application Support/<app name>/) so relaunches don't lose state.
+    - Keep the user's data with ForgeStore (in ForgeSupport.swift): `ForgeStore.load(T.self, from: "name")` and \
+    `ForgeStore.save(value, to: "name")` with Codable types, plus `ForgeStore.folder` for other files the app keeps. \
+    It backs data up and never overwrites a file the app can't read. People rely on their data through every \
+    change you make, so once a type is saved, only ever add to it: new properties must be optional (or decoded \
+    with decodeIfPresent and a default), and never rename, remove or retype a saved property. If you must \
+    restructure, decode the old shape and convert it. An app made before ForgeStore may keep data elsewhere; \
+    keep reading it from there, or move it over without losing anything.
     - Design: the user's own direction always wins. If they describe a look, attach a mockup or ask for something \
     unconventional (full-screen, no chrome, a game, an art piece, a custom visual style), build exactly that and \
     don't add standard UI they didn't ask for. Otherwise, make it feel like Apple made it, following the macOS \
@@ -127,7 +133,8 @@ enum Agent {
     colour of the object). To change the icon, edit icon.json; Forge redraws it. Never create icon files yourself.
     - Files the user attaches are saved in Attachments/ and bundled inside the app. When the app should use \
     one (a logo, a data file, a sound), load it with `ForgeAssets.url("name")`, `ForgeAssets.image("name")` or \
-    `ForgeAssets.text("name")` from ForgeSupport.swift. Screenshots and mockups are usually just references for you.
+    `ForgeAssets.text("name")` from ForgeSupport.swift, writing the full file name (e.g. "logo.png") in the code: \
+    shared copies of the app include only attachments the code names. Screenshots and mockups are usually just references for you.
     - You can't watch the app run, but Forge saves what it prints (print, NSLog, SwiftUI runtime warnings, \
     fatal errors, failed ForgeAI calls) in .forge/runtime/log.txt for the latest launch and \
     .forge/runtime/previous-log.txt for the one before. When the user says something doesn't work, read the log \

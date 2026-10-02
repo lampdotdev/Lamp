@@ -286,6 +286,88 @@ enum Template {
         }()
     }
 
+    /// Keeps the app's data safe across launches and across changes to the app.
+    ///
+    ///     struct Library: Codable, Equatable { var books: [Book] = [] }
+    ///     @State private var library = ForgeStore.load(Library.self) ?? Library()
+    ///     ...
+    ///     .onChange(of: library) { ForgeStore.save(library) }
+    ///
+    /// Each name is a JSON file in ~/Library/Application Support/<bundle id>/ (`folder`, which also suits
+    /// other files the app keeps). Before the first save of each launch, the previous file is copied to
+    /// Backups/ (the newest 20 are kept). If this version of the app can't read a file, nothing overwrites
+    /// it: the user is told once, and it loads again once the app is fixed.
+    enum ForgeStore {
+        static let folder: URL = {
+            let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            let url = base.appendingPathComponent(Bundle.main.bundleIdentifier ?? "{{EXE}}")
+            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            return url
+        }()
+
+        static var backups: URL { folder.appendingPathComponent("Backups") }
+
+        static func url(_ name: String) -> URL { folder.appendingPathComponent(name + ".json") }
+
+        private static let lock = NSLock()
+        nonisolated(unsafe) private static var unreadable: Set<String> = []
+        nonisolated(unsafe) private static var backedUp: Set<String> = []
+
+        /// The saved value, or nil when there's none yet (or it can't be read; see above).
+        static func load<T: Decodable>(_ type: T.Type, from name: String = "data") -> T? {
+            guard let data = try? Data(contentsOf: url(name)) else { return nil }
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            do {
+                return try decoder.decode(T.self, from: data)
+            } catch {
+                lock.withLock { _ = unreadable.insert(name) }
+                print("ForgeStore: couldn't read \(name).json, so it won't be overwritten. Make the types decode the "
+                      + "existing data (add new properties as optionals), and it loads again. Error: \(error)")
+                DispatchQueue.main.async { MainActor.assumeIsolated { warn() } }
+                return nil
+            }
+        }
+
+        static func save<T: Encodable>(_ value: T, to name: String = "data") {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            guard let data = try? encoder.encode(value) else { print("ForgeStore: couldn't save \(name)"); return }
+            let fm = FileManager.default
+            let target = url(name)
+            let (blocked, first) = lock.withLock { (unreadable.contains(name), backedUp.insert(name).inserted) }
+            if blocked {
+                // Keep what the user does now as well, next to the unreadable file, without touching it.
+                try? fm.createDirectory(at: backups, withIntermediateDirectories: true)
+                try? data.write(to: backups.appendingPathComponent("\(name)-while-unreadable.json"), options: .atomic)
+                return
+            }
+            if first, fm.fileExists(atPath: target.path) {
+                try? fm.createDirectory(at: backups, withIntermediateDirectories: true)
+                let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+                try? fm.copyItem(at: target, to: backups.appendingPathComponent("\(name)-\(stamp).json"))
+                let old = ((try? fm.contentsOfDirectory(at: backups, includingPropertiesForKeys: nil)) ?? [])
+                    .filter { $0.lastPathComponent.hasPrefix(name + "-20") }
+                    .sorted { $0.lastPathComponent > $1.lastPathComponent }
+                for file in old.dropFirst(20) { try? fm.removeItem(at: file) }
+            }
+            do { try data.write(to: target, options: .atomic) } catch { print("ForgeStore: couldn't save \(name): \(error)") }
+        }
+
+        nonisolated(unsafe) private static var warned = false
+
+        @MainActor private static func warn() {
+            guard !warned else { return }
+            warned = true
+            let alert = NSAlert()
+            alert.messageText = "Some saved data couldn't be opened"
+            alert.informativeText = "This version of the app can't read data saved by an earlier one. Your data is safe "
+                + "and won't be overwritten. Choose Edit with Forge (⇧⌘E) and ask Forge to fix it."
+            alert.runModal()
+        }
+    }
+
     /// Files attached in Forge's chat, bundled inside this app (Contents/Resources/Attachments).
     ///
     ///     let logo = ForgeAssets.image("logo.png")

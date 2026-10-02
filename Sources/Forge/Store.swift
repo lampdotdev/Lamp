@@ -310,7 +310,8 @@ final class Store: ObservableObject {
     // MARK: - Actions
 
     /// New App: an untitled app, straight into its chat. Its first message names it and designs its icon.
-    func create() {
+    /// A new app, optionally with its first request already sent.
+    func create(starting prompt: String? = nil) {
         let project: ForgeProject
         do {
             project = try Template.scaffold(name: uniqueName("Untitled"), untitled: true, in: root)
@@ -321,7 +322,10 @@ final class Store: ObservableObject {
         reload()
         selection = project.id
         chatFocusRequest += 1
-        Task { await initRepo(project, message: "Scaffold") }
+        Task {
+            await initRepo(project, message: "Scaffold")
+            if let prompt { send(prompt, to: project) }
+        }
     }
 
     private func initRepo(_ project: ForgeProject, message: String) async {

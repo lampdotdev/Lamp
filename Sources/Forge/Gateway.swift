@@ -94,6 +94,11 @@ enum AppAI {
 
     struct Failure: Error { let message: String }
 
+    /// Whether apps' text AI can answer: an OpenRouter key, or whatever builds apps.
+    static var canAnswer: Bool {
+        Provider.hasKey || Builder.engine == .pi || ToolLocator.path(for: Builder.engine) != nil
+    }
+
     /// Returns the model's text and what the call cost in USD.
     /// An image from the app: `media_type` (e.g. image/jpeg) and base64 `data`.
     struct Image {
@@ -124,8 +129,11 @@ enum AppAI {
             default:
                 (text, cost) = try await viaPi(prompt: prompt, images: images, system: system)
             }
+        } else if ToolLocator.path(for: Builder.engine) != nil {
+            // No OpenRouter key: use the Claude Code, Codex or opencode sign-in that builds apps.
+            (text, cost) = try await viaEngine(Builder.engine, prompt: prompt, images: images, system: system)
         } else {
-            throw Failure(message: "Apps' AI features need an OpenRouter key, or Forge's built-in agent with any provider. Set one up in Forge → Settings (⌘,).")
+            throw Failure(message: "Apps' AI features need an OpenRouter key, or a working builder. Set one up in Forge → Settings (⌘,).")
         }
         return (json ? stripFences(text) : text, cost)
     }
@@ -167,6 +175,71 @@ enum AppAI {
         }
         if let failure { throw Failure(message: Provider.friendlyError(failure)) }
         guard !text.isEmpty else { throw Failure(message: "The AI didn't answer.") }
+        return (text, cost)
+    }
+
+    /// One-shot answer from an external coding agent, using the user's own sign-in (and so their subscription).
+    /// Isolated from their setup like a build turn, with no tools except reading the images it's given.
+    private static func viaEngine(_ engine: Engine, prompt: String, images: [Image],
+                                  system: String) async throws -> (String, Double) {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("forge-ai-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var files: [String] = []
+        for (index, image) in images.enumerated() {
+            guard let data = Data(base64Encoded: image.data) else { continue }
+            let name = "image\(index).\(image.mediaType.hasSuffix("png") ? "png" : "jpg")"
+            try data.write(to: folder.appendingPathComponent(name))
+            files.append(name)
+        }
+        var env: [String: String] = ["PATH": ToolLocator.userPath, "FORGE_TOOL": ToolLocator.path(for: engine) ?? "",
+                                     "FORGE_SYSTEM": system.isEmpty ? "You are a helpful assistant inside a Mac app." : system,
+                                     "FORGE_PROMPT": prompt]
+        for (index, file) in files.enumerated() { env["FORGE_FILE_\(index)"] = file }
+        let command: String
+        switch engine {
+        case .claude:
+            // Claude Code takes images by reading them, so it gets the Read tool and their names.
+            if !files.isEmpty { env["FORGE_PROMPT"] = prompt + "\n\n(Images: " + files.joined(separator: ", ") + ". Read them.)" }
+            env["FORGE_MODEL"] = model.id   // "haiku" or "sonnet": Claude Code's own aliases
+            command = """
+            "$FORGE_TOOL" -p "$FORGE_PROMPT" --output-format stream-json --verbose --no-session-persistence \\
+              --restricted --strict-mcp-config --disable-slash-commands \\
+              --tools \(files.isEmpty ? "''" : "Read --allowedTools Read") --model "$FORGE_MODEL" --system-prompt "$FORGE_SYSTEM"
+            """
+        case .codex:
+            env["FORGE_CODEX_INSTRUCTIONS"] = "developer_instructions="
+                + Agent.tomlString(env["FORGE_SYSTEM"]! + "\n\nAnswer directly. Don't run commands or change files.")
+            let imageArgs = files.indices.map { "-i \"$FORGE_FILE_\($0)\"" }.joined(separator: " ")
+            command = """
+            "$FORGE_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
+              -s read-only -c hooks={} -c model_reasoning_effort="low" -c "$FORGE_CODEX_INSTRUCTIONS" \(imageArgs) -- "$FORGE_PROMPT"
+            """
+        case .opencode:
+            env["FORGE_PROMPT"] = "Instructions (follow these):\n\(env["FORGE_SYSTEM"]!)\n\nRequest:\n\(prompt)"
+            env["OPENCODE_CONFIG_CONTENT"] = #"{"permission":{"edit":"deny","bash":"deny","webfetch":"deny"}}"#
+            let fileArgs = files.indices.map { "-f \"$FORGE_FILE_\($0)\"" }.joined(separator: " ")
+            command = "\"$FORGE_TOOL\" run --format json \"$FORGE_PROMPT\" \(fileArgs)"
+        case .pi:
+            return try await viaPi(prompt: prompt, images: images, system: system)
+        }
+        var text = ""
+        var cost = 0.0
+        var failure: String?
+        let status = await Shell.run(command, cwd: folder, env: env) { line in
+            for event in Agent.parse(line, engine: engine) {
+                switch event {
+                case .text(let chunk): text = chunk   // the last message is the answer
+                case .cost(let amount): cost += amount
+                case .failed(let message): failure = message
+                default: break
+                }
+            }
+        }
+        if let failure { throw Failure(message: Provider.friendlyError(failure)) }
+        guard !text.isEmpty else {
+            throw Failure(message: status == 0 ? "The AI didn't answer." : "\(engine.title) didn't answer. Check it's signed in.")
+        }
         return (text, cost)
     }
 

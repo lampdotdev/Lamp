@@ -362,8 +362,10 @@ extension Agent {
     }
 
     /// Parses one output line from the current engine.
-    static func parseLine(_ line: String) -> [AgentEvent] {
-        switch Builder.engine {
+    static func parseLine(_ line: String) -> [AgentEvent] { parse(line, engine: Builder.engine) }
+
+    static func parse(_ line: String, engine: Engine) -> [AgentEvent] {
+        switch engine {
         case .pi: parse(line)
         case .claude: parseClaude(line)
         case .codex: parseCodex(line)

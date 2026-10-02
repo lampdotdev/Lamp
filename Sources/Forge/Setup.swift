@@ -53,11 +53,14 @@ struct SetupCheck {
 struct SetupView: View {
     @EnvironmentObject private var store: Store
     @State private var key = ""
+    @State private var checkingKey = false
+    @State private var keyProblem: String?
+    @State private var showAlternatives = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             Text("Welcome to Forge").font(.largeTitle.bold())
-            Text("Two one-time steps and you're ready to build apps. Both can happen at the same time.")
+            Text("Describe an app your Mac is missing, and Forge builds it: a real app you can keep using, change whenever you like, and share. Two one-time steps first, and they can happen at the same time.")
                 .foregroundStyle(.secondary)
 
             if !store.setup.hasAgent {
@@ -84,8 +87,8 @@ struct SetupView: View {
             }
 
             step(done: store.setup.hasBuilder,
-                 title: "Choose the AI that builds your apps",
-                 detail: "The easiest option is an OpenRouter key, which also powers AI features and images inside your apps.") {
+                 title: "Add an OpenRouter key",
+                 detail: "One key covers everything: building your apps, and the AI, images and decisions inside them. You pay OpenRouter only for what you use.") {
                 EmptyView()
             }
             if !store.setup.hasBuilder {
@@ -94,18 +97,33 @@ struct SetupView: View {
                         SecureField("OpenRouter key (sk-or-…)", text: $key)
                             .textFieldStyle(.roundedBorder)
                             .onSubmit(saveKey)
-                        Button("Save", action: saveKey).disabled(key.trimmed.isEmpty)
+                            .onChange(of: key) { keyProblem = nil }
+                        if checkingKey {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Button("Save", action: saveKey).disabled(key.trimmed.isEmpty)
+                        }
                         Link("Get a key", destination: URL(string: "https://openrouter.ai/keys")!)
                     }
-                    Text("Or use something you already have:").font(.callout).foregroundStyle(.secondary)
-                    HStack {
-                        ForEach(Engine.allCases.filter { $0 != .pi && ToolLocator.path(for: $0) != nil }) { engine in
-                            Button(engine.title) { use(engine) }
-                        }
-                        Button("A model on this Mac…") { openSettings(tab: "providers", sheet: Builder.localProvider) }
-                        Button("Other providers…") { openSettings(tab: "building") }
+                    if let keyProblem {
+                        Label(keyProblem, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
                     }
-                    .controlSize(.small)
+                    DisclosureGroup("Use something you already have instead", isExpanded: $showAlternatives) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                ForEach(Engine.allCases.filter { $0 != .pi && ToolLocator.path(for: $0) != nil }) { engine in
+                                    Button(engine.title) { use(engine) }
+                                }
+                                Button("A model on this Mac…") { openSettings(tab: "providers", sheet: Builder.localProvider) }
+                                Button("Other providers…") { openSettings(tab: "building") }
+                            }
+                            .controlSize(.small)
+                            Text("Apps' text AI then uses the same sign-in. Images and decisions inside apps still need an OpenRouter key, which you can add later in Settings.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        .padding(.top, 6)
+                    }
+                    .font(.callout)
                 }
                 .padding(.leading, 36)
             }
@@ -129,12 +147,43 @@ struct SetupView: View {
         Task { await store.recheckSetup() }
     }
 
+    /// Checks the key with OpenRouter before saving it, so a typo shows up now rather than at the first build.
     private func saveKey() {
-        KeyStore.setOpenRouterKey(key)
-        key = ""
-        Builder.engine = .pi
-        Builder.piProvider = "openrouter"
-        Task { await store.recheckSetup() }
+        let candidate = key.trimmed
+        guard !candidate.isEmpty, !checkingKey else { return }
+        checkingKey = true
+        Task {
+            defer { checkingKey = false }
+            if let problem = await Self.checkOpenRouterKey(candidate) {
+                keyProblem = problem
+                return
+            }
+            KeyStore.setOpenRouterKey(candidate)
+            key = ""
+            Builder.engine = .pi
+            Builder.piProvider = "openrouter"
+            await store.recheckSetup()
+        }
+    }
+
+    /// nil if OpenRouter accepts the key; otherwise what's wrong, in plain words.
+    static func checkOpenRouterKey(_ key: String) async -> String? {
+        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/key")!)
+        request.timeoutInterval = 20
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        guard let (data, response) = try? await URLSession.shared.data(for: request) else {
+            return "Couldn't reach OpenRouter. Check your internet connection."
+        }
+        switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
+        case 200:
+            let info = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["data"] as? [String: Any]
+            if let remaining = info?["limit_remaining"] as? Double, remaining <= 0 {
+                return "That key works, but it has no credit left. Add credit at openrouter.ai, then try again."
+            }
+            return nil
+        case 401, 403: return "OpenRouter didn't accept that key. Copy it again from openrouter.ai/keys."
+        default: return "OpenRouter couldn't check the key right now. Try again in a moment."
+        }
     }
 
     private func step<Accessory: View>(done: Bool, title: String, detail: String,
@@ -147,6 +196,7 @@ struct SetupView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.headline)
                 Text(LocalizedStringKey(detail)).font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             if !done { accessory() }
