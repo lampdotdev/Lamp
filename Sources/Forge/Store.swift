@@ -679,6 +679,27 @@ final class Store: ObservableObject {
         process.terminate()
     }
 
+    /// Opens the installed app, or brings it to the front if it's running. Only builds when there's
+    /// nothing installed yet (or the installed copy was deleted).
+    func open(_ project: ForgeProject) async {
+        if let running = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first {
+            running.activate()
+            return
+        }
+        guard FileManager.default.fileExists(atPath: project.installedURL.path) else {
+            await run(project)
+            return
+        }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        do {
+            _ = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
+        } catch {
+            log(project, .error, "Couldn't open the app: \(error.localizedDescription)")
+        }
+    }
+
+    /// Rebuilds the app from its code, reinstalls it and relaunches it.
     func run(_ project: ForgeProject) async {
         guard busy.insert(project.id).inserted else { return }
         defer { finish(project) }

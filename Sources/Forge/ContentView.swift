@@ -128,7 +128,7 @@ struct AppSidebar: View {
             }
         } primaryAction: { ids in
             for project in store.projects where ids.contains(project.id) {
-                Task { await store.run(project) }
+                Task { await store.open(project) }
             }
         }
     }
@@ -138,7 +138,7 @@ struct AppSidebar: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 84, maximum: 110), spacing: 4)], spacing: 8) {
                 ForEach(store.projects) { project in
                     AppTile(project: project, selected: store.selection == project.id)
-                        .onTapGesture(count: 2) { Task { await store.run(project) } }
+                        .onTapGesture(count: 2) { Task { await store.open(project) } }
                         .simultaneousGesture(TapGesture().onEnded { store.selection = project.id })
                         .contextMenu { AppMenu(project: project) }
                 }
@@ -275,7 +275,8 @@ struct AppMenu: View {
 
     var body: some View {
         let busy = store.busy.contains(project.id)
-        Button("Run") { Task { await store.run(project) } }
+        Button("Open") { Task { await store.open(project) } }
+        Button("Rebuild & Open") { Task { await store.run(project) } }
             .disabled(busy)
         Divider()
         Button("Rename…") { store.renaming = project }
@@ -457,10 +458,10 @@ struct ProjectView: View {
             ToolbarItem(placement: .navigation) { titleIcon }
         }
         ToolbarItem {
-            Button { Task { await store.run(project) } } label: {
+            Button { Task { await store.open(project) } } label: {
                 Label("Open App", systemImage: "play.fill")
             }
-            .disabled(busy)
+            .help("Open the app (right-click it in the sidebar to rebuild)")
         }
         gap
         ToolbarItemGroup {
