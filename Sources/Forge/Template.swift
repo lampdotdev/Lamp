@@ -1,0 +1,270 @@
+import Foundation
+
+/// The scaffold every generated app starts from.
+enum Template {
+    static func scaffold(name rawName: String, in root: URL) throws -> ForgeProject {
+        let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
+        let exe = identifier(from: name)
+        var slug = exe.lowercased()
+        var n = 2
+        while FileManager.default.fileExists(atPath: root.appendingPathComponent(slug).path) {
+            slug = "\(exe.lowercased())-\(n)"
+            n += 1
+        }
+        let project = ForgeProject(id: slug, name: name.isEmpty ? exe : name, exe: exe,
+                                   dir: root.appendingPathComponent(slug))
+
+        let files: [String: String] = [
+            "Package.swift": packageSwift,
+            "Sources/App.swift": appSwift,
+            "Sources/ContentView.swift": contentViewSwift,
+            "build.sh": buildSh,
+            "APP.md": appMd,
+            ".gitignore": ".build/\nbuild/\n.forge/\n",
+        ]
+        for (path, template) in files {
+            let url = project.dir.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let contents = template
+                .replacingOccurrences(of: "{{NAME}}", with: project.name)
+                .replacingOccurrences(of: "{{EXE}}", with: project.exe)
+                .replacingOccurrences(of: "{{SLUG}}", with: project.id)
+                .replacingOccurrences(of: "{{BUNDLE}}", with: project.bundleID)
+            try contents.write(to: url, atomically: true, encoding: .utf8)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                              ofItemAtPath: project.dir.appendingPathComponent("build.sh").path)
+
+        let forgeDir = project.dir.appendingPathComponent(".forge")
+        try FileManager.default.createDirectory(at: forgeDir, withIntermediateDirectories: true)
+        try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe))
+            .write(to: forgeDir.appendingPathComponent("meta.json"))
+        try writeSupport(for: project)
+        return project
+    }
+
+    /// Per-app secret the app sends to Forge's AI gateway. Created on first use.
+    static func token(for project: ForgeProject) -> String {
+        let url = project.dir.appendingPathComponent(".forge/token")
+        if let token = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !token.isEmpty { return token }
+        let token = UUID().uuidString + UUID().uuidString
+        try? token.write(to: url, atomically: true, encoding: .utf8)
+        return token
+    }
+
+    /// Forge owns ForgeSupport.swift and rewrites it before every agent turn and build,
+    /// so existing apps pick up helper improvements automatically.
+    static func writeSupport(for project: ForgeProject) throws {
+        let contents = forgeSupportSwift
+            .replacingOccurrences(of: "{{SLUG}}", with: project.id)
+            .replacingOccurrences(of: "{{TOKEN}}", with: token(for: project))
+            .replacingOccurrences(of: "{{PORT}}", with: String(Gateway.port))
+        try contents.write(to: project.dir.appendingPathComponent("Sources/ForgeSupport.swift"),
+                           atomically: true, encoding: .utf8)
+    }
+
+    /// "pomodoro timer!" → "PomodoroTimer"
+    static func identifier(from name: String) -> String {
+        let words = name.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        var id = words.map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined()
+        if id.isEmpty { id = "Untitled" }
+        if id.first!.isNumber { id = "App" + id }
+        return id
+    }
+
+    static let packageSwift = """
+    // swift-tools-version:5.9
+    import PackageDescription
+
+    let package = Package(
+        name: "{{EXE}}",
+        platforms: [.macOS(.v14)],
+        targets: [.executableTarget(name: "{{EXE}}", path: "Sources")]
+    )
+
+    """
+
+    static let appSwift = """
+    import SwiftUI
+
+    @main
+    struct MainApp: SwiftUI.App {
+        var body: some SwiftUI.Scene {
+            WindowGroup("{{NAME}}") {
+                ContentView()
+            }
+            .commands { ForgeCommands() }
+        }
+    }
+
+    """
+
+    static let contentViewSwift = """
+    import SwiftUI
+
+    struct ContentView: View {
+        var body: some View {
+            VStack(spacing: 12) {
+                Image(systemName: "hammer")
+                    .font(.system(size: 40))
+                    .foregroundStyle(.secondary)
+                Text("{{NAME}}")
+                    .font(.title2.bold())
+                Text("Press ⇧⌘E to tell Forge what to build.")
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .frame(minWidth: 420, minHeight: 300)
+        }
+    }
+
+    """
+
+    static let forgeSupportSwift = #"""
+    // Generated by Forge before every build. Don't edit: changes are overwritten.
+    import SwiftUI
+    import AppKit
+
+    /// Adds "Edit with Forge…" (⇧⌘E), which jumps back to this app's chat in Forge.
+    struct ForgeCommands: Commands {
+        var body: some Commands {
+            CommandGroup(after: .appInfo) {
+                Button("Edit with Forge…") {
+                    NSWorkspace.shared.open(URL(string: "forge://edit?app={{SLUG}}")!)
+                }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+            }
+        }
+    }
+
+    /// AI for this app, using the same AI account as Forge. No API keys needed.
+    ///
+    ///     let summary = try await ForgeAI.ask("Summarise these notes:\n\(notes)")
+    ///
+    ///     struct Items: Decodable { let items: [String] }
+    ///     let result = try await ForgeAI.ask("Extract action items from:\n\(notes)\n" +
+    ///         #"Reply as JSON: {"items": ["..."]}"#, as: Items.self)
+    ///
+    /// Pass images (photos, screenshots, camera frames) to have the AI look at them:
+    ///
+    ///     let verdict = try await ForgeAI.ask("What's in this photo?", images: [photo])
+    ///
+    /// Calls take a few seconds: show a ProgressView, and show `error.localizedDescription` on failure.
+    enum ForgeAI {
+        struct Failure: LocalizedError {
+            let message: String
+            var errorDescription: String? { message }
+        }
+
+        static func ask(_ prompt: String, images: [NSImage] = [], system: String? = nil) async throws -> String {
+            try await call(prompt: prompt, images: images, system: system, json: false)
+        }
+
+        /// Asks for JSON and decodes it. Describe the exact JSON shape in the prompt.
+        static func ask<T: Decodable>(_ prompt: String, images: [NSImage] = [], system: String? = nil,
+                                      as type: T.Type) async throws -> T {
+            let text = try await call(prompt: prompt, images: images, system: system, json: true)
+            do {
+                return try JSONDecoder().decode(T.self, from: Data(text.utf8))
+            } catch {
+                throw Failure(message: "The AI's answer wasn't in the expected format. Try again.")
+            }
+        }
+
+        private static func call(prompt: String, images: [NSImage], system: String?, json: Bool) async throws -> String {
+            var request = URLRequest(url: URL(string: "http://127.0.0.1:{{PORT}}/ai")!)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 180
+            request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "prompt": prompt, "system": system ?? "", "json": json, "images": images.compactMap(encode),
+            ] as [String: Any])
+
+            for attempt in 0..<2 {
+                do {
+                    let (data, response) = try await URLSession.shared.data(for: request)
+                    let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+                    if (response as? HTTPURLResponse)?.statusCode == 200, let text = body["text"] as? String {
+                        return text
+                    }
+                    throw Failure(message: body["error"] as? String ?? "The AI request failed.")
+                } catch let error as URLError where error.code == .cannotConnectToHost && attempt == 0 {
+                    // Forge isn't running: start it in the background, then retry once.
+                    let config = NSWorkspace.OpenConfiguration()
+                    config.activates = false
+                    if let forge = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "dev.forge.host") {
+                        _ = try? await NSWorkspace.shared.openApplication(at: forge, configuration: config)
+                    }
+                    try await Task.sleep(for: .seconds(3))
+                }
+            }
+            throw Failure(message: "Couldn't reach Forge. Open Forge and try again.")
+        }
+
+        /// Downscales to at most 1568px on the long side (the most the model uses) and JPEG-encodes.
+        private static func encode(_ image: NSImage) -> [String: String]? {
+            guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+            let scale = min(1, 1568 / Double(max(cg.width, cg.height)))
+            let width = max(1, Int(Double(cg.width) * scale)), height = max(1, Int(Double(cg.height) * scale))
+            guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+            context.interpolationQuality = .high
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+            guard let scaled = context.makeImage(),
+                  let jpeg = NSBitmapImageRep(cgImage: scaled).representation(using: .jpeg, properties: [.compressionFactor: 0.8])
+            else { return nil }
+            return ["media_type": "image/jpeg", "data": jpeg.base64EncodedString()]
+        }
+    }
+
+    """#
+
+    static let buildSh = """
+    #!/bin/zsh
+    # Builds build/{{EXE}}.app. Run after every change.
+    set -euo pipefail
+    cd "$(dirname "$0")"
+    swift build -c debug 2>&1
+    BIN="$(swift build -c debug --show-bin-path)/{{EXE}}"
+    APP="build/{{EXE}}.app"
+    rm -rf "$APP"
+    mkdir -p "$APP/Contents/MacOS"
+    cp "$BIN" "$APP/Contents/MacOS/{{EXE}}"
+    cat > "$APP/Contents/Info.plist" <<PLIST
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0"><dict>
+      <key>CFBundleExecutable</key><string>{{EXE}}</string>
+      <key>CFBundleIdentifier</key><string>{{BUNDLE}}</string>
+      <key>CFBundleName</key><string>{{NAME}}</string>
+      <key>CFBundleDisplayName</key><string>{{NAME}}</string>
+      <key>CFBundlePackageType</key><string>APPL</string>
+      <key>CFBundleShortVersionString</key><string>0.1</string>
+      <key>LSMinimumSystemVersion</key><string>14.0</string>
+      <key>NSPrincipalClass</key><string>NSApplication</string>
+      <key>NSHighResolutionCapable</key><true/>
+    </dict></plist>
+    PLIST
+    codesign --force -s - "$APP" >/dev/null 2>&1
+    echo "Built $APP"
+
+    """
+
+    static let appMd = """
+    # {{NAME}}
+
+    A macOS SwiftUI app built and live-edited with Forge.
+
+    ## What it does
+    Nothing yet: fresh scaffold.
+
+    ## Structure
+    - `Sources/App.swift`: entry point and window.
+    - `Sources/ContentView.swift`: main UI.
+    - `Sources/ForgeSupport.swift`: generated by Forge ("Edit with Forge" command and `ForgeAI`). Don't edit.
+    - `build.sh`: builds `build/{{EXE}}.app`.
+
+    """
+}
