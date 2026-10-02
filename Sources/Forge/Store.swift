@@ -82,6 +82,8 @@ final class Store: ObservableObject {
     @Published var pendingImport: PendingImport?
     /// The app whose Rename… alert is showing.
     @Published var renaming: ForgeProject?
+    /// The app whose Delete confirmation is showing.
+    @Published var deleting: ForgeProject?
     private var running: [String: Process] = [:]    // project id → agent process, for Stop
     private var stopped: Set<String> = []
     private var artInProgress: Set<String> = []
@@ -670,6 +672,35 @@ final class Store: ObservableObject {
 
     private static func savedSession(_ url: URL) -> String? {
         (try? String(contentsOf: url, encoding: .utf8))?.trimmed.nilIfEmpty
+    }
+
+    /// Deletes an app: quits it, stops its agent, and moves its source and built app to the Trash.
+    func delete(_ project: ForgeProject) async {
+        stop(project)
+        iconDesigns.removeValue(forKey: project.id)?.cancel()
+        await quit(project)
+        let fm = FileManager.default
+        if fm.fileExists(atPath: project.installedURL.path) {
+            try? fm.trashItem(at: project.installedURL, resultingItemURL: nil)
+        }
+        do {
+            try fm.trashItem(at: project.dir, resultingItemURL: nil)
+        } catch {
+            NSAlert(error: error).runModal()
+            return
+        }
+        let index = projects.firstIndex { $0.id == project.id }
+        projects.removeAll { $0.id == project.id }
+        logs[project.id] = nil
+        usage[project.id] = nil
+        queued[project.id] = nil
+        icons[project.id] = nil
+        busy.remove(project.id)
+        unread.remove(project.id)
+        tokens = tokens.filter { $0.value != project.id }
+        if selection == project.id {
+            selection = index.flatMap { projects.indices.contains($0) ? projects[$0] : projects.last }?.id
+        }
     }
 
     /// Stops the agent working on an app.

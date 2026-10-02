@@ -47,10 +47,28 @@ struct ContentView: View {
             .disabled(newName.trimmed.isEmpty)
             Button("Cancel", role: .cancel) {}
         }
+        .confirmationDialog("Delete “\(store.deleting?.name ?? "")”?", isPresented: Binding(
+            get: { store.deleting != nil }, set: { if !$0 { store.deleting = nil } })) {
+            Button("Move to Trash", role: .destructive) {
+                if let project = store.deleting { Task { await store.delete(project) } }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The app, its chat and its history are moved to the Trash.")
+        }
+        .dialogIcon(store.deleting.map { Image(nsImage: dialogIcon(for: $0)) })
         .onChange(of: store.renaming) { newName = store.renaming.map { $0.untitled ? "" : $0.name } ?? "" }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             store.markRead()
         }
+    }
+
+    /// The app's own icon, or its blueprint stand-in if it doesn't have one yet.
+    private func dialogIcon(for project: ForgeProject) -> NSImage {
+        if let icon = store.icons[project.id] { return icon }
+        let renderer = ImageRenderer(content: BlueprintIcon(letter: project.untitled ? nil : project.name.first, size: 128))
+        renderer.scale = 2
+        return renderer.nsImage ?? NSApp.applicationIconImage
     }
 }
 
@@ -291,6 +309,8 @@ struct AppMenu: View {
         ShareLink("Share…", item: SharedApp(project: project),
                   preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
         Button("Export…") { store.chooseExport(project) }
+        Divider()
+        Button("Delete…", role: .destructive) { store.deleting = project }
     }
 }
 
@@ -469,6 +489,10 @@ struct ProjectView: View {
                 Label("Undo Last Change", systemImage: "arrow.uturn.backward")
             }
             .disabled(busy)
+            Button { store.deleting = project } label: {
+                Label("Delete App", systemImage: "trash")
+            }
+            .help("Delete this app")
             Menu {
                 Button("Copy App File") { store.copyAppFile(project) }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
