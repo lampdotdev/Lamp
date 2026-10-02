@@ -267,7 +267,6 @@ final class Store: ObservableObject {
     }
 
     /// The installed app was built by an older Forge and hasn't been rebuilt since.
-    func isOutdated(_ project: ForgeProject) -> Bool { stamps[project.id]?.isOutdated ?? false }
 
     // MARK: - Drafts
 

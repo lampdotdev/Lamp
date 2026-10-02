@@ -136,10 +136,6 @@ struct AppSidebar: View {
                         ProgressView().controlSize(.small)
                     } else if store.unread.contains(project.id) {
                         ReadyDot()
-                    } else if store.isOutdated(project) {
-                        Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
-                            .foregroundStyle(.orange)
-                            .help("Built with an older version of Forge. Rebuild it to bring it up to date.")
                     }
                 }
                 .tag(project.id)
@@ -216,13 +212,6 @@ struct AppTile: View {
                         ReadyDot(size: 12)
                             .overlay(Circle().strokeBorder(.background, lineWidth: 2))
                             .offset(x: 4, y: -4)
-                    } else if store.isOutdated(project) {
-                        Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
-                            .font(.caption).foregroundStyle(.orange)
-                            .padding(3)
-                            .background(.regularMaterial, in: Circle())
-                            .offset(x: 6, y: -6)
-                            .help("Built with an older version of Forge. Rebuild it to bring it up to date.")
                     }
                 }
             Text(project.name)
