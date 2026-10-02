@@ -420,7 +420,6 @@ struct ProjectView: View {
                 .help(dictation.isListening ? "Stop dictation" : "Dictate a change")
                 .frame(height: Composer.lineHeight)
                 if busy {
-                    ProgressView().controlSize(.small).frame(height: Composer.lineHeight)
                     Button { store.stop(project) } label: { Image(systemName: "stop.circle.fill").font(.title2) }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
