@@ -8,6 +8,20 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# The version. Releases pass APP_VERSION (the tag). A local build takes it from git: "0.3.1" on the
+# release tag itself, "0.3.1+6" six commits after it, so a build from source says which release it's
+# ahead of. APP_BUILD is the all-numeric form macOS compares when two copies of Forge are on disk.
+if [[ -z "${APP_VERSION:-}" ]]; then
+  described="$(git describe --tags --match 'v[0-9]*' 2>/dev/null || true)"   # v0.3.1 or v0.3.1-6-g8065f74
+  if [[ "$described" =~ '^v([0-9.]+)(-([0-9]+)-g[0-9a-f]+)?$' ]]; then
+    APP_VERSION="${match[1]}${match[3]:++${match[3]}}"
+    APP_BUILD="${match[1]}${match[3]:+.${match[3]}}"
+  else
+    APP_VERSION="0.1"   # no git, or no release tags fetched
+  fi
+fi
+APP_BUILD="${APP_BUILD:-$APP_VERSION}"
+
 # The pi coding agent (MIT, github.com/badlogic/pi-mono) is bundled inside Forge.app.
 # Pinned version + checksums from the release's SHA256SUMS; downloads are cached in vendor/.
 PI_VERSION="1.0.0"
@@ -78,8 +92,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>Forge</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>${APP_VERSION:-0.1}</string>
-  <key>CFBundleVersion</key><string>${APP_VERSION:-0.1}</string>
+  <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
+  <key>CFBundleVersion</key><string>$APP_BUILD</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHighResolutionCapable</key><true/>
