@@ -722,25 +722,19 @@ struct AppInfoView: View {
             }
             Section {
                 let _ = settingsRevision
-                Picker("Text and pictures", selection: choice(\.text)) {
-                    Text("Default: \(Self.short(AppAI.model.label))").tag("")
-                    Divider()
+                Picker("Text and pictures", selection: choice(\.text, default: AppAI.model.id)) {
                     ForEach(AppAI.models, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
                 }
-                Picker("Making images", selection: choice(\.image)) {
-                    Text("Default: \(Self.short(label(Icons.artModels, Icons.artModel)))").tag("")
-                    Divider()
+                Picker("Making images", selection: choice(\.image, default: Icons.artModel)) {
                     ForEach(Icons.artModels, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
                 }
-                Picker("Decisions", selection: choice(\.decision)) {
-                    Text("Default: \(AppAI.decisionModel.label)").tag("")
-                    Divider()
+                Picker("Decisions", selection: choice(\.decision, default: AppAI.decisionModel.id)) {
                     ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }
                 }
             } header: {
                 Text("AI inside this app")
             } footer: {
-                Text(Provider.hasKey ? "Applies straight away, without rebuilding." : "Without an OpenRouter key, text uses whatever builds your apps.")
+                Text(Provider.hasKey ? "Starts as your choices in Settings. Changes apply straight away, without rebuilding." : "Without an OpenRouter key, text uses whatever builds your apps.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {
@@ -787,10 +781,11 @@ struct AppInfoView: View {
         return inside.hasPrefix("Claude") ? inside : String(label[..<open]).trimmed
     }
 
-    /// One of this app's model choices, with "" for Forge's default.
-    private func choice(_ field: WritableKeyPath<AppModels, String?>) -> Binding<String> {
-        Binding(get: { models[keyPath: field] ?? "" }, set: {
-            models[keyPath: field] = $0.isEmpty ? nil : $0
+    /// One of this app's model choices. Picking the model Settings uses means following Settings, so the app
+    /// keeps up if that default changes; any other pick is this app's own.
+    private func choice(_ field: WritableKeyPath<AppModels, String?>, default fallback: String) -> Binding<String> {
+        Binding(get: { models[keyPath: field] ?? fallback }, set: {
+            models[keyPath: field] = $0 == fallback ? nil : $0
             models.save(project)
         })
     }
