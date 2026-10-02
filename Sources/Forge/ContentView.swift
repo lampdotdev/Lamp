@@ -360,6 +360,10 @@ struct ProjectView: View {
         (store.logs[project.id] ?? []).filter { showDetails || !$0.isDetail }
     }
     private var busy: Bool { store.busy.contains(project.id) }
+    /// The first turn of a new app, while it's still running.
+    private var building: TurnProgress? {
+        store.progress[project.id].flatMap { $0.newApp && $0.finished == nil ? $0 : nil }
+    }
     private var queued: [QueuedMessage] { store.queued[project.id] ?? [] }
     /// The finished agent turn a suggestion follows up on. Nil while working, so none shows mid-turn.
     private var suggestionTurn: UUID? { busy ? nil : NextStep.turn(in: store.logs[project.id] ?? []) }
@@ -373,17 +377,27 @@ struct ProjectView: View {
             ScrollViewReader { proxy in
                 GeometryReader { area in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
+                        // While a new app is being built, its card stays in view above the steps.
+                        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: building == nil ? [] : [.sectionHeaders]) {
                             if lines.isEmpty && queued.isEmpty {
                                 NewAppIntro(project: project)
                             }
-                            Transcript(lines: lines, dir: project.dir, busy: busy) { line, before in
-                                Task { await store.restore(project, toVersionOf: line, before: before) }
-                            }
-                            if let progress = store.progress[project.id] {
-                                if progress.newApp {
-                                    BuildCard(project: project, progress: progress).padding(.top, 16)
-                                } else if busy, !(lines.last.map { $0.kind == .status && $0.text.hasSuffix("…") } ?? false) {
+                            if let card = store.progress[project.id], card.newApp,
+                               let request = lines.lastIndex(where: { $0.kind == .user }) {
+                                // The build card goes straight after the request; what the agent says and
+                                // does follows it.
+                                transcript(Array(lines[...request]), busy: false)
+                                Section {
+                                    transcript(Array(lines[(request + 1)...]), busy: busy)
+                                } header: {
+                                    BuildCard(project: project, progress: card)
+                                        .padding(.top, 16).padding(.bottom, 12)
+                                        .background(Color(nsColor: .textBackgroundColor))
+                                }
+                            } else {
+                                transcript(lines, busy: busy)
+                                if let progress = store.progress[project.id], busy,
+                                   !(lines.last.map { $0.kind == .status && $0.text.hasSuffix("…") } ?? false) {
                                     // Not next to a status like "Building…", which says the same thing.
                                     ActivityRow(progress: progress).padding(.top, 12)
                                 }
@@ -517,6 +531,12 @@ struct ProjectView: View {
             suggestion = nil
             guard suggestionTurn != nil else { return }
             suggestion = await NextStep.suggest(for: project, lines: store.logs[project.id] ?? [])
+        }
+    }
+
+    private func transcript(_ lines: [LogLine], busy: Bool) -> some View {
+        Transcript(lines: lines, dir: project.dir, busy: busy) { line, before in
+            Task { await store.restore(project, toVersionOf: line, before: before) }
         }
     }
 
