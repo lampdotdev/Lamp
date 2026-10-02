@@ -4,6 +4,9 @@
  * - `look_at_app`: the agent can't run anything itself. This asks Forge (over its local gateway) to build
  *   the app with the agent's changes, open it, and report back: a picture of each window, what the app
  *   printed, and any build errors or crash.
+ * - `use_app`: clicks, types and presses keys in the open app's front window, at points in its latest picture.
+ *   Forge passes the actions to the app, which performs them on itself (ForgeDriver in ForgeSupport), so no
+ *   Accessibility permission is needed. The reply is what happened and a fresh picture.
  * - `delete_file`: pi's own tools can write and edit files but not remove one. This deletes a single file
  *   inside the app's folder, leaving alone the files Forge owns. The app's git history can bring it back
  *   (Undo).
@@ -41,21 +44,65 @@ const lookAtApp = defineTool({
 			body: "{}",
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(600_000)]) : AbortSignal.timeout(600_000),
 		});
-		const reply = (await response.json()) as { text?: string; error?: string; screenshots?: string[] };
-		if (!response.ok) throw new Error(reply.error ?? "Forge couldn't look at the app.");
+		return pictureReply(response, ctx.model, "Forge couldn't look at the app.");
+	},
+});
 
-		const content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] = [
-			{ type: "text", text: reply.text ?? "" },
-		];
-		const pictures = reply.screenshots ?? [];
-		if (pictures.length > 0 && ctx.model && !ctx.model.input.includes("image")) {
-			content.push({ type: "text", text: "This model can't view images, so the pictures of the windows were left out." });
-		} else {
-			for (const path of pictures) {
-				content.push({ type: "image", data: (await readFile(path)).toString("base64"), mimeType: "image/png" });
-			}
+/** Forge's answer to look_at_app or use_app: its text, then the pictures it names (if the model can see them). */
+async function pictureReply(response: Response, model: { input: string[] } | undefined, failure: string) {
+	const reply = (await response.json()) as { text?: string; error?: string; screenshots?: string[] };
+	if (!response.ok) throw new Error(reply.error ?? failure);
+
+	const content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] = [
+		{ type: "text", text: reply.text ?? "" },
+	];
+	const pictures = reply.screenshots ?? [];
+	if (pictures.length > 0 && model && !model.input.includes("image")) {
+		content.push({ type: "text", text: "This model can't view images, so the pictures of the windows were left out." });
+	} else {
+		for (const path of pictures) {
+			content.push({ type: "image", data: (await readFile(path)).toString("base64"), mimeType: "image/png" });
 		}
-		return { content, details: { screenshots: pictures } };
+	}
+	return { content, details: { screenshots: pictures } };
+}
+
+const useApp = defineTool({
+	name: "use_app",
+	label: "Use the app",
+	description:
+		"Uses the open app the way a person would: clicks, double-clicks, types, presses keys and scrolls in its " +
+		"front window, then shows you what happened, a fresh picture, and what the app printed. x and y are pixels " +
+		"in the latest picture of the front window from look_at_app or use_app. Use it to check that something " +
+		"works, not just how it looks: click a column header and see whether the list re-sorts, fill in a form " +
+		"and submit it. Call look_at_app first so your latest code is built and open.",
+	parameters: Type.Object({
+		actions: Type.Array(
+			Type.Object({
+				action: Type.Union([
+					Type.Literal("click"), Type.Literal("double_click"), Type.Literal("type"),
+					Type.Literal("key"), Type.Literal("scroll"), Type.Literal("wait"),
+				]),
+				x: Type.Optional(Type.Number({ description: "click, double_click, scroll: pixels from the picture's left" })),
+				y: Type.Optional(Type.Number({ description: "click, double_click, scroll: pixels from the picture's top" })),
+				text: Type.Optional(Type.String({ description: "type: the text, typed into whatever has focus (click a field first)" })),
+				key: Type.Optional(Type.String({ description: "key: return, escape, tab, delete, space, up, down, left, right, or a letter, with modifiers like cmd+a" })),
+				amount: Type.Optional(Type.Number({ description: "scroll: points, positive scrolls down; wait: seconds" })),
+			}),
+			{ minItems: 1, maxItems: 30 },
+		),
+	}),
+
+	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		const url = process.env.FORGE_USE_URL;
+		if (!url) throw new Error("Forge isn't available to use the app.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.FORGE_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify({ actions: params.actions }),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
+		});
+		return pictureReply(response, ctx.model, "Forge couldn't use the app.");
 	},
 });
 
@@ -246,6 +293,7 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.registerTool(webFetch);
 	pi.registerTool(lookAtApp);
+	pi.registerTool(useApp);
 	pi.registerTool(plan);
 	pi.registerTool(deleteFile);
 	pi.registerTool(listVersions);

@@ -72,6 +72,7 @@ struct TurnProgress {
     static func activity(for call: ToolCall) -> String {
         let file = call.argument
         if call.name == "look_at_app" { return "Checking the result" }
+        if call.name == "use_app" { return "Trying the app" }
         switch call.action {
         case .read: return file.hasPrefix("screenshot") ? "Looking at the app" : file.isEmpty ? "Reading the code" : "Reading \(file)"
         case .write: return file.isEmpty ? "Writing a file" : "Writing \(file)"
