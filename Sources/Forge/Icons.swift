@@ -17,7 +17,9 @@ enum Icons {
     static let artModels: [(id: String, label: String)] = [
         ("google/gemini-3.1-flash-image", "Nano Banana 2 (Gemini 3.1 Flash Image)"),
         ("google/gemini-3-pro-image", "Nano Banana Pro (Gemini 3 Pro Image, pricier)"),
-        ("openai/gpt-5.4-image-2", "GPT Image 2 (OpenAI, pricier)"),
+        ("openai/gpt-image-2.5-sunburst", "GPT Image 2.5 Sunburst (OpenAI, pricier)"),
+        ("openai/gpt-image-2.5-flare", "GPT Image 2.5 Flare (OpenAI, pricier)"),
+        ("openai/gpt-image-2", "GPT Image 2 (OpenAI, pricier)"),
         ("google/gemini-3.1-flash-lite-image", "Nano Banana 2 Lite (fastest, cheapest)"),
     ]
 
@@ -177,7 +179,8 @@ enum Icons {
 
     // MARK: Artwork
 
-    /// Generates square artwork with an OpenRouter image model. Returns PNG/JPEG data.
+    /// Generates square artwork through OpenRouter's image API, which works the same for every image model
+    /// (including image-only ones like GPT Image). Returns PNG data.
     static func generateArt(_ description: String) async throws -> Data {
         let prompt = """
         Artwork for a macOS app icon: \(description).
@@ -185,7 +188,7 @@ enum Icons {
         entire canvas edge to edge. Polished, modern, soft lighting. No text, no letters, no border, no frame, \
         no rounded corners, no device mockup, no white margins.
         """
-        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
+        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/images")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 180
         request.setValue("Bearer \(Keychain.openRouterKey ?? "")", forHTTPHeaderField: "Authorization")
@@ -193,9 +196,10 @@ enum Icons {
         request.setValue("Forge", forHTTPHeaderField: "X-Title")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": artModel,
-            "messages": [["role": "user", "content": prompt]],
-            "modalities": ["image", "text"],
-            "image_config": ["aspect_ratio": "1:1"],
+            "prompt": prompt,
+            "n": 1,
+            "aspect_ratio": "1:1",
+            "output_format": "png",
         ] as [String: Any])
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -205,11 +209,9 @@ enum Icons {
             let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
             throw AppAI.Failure(message: Provider.friendlyError("\(status) \(message)"))
         }
-        let message = ((obj["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any]) ?? [:]
-        let images = message["images"] as? [[String: Any]] ?? []
-        guard let url = (images.first?["image_url"] as? [String: Any])?["url"] as? String,
-              let comma = url.firstIndex(of: ","),
-              let decoded = Data(base64Encoded: String(url[url.index(after: comma)...])) else {
+        let images = obj["data"] as? [[String: Any]] ?? []
+        guard let base64 = images.first?["b64_json"] as? String,
+              let decoded = Data(base64Encoded: base64), NSImage(data: decoded) != nil else {
             throw AppAI.Failure(message: "The image model didn't return a picture.")
         }
         return decoded

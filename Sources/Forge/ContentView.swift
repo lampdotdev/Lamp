@@ -48,6 +48,16 @@ struct ContentView: View {
             .toolbar {
                 Button { showingNew = true } label: { Label("New App", systemImage: "plus") }
             }
+            .safeAreaInset(edge: .bottom) {
+                HStack {
+                    SettingsLink { Label("Settings", systemImage: "gearshape") }
+                        .buttonStyle(.borderless)
+                        .help("Settings (⌘,)")
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
         } detail: {
             if let project = store.selected {
                 ProjectView(project: project).id(project.id)
