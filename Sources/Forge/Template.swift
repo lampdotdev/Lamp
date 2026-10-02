@@ -182,7 +182,11 @@ enum Template {
     ///     let combined = try await ForgeAI.editImages([person, beach], "put the person from the first photo on this beach")
     ///
     /// Make quick decisions with a decision model (Jev): probabilities and confidence, not text.
-    /// Use these to classify, route, filter, prioritise, match or moderate.
+    /// Use these to classify, route, filter, prioritise, match or moderate anything by its meaning.
+    /// They're smart, answer in well under a second and cost about $0.04 per million input tokens, so judging
+    /// every item (hundreds of files, messages or rows) is fine and costs a fraction of a cent. Prefer them to
+    /// keyword lists or hand-written rules that guess at meaning; keep exact facts (sizes, dates) in code and
+    /// pass them in as part of the state.
     ///
     ///     let urgent = try await ForgeAI.isTrue("Does this message need a reply today?", about: email)   // 0…1
     ///     let team = try await ForgeAI.choose("Which team should handle this?", from: ["billing", "bugs", "sales"], about: ticket)
@@ -190,7 +194,18 @@ enum Template {
     ///     let mood = try await ForgeAI.rate("How frustrated is the customer?", levels: ["Calm", "Annoyed", "Furious"], about: ticket)
     ///
     /// `about:` takes text, a dictionary/array, or any Encodable value. Ask several questions about the same
-    /// thing in one request with `ForgeAI.decide(about:_:)`; they run in parallel.
+    /// thing in one request with `ForgeAI.decide(about:_:)`; they run in parallel. To judge many items, run one
+    /// call per item concurrently:
+    ///
+    ///     let verdicts = try await withThrowingTaskGroup(of: (URL, Double).self) { group in
+    ///         for file in files {
+    ///             group.addTask {
+    ///                 let info: [String: Any] = ["name": file.lastPathComponent, "size_mb": sizeMB(file), "days_old": age(file)]
+    ///                 return (file, try await ForgeAI.isTrue("Is this file safe to throw away?", about: info))
+    ///             }
+    ///         }
+    ///         return try await group.reduce(into: [:]) { $0[$1.0] = $1.1 }
+    ///     }
     ///
     /// Text calls take a few seconds; decisions well under a second; image calls 10–60 seconds. Show a ProgressView, and show
     /// `error.localizedDescription` on failure. Aspect ratios look like "1:1", "16:9", "3:4".

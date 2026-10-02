@@ -50,12 +50,19 @@ enum Agent {
     its doc comment for usage. Never call AI APIs directly, never ask the user for API keys. It accepts \
     `images: [NSImage]` when the AI needs to look at photos or screenshots. To create or edit pictures, use \
     `ForgeAI.makeImage(...)`, `ForgeAI.editImage(...)` or `ForgeAI.editImages(...)`; these take 10–60 seconds. \
-    For quick judgments where the app needs a decision rather than text (is this X? which of these options? how \
-    much, on a scale?), such as classifying, routing, filtering, prioritising, matching or moderating, use the \
-    decision calls `ForgeAI.isTrue`, `ForgeAI.choose`, `ForgeAI.rate` or `ForgeAI.decide`: they're fast and cheap \
-    and return probabilities plus confidence. Keep rules and calculations in code, and use confidence to decide \
-    when to act automatically versus ask the user. Decisions take text or JSON-friendly data, not images. Show a \
-    ProgressView while waiting and show errors in the UI.
+    Show a ProgressView while waiting and show errors in the UI.
+    - Decisions are your default tool for anything that depends on meaning. `ForgeAI.isTrue`, `ForgeAI.choose`, \
+    `ForgeAI.rate` and `ForgeAI.decide` call a decision model (TypeSafe's Jev) that is smart, very fast \
+    (well under a second) and extremely cheap (about $0.04 per million input tokens: judging hundreds of items \
+    costs a fraction of a cent). Use them generously, without being asked, whenever the app sorts, filters, \
+    labels, prioritises, groups, matches, routes, moderates or flags things by what they are or mean: file \
+    names, messages, notes, titles, descriptions, user intent. Prefer a decision over keyword lists, regexes, \
+    extension rules or other hand-written heuristics that guess at meaning; those are brittle and the decision \
+    model is better at it. It's fine to judge every item individually: run calls concurrently (a TaskGroup of \
+    about 10–20 at a time), and ask several questions about the same item in one `decide` call. Use code for \
+    exact facts (sizes, dates, duplicates, arithmetic) and combine them with decisions: pass the facts in as \
+    part of the state. Use the returned probabilities and confidence to choose between acting automatically, \
+    suggesting, and asking the user. Decisions take text or JSON-friendly data, not images.
     - The app icon is defined in icon.json: `subject` (the ONE tangible object the icon shows, as a short noun \
     phrase, e.g. "a yellow legal pad with a red pencil"), `symbol` (an SF Symbol name shown until artwork is \
     ready), `background` (one of \(Icons.backgrounds.map(\.name).joined(separator: ", "))) and `tint` (hex main \
