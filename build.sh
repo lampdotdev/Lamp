@@ -1,5 +1,10 @@
 #!/bin/zsh
-# Builds build/Forge.app (ad-hoc signed, registers the forge:// URL scheme).
+# Builds build/Forge.app (registers the forge:// URL scheme).
+#
+# Local builds are signed with a self-signed "Forge Local Signing" identity (see scripts/signing-identity.sh).
+# Releases set SIGN_IDENTITY to a Developer ID certificate (see release.sh): everything is then signed with
+# hardened runtime, entitlements and a secure timestamp, ready for notarization.
+#   APP_VERSION=0.2.0 SIGN_IDENTITY="Developer ID Application: …" ./build.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -49,7 +54,7 @@ fi
 
 swift build -c release
 BIN="$(swift build -c release --show-bin-path)/Forge"
-APP="build/Forge.app"
+APP="${BUILD_DIR:-build}/Forge.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Forge"
@@ -71,7 +76,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>Forge</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1</string>
+  <key>CFBundleShortVersionString</key><string>${APP_VERSION:-0.1}</string>
+  <key>CFBundleVersion</key><string>${APP_VERSION:-0.1}</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHighResolutionCapable</key><true/>
@@ -98,13 +104,25 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   </dict></array>
 </dict></plist>
 PLIST
-# Sign with a stable local identity so macOS sees every rebuild as the same app
-# (Keychain "Always Allow" sticks). Falls back to ad-hoc signing if that isn't possible.
-SIGN_ID="$(./scripts/signing-identity.sh 2>/dev/null || echo -)"
-# Nested code first (pi and its native module), then the app.
-find "$APP/Contents/Resources/pi" -name '*.node' -exec codesign --force -s "$SIGN_ID" {} \; >/dev/null 2>&1
-find "$APP/Contents/Resources/llama" -type f \( -name '*.dylib' -o -name 'llama-server' \) -exec codesign --force -s "$SIGN_ID" {} \; >/dev/null 2>&1
-codesign --force -s "$SIGN_ID" "$APP/Contents/Resources/pi/pi" >/dev/null 2>&1
-codesign --force -s "$SIGN_ID" "$APP" >/dev/null 2>&1
+# Local builds: a stable self-signed identity, so macOS sees every rebuild as the same app.
+# Falls back to ad-hoc signing if that isn't possible.
+SIGN_ID="${SIGN_IDENTITY:-$(./scripts/signing-identity.sh 2>/dev/null || echo -)}"
+if [[ "$SIGN_ID" == "Developer ID Application:"* ]]; then
+  # Release: hardened runtime + secure timestamp (both required for notarization).
+  SIGN=(codesign --force --timestamp --options runtime -s "$SIGN_ID")
+  PI_ENTITLEMENTS=(--entitlements Resources/pi.entitlements)
+  APP_ENTITLEMENTS=(--entitlements Resources/Forge.entitlements)
+  QUIET=/dev/stdout
+else
+  SIGN=(codesign --force -s "$SIGN_ID")
+  PI_ENTITLEMENTS=()
+  APP_ENTITLEMENTS=()
+  QUIET=/dev/null
+fi
+# Nested code first (pi's native module, llama.cpp's libraries and server, pi), then the app.
+find "$APP/Contents/Resources/pi" -name '*.node' -exec "${SIGN[@]}" {} \; >$QUIET 2>&1
+find "$APP/Contents/Resources/llama" -type f \( -name '*.dylib' -o -name 'llama-server' \) -exec "${SIGN[@]}" {} \; >$QUIET 2>&1
+"${SIGN[@]}" "${PI_ENTITLEMENTS[@]}" "$APP/Contents/Resources/pi/pi" >$QUIET 2>&1
+"${SIGN[@]}" "${APP_ENTITLEMENTS[@]}" "$APP" >$QUIET 2>&1
 [ "$SIGN_ID" = "-" ] && echo "Signed ad-hoc (macOS may ask for Keychain access after each rebuild)"
 echo "Built $APP"

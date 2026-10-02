@@ -16,6 +16,10 @@ A Mac app that builds Mac apps. Describe what you want, and Forge has an AI agen
 
 Nothing else needs installing. The coding agent ([pi](https://github.com/badlogic/pi-mono)) and llama.cpp's model server are bundled inside `Forge.app`; `build.sh` downloads pinned, checksum-verified copies (about 40 MB together). No Apple developer account, signing certificate or notarization is needed. Forge and every app it builds are ad-hoc signed and run only on your own Mac.
 
+## Download
+
+Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/Forge/releases): open the DMG and drag Forge to Applications. To cut a release, see [RELEASING.md](RELEASING.md).
+
 ## Setup
 
 1. **Install the Command Line Tools** (skip this if you already have Xcode, or if `xcode-select -p` prints a path). You need them to build Forge from source. People who get a pre-built `Forge.app` don't, because Forge's welcome screen installs them.
