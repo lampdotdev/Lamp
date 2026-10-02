@@ -245,8 +245,11 @@ final class Store: ObservableObject {
     }
 
     /// Updates what the app's turn is doing right now, for the build card and the activity line.
-    private func note(_ activity: String, for project: ForgeProject) {
-        if let current = progress[project.id], current.activity != activity { progress[project.id]?.activity = activity }
+    /// `file` is the file being written or edited, when that's the step.
+    private func note(_ activity: String, file: String? = nil, for project: ForgeProject) {
+        guard let current = progress[project.id], current.activity != activity || current.currentFile != file else { return }
+        progress[project.id]?.activity = activity
+        progress[project.id]?.currentFile = file
     }
 
     // MARK: - Drafts
@@ -828,14 +831,15 @@ final class Store: ObservableObject {
                     // The file name is among the first arguments; the rest is the file itself.
                     guard streamingArguments.count < 600 else { break }
                     streamingArguments += piece
-                    note(TurnProgress.activity(tool: streamingTool, partialArguments: streamingArguments), for: project)
+                    let call = TurnProgress.call(tool: streamingTool, partialArguments: streamingArguments)
+                    note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
                 case .plan(let parts):
                     progress[project.id]?.plan = parts
                     progress[project.id]?.tickWrittenParts()
                 case .tool(let text, let fullCall):
                     log(project, .tool, text)
                     let call = ToolCall(text)
-                    note(TurnProgress.activity(for: call), for: project)
+                    note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
                     if call.action == .write || call.action == .edit, !call.argument.isEmpty,
                        progress[project.id]?.files.last != call.argument {
                         progress[project.id]?.files.removeAll { $0 == call.argument }
