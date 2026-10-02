@@ -393,8 +393,8 @@ final class Store: ObservableObject {
         let prompt = messages.map(\.text).joined(separator: "\n\n")
 
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
-        guard await runAgent(prompt + Attachments.note(for: saved) + Runtime.crashNote(for: project),
-                             files: files, on: project),
+        let notes = Attachments.note(for: saved) + Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project)
+        guard await runAgent(prompt + notes, files: files, on: project),
               await buildFixingErrors(project) else { return }
         // Nothing is committed when the agent changed no files.
         var committed = await Shell.run("git add -A && \(Self.commit) -qm \"$FORGE_PROMPT\"", cwd: project.dir,
