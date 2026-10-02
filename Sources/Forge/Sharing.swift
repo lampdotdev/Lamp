@@ -37,6 +37,17 @@ enum Sharing {
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
         }
+        // Attached files (regular files only), capped so shared apps stay small enough to send.
+        var attachedBytes = 0
+        for file in regularFiles(in: project.dir.appendingPathComponent(Attachments.folder)) {
+            attachedBytes += (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            guard attachedBytes <= 100_000_000 else {
+                throw ImportError("This app's attached files are over 100 MB, too big to share.")
+            }
+            let target = stage.appendingPathComponent(Attachments.folder).appendingPathComponent(file.lastPathComponent)
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: file, to: target)
+        }
         for name in ["APP.md", "icon.json"] where fm.fileExists(atPath: project.dir.appendingPathComponent(name).path) {
             try fm.copyItem(at: project.dir.appendingPathComponent(name), to: stage.appendingPathComponent(name))
         }
@@ -60,6 +71,7 @@ enum Sharing {
         let name: String
         let folder: URL          // unpacked, temporary
         let sources: [URL]       // .swift files only
+        let attachments: [URL]   // files attached in the sender's chat; bundled as data, never run by Forge
         let fileCount: Int
     }
 
@@ -81,7 +93,8 @@ enum Sharing {
         let sources = swiftSources(in: folder.appendingPathComponent("Sources"))
         guard !sources.isEmpty else { throw ImportError("This Forge app file has no code in it.") }
         let all = fm.enumerator(at: folder, includingPropertiesForKeys: nil)?.allObjects.count ?? 0
-        return Package(name: manifest.name, folder: folder, sources: sources, fileCount: all)
+        let attachments = regularFiles(in: folder.appendingPathComponent(Attachments.folder))
+        return Package(name: manifest.name, folder: folder, sources: sources, attachments: attachments, fileCount: all)
     }
 
     struct ImportError: LocalizedError {
@@ -97,6 +110,16 @@ enum Sharing {
         return items.filter { url in
             let values = try? url.resourceValues(forKeys: Set(keys))
             return url.pathExtension == "swift" && values?.isRegularFile == true && values?.isSymbolicLink != true
+        }
+    }
+
+    /// Regular files directly inside a folder (no links, no subfolders).
+    private static func regularFiles(in folder: URL) -> [URL] {
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey]
+        let items = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: Array(keys))) ?? []
+        return items.filter { url in
+            let values = try? url.resourceValues(forKeys: keys)
+            return values?.isRegularFile == true && values?.isSymbolicLink != true
         }
     }
 

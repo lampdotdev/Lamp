@@ -83,7 +83,10 @@ struct ProjectView: View {
     @EnvironmentObject private var store: Store
     let project: ForgeProject
     @State private var draft = ""
-    @FocusState private var focused: Bool
+    @State private var attachments: [URL] = []
+    @State private var composerHeight: CGFloat = 24
+    @State private var focusRequest = 0
+    @State private var dropTargeted = false
     @AppStorage("showDetails") private var showDetails = false
 
     private var lines: [LogLine] {
@@ -100,7 +103,7 @@ struct ProjectView: View {
                             Text("Describe what \(project.name) should do, or what to change. Forge builds it and opens it for you. While using the app, press ⇧⌘E to come back here and ask for changes.")
                                 .foregroundStyle(.secondary)
                         }
-                        ForEach(lines) { LogRow(line: $0) }
+                        ForEach(lines) { LogRow(line: $0, dir: project.dir) }
                         Color.clear.frame(height: 1).id("bottom")
                     }
                     .padding()
@@ -108,12 +111,27 @@ struct ProjectView: View {
                 .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
             Divider()
+            if !attachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(attachments, id: \.self) { url in
+                            AttachmentChip(url: url) { attachments.removeAll { $0 == url } }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                }
+                .padding(.top, 8)
+            }
             HStack(alignment: .bottom, spacing: 8) {
-                TextField(busy ? "Working…" : "Describe a change…", text: $draft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...6)
-                    .focused($focused)
-                    .onSubmit(send)
+                Button(action: chooseFiles) { Image(systemName: "paperclip").font(.title3) }
+                    .buttonStyle(.borderless)
+                    .help("Attach files. You can also paste or drop images and files here.")
+                    .padding(.bottom, 2)
+                Composer(text: $draft, height: $composerHeight,
+                         placeholder: busy ? "Working…" : "Describe a change…  (Shift-Return for a new line)",
+                         isEnabled: true, focusRequest: focusRequest,
+                         onSubmit: send, onFiles: { attachments.append(contentsOf: $0) })
+                    .frame(height: composerHeight)
                 if busy {
                     ProgressView().controlSize(.small)
                     Text("Working…").foregroundStyle(.secondary)
@@ -122,10 +140,24 @@ struct ProjectView: View {
                         Image(systemName: "arrow.up.circle.fill").font(.title2)
                     }
                     .buttonStyle(.plain)
-                    .disabled(draft.trimmed.isEmpty)
+                    .disabled(draft.trimmed.isEmpty && attachments.isEmpty)
                 }
             }
             .padding(12)
+        }
+        .overlay {
+            if dropTargeted {
+                RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor, lineWidth: 3).padding(4)
+                    .allowsHitTesting(false)
+            }
+        }
+        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
+            for provider in providers {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    if let url { DispatchQueue.main.async { attachments.append(url) } }
+                }
+            }
+            return true
         }
         .navigationTitle(project.name)
         .navigationSubtitle(usageSummary)
@@ -153,8 +185,8 @@ struct ProjectView: View {
             }
             .help("Show what the agent is doing under the hood")
         }
-        .onAppear { focused = true }
-        .onChange(of: store.chatFocusRequest) { focused = true }
+        .onAppear { focusRequest += 1 }
+        .onChange(of: store.chatFocusRequest) { focusRequest += 1 }
     }
 
     private var usageSummary: String {
@@ -164,23 +196,52 @@ struct ProjectView: View {
 
     private func send() {
         let text = draft.trimmed
-        guard !text.isEmpty, !busy else { return }
+        guard !text.isEmpty || !attachments.isEmpty, !busy else { return }
+        let files = attachments
         draft = ""
-        Task { await store.send(text, to: project) }
+        attachments = []
+        Task { await store.send(text.isEmpty ? "Use the attached files." : text, attachments: files, to: project) }
+    }
+
+    private func chooseFiles() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.message = "Attach screenshots, mockups, images, data or documents"
+        if panel.runModal() == .OK { attachments.append(contentsOf: panel.urls) }
     }
 }
 
 struct LogRow: View {
     let line: LogLine
+    let dir: URL
 
     var body: some View {
         switch line.kind {
         case .user:
-            Text(line.text)
-                .textSelection(.enabled)
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
-                .frame(maxWidth: .infinity, alignment: .trailing)
+            VStack(alignment: .trailing, spacing: 6) {
+                if let names = line.attachments, !names.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(names, id: \.self) { name in
+                            let url = dir.appendingPathComponent(Attachments.folder).appendingPathComponent(name)
+                            Button { NSWorkspace.shared.open(url) } label: {
+                                if Attachments.isImage(url) {
+                                    AttachmentThumbnail(url: url, size: 72)
+                                } else {
+                                    AttachmentChip(url: url)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .help(name)
+                        }
+                    }
+                }
+                Text(line.text)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
         case .agent:
             Text((try? AttributedString(markdown: line.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
                  ?? AttributedString(line.text))
@@ -254,6 +315,12 @@ struct ImportReviewView: View {
                         ForEach(review.detected + review.capabilities.filter { !review.detected.contains($0) }, id: \.self) {
                             Label($0, systemImage: "checkmark.shield").labelStyle(.titleAndIcon)
                         }
+                    }
+                }
+                if !pending.package.attachments.isEmpty {
+                    section("Included files") {
+                        Text(pending.package.attachments.map(\.lastPathComponent).joined(separator: ", "))
+                            .font(.callout).foregroundStyle(.secondary)
                     }
                 }
                 if !review.concerns.isEmpty {

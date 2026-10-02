@@ -43,20 +43,27 @@ enum Agent {
     - The app icon is defined in icon.json: `symbol` (an SF Symbol name), `background` (two hex colours, \
     top-to-bottom gradient), `foreground` (symbol colour) and `art_prompt` (one sentence describing illustrated \
     artwork). To change the icon, edit icon.json; Forge redraws it. Never create icon files yourself.
+    - Files the user attaches are saved in Attachments/ and bundled inside the app. When the app should use \
+    one (a logo, a data file, a sound), load it with `ForgeAssets.url("name")`, `ForgeAssets.image("name")` or \
+    `ForgeAssets.text("name")` from ForgeSupport.swift. Screenshots and mockups are usually just references for you.
     - Keep APP.md current: what the app does and how the code is organised.
     - Finish with one or two plain sentences describing what changed.
     """
 
-    /// The shell command for one agent turn. Values come from FORGE_* environment variables.
-    static let command = """
-    "$FORGE_PI" --mode json --provider openrouter --model "$FORGE_MODEL" --tools \(tools) \\
-      --no-extensions --no-skills --no-prompt-templates --no-context-files --no-approve \\
-      --session-dir "$FORGE_SESSION_DIR" --session-id "$FORGE_SESSION" \\
-      --append-system-prompt "$FORGE_SYSTEM" -- "$FORGE_PROMPT"
-    """
+    /// The shell command for one agent turn. Values come from FORGE_* environment variables;
+    /// attached files are passed as pi `@file` arguments (images and text go straight to the model).
+    static func command(fileCount: Int) -> String {
+        let files = (0..<fileCount).map { "\"@$FORGE_FILE_\($0)\"" }.joined(separator: " ")
+        return """
+        "$FORGE_PI" --mode json --provider openrouter --model "$FORGE_MODEL" --tools \(tools) \\
+          --no-extensions --no-skills --no-prompt-templates --no-context-files --no-approve \\
+          --session-dir "$FORGE_SESSION_DIR" --session-id "$FORGE_SESSION" \\
+          --append-system-prompt "$FORGE_SYSTEM" -- \(files) "$FORGE_PROMPT"
+        """
+    }
 
-    static func environment(prompt: String, session: String, sessionDir: String) -> [String: String] {
-        [
+    static func environment(prompt: String, files: [String] = [], session: String, sessionDir: String) -> [String: String] {
+        var env = [
             "FORGE_PI": executable?.path ?? "pi",
             "FORGE_MODEL": Provider.model,
             "FORGE_SESSION": session,
@@ -68,6 +75,8 @@ enum Agent {
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_TELEMETRY": "0",
         ]
+        for (index, file) in files.enumerated() { env["FORGE_FILE_\(index)"] = file }
+        return env
     }
 
     /// Parses one line of pi's JSONL event stream (stderr is merged in, so non-JSON lines are diagnostics).

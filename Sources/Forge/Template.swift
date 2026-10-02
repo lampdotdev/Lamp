@@ -137,6 +137,30 @@ enum Template {
         }
     }
 
+    /// Files attached in Forge's chat, bundled inside this app (Contents/Resources/Attachments).
+    ///
+    ///     let logo = ForgeAssets.image("logo.png")
+    ///     let csv = ForgeAssets.text("prices.csv")
+    enum ForgeAssets {
+        static var folder: URL? { Bundle.main.resourceURL?.appendingPathComponent("Attachments") }
+
+        static func url(_ name: String) -> URL? {
+            guard let url = folder?.appendingPathComponent(name),
+                  FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return url
+        }
+
+        static func image(_ name: String) -> NSImage? { url(name).flatMap(NSImage.init(contentsOf:)) }
+
+        static func text(_ name: String) -> String? { url(name).flatMap { try? String(contentsOf: $0, encoding: .utf8) } }
+
+        /// Every attached file's name.
+        static var names: [String] {
+            guard let folder else { return [] }
+            return ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).sorted()
+        }
+    }
+
     /// AI for this app, using the same AI account as Forge. No API keys needed.
     ///
     ///     let summary = try await ForgeAI.ask("Summarise these notes:\n\(notes)")

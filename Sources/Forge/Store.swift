@@ -28,6 +28,7 @@ struct LogLine: Identifiable, Codable {
     var id = UUID()
     let kind: Kind
     let text: String
+    var attachments: [String]? = nil   // names in the app's Attachments/ folder
 }
 
 @MainActor
@@ -124,8 +125,8 @@ final class Store: ObservableObject {
         }
     }
 
-    func log(_ project: ForgeProject, _ kind: LogLine.Kind, _ text: String) {
-        logs[project.id, default: []].append(LogLine(kind: kind, text: text))
+    func log(_ project: ForgeProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil) {
+        logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments))
         if let data = try? JSONEncoder().encode(logs[project.id]) {
             try? data.write(to: project.dir.appendingPathComponent(".forge/chat.json"))
         }
@@ -285,6 +286,13 @@ final class Store: ObservableObject {
                 try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try fm.copyItem(at: file, to: target)
             }
+            if !package.attachments.isEmpty {
+                let folder = project.dir.appendingPathComponent(Attachments.folder)
+                try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                for file in package.attachments {
+                    try fm.copyItem(at: file, to: folder.appendingPathComponent(file.lastPathComponent))
+                }
+            }
             let appMd = package.folder.appendingPathComponent("APP.md")
             if fm.fileExists(atPath: appMd.path) {
                 try? fm.removeItem(at: project.dir.appendingPathComponent("APP.md"))
@@ -317,12 +325,14 @@ final class Store: ObservableObject {
     }
 
     /// One turn of the loop: agent edits → build (agent fixes failures) → commit → relaunch.
-    func send(_ prompt: String, to project: ForgeProject) async {
+    func send(_ prompt: String, attachments: [URL] = [], to project: ForgeProject) async {
         guard busy.insert(project.id).inserted else { return }
         defer { busy.remove(project.id) }
-        log(project, .user, prompt)
+        let saved = Attachments.save(attachments, to: project)
+        log(project, .user, prompt, attachments: saved.isEmpty ? nil : saved)
 
-        guard await runAgent(prompt, on: project) else { return }
+        let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
+        guard await runAgent(prompt + Attachments.note(for: saved), files: files, on: project) else { return }
         var errors = await build(project)
         for _ in 0..<3 where errors != nil {
             log(project, .status, "Fixing a build problem…")
@@ -340,14 +350,14 @@ final class Store: ObservableObject {
     }
 
     /// Returns false when the agent couldn't run at all (bad key, no credit, …), after telling the user why.
-    private func runAgent(_ prompt: String, on project: ForgeProject) async -> Bool {
+    private func runAgent(_ prompt: String, files: [String] = [], on project: ForgeProject) async -> Bool {
         try? Template.writeSupport(for: project)
         let started = Date()
         var cost = 0.0
         var failure: String?
-        let env = Agent.environment(prompt: prompt, session: Self.agentSession(for: project),
+        let env = Agent.environment(prompt: prompt, files: files, session: Self.agentSession(for: project),
                                     sessionDir: project.dir.appendingPathComponent(".forge/pi-sessions").path)
-        let status = await Shell.run(Agent.command, cwd: project.dir, env: env) { [weak self] line in
+        let status = await Shell.run(Agent.command(fileCount: files.count), cwd: project.dir, env: env) { [weak self] line in
             guard let self else { return }
             for event in Agent.parse(line) {
                 switch event {
@@ -438,16 +448,22 @@ final class Store: ObservableObject {
     /// The swap is atomic, so it's safe even while the app is running.
     private func deploy(_ project: ForgeProject) async throws {
         let fm = FileManager.default
+        let resources = project.builtURL.appendingPathComponent("Contents/Resources")
+        try fm.createDirectory(at: resources, withIntermediateDirectories: true)
         if fm.fileExists(atPath: Icons.icnsURL(project).path) {
-            let resources = project.builtURL.appendingPathComponent("Contents/Resources")
-            try fm.createDirectory(at: resources, withIntermediateDirectories: true)
             try? fm.removeItem(at: resources.appendingPathComponent("AppIcon.icns"))
             try fm.copyItem(at: Icons.icnsURL(project), to: resources.appendingPathComponent("AppIcon.icns"))
-            _ = await Shell.run("""
-                plutil -replace CFBundleIconFile -string AppIcon "$FORGE_APP/Contents/Info.plist" && \
-                codesign --force -s - "$FORGE_APP"
-                """, cwd: project.dir, env: ["FORGE_APP": project.builtURL.path]) { _ in }
+            _ = await Shell.run("plutil -replace CFBundleIconFile -string AppIcon \"$FORGE_APP/Contents/Info.plist\"",
+                                cwd: project.dir, env: ["FORGE_APP": project.builtURL.path]) { _ in }
         }
+        // Files attached in Forge's chat ship inside the app, where ForgeAssets finds them.
+        let attachments = project.dir.appendingPathComponent(Attachments.folder)
+        try? fm.removeItem(at: resources.appendingPathComponent(Attachments.folder))
+        if fm.fileExists(atPath: attachments.path) {
+            try fm.copyItem(at: attachments, to: resources.appendingPathComponent(Attachments.folder))
+        }
+        _ = await Shell.run("codesign --force -s - \"$FORGE_APP\"", cwd: project.dir,
+                            env: ["FORGE_APP": project.builtURL.path]) { _ in }
 
         try fm.createDirectory(at: Self.installDir, withIntermediateDirectories: true)
         let staging = Self.installDir.appendingPathComponent(".\(project.exe)-\(UUID().uuidString).app")
