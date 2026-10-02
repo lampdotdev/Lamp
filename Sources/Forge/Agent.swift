@@ -12,7 +12,22 @@ enum AgentEvent {
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
 /// pi only gets file tools: Forge does the building and feeds compiler errors back.
 enum Agent {
-    static let tools = "read,edit,write,grep,find,ls"
+    static var tools: String { "read,edit,write,grep,find,ls" + (lookTool == nil ? "" : ",look_at_app") }
+
+    /// The `look_at_app` tool (Resources/look-tool.ts): lets pi ask Forge to build and open the app
+    /// mid-turn and see the result. Other engines don't have it.
+    static var lookTool: URL? {
+        let url = Bundle.main.resourceURL?.appendingPathComponent("look-tool.ts")
+        return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+    }
+
+    static let lookRule = """
+
+    - `look_at_app` builds the app with your changes, opens it, and shows you its windows, what it printed \
+    and any build errors or crash, so you can check your work instead of guessing. Once your edits are in, use \
+    it after changing the interface or after a fix you can't verify from the code, and fix what you see before \
+    finishing. Skip it for small changes you're sure of.
+    """
 
     /// pi ships inside Forge.app (see build.sh).
     static var executable: URL? {
@@ -104,7 +119,7 @@ enum Agent {
         let files = (0..<fileCount).map { "\"@$FORGE_FILE_\($0)\"" }.joined(separator: " ")
         return """
         "$FORGE_PI" --mode json --provider "$FORGE_PROVIDER" --model "$FORGE_MODEL" --tools \(tools) \\
-          --no-extensions --no-skills --no-prompt-templates --no-context-files --no-approve \\
+          --no-extensions\(lookTool == nil ? "" : " -e \"$FORGE_LOOK_TOOL\"") --no-skills --no-prompt-templates --no-context-files --no-approve \\
           --session-dir "$FORGE_SESSION_DIR" --session-id "$FORGE_SESSION" \\
           --append-system-prompt "$FORGE_SYSTEM" -- \(files) "$FORGE_PROMPT"
         """
@@ -119,8 +134,9 @@ enum Agent {
             "FORGE_MODEL": Builder.piProvider == Builder.myPiProvider ? myPiModel : Builder.piModel,
             "FORGE_SESSION": session,
             "FORGE_SESSION_DIR": sessionDir,
-            "FORGE_SYSTEM": systemPrompt,
+            "FORGE_SYSTEM": systemPrompt + (lookTool == nil ? "" : lookRule),
             "FORGE_PROMPT": prompt,
+            "FORGE_LOOK_TOOL": lookTool?.path ?? "",
             // "My pi setup" uses the user's own pi config (their logins); everything else uses Forge's.
             "PI_CODING_AGENT_DIR": Builder.piProvider == Builder.myPiProvider ? userConfigDir : configDir,
             "PI_SKIP_VERSION_CHECK": "1",
