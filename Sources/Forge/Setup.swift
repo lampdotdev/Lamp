@@ -103,7 +103,7 @@ struct SetupView: View {
                             Button(engine.title) { use(engine) }
                         }
                         Button("A model on this Mac…") { openSettings(tab: "local") }
-                        Button("Other providers…") { openSettings(tab: "ai") }
+                        Button("Other providers…") { openSettings(tab: "building") }
                     }
                     .controlSize(.small)
                 }
@@ -115,7 +115,7 @@ struct SetupView: View {
     }
 
     @Environment(\.openSettings) private var openSettingsAction
-    @AppStorage("settingsTab") private var settingsTab = "ai"
+    @AppStorage("settingsTab") private var settingsTab = "building"
 
     private func openSettings(tab: String) {
         settingsTab = tab
@@ -153,30 +153,70 @@ struct SetupView: View {
 }
 
 struct SettingsView: View {
-    @AppStorage("settingsTab") private var tab = "ai"
+    @AppStorage("settingsTab") private var tab = "building"
 
     var body: some View {
         TabView(selection: $tab) {
-            AISettings().tabItem { Label("AI", systemImage: "sparkles") }.tag("ai")
+            BuildingSettings().tabItem { Label("Building", systemImage: "hammer") }.tag("building")
+            AppsSettings().tabItem { Label("Apps", systemImage: "square.grid.2x2") }.tag("apps")
+            ProvidersSettings().tabItem { Label("Providers", systemImage: "cpu") }.tag("providers")
             LocalModelsSettings().tabItem { Label("Local Models", systemImage: "desktopcomputer") }.tag("local")
         }
         .frame(width: 560)
+        .onAppear { if !["building", "apps", "providers", "local"].contains(tab) { tab = "building" } }
     }
 }
 
-/// Which agent and model build apps, plus in-app AI, images and the OpenRouter key.
-struct AISettings: View {
+extension View {
+    /// A grouped settings form that grows to fit its content, so the Settings window
+    /// resizes per tab like Apple's apps, and scrolls only when it's taller than the screen.
+    func settingsPane() -> some View { modifier(SettingsPane()) }
+}
+
+private struct SettingsPane: ViewModifier {
+    @State private var height: CGFloat = 0
+
+    /// Room left on screen once the window's title bar and toolbar are accounted for.
+    private var maxHeight: CGFloat {
+        ((NSScreen.main?.visibleFrame.height ?? 800) - 100).rounded()
+    }
+
+    func body(content: Content) -> some View {
+        ScrollView {
+            content
+                .formStyle(.grouped)
+                .scrollDisabled(true)
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        }
+        .scrollDisabled(height <= maxHeight)
+        .frame(height: height == 0 ? nil : min(height, maxHeight))
+    }
+}
+
+/// Which agent, provider and model build apps.
+struct BuildingSettings: View {
     @EnvironmentObject private var store: Store
     @ObservedObject private var local = LocalModels.shared
     @AppStorage("engine") private var engine = Engine.pi.rawValue
     @AppStorage("piProvider") private var provider = "openrouter"
-    @AppStorage("appModel") private var appModel = "haiku"
-    @AppStorage("imageModel") private var imageModel = Icons.artModels[0].id
-    @AppStorage("decisionModel") private var decisionModel = AppAI.decisionModel.id
+    @AppStorage("settingsTab") private var tab = "building"
     @State private var model = Builder.piModel
     @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore
 
     private var selectedEngine: Engine { Engine(rawValue: engine) ?? .pi }
+
+    /// Providers added in Settings → Providers, plus the current one even if its key was removed.
+    private var addedProviders: [PiProvider] {
+        _ = revision
+        return Provider.apiProviders.filter { KeyStore.key(for: $0.id) != nil || $0.id == provider }
+    }
+
+    /// The provider menu's last item switches to the Providers tab instead of choosing a provider.
+    private static let configure = "configure-providers"
+    private var providerChoice: Binding<String> {
+        Binding(get: { provider }, set: { if $0 == Self.configure { tab = "providers" } else { provider = $0 } })
+    }
 
     var body: some View {
         Form {
@@ -190,14 +230,16 @@ struct AISettings: View {
                 Text(selectedEngine.detail).font(.caption).foregroundStyle(.secondary)
 
                 if selectedEngine == .pi {
-                    Picker("Provider", selection: $provider) {
-                        ForEach(Provider.apiProviders) { Text($0.name).tag($0.id) }
-                        Divider()
+                    Picker("Provider", selection: providerChoice) {
+                        ForEach(addedProviders) { Text($0.name).tag($0.id) }
+                        if !addedProviders.isEmpty { Divider() }
                         Text("On this Mac (local models)").tag(Builder.localProvider)
                         ForEach(local.external.keys.sorted(), id: \.self) { Text(LocalModels.externalName($0)).tag($0) }
                         if FileManager.default.fileExists(atPath: Agent.userConfigDir) {
                             Text("My pi setup (logins and subscriptions)").tag(Builder.myPiProvider)
                         }
+                        Divider()
+                        Text("Configure providers…").tag(Self.configure)
                     }
                     if let api = Provider.apiProvider(provider) {
                         KeyRow(provider: api) { revision += 1; recheck() }
@@ -212,10 +254,29 @@ struct AISettings: View {
                 if let problem = Builder.problem() {
                     Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
                 }
-            } header: {
-                Text("Building apps")
             }
+        }
+        .settingsPane()
+        .onChange(of: engine) { recheck() }
+        .onChange(of: provider) { model = Builder.piModel; recheck() }
+        .onChange(of: model) { Builder.piModel = model; recheck() }
+        .onAppear { revision += 1 }   // keys may have changed in the Providers tab
+        .task { await local.detectExternal() }
+    }
 
+    private func recheck() { Task { await store.recheckSetup() } }
+}
+
+/// The AI, images and decisions that apps use while they run.
+struct AppsSettings: View {
+    @EnvironmentObject private var store: Store
+    @AppStorage("appModel") private var appModel = "haiku"
+    @AppStorage("imageModel") private var imageModel = Icons.artModels[0].id
+    @AppStorage("decisionModel") private var decisionModel = AppAI.decisionModel.id
+    @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore
+
+    var body: some View {
+        Form {
             Section {
                 Picker("Inside your apps", selection: $appModel) {
                     ForEach(AppAI.models, id: \.id) { Text($0.label).tag($0.id) }
@@ -230,36 +291,213 @@ struct AISettings: View {
                 }
                 Text("Image generation and the in-app models above need an OpenRouter key.")
                     .font(.caption).foregroundStyle(.secondary)
-            } header: {
-                Text("AI and images inside your apps")
-            }
 
-            Section {
                 Picker("Decision model", selection: $decisionModel) {
                     ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }
                 }
                 if decisionModel.hasPrefix("typesafe:") {
-                    KeyRow(provider: Self.typesafe, label: "TypeSafe key") { revision += 1 }
+                    KeyRow(provider: Provider.typesafe, label: "TypeSafe key") { revision += 1 }
                 } else if KeyStore.openRouterKey == nil {
                     Text("Add an OpenRouter key above, or switch to TypeSafe.").font(.caption).foregroundStyle(.orange)
                 }
                 Text("Fast, cheap typed judgments for apps: yes/no probabilities, picking from options, and rating on a scale, each with a calibrated confidence. Text in, decisions out.")
                     .font(.caption).foregroundStyle(.secondary)
-            } header: {
-                Text("Decisions inside your apps")
             }
         }
-        .formStyle(.grouped)
-        .onChange(of: engine) { recheck() }
-        .onChange(of: provider) { model = Builder.piModel; recheck() }
-        .onChange(of: model) { Builder.piModel = model; recheck() }
-        .task { await local.detectExternal() }
+        .settingsPane()
     }
 
     private func recheck() { Task { await store.recheckSetup() } }
+}
 
-    static let typesafe = PiProvider(id: "typesafe", name: "TypeSafe", envVar: "TYPESAFE_API_KEY",
-                                     keyURL: "https://typesafe.ai")
+/// The providers you've added a key for. Double-click one to change or remove its key.
+struct ProvidersSettings: View {
+    @EnvironmentObject private var store: Store
+    @State private var selection: String?
+    @State private var editing: PiProvider?
+    @State private var removing: PiProvider?
+    @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore
+
+    private var added: [PiProvider] {
+        _ = revision
+        return Provider.keyProviders.filter { KeyStore.key(for: $0.id) != nil }
+    }
+
+    private var addable: [PiProvider] {
+        _ = revision
+        return Provider.keyProviders.filter { KeyStore.key(for: $0.id) == nil }
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                if added.isEmpty {
+                    Text("No providers yet. Click + to add one with its API key.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 60)
+                } else {
+                    List(added, selection: $selection) { provider in
+                        HStack(spacing: 10) {
+                            ProviderLogo(id: provider.id, size: 24)
+                            Text(provider.name)
+                            Spacer()
+                            Text(KeyStore.usesKeychain ? "Key in Keychain" : "Key saved")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                        .tag(provider.id)
+                    }
+                    .contextMenu(forSelectionType: String.self) { ids in
+                        if let provider = ids.first.flatMap(Provider.keyProvider) {
+                            Button("Edit…") { editing = provider }
+                            Button("Remove…", role: .destructive) { removing = provider }
+                        }
+                    } primaryAction: { ids in
+                        editing = ids.first.flatMap(Provider.keyProvider)
+                    }
+                    .onDeleteCommand { removing = selection.flatMap(Provider.keyProvider) }
+                    .scrollDisabled(true)
+                    .frame(height: CGFloat(added.count) * 40)
+                }
+                HStack(spacing: 0) {
+                    Menu {
+                        ForEach(addable) { provider in
+                            Button(provider.name) { editing = provider }
+                        }
+                    } label: {
+                        Image(systemName: "plus").frame(width: 24, height: 20)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .disabled(addable.isEmpty)
+                    Divider().frame(height: 16).padding(.horizontal, 4)
+                    Button {
+                        removing = selection.flatMap(Provider.keyProvider)
+                    } label: {
+                        Image(systemName: "minus").frame(width: 24, height: 20)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(selection == nil)
+                    Spacer()
+                }
+            } footer: {
+                Text("Keys are used to build apps and for the AI inside them. Pick which provider builds apps in Building.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .settingsPane()
+        .sheet(item: $editing) { provider in
+            ProviderSheet(provider: provider) { changed() }
+        }
+        .confirmationDialog("Remove \(removing?.name ?? "provider")?", isPresented: Binding(
+            get: { removing != nil }, set: { if !$0 { removing = nil } })) {
+            Button("Remove", role: .destructive) {
+                if let removing { KeyStore.setKey(nil, for: removing.id) }
+                selection = nil
+                changed()
+            }
+        } message: {
+            Text("Forge forgets its API key. Apps and builds that use it stop working until you add it again.")
+        }
+    }
+
+    private func changed() {
+        revision += 1
+        Task { await store.recheckSetup() }
+    }
+}
+
+/// Add, replace or remove one provider's API key.
+private struct ProviderSheet: View {
+    let provider: PiProvider
+    var onChange: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var key = ""
+    private let hasKey: Bool
+
+    init(provider: PiProvider, onChange: @escaping () -> Void) {
+        self.provider = provider
+        self.onChange = onChange
+        hasKey = KeyStore.key(for: provider.id) != nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                ProviderLogo(id: provider.id, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(provider.name).font(.headline)
+                    Text(hasKey ? (KeyStore.usesKeychain ? "Key saved in Keychain" : "Key saved") : "Not added yet")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            Form {
+                SecureField(hasKey ? "New key" : "API key", text: $key, prompt: Text("Paste key"))
+                    .onSubmit(save)
+                Link("Get a key from \(provider.name)", destination: URL(string: provider.keyURL)!)
+                    .font(.callout)
+            }
+            HStack {
+                if hasKey {
+                    Button("Remove Key", role: .destructive) {
+                        KeyStore.setKey(nil, for: provider.id)
+                        onChange()
+                        dismiss()
+                    }
+                }
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(hasKey ? "Save" : "Add", action: save)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(key.trimmed.isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 400)
+    }
+
+    private func save() {
+        guard !key.trimmed.isEmpty else { return }
+        KeyStore.setKey(key, for: provider.id)
+        onChange()
+        dismiss()
+    }
+}
+
+/// A provider's logo on a white rounded tile, like an app icon. Falls back to its initial.
+struct ProviderLogo: View {
+    let id: String
+    let size: CGFloat
+
+    private static var cache: [String: NSImage] = [:]
+    /// Logos that are already a full icon, drawn edge to edge instead of on a tile.
+    private static let fullBleed: Set<String> = ["typesafe"]
+
+    private var image: NSImage? {
+        if let cached = Self.cache[id] { return cached }
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("ProviderLogos/\(id).png"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        Self.cache[id] = image
+        return image
+    }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: size * 0.225, style: .continuous)
+        ZStack {
+            shape.fill(.white)
+            if let image {
+                Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
+                    .padding(Self.fullBleed.contains(id) ? 0 : size * 0.18)
+            } else {
+                Text(Provider.keyProvider(id)?.name.prefix(1) ?? "?")
+                    .font(.system(size: size * 0.5, weight: .semibold)).foregroundStyle(.black.opacity(0.7))
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(.black.opacity(0.1), lineWidth: 0.5))
+    }
 }
 
 /// API key for one provider: shows "saved" with a Remove button, or a field to add one.
@@ -422,7 +660,7 @@ struct LocalModelsSettings: View {
                 Button("Look Again") { local.refresh(); Task { await local.detectExternal() } }
             } header: { Text("Servers") }
         }
-        .formStyle(.grouped)
+        .settingsPane()
         .task { local.refresh(); await local.detectExternal() }
     }
 

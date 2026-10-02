@@ -36,6 +36,15 @@ enum Provider {
 
     static func apiProvider(_ id: String) -> PiProvider? { apiProviders.first { $0.id == id } }
 
+    /// TypeSafe answers apps' typed decisions; it isn't a pi provider, but its key lives alongside theirs.
+    static let typesafe = PiProvider(id: "typesafe", name: "TypeSafe", envVar: "TYPESAFE_API_KEY",
+                                     keyURL: "https://typesafe.ai")
+
+    /// Every provider Forge keeps an API key for, as listed in Settings → Providers.
+    static let keyProviders = apiProviders + [typesafe]
+
+    static func keyProvider(_ id: String) -> PiProvider? { keyProviders.first { $0.id == id } }
+
     /// Suggested building models when using OpenRouter (any model from the full list also works).
     static let models: [(id: String, label: String)] = [
         ("anthropic/claude-opus-5.5", "Best quality (Claude Opus)"),
