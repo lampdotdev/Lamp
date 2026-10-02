@@ -1,48 +1,27 @@
 import Foundation
 import Security
 
-/// Where the agent's model calls go. An OpenRouter key means nobody has to sign in to anything.
-enum Provider: String, CaseIterable {
-    case openRouter = "openrouter"
-    case claudeLogin = "claude"     // fallback: whatever `claude` is already signed in to
-
-    var id: String { rawValue }
-    static let all = allCases
-
-    static var current: Provider { Keychain.openRouterKey == nil ? .claudeLogin : .openRouter }
-
-    static var model: String { UserDefaults.standard.string(forKey: "model") ?? "sonnet" }
+/// Everything AI goes through OpenRouter: the builder agent (pi), ForgeAI in generated apps, and icon artwork.
+enum Provider {
+    static var hasKey: Bool { Keychain.openRouterKey != nil }
 
     static let models: [(id: String, label: String)] = [
-        ("sonnet", "Balanced (Claude Sonnet)"),
-        ("opus", "Best quality (Claude Opus, pricier)"),
+        ("anthropic/claude-sonnet-5.5", "Balanced (Claude Sonnet)"),
+        ("anthropic/claude-opus-5.5", "Best quality (Claude Opus, pricier)"),
     ]
 
-    /// Forge keeps its own Claude Code config so it never touches the user's own login or settings.
-    private static let configDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Forge/claude").path
-
-    var environment: [String: String] {
-        switch self {
-        case .openRouter:
-            return [
-                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
-                "ANTHROPIC_AUTH_TOKEN": Keychain.openRouterKey ?? "",
-                "ANTHROPIC_API_KEY": "",
-                "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
-                "CLAUDE_CONFIG_DIR": Self.configDir,
-            ]
-        case .claudeLogin:
-            return [:]
-        }
+    /// The OpenRouter model that builds apps.
+    static var model: String {
+        let saved = UserDefaults.standard.string(forKey: "model") ?? ""
+        return models.contains { $0.id == saved } ? saved : models[0].id
     }
 
     static func friendlyError(_ raw: String) -> String {
         let text = raw.lowercased()
-        if text.contains("401") || text.contains("authenticat") || text.contains("login") {
-            return current == .openRouter
+        if text.contains("401") || text.contains("authenticat") || text.contains("api key") {
+            return hasKey
                 ? "Your OpenRouter key didn't work. Check it in Forge → Settings (⌘,)."
-                : "Forge isn't connected to an AI yet. Add an OpenRouter key in Forge → Settings (⌘,)."
+                : "Forge needs an OpenRouter key. Add one in Forge → Settings (⌘,)."
         }
         if text.contains("402") || text.contains("credit") || text.contains("insufficient") {
             return "Your OpenRouter account is out of credit. Top it up at openrouter.ai/credits, then try again."

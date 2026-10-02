@@ -5,41 +5,47 @@ import AppKit
 struct SetupCheck {
     var checked = false
     var hasBuildTools = true
-    var hasClaude = true
     var hasKey = true
-    var installingClaude = false
+    var hasAgent = true
+    /// Forge has already opened Apple's installer this launch.
+    var installRequested = false
 
-    /// Developers who already use Claude Code can skip the key.
-    static var useClaudeLogin: Bool {
-        get { UserDefaults.standard.bool(forKey: "useClaudeLogin") }
-        set { UserDefaults.standard.set(newValue, forKey: "useClaudeLogin") }
+    var ready: Bool { hasBuildTools && hasKey && hasAgent }
+
+    static func run(keeping previous: SetupCheck) async -> SetupCheck {
+        var check = SetupCheck(checked: true, hasBuildTools: buildToolsInstalled(), hasKey: Provider.hasKey,
+                               hasAgent: Agent.executable != nil)
+        check.installRequested = previous.installRequested
+        return check
     }
 
-    var ready: Bool { hasBuildTools && hasClaude && (hasKey || Self.useClaudeLogin) }
-
-    static let claudePaths = ["~/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
-        .map { ($0 as NSString).expandingTildeInPath }
-
-    static func run() async -> SetupCheck {
-        // `xcrun --find swift` fails (without prompting) when the Command Line Tools aren't installed.
-        let tools = await Shell.run("xcrun --find swift", cwd: URL(fileURLWithPath: NSHomeDirectory())) { _ in }
-        return SetupCheck(
-            checked: true,
-            hasBuildTools: tools == 0,
-            hasClaude: claudePaths.contains { FileManager.default.isExecutableFile(atPath: $0) },
-            hasKey: Keychain.openRouterKey != nil
-        )
+    /// Looks for a Swift compiler without calling /usr/bin/swift or xcrun: on a Mac without the tools,
+    /// those shims pop up Apple's installer, which would happen every time Forge checks.
+    static func buildToolsInstalled() -> Bool {
+        let fm = FileManager.default
+        if fm.isExecutableFile(atPath: "/Library/Developer/CommandLineTools/usr/bin/swift") { return true }
+        let select = Process()
+        select.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+        select.arguments = ["-p"]
+        let pipe = Pipe()
+        select.standardOutput = pipe
+        select.standardError = FileHandle.nullDevice
+        guard (try? select.run()) != nil else { return false }
+        select.waitUntilExit()
+        let developer = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmed ?? ""
+        guard select.terminationStatus == 0, !developer.isEmpty else { return false }
+        return fm.isExecutableFile(atPath: developer + "/usr/bin/swift")
+            || fm.isExecutableFile(atPath: developer + "/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift")
     }
 
-    /// Opens Apple's own installer dialog for the free Command Line Tools (no developer account needed).
+    /// Opens Apple's installer for the free Command Line Tools (no developer account needed).
     static func installBuildTools() {
-        Task { _ = await Shell.run("xcode-select --install", cwd: URL(fileURLWithPath: NSHomeDirectory())) { _ in } }
-    }
-
-    /// Installs Claude Code (the agent Forge drives) quietly in the background.
-    static func installClaude() async -> Bool {
-        await Shell.run("curl -fsSL https://claude.ai/install.sh | bash",
-                        cwd: URL(fileURLWithPath: NSHomeDirectory())) { _ in } == 0
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+        process.arguments = ["--install"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
     }
 }
 
@@ -50,19 +56,30 @@ struct SetupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             Text("Welcome to Forge").font(.largeTitle.bold())
-            Text("A couple of one-time steps and you're ready to build apps.")
+            Text("Two one-time steps and you're ready to build apps. Both can happen at the same time.")
                 .foregroundStyle(.secondary)
+
+            if !store.setup.hasAgent {
+                Label("Forge's AI builder is missing from the app. Download Forge again.",
+                      systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+            }
 
             step(done: store.setup.hasBuildTools,
                  title: "Install Apple's app-building tools",
-                 detail: "macOS will show an install window. It's free, takes a few minutes, and needs no developer account.") {
-                Button("Install…", action: SetupCheck.installBuildTools)
-            }
-
-            step(done: store.setup.hasClaude,
-                 title: "Install the AI builder",
-                 detail: store.setup.installingClaude ? "Installing…" : "Downloads automatically.") {
-                if store.setup.installingClaude { ProgressView().controlSize(.small) }
+                 detail: store.setup.installRequested
+                    ? "Apple's installer window is open. Click **Install**, then **Agree**. It usually takes 5–10 minutes, and Forge carries on by itself when it's done."
+                    : "Free from Apple, and no developer account needed.") {
+                VStack(alignment: .trailing, spacing: 6) {
+                    if store.setup.installRequested {
+                        ProgressView().controlSize(.small)
+                        Button("Show Installer Again", action: SetupCheck.installBuildTools)
+                            .buttonStyle(.link)
+                            .font(.caption)
+                    } else {
+                        Button("Install…") { store.requestBuildTools() }
+                    }
+                }
             }
 
             step(done: store.setup.hasKey,
@@ -79,19 +96,6 @@ struct SetupView: View {
                     Link("Get a key", destination: URL(string: "https://openrouter.ai/keys")!)
                 }
                 .padding(.leading, 36)
-            }
-
-            HStack {
-                Button("Check Again") { Task { await store.recheckSetup() } }
-                Spacer()
-                if !store.setup.hasKey {
-                    Button("I already use Claude Code") {
-                        SetupCheck.useClaudeLogin = true
-                        Task { await store.recheckSetup() }
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
-                }
             }
         }
         .padding(40)
@@ -113,7 +117,7 @@ struct SetupView: View {
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.headline)
-                Text(detail).font(.callout).foregroundStyle(.secondary)
+                Text(LocalizedStringKey(detail)).font(.callout).foregroundStyle(.secondary)
             }
             Spacer()
             if !done { accessory() }
@@ -123,7 +127,7 @@ struct SetupView: View {
 
 struct SettingsView: View {
     @EnvironmentObject private var store: Store
-    @AppStorage("model") private var model = "sonnet"
+    @AppStorage("model") private var model = Provider.models[0].id
     @AppStorage("appModel") private var appModel = "haiku"
     @State private var key = ""
     @State private var hasKey = Keychain.openRouterKey != nil

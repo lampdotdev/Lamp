@@ -103,9 +103,10 @@ enum AppAI {
     static func complete(prompt: String, images: [Image], system: String, json: Bool) async throws -> (String, Double) {
         var system = system
         if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
-        let (text, cost) = Provider.current == .openRouter
-            ? try await viaOpenRouter(prompt: prompt, images: images, system: system)
-            : try await viaClaude(prompt: prompt, images: images, system: system)
+        guard Provider.hasKey else {
+            throw Failure(message: "Forge needs an OpenRouter key before apps can use AI. Add one in Forge → Settings (⌘,).")
+        }
+        let (text, cost) = try await viaOpenRouter(prompt: prompt, images: images, system: system)
         return (json ? stripFences(text) : text, cost)
     }
 
@@ -137,37 +138,6 @@ enum AppAI {
         }
         let cost = (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0
         return (text, cost)
-    }
-
-    /// Fallback for people using their own Claude Code login: a tool-less `claude -p` call.
-    /// The message goes in as stream-json so it can carry images.
-    private static func viaClaude(prompt: String, images: [Image], system: String) async throws -> (String, Double) {
-        let content: [[String: Any]] = [["type": "text", "text": prompt]] + images.map {
-            ["type": "image", "source": ["type": "base64", "media_type": $0.mediaType, "data": $0.data]]
-        }
-        let message: [String: Any] = ["type": "user", "message": ["role": "user", "content": content]]
-        let input = FileManager.default.temporaryDirectory.appendingPathComponent("forge-ai-\(UUID().uuidString).jsonl")
-        try JSONSerialization.data(withJSONObject: message).write(to: input)
-        defer { try? FileManager.default.removeItem(at: input) }
-
-        var result: [String: Any]?
-        let status = await Shell.run(
-            """
-            claude -p --input-format stream-json --output-format stream-json --verbose \\
-              --model \(model.id) --tools '' --system-prompt "$FORGE_SYSTEM" < "$FORGE_INPUT"
-            """,
-            cwd: FileManager.default.temporaryDirectory,
-            env: ["FORGE_INPUT": input.path,
-                  "FORGE_SYSTEM": system.isEmpty ? "You are a helpful assistant." : system]
-        ) { line in
-            if let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
-               obj["type"] as? String == "result" { result = obj }
-        }
-        guard let result, let text = result["result"] as? String else {
-            throw Failure(message: "The AI request failed (status \(status)).")
-        }
-        if result["is_error"] as? Bool == true { throw Failure(message: Provider.friendlyError(text)) }
-        return (text, result["total_cost_usd"] as? Double ?? 0)
     }
 
     private static func stripFences(_ text: String) -> String {

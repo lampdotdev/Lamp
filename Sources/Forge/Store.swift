@@ -57,19 +57,40 @@ final class Store: ObservableObject {
         reload()
         selection = projects.first?.id
         startGateway()
-        Task {
-            await recheckSetup()
-            if setup.ready { await backfillIcons() }
+        if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
+            UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
+        Task { await recheckSetup() }
     }
 
+    private var pollingSetup = false
+
+    /// Re-checks setup. On a fresh Mac this opens Apple's installer straight away, then keeps
+    /// checking in the background so setup finishes by itself once the tools are installed.
     func recheckSetup() async {
-        setup = await SetupCheck.run()
-        guard !setup.hasClaude, !setup.installingClaude else { return }
-        setup.installingClaude = true
-        let ok = await SetupCheck.installClaude()
-        setup = await SetupCheck.run()
-        if !ok { setup.installingClaude = false }
+        let wasReady = setup.checked && setup.ready
+        setup = await SetupCheck.run(keeping: setup)
+        if !setup.hasBuildTools && !setup.installRequested { requestBuildTools() }
+        if !setup.hasBuildTools { pollSetup() }
+        if setup.ready && !wasReady { await backfillIcons() }
+    }
+
+    func requestBuildTools() {
+        SetupCheck.installBuildTools()
+        setup.installRequested = true
+    }
+
+    private func pollSetup() {
+        guard !pollingSetup else { return }
+        pollingSetup = true
+        Task {
+            defer { pollingSetup = false }
+            while !setup.hasBuildTools {
+                try? await Task.sleep(for: .seconds(5))
+                setup = await SetupCheck.run(keeping: setup)
+            }
+            if setup.ready { await backfillIcons() }
+        }
     }
 
     var selected: ForgeProject? { projects.first { $0.id == selection } }
@@ -91,9 +112,6 @@ final class Store: ObservableObject {
         }
         for project in projects where logs[project.id] == nil {
             let forge = project.dir.appendingPathComponent(".forge")
-            // Sessions used to be stored without a provider suffix.
-            try? FileManager.default.moveItem(at: forge.appendingPathComponent("session"),
-                                              to: forge.appendingPathComponent("session-claude"))
             if let data = try? Data(contentsOf: forge.appendingPathComponent("chat.json")),
                let saved = try? JSONDecoder().decode([LogLine].self, from: data) {
                 logs[project.id] = saved
@@ -152,9 +170,9 @@ final class Store: ObservableObject {
 
         guard await runAgent(prompt, on: project) else { return }
         var errors = await build(project)
-        for _ in 0..<2 where errors != nil {
+        for _ in 0..<3 where errors != nil {
             log(project, .status, "Fixing a build problem…")
-            guard await runAgent("The app failed to build. Fix these errors, then run ./build.sh again:\n\n\(errors!)",
+            guard await runAgent("The app failed to build. Fix these compiler errors:\n\n\(errors!)",
                                  on: project) else { return }
             errors = await build(project)
         }
@@ -170,43 +188,39 @@ final class Store: ObservableObject {
     /// Returns false when the agent couldn't run at all (bad key, no credit, …), after telling the user why.
     private func runAgent(_ prompt: String, on project: ForgeProject) async -> Bool {
         try? Template.writeSupport(for: project)
-        let provider = Provider.current
-        // Sessions live in the provider's config dir, so keep one per provider.
-        let sessionFile = project.dir.appendingPathComponent(".forge/session-\(provider.id)")
-        let session = (try? String(contentsOf: sessionFile, encoding: .utf8))?.trimmed ?? ""
-
-        var env = provider.environment
-        env["FORGE_PROMPT"] = prompt
-        env["FORGE_SYSTEM"] = Agent.systemPrompt
-        var command = """
-        claude -p "$FORGE_PROMPT" --output-format stream-json --verbose \\
-          --permission-mode acceptEdits --allowedTools '\(Agent.allowedTools)' \\
-          --append-system-prompt "$FORGE_SYSTEM" --model '\(Provider.model)'
-        """
-        if !session.isEmpty {
-            env["FORGE_SESSION"] = session
-            command += " --resume \"$FORGE_SESSION\""
-        }
-
+        let started = Date()
+        var cost = 0.0
         var failure: String?
-        let status = await Shell.run(command, cwd: project.dir, env: env) { [weak self] line in
+        let env = Agent.environment(prompt: prompt, session: Self.agentSession(for: project),
+                                    sessionDir: project.dir.appendingPathComponent(".forge/pi-sessions").path)
+        let status = await Shell.run(Agent.command, cwd: project.dir, env: env) { [weak self] line in
             guard let self else { return }
             for event in Agent.parse(line) {
                 switch event {
-                case .session(let id): try? id.write(to: sessionFile, atomically: true, encoding: .utf8)
                 case .text(let text): log(project, .agent, text)
                 case .tool(let text): log(project, .detail, text)
-                case .done(let text): log(project, .detail, text)
-                case .raw(let text): log(project, .detail, text)
+                case .cost(let amount): cost += amount
                 case .failed(let text): failure = text
+                case .raw(let text): log(project, .detail, text)
                 }
             }
         }
-        if status != 0 { log(project, .detail, "Agent exited with status \(status)") }
+        log(project, .detail, String(format: "Agent %@ · %.0fs · $%.2f", failure == nil ? "done" : "error",
+                                     Date().timeIntervalSince(started), cost))
+        if status != 0 && failure == nil { failure = "Agent exited with status \(status)" }
         guard let failure else { return true }
         log(project, .detail, failure)
         log(project, .error, Provider.friendlyError(failure))
         return false
+    }
+
+    /// One pi conversation per app, so the agent remembers earlier requests. Undo starts a new one.
+    private static func agentSession(for project: ForgeProject) -> String {
+        let url = project.dir.appendingPathComponent(".forge/pi-session")
+        if let id = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !id.isEmpty { return id }
+        let id = "forge-" + UUID().uuidString.lowercased()
+        try? id.write(to: url, atomically: true, encoding: .utf8)
+        return id
     }
 
     func run(_ project: ForgeProject) async {
@@ -229,9 +243,7 @@ final class Store: ObservableObject {
             return
         }
         // The agent's conversation still remembers the reverted change, so start fresh.
-        for provider in Provider.all {
-            try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".forge/session-\(provider.id)"))
-        }
+        try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".forge/pi-session"))
         log(project, .status, "Undid the last change")
         if await build(project) == nil { await install(project) }
     }
@@ -321,7 +333,7 @@ final class Store: ObservableObject {
 
     /// With an OpenRouter key, generates illustrated artwork in the background and swaps it in when ready.
     private func upgradeIconArt(_ project: ForgeProject) {
-        guard Provider.current == .openRouter,
+        guard Provider.hasKey,
               let spec = Icons.load(project), let prompt = spec.art_prompt, !prompt.trimmed.isEmpty,
               Icons.cachedArt(project, spec: spec) == nil,
               artInProgress.insert(project.id).inserted else { return }
@@ -354,7 +366,7 @@ final class Store: ObservableObject {
         if FileManager.default.fileExists(atPath: project.builtURL.path) {
             try? await deploy(project)
         }
-        log(project, .status, Provider.current == .openRouter ? "New icon applied. Artwork is on its way." : "New icon applied.")
+        log(project, .status, Provider.hasKey ? "New icon applied. Artwork is on its way." : "New icon applied.")
         Task { upgradeIconArt(project) }
     }
 
