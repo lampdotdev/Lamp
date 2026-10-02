@@ -85,12 +85,18 @@ enum NextStep {
 @MainActor
 enum AppName {
     private static let prompt = """
-    Name a small Mac app from what its user asked for. Pick a name in the spirit of Apple's own apps: \
-    one or two plain, friendly words that say what it is or evoke it (Notes, Stopwatch, Calendar, Photo Booth, \
-    Night Shift). No "App", "Pro" or "AI" suffix, no made-up portmanteaus, no emoji, and not the name of an \
-    existing product or brand. If the user already names the app in their message, use that name.
+    Name a small Mac app from what its user asked for.
 
-    Respond with JSON: {"name": "..."}
+    First, check whether the user already named it. A name is usually a capitalised phrase used as a title, \
+    often at the very start ("Lucide Picker, an app that…", "Build Tally: a counter…", "make me an app called \
+    Brew Log"). If they named it, use their name exactly as they wrote it, even if it includes a brand or \
+    product name. Their choice beats every rule below.
+
+    Only if they didn't name it, pick a name in the spirit of Apple's own apps: one or two plain, friendly \
+    words that say what it is or evoke it (Notes, Stopwatch, Calendar, Photo Booth, Night Shift). No "App", \
+    "Pro" or "AI" suffix, no made-up portmanteaus, no emoji, and not the name of an existing product or brand.
+
+    Respond with JSON: {"named_by_user": true or false, "name": "..."}
     """
 
     static func suggest(for brief: String) async -> String? {
@@ -101,7 +107,10 @@ enum AppName {
               let raw = object["name"] as? String else { return nil }
         let name = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
             .trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”‘’."))
-        guard !name.isEmpty, name.split(separator: " ").count <= 3, name.count <= 24 else { return nil }
+        // The user's own name gets more room than one Forge makes up.
+        let named = object["named_by_user"] as? Bool ?? false
+        guard !name.isEmpty, name.split(separator: " ").count <= (named ? 5 : 3), name.count <= (named ? 40 : 24)
+        else { return nil }
         return name
     }
 }
