@@ -501,7 +501,7 @@ final class Store: ObservableObject {
         log(project, .status, "Building…")
         try? Template.writeSupport(for: project)
         var output: [String] = []
-        let status = await Shell.run("./build.sh", cwd: project.dir) { output.append($0) }
+        let status = await Shell.run(Shell.compatibleSDK + "./build.sh", cwd: project.dir) { output.append($0) }
         guard status != 0 else { return nil }
         let tail = output.suffix(40).joined(separator: "\n")
         log(project, .detail, "Build failed:\n" + tail)

@@ -35,6 +35,18 @@ if [ ! -f "$PI_TARBALL" ] || ! echo "$PI_SHA256  $PI_TARBALL" | shasum -a 256 -c
   echo "$PI_SHA256  $PI_TARBALL" | shasum -a 256 -c - >/dev/null || { echo "pi checksum mismatch" >&2; rm -f "$PI_TARBALL"; exit 1; }
 fi
 
+# The macOS 27 SDK makes @State a macro, and its compiler plugin only ships with full Xcode.
+# With just the Command Line Tools, build against the newest installed SDK that doesn't need it.
+# (Forge does the same for the apps it builds: Shell.compatibleSDK in Sources/Forge/Agent.swift.)
+dev="$(xcode-select -p 2>/dev/null)"
+if [ -z "${SDKROOT:-}" ] && [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
+  for sdk in "$dev"/SDKs/MacOSX*.sdk(/NnOn); do
+    if ! grep -qs StateMacro /dev/null "$sdk"/System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule/*-macos.swiftinterface(N); then
+      export SDKROOT="$sdk"; break
+    fi
+  done
+fi
+
 swift build -c release
 BIN="$(swift build -c release --show-bin-path)/Forge"
 APP="build/Forge.app"
