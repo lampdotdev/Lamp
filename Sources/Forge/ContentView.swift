@@ -371,39 +371,44 @@ struct ProjectView: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        if lines.isEmpty && queued.isEmpty {
-                            NewAppIntro(project: project)
-                        }
-                        Transcript(lines: lines, dir: project.dir, busy: busy) { line, before in
-                            Task { await store.restore(project, toVersionOf: line, before: before) }
-                        }
-                        if let progress = store.progress[project.id] {
-                            if progress.newApp {
-                                BuildCard(project: project, progress: progress).padding(.top, 16)
-                            } else if busy, !(lines.last.map { $0.kind == .status && $0.text.hasSuffix("…") } ?? false) {
-                                // Not next to a status like "Building…", which says the same thing.
-                                ActivityRow(progress: progress).padding(.top, 12)
+                GeometryReader { area in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            if lines.isEmpty && queued.isEmpty {
+                                NewAppIntro(project: project)
                             }
+                            Transcript(lines: lines, dir: project.dir, busy: busy) { line, before in
+                                Task { await store.restore(project, toVersionOf: line, before: before) }
+                            }
+                            if let progress = store.progress[project.id] {
+                                if progress.newApp {
+                                    BuildCard(project: project, progress: progress).padding(.top, 16)
+                                } else if busy, !(lines.last.map { $0.kind == .status && $0.text.hasSuffix("…") } ?? false) {
+                                    // Not next to a status like "Building…", which says the same thing.
+                                    ActivityRow(progress: progress).padding(.top, 12)
+                                }
+                            }
+                            ForEach(queued) { message in
+                                QueuedRow(message: message) { store.unqueue(message, from: project) }
+                                    .padding(.top, lines.isEmpty ? 0 : 32)
+                            }
+                            Color.clear.frame(height: 1).id("bottom")
                         }
-                        ForEach(queued) { message in
-                            QueuedRow(message: message) { store.unqueue(message, from: project) }
-                                .padding(.top, lines.isEmpty ? 0 : 32)
-                        }
-                        Color.clear.frame(height: 1).id("bottom")
+                        // A readable line length; wide windows get margins instead of longer lines.
+                        .frame(maxWidth: 640)
+                        .padding(.horizontal, 20).padding(.vertical, 16)
+                        .frame(maxWidth: .infinity)
+                        // At least as tall as the chat area, so a short chat still sits at the top.
+                        .frame(minHeight: area.size.height, alignment: .top)
                     }
-                    // A readable line length; wide windows get margins instead of longer lines.
-                    .frame(maxWidth: 640)
-                    .padding(.horizontal, 20).padding(.vertical, 16)
-                    .frame(maxWidth: .infinity)
+                    // A chat opens on its latest messages: the scroll view starts at the bottom, with
+                    // no scrolling to get there.
+                    .defaultScrollAnchor(.bottom)
+                    .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
+                    .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
+                    .onChange(of: store.progress[project.id]?.plan.count) { proxy.scrollTo("bottom", anchor: .bottom) }
+                    .onChange(of: store.progress[project.id]?.screenshot != nil) { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
-                // A chat opens on its latest messages, not its first.
-                .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
-                .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
-                .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
-                .onChange(of: store.progress[project.id]?.plan.count) { proxy.scrollTo("bottom", anchor: .bottom) }
-                .onChange(of: store.progress[project.id]?.screenshot != nil) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
             Divider()
             if let approval = store.approvals[project.id] {
