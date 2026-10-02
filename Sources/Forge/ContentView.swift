@@ -550,17 +550,18 @@ struct ProjectView: View {
             ToolbarItem(placement: .navigation) { titleIcon }
         }
         ToolbarItem {
-            Button { Task { await store.open(project) } } label: {
-                Label("Open App", systemImage: "play.fill")
+            // One button: Play while the app is closed, Stop while it's open.
+            if store.openApps.contains(project.id) {
+                Button { Task { await store.quitApp(project) } } label: {
+                    Label("Quit App", systemImage: "stop.fill")
+                }
+                .help("Quit the app (double-click it in the sidebar to bring it to the front)")
+            } else {
+                Button { Task { await store.open(project) } } label: {
+                    Label("Open App", systemImage: "play.fill")
+                }
+                .help("Open the app (right-click it in the sidebar to rebuild)")
             }
-            .help("Open the app (right-click it in the sidebar to rebuild)")
-        }
-        ToolbarItem {
-            Button { Task { await store.quitApp(project) } } label: {
-                Label("Quit App", systemImage: "stop.fill")
-            }
-            .disabled(!store.openApps.contains(project.id))
-            .help(store.openApps.contains(project.id) ? "Quit the app" : "The app isn't open")
         }
         gap
         ToolbarItemGroup {
