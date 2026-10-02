@@ -51,6 +51,7 @@ Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/
 
 - Click **New App** at the bottom of the app list, give the app a name and (optionally) describe it. Forge builds it and opens it, usually in under a minute.
 - Type changes into the chat. Each change rebuilds and relaunches the app. **Undo** reverts the last change. **Return** sends, and **Shift-Return** starts a new line.
+- While a new app's first version is built, the chat shows a build card: the app's name and icon as they're chosen, the agent's plan with each part ticked off as it's written, what it's doing right now, and at the end a picture of the app's real window. Later changes show one line with the current step and the time so far.
 - You can keep typing while Forge works. Messages sent in the meantime wait in the chat (click the ✕ to take one back) and go out together as the next change.
 - Attach screenshots, mockups, logos, data files or documents with the paperclip, by dropping them on the chat, or by pasting (a screenshot copied with ⌃⇧⌘4 pastes as an image). The agent sees images and small text files directly. Attachments are saved in the app's `Attachments/` folder and bundled inside the app, where code loads them with `ForgeAssets.url/image/text("name")`. Shared apps include them.
 - In any generated app, press **⇧⌘E** to jump back to its chat in Forge.
@@ -126,7 +127,7 @@ Local models are slower and much less capable than the best cloud models for who
 | `Sources/Forge/Provider.swift` | Provider catalog, friendly errors, per-provider key storage (Keychain or private file) |
 | `Sources/Forge/Setup.swift` | First-run setup and Settings |
 | `Sources/Forge/Sharing.swift` | `.forgeapp` export and import, and the import review (checklist + AI) |
-| `Resources/look-tool.ts` | The agent's `look_at_app` tool (a pi extension) |
+| `Resources/forge-tools.ts` | The agent's `look_at_app` and `plan` tools (a pi extension) |
 | `Resources/make-icon.swift` | Draws Forge's own icon |
 | `Resources/THIRD_PARTY_NOTICES.md` | Licences for the bundled pi agent and llama.cpp (both MIT) |
 
