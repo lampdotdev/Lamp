@@ -172,12 +172,49 @@ enum ToolLocator {
         engine.tool.flatMap(path(named:))
     }
 
+    nonisolated(unsafe) private static var chosen: [String: String] = [:]
+
+    /// The tool's path. When several copies are installed (say, one from npm under nvm and one under mise),
+    /// the newest version wins rather than whichever comes first in PATH.
     static func path(named tool: String) -> String? {
-        for dir in userPath.split(separator: ":") {
-            let candidate = "\(dir)/\(tool)"
-            if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
+        lock.lock()
+        if let cached = chosen[tool] { lock.unlock(); return cached }
+        lock.unlock()
+        var seen = Set<String>()
+        let candidates = userPath.split(separator: ":").map { "\($0)/\(tool)" }.filter {
+            FileManager.default.isExecutableFile(atPath: $0)
+                && seen.insert(URL(fileURLWithPath: $0).resolvingSymlinksInPath().path).inserted
         }
-        return nil
+        guard let first = candidates.first else { return nil }
+        var best = first
+        if candidates.count > 1 {
+            best = candidates.max { version(of: $0).lexicographicallyPrecedes(version(of: $1)) } ?? first
+        }
+        lock.lock()
+        chosen[tool] = best
+        lock.unlock()
+        return best
+    }
+
+    /// The numbers in `<tool> --version` (e.g. "codex-cli 0.160.0" → [0, 160, 0]); [] if it can't tell.
+    private static func version(of path: String) -> [Int] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = ["--version"]
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = userPath
+        process.environment = env
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return [] }
+        let deadline = Date().addingTimeInterval(5)
+        while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        if process.isRunning { process.terminate(); return [] }
+        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        guard let match = output.firstMatch(of: #/(\d+)\.(\d+)(?:\.(\d+))?/#) else { return [] }
+        return [Int(match.1) ?? 0, Int(match.2) ?? 0, Int(match.3 ?? "0") ?? 0]
     }
 }
 
@@ -256,14 +293,32 @@ extension Agent {
             if session != nil { command += " --resume \"$FORGE_SESSION\"" }
             return AgentRun(command: command, env: env)
         case .codex:
-            // Codex has no system-prompt flag, so Forge's rules go in front of each request.
+            // Isolated from the user's own Codex setup (--ignore-user-config --ignore-rules: their model, MCP
+            // servers, features and rules), keeping their sign-in. Forge's rules go in as developer instructions.
             env["FORGE_TOOL"] = ToolLocator.path(for: .codex) ?? "codex"
-            env["FORGE_PROMPT"] = "Instructions from Forge (follow these):\n\(systemPrompt)\n\nRequest:\n\(prompt)"
+            env["FORGE_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt + Self.codexNote)
+            // Approvals (Settings → Building): a PreToolUse hook sends each shell command to Forge before it runs.
+            // Forge lets known read-only commands through (Codex reads with its shell), and otherwise applies the
+            // setting: the decision model then the user (auto), the user (always). "Never" has no hook. In every
+            // mode Codex stays in its sandbox (writes only in the app's folder), with network access.
+            let approval = CommandApproval.current
+            env["FORGE_TOKEN"] = Template.token(for: project)
+            env["FORGE_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=codex"
+            let hook = Bundle.main.resourceURL?.appendingPathComponent("forge-approve.sh").path ?? "forge-approve.sh"
+            env["FORGE_CODEX_HOOKS"] = approval == .never ? "hooks={}"
+                : #"hooks.PreToolUse=[{matcher="^Bash$",hooks=[{type="command",timeout=3600,command="'"# + hook + #"'"}]}]"#
+            let options = """
+            --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check \\
+              -c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true \\
+              -c web_search="live" -c "$FORGE_CODEX_INSTRUCTIONS" -c "$FORGE_CODEX_HOOKS"
+            """
+            if session != nil {
+                // `exec resume` keeps the conversation; it takes no -C/-i (Forge already runs in the app's folder).
+                return AgentRun(command: "\"$FORGE_TOOL\" exec resume \(options) \"$FORGE_SESSION\" -- \"$FORGE_PROMPT\"", env: env)
+            }
             let images = files.enumerated().filter { Attachments.isImage(URL(fileURLWithPath: $0.element)) }
                 .map { "-i \"$FORGE_FILE_\($0.offset)\"" }.joined(separator: " ")
-            return AgentRun(command: """
-            "$FORGE_TOOL" exec --json -C "$FORGE_DIR" --sandbox workspace-write --skip-git-repo-check \(images) -- "$FORGE_PROMPT"
-            """, env: env)
+            return AgentRun(command: "\"$FORGE_TOOL\" exec \(options) -C \"$FORGE_DIR\" \(images) -- \"$FORGE_PROMPT\"", env: env)
         case .opencode:
             env["FORGE_TOOL"] = ToolLocator.path(for: .opencode) ?? "opencode"
             env["FORGE_PROMPT"] = "Instructions from Forge (follow these):\n\(systemPrompt)\n\nRequest:\n\(prompt)"
@@ -279,6 +334,31 @@ extension Agent {
             if !fileArgs.isEmpty { command += " " + fileArgs.map { "-f \($0)" }.joined(separator: " ") }
             return AgentRun(command: command, env: env)
         }
+    }
+
+    /// Codex reads and searches with its shell (it has no separate file tools), which is fine inside the sandbox.
+    static let codexNote = """
+
+    - (Codex) Your shell is how you read and search files; reading inside the app's folder needs no approval. \
+    The "never use the shell to read files" rule above is for agents with separate file tools.
+    """
+
+    /// A TOML basic string, for `codex -c key=value`.
+    static func tomlString(_ text: String) -> String {
+        var out = "\""
+        for scalar in text.unicodeScalars {
+            switch scalar {
+            case "\\": out += "\\\\"
+            case "\"": out += "\\\""
+            case "\n": out += "\\n"
+            case "\t": out += "\\t"
+            case "\r": out += "\\r"
+            default:
+                if scalar.value < 0x20 || scalar.value == 0x7F { out += String(format: "\\u%04X", scalar.value) }
+                else { out.unicodeScalars.append(scalar) }
+            }
+        }
+        return out + "\""
     }
 
     /// Parses one output line from the current engine.
@@ -320,6 +400,10 @@ extension Agent {
                 default: nil
                 }
             }
+        case "user":
+            // A tool result: the tool has finished and the model is thinking about what's next.
+            let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
+            if content.contains(where: { $0["type"] as? String == "tool_result" }) { return [.step("")] }
         case "result":
             var events: [AgentEvent] = []
             if let cost = obj["total_cost_usd"] as? Double, cost > 0 { events.append(.cost(cost)) }
@@ -331,13 +415,24 @@ extension Agent {
     }
 
     static func parseCodex(_ line: String) -> [AgentEvent] {
-        guard let obj = json(line), let type = obj["type"] as? String else { return line.trimmed.isEmpty ? [] : [.raw(line)] }
+        guard let obj = json(line), let type = obj["type"] as? String else {
+            // Notices Codex prints for the flags Forge chose on purpose.
+            if line.contains("--dangerously-bypass-hook-trust") || line.hasPrefix("Reading additional input") { return [] }
+            return line.trimmed.isEmpty ? [] : [.raw(line)]
+        }
         let item = obj["item"] as? [String: Any] ?? [:]
         switch (type, item["type"] as? String) {
         case ("thread.started", _):
             return (obj["thread_id"] as? String).map { [.session($0)] } ?? []
         case ("item.completed", "agent_message"):
             return (item["text"] as? String)?.trimmed.nilIfEmpty.map { [.text($0)] } ?? []
+        case ("item.started", "web_search"):
+            return [.tool("Search the web", call: "web_search \(item["query"] as? String ?? "")")]
+        case ("item.completed", "error"):
+            guard let message = item["message"] as? String, !message.contains("--dangerously-bypass-hook-trust") else { return [] }
+            return [.raw(message)]
+        case ("item.completed", "command_execution"):
+            return [.step("")]
         case ("item.started", "command_execution"):
             let command = "Run: \(item["command"] as? String ?? "")"
             return [.tool(command, call: command)]

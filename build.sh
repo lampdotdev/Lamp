@@ -61,6 +61,7 @@ cp "$BIN" "$APP/Contents/MacOS/Forge"
 [ -f Resources/AppIcon.icns ] || swift Resources/make-icon.swift Resources/AppIcon.icns
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp Resources/THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
+install -m 755 Resources/forge-approve.sh "$APP/Contents/Resources/forge-approve.sh"
 cp Resources/forge-tools.ts "$APP/Contents/Resources/"   # pi extension: the agent's look_at_app and plan tools
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'

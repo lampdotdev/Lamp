@@ -104,6 +104,14 @@ final class Store: ObservableObject {
         let id = UUID()
         let command: String
         let answer: CheckedContinuation<Bool, Never>
+        var explanation: CommandExplanation?
+    }
+
+    /// What a command does and how risky it is, in plain words for people who don't read shell commands.
+    struct CommandExplanation {
+        let summary: String
+        let risk: String     // "low", "medium" or "high"
+        let why: String
     }
     @Published var approvals: [String: PendingApproval] = [:]   // project id → the command waiting
     private var allowAllThisTurn: Set<String> = []
@@ -984,6 +992,54 @@ final class Store: ObservableObject {
         return probability >= 0.85
     }
 
+    /// Commands that only read (Codex explores with its shell): every part of a pipeline or `&&` chain is a known
+    /// read-only program, with no redirection or command substitution. Anything else gets the normal approval.
+    nonisolated static func isReadOnly(_ raw: String) -> Bool {
+        var command = raw.trimmed
+        // Codex wraps commands as /bin/zsh -lc '…'.
+        if let match = command.firstMatch(of: #/^/bin/(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*)\1$/#) { command = String(match.2) }
+        if command.isEmpty || command.contains(">") || command.contains("`") || command.contains("$(") { return false }
+        let readers: Set<String> = ["cat", "ls", "head", "tail", "wc", "pwd", "echo", "rg", "grep", "egrep", "fgrep", "stat",
+                                    "file", "which", "tree", "sort", "uniq", "cut", "tr", "basename", "dirname", "realpath",
+                                    "du", "nl", "diff", "cd", "true", "test", "printf", "find", "sed", "git"]
+        let gitReads: Set<String> = ["status", "log", "diff", "show", "ls-files", "branch", "rev-parse", "blame", "grep"]
+        let parts = command.split(whereSeparator: { "|;&\n".contains($0) }).map { String($0).trimmed }.filter { !$0.isEmpty }
+        for part in parts {
+            let words = part.split(separator: " ").map(String.init).drop { $0.contains("=") && !$0.hasPrefix("-") }
+            guard let program = words.first.map({ ($0 as NSString).lastPathComponent }), readers.contains(program) else { return false }
+            let args = Array(words.dropFirst())
+            switch program {
+            case "find": if args.contains(where: { ["-exec", "-execdir", "-delete", "-ok", "-fprint"].contains($0) }) { return false }
+            case "sed": if !args.contains("-n") || args.contains(where: { $0.hasPrefix("-i") }) { return false }
+            case "git": if !gitReads.contains(args.first(where: { !$0.hasPrefix("-") }) ?? "") { return false }
+            default: break
+            }
+        }
+        return true
+    }
+
+    /// Asks the in-app AI model to describe a command for a non-technical person: what it does, and its risk.
+    private func explain(_ command: String, for project: ForgeProject) async -> CommandExplanation? {
+        let system = """
+        You explain shell commands to people who don't use the command line. An AI agent building a Mac app \
+        called "\(project.name)" wants to run a command, and the user has to decide whether to allow it.
+        Reply as JSON: {"summary": "<one plain sentence, under 20 words, saying what it does and why it might \
+        help, without jargon or command names>", "risk": "low" | "medium" | "high", "why": "<under 15 words: \
+        the main reason for that risk level, e.g. what it could change, delete, install or send>"}
+        low: only reads, or changes files inside the app's own folder. medium: downloads things, installs tools for \
+        this project, or changes files elsewhere that are easy to restore. high: deletes or overwrites files outside \
+        the app's folder, needs administrator rights, changes system settings, sends personal data somewhere, or \
+        runs code downloaded from the internet.
+        """
+        let prompt = "The user's request: \(currentRequests[project.id] ?? "(unknown)")\n\nThe command:\n\(command)"
+        guard let (text, _) = try? await AppAI.complete(prompt: prompt, images: [], system: system, json: true),
+              let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+              let summary = (json["summary"] as? String)?.trimmed, !summary.isEmpty else { return nil }
+        let risk = (json["risk"] as? String)?.lowercased() ?? "medium"
+        return CommandExplanation(summary: summary, risk: ["low", "medium", "high"].contains(risk) ? risk : "medium",
+                                  why: (json["why"] as? String)?.trimmed ?? "")
+    }
+
     /// Waits for the user to allow or deny a shell command. One request per app at a time; others queue.
     /// There's no timeout: commands wait until the user answers, stops the turn, or the turn ends.
     func requestApproval(for project: ForgeProject, command: String) async -> Bool {
@@ -995,8 +1051,16 @@ final class Store: ObservableObject {
         while approvals[project.id] != nil { try? await Task.sleep(for: .milliseconds(200)) }
         guard busy.contains(project.id) else { return false }   // the turn ended while queued
         NSApp.requestUserAttention(.informationalRequest)
+        note("Waiting for your OK to run a command", for: project)
         return await withCheckedContinuation { continuation in
-            approvals[project.id] = PendingApproval(command: command, answer: continuation)
+            let pending = PendingApproval(command: command, answer: continuation)
+            approvals[project.id] = pending
+            // Explain it while the card is up; the card shows the raw command until (and if) this arrives.
+            Task {
+                if let explanation = await explain(command, for: project), approvals[project.id]?.id == pending.id {
+                    approvals[project.id]?.explanation = explanation
+                }
+            }
         }
     }
 
@@ -1004,6 +1068,7 @@ final class Store: ObservableObject {
         guard let pending = approvals.removeValue(forKey: project.id) else { return }
         if allowAll { allowAllThisTurn.insert(project.id) }
         log(project, .detail, (allow ? "Allowed: " : "Denied: ") + pending.command)
+        note(allow ? "Running a command" : "Thinking", for: project)
         pending.answer.resume(returning: allow)
     }
 
@@ -1443,6 +1508,14 @@ final class Store: ObservableObject {
             }
             // Claude Code already ran its own classifier before asking ("claude-permission"), so ask the user.
             let escalated = request.path.contains("format=claude-permission")
+            if request.path.contains("format=codex") {
+                // Codex's PreToolUse hook can only block: an empty answer lets the command run.
+                if Self.isReadOnly(command) { return (200, [:]) }
+                let allowed = await approveCommand(command, for: project, escalated: false)
+                return (200, allowed ? [:] : ["hookSpecificOutput": ["hookEventName": "PreToolUse",
+                                                                     "permissionDecision": "deny",
+                                                                     "permissionDecisionReason": "The user denied this command in Forge."]])
+            }
             let allowed = await approveCommand(command, for: project, escalated: escalated)
             let reason = allowed ? "Approved in Forge." : "The user denied this command in Forge."
             if escalated {

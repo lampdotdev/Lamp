@@ -407,7 +407,7 @@ struct ProjectView: View {
             }
             Divider()
             if let approval = store.approvals[project.id] {
-                ApprovalCard(command: approval.command,
+                ApprovalCard(command: approval.command, explanation: approval.explanation,
                              onAllow: { store.answerApproval(for: project, allow: true) },
                              onAllowAll: { store.answerApproval(for: project, allow: true, allowAll: true) },
                              onDeny: { store.answerApproval(for: project, allow: false) })
@@ -877,40 +877,86 @@ struct ImportReviewView: View {
     }
 }
 
-/// A shell command the agent wants to run. Nothing runs until the user allows it.
+/// A shell command the agent wants to run, explained in plain words. Nothing runs until the user allows it.
 struct ApprovalCard: View {
     let command: String
+    let explanation: Store.CommandExplanation?
     let onAllow: () -> Void
     let onAllowAll: () -> Void
     let onDeny: () -> Void
+    @State private var showCommand = false
+
+    private var highRisk: Bool { explanation?.risk == "high" }
+
+    private var footnote: String {
+        switch explanation?.risk {
+        case "low": ""
+        case "high": "Only allow this if you're sure it's what you asked for."
+        default: "Check it's something you expected."
+        }
+    }
+
+    private var riskColor: Color {
+        switch explanation?.risk {
+        case "low": .green
+        case "high": .red
+        default: .orange
+        }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("The agent wants to run a command", systemImage: "terminal")
-                .font(.headline)
-            ScrollView {
-                Text(command)
-                    .font(.system(.callout, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("The agent wants to run a command").font(.caption).foregroundStyle(.secondary)
+            if let explanation {
+                Text(explanation.summary).font(.headline).fixedSize(horizontal: false, vertical: true)
+                Label {
+                    Text("\(explanation.risk.capitalized) risk").bold() + Text(explanation.why.isEmpty ? "" : ": \(explanation.why)")
+                } icon: {
+                    Image(systemName: explanation.risk == "low" ? "checkmark.shield" : "exclamationmark.triangle")
+                }
+                .font(.callout)
+                .foregroundStyle(riskColor)
+            } else {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Working out what this does…").foregroundStyle(.secondary)
+                }
             }
-            .frame(maxHeight: 120)
-            .padding(8)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+            DisclosureGroup(isExpanded: $showCommand) {
+                ScrollView {
+                    Text(command)
+                        .font(.system(.callout, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 120)
+                .padding(8)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+            } label: {
+                Text("Show command").font(.caption)
+            }
             HStack {
-                Text("It runs in this app's folder with your permissions.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(footnote).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Deny", role: .cancel, action: onDeny)
-                    .keyboardShortcut(.escape, modifiers: [])
-                Button("Allow All This Turn", action: onAllowAll)
-                Button("Allow", action: onAllow)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .buttonStyle(.borderedProminent)
+                if highRisk {
+                    // Risky: denying is the default, and there's no blanket "allow all".
+                    Button("Allow", action: onAllow)
+                    Button("Deny", action: onDeny)
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .buttonStyle(.borderedProminent)
+                } else {
+                    Button("Deny", role: .cancel, action: onDeny)
+                        .keyboardShortcut(.escape, modifiers: [])
+                    Button("Allow All This Turn", action: onAllowAll)
+                    Button("Allow", action: onAllow)
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .buttonStyle(.borderedProminent)
+                }
             }
         }
         .padding(12)
-        .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.orange.opacity(0.35)))
+        .background(riskColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(riskColor.opacity(0.35)))
+        .onAppear { showCommand = false }
     }
 }

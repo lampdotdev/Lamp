@@ -68,8 +68,9 @@ enum Agent {
     Rules:
     - Make the change the user asks for by editing files under Sources/. Split code into files as it grows.
     - You can read, search and edit files and read web pages without asking. You can also run shell commands \
-    (to clone a repo, inspect a file, convert data); Forge may ask the user to approve them, so run commands \
-    only when they really help, and prefer your file tools. Don't build or run the app yourself: when \
+    (to clone a repo, convert data, run a script); Forge may ask the user to approve them. Never use the shell to \
+    read, list or search files (no cat, ls, head, grep, find or cd): use your file tools for that, which need \
+    no approval. Save the shell for what the file tools can't do. Don't build or run the app yourself: when \
     you finish, Forge builds and relaunches it, and if the build fails your next message will contain the \
     compiler errors to fix. If something you need is denied or unavailable, say plainly what you need (for \
     example "attach the files" or "allow the clone"). To read a GitHub repo, clone it shallowly into \
