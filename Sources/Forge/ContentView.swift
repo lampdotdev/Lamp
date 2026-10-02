@@ -681,9 +681,10 @@ struct QueuedRow: View {
                     .lineSpacing(2)
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-                    .frame(maxWidth: 480, alignment: .trailing)
                     .foregroundStyle(.secondary)
             }
+            // The width limit goes around the button too, so it stays next to the bubble.
+            .frame(maxWidth: 480 + 22, alignment: .trailing)
             Label("Queued", systemImage: "clock").font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
