@@ -258,7 +258,7 @@ struct ProjectView: View {
     let project: ForgeProject
     @State private var draft = ""
     @State private var attachments: [URL] = []
-    @State private var composerHeight: CGFloat = 24
+    @State private var composerHeight = Composer.lineHeight
     @State private var focusRequest = 0
     @State private var dropTargeted = false
     @StateObject private var dictation = Dictation()
@@ -316,7 +316,7 @@ struct ProjectView: View {
                 Button(action: chooseFiles) { Image(systemName: "paperclip").font(.title3) }
                     .buttonStyle(.borderless)
                     .help("Attach files. You can also paste or drop images and files here.")
-                    .padding(.bottom, 2)
+                    .frame(height: Composer.lineHeight)
                 Composer(text: $draft, height: $composerHeight,
                          placeholder: busy ? "Working… describe the next change" : "Describe a change…",
                          suggestion: shownSuggestion, onDismissSuggestion: { dismissedSuggestion = suggestion },
@@ -330,13 +330,14 @@ struct ProjectView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(dictation.isListening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
                 .help(dictation.isListening ? "Stop dictation" : "Dictate a change")
-                .padding(.bottom, 2)
+                .frame(height: Composer.lineHeight)
                 if busy {
-                    ProgressView().controlSize(.small).padding(.bottom, 4)
+                    ProgressView().controlSize(.small).frame(height: Composer.lineHeight)
                     Button { store.stop(project) } label: { Image(systemName: "stop.circle.fill").font(.title2) }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
                         .help("Stop")
+                        .frame(height: Composer.lineHeight)
                 }
                 Button(action: send) {
                     Image(systemName: "arrow.up.circle.fill").font(.title2)
@@ -344,6 +345,7 @@ struct ProjectView: View {
                 .buttonStyle(.plain)
                 .disabled(draft.trimmed.isEmpty && attachments.isEmpty)
                 .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
+                .frame(height: Composer.lineHeight)
             }
             .padding(12)
         }

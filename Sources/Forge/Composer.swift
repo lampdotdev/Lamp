@@ -18,6 +18,9 @@ struct Composer: NSViewRepresentable {
     var onFiles: ([URL]) -> Void
 
     static let maxLines: CGFloat = 8
+    static let inset: CGFloat = 4
+    /// Height of a one-line composer; buttons beside it use this so they line up with the text.
+    static let lineHeight = NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: NSFont.systemFontSize)) + inset * 2
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -36,7 +39,7 @@ struct Composer: NSViewRepresentable {
         textView.drawsBackground = false
         textView.font = .systemFont(ofSize: NSFont.systemFontSize)
         textView.textColor = .labelColor
-        textView.textContainerInset = NSSize(width: 0, height: 4)
+        textView.textContainerInset = NSSize(width: 0, height: Composer.inset)
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isVerticallyResizable = true
