@@ -77,29 +77,36 @@ enum Runtime {
         """
     }
 
-    /// Pictures the app has saved since `date`, frontmost window first. Waits a few seconds for the
-    /// first one, which the app takes shortly after it opens.
-    static func screenshots(of project: ForgeProject, since date: Date) async -> [URL] {
+    /// Asks the running app to save fresh pictures of its windows now (see `ForgeRuntime` in the app).
+    static func requestScreenshots(of project: ForgeProject) {
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name("dev.forge.snapshot.\(project.id)"), object: nil, userInfo: nil, deliverImmediately: true)
+    }
+
+    /// Pictures the app has saved since `date`, frontmost window first. Waits up to `seconds` for the
+    /// first one: the app takes it shortly after it opens.
+    static func screenshots(of project: ForgeProject, since date: Date, waiting seconds: Double = 6) async -> [URL] {
         func fresh() -> [URL] {
             ["screenshot.png", "screenshot-2.png", "screenshot-3.png"].map { folder(project).appendingPathComponent($0) }
                 .filter { (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast > date }
         }
-        for _ in 0..<12 where fresh().isEmpty {
-            try? await Task.sleep(for: .milliseconds(500))
+        for _ in 0..<Int(seconds * 4) where fresh().isEmpty {
+            try? await Task.sleep(for: .milliseconds(250))
         }
         return fresh()
     }
 
-    /// Whether the app's code or bundled files changed after the current build was made.
-    /// ForgeSupport.swift doesn't count: Forge rewrites it before every build.
+    /// Whether the app needs building: its code or bundled files changed after the current build was made,
+    /// or there's no build at all.
     static func sourcesChanged(_ project: ForgeProject) -> Bool {
-        guard let built = (try? builtURL(project).resourceValues(forKeys: [.contentModificationDateKey]))?
+        guard FileManager.default.fileExists(atPath: project.builtURL.path),
+              let built = (try? builtURL(project).resourceValues(forKeys: [.contentModificationDateKey]))?
             .contentModificationDate else { return true }
         let roots = ["Sources", "Attachments", "Package.swift", "icon.json"].map { project.dir.appendingPathComponent($0) }
         for root in roots {
             let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey])?
                 .compactMap { $0 as? URL } ?? []
-            for file in [root] + files where file.lastPathComponent != "ForgeSupport.swift" {
+            for file in [root] + files {
                 let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .isDirectoryKey])
                 if values?.isDirectory != true, let modified = values?.contentModificationDate, modified > built { return true }
             }

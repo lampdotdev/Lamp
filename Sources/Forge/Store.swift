@@ -561,25 +561,29 @@ final class Store: ObservableObject {
         let notes = Attachments.note(for: saved) + Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project)
         looks[project.id] = Look()
         guard await runAgent(prompt + notes, files: files, on: project) else { return }
-        // When the agent's last look already built and opened exactly this code, don't do it all again.
-        let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first
-        let look = looks[project.id] ?? Look()
-        let alreadyOpen = look.installed && (look.crash != nil || app != nil) && !Runtime.sourcesChanged(project)
-        if !alreadyOpen {
+        // Only build when something changed: not after a question, and not again when the agent's last
+        // look already built and opened exactly this code.
+        try? Template.writeSupport(for: project)
+        let changed = Runtime.sourcesChanged(project)
+        if changed {
             guard await buildFixingErrors(project) else { return }
         }
         // Nothing is committed when the agent changed no files.
         var committed = await Shell.run("git add -A && \(Self.commit) -qm \"$FORGE_PROMPT\"", cwd: project.dir,
                                         env: ["FORGE_PROMPT": prompt]) { _ in } == 0
         var crash: String?
-        if alreadyOpen {
+        if changed {
+            crash = await install(project)
+        } else if let look = looks[project.id], look.installed {
             crash = look.crash
             if crash == nil {
-                app?.activate()
-                log(project, .status, "\(project.name) is ready")
+                if let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first {
+                    app.activate()
+                    log(project, .status, "\(project.name) is ready")
+                } else {
+                    crash = await install(project)
+                }
             }
-        } else {
-            crash = await install(project)
         }
         // Like build errors, a crash on launch goes back to the agent. The fix joins this turn's commit,
         // so Undo still reverts the whole change.
@@ -1063,18 +1067,34 @@ final class Store: ObservableObject {
         looks[project.id] = look
         defer { looks[project.id]?.inProgress = false }
 
-        if let errors = await build(project) {
+        try? Template.writeSupport(for: project)
+        let changed = Runtime.sourcesChanged(project)
+        if changed, let errors = await build(project) {
             return (200, ["text": "The app doesn't build yet. Fix these compiler errors:\n\n\(errors)"])
         }
-        let launched = Date()
-        let crash = await install(project, inFront: false)
-        looks[project.id]?.installed = true
-        looks[project.id]?.crash = crash
-        if let crash {
-            return (200, ["text": "The app built, but it quit right after launching.\n\n\(crash)"])
+        var note = "The app built and is running."
+        var screenshots: [URL] = []
+        if !changed, NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first != nil {
+            // Nothing to rebuild and the app is open: ask it for fresh pictures instead of relaunching it.
+            let asked = Date()
+            Runtime.requestScreenshots(of: project)
+            screenshots = await Runtime.screenshots(of: project, since: asked, waiting: 2)
+            note = "The app is running your latest code; nothing needed rebuilding."
+            looks[project.id]?.installed = !screenshots.isEmpty
+            looks[project.id]?.crash = nil
         }
-        let screenshots = await Runtime.screenshots(of: project, since: launched)
-        var text = "The app built and is running. " + (screenshots.isEmpty
+        if screenshots.isEmpty {
+            let launched = Date()
+            let crash = await install(project, inFront: false)
+            looks[project.id]?.installed = true
+            looks[project.id]?.crash = crash
+            if let crash {
+                return (200, ["text": "The app \(changed ? "built" : "is built"), but it quit right after launching.\n\n\(crash)"])
+            }
+            if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
+            screenshots = await Runtime.screenshots(of: project, since: launched)
+        }
+        var text = note + " " + (screenshots.isEmpty
             ? "It has no window open, so there's no picture."
             : "Pictures of its windows follow, frontmost first.")
         if let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
