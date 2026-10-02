@@ -127,7 +127,7 @@ Local models are slower and much less capable than the best cloud models for who
 | `Sources/Forge/Provider.swift` | Provider catalog, friendly errors, per-provider key storage (Keychain or private file) |
 | `Sources/Forge/Setup.swift` | First-run setup and Settings |
 | `Sources/Forge/Sharing.swift` | `.forgeapp` export and import, and the import review (checklist + AI) |
-| `Resources/forge-tools.ts` | The agent's `look_at_app` and `plan` tools (a pi extension) |
+| `Resources/forge-tools.ts` | The agent's `look_at_app`, `plan` and `delete_file` tools (a pi extension) |
 | `Resources/make-icon.swift` | Draws Forge's own icon |
 | `Resources/THIRD_PARTY_NOTICES.md` | Licences for the bundled pi agent and llama.cpp (both MIT) |
 

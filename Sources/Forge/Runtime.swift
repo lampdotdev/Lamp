@@ -107,8 +107,9 @@ enum Runtime {
             let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey])?
                 .compactMap { $0 as? URL } ?? []
             for file in [root] + files {
-                let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .isDirectoryKey])
-                if values?.isDirectory != true, let modified = values?.contentModificationDate, modified > built { return true }
+                // Folders count too: deleting a file changes only the date of the folder it was in.
+                if let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+                   modified > built { return true }
             }
         }
         return false

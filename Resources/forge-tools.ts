@@ -4,12 +4,16 @@
  * - `look_at_app`: the agent can't run anything itself. This asks Forge (over its local gateway) to build
  *   the app with the agent's changes, open it, and report back: a picture of each window, what the app
  *   printed, and any build errors or crash.
+ * - `delete_file`: pi's own tools can write and edit files but not remove one. This deletes a single file
+ *   inside the app's folder, leaving alone the files Forge owns. The app's git history can bring it back
+ *   (Undo).
  * - `plan`: the agent's checklist of what it's building, with the files behind each part. Forge reads the
  *   list from pi's event stream, shows it on the build card, and ticks parts as their files are written,
  *   so the tool itself has nothing to do.
  */
 
-import { readFile } from "node:fs/promises";
+import { lstat, readFile, realpath, rm } from "node:fs/promises";
+import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -76,7 +80,45 @@ const plan = defineTool({
 	},
 });
 
+/** Files and folders Forge generates or depends on: never the agent's to delete. */
+const protectedPaths = [".forge", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/ForgeSupport.swift"];
+
+const deleteFile = defineTool({
+	name: "delete_file",
+	label: "Delete file",
+	description:
+		"Deletes one file in the app's folder that is no longer needed, such as a source file whose code " +
+		"moved elsewhere or a view that was removed. Use it instead of leaving an emptied file behind. " +
+		"It can't delete folders, files outside the app's folder, or the files Forge generates.",
+	parameters: Type.Object({
+		path: Type.String({ description: "Path of the file, relative to the app's folder, e.g. Sources/CardsView.swift" }),
+	}),
+
+	async execute(_toolCallId, params) {
+		const root = await realpath(process.cwd());
+		const target = path.resolve(root, params.path);
+		const relative = path.relative(root, target);
+		if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
+			throw new Error("Only files inside the app's folder can be deleted.");
+		}
+		if (protectedPaths.some((item) => relative === item || relative.startsWith(item + path.sep))) {
+			throw new Error(`${relative} belongs to Forge and can't be deleted.`);
+		}
+		const info = await lstat(target).catch(() => undefined);
+		if (!info) throw new Error(`There's no file at ${relative}.`);
+		if (!info.isFile()) throw new Error(`${relative} isn't a file. Only single files can be deleted.`);
+		// A folder on the way that is really a link could lead outside the app's folder.
+		const folder = await realpath(path.dirname(target));
+		if (folder !== root && !folder.startsWith(root + path.sep)) {
+			throw new Error("Only files inside the app's folder can be deleted.");
+		}
+		await rm(target);
+		return { content: [{ type: "text", text: `Deleted ${relative}.` }], details: undefined };
+	},
+});
+
 export default function (pi: ExtensionAPI) {
 	pi.registerTool(lookAtApp);
 	pi.registerTool(plan);
+	pi.registerTool(deleteFile);
 }
