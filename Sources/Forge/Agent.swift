@@ -255,6 +255,13 @@ enum Shell {
         process.standardError = pipe
         process.standardInput = FileHandle.nullDevice
 
+        // Not `fileHandleForReading.bytes`: every FileHandle shares one serial reader, so a quiet process
+        // (the agent waiting on its look_at_app tool) would hold up the output of every other one (the build
+        // that tool is waiting for).
+        let (lines, output) = AsyncStream<String>.makeStream()
+        let reader = LineReader(output)
+        pipe.fileHandleForReading.readabilityHandler = { reader.read(from: $0) }
+
         // Not waitUntilExit(): off the main thread it can wait forever for a process that has already exited.
         let (exit, exited) = AsyncStream<Int32>.makeStream()
         process.terminationHandler = {
@@ -264,16 +271,41 @@ enum Shell {
         do {
             try process.run()
         } catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
             await onLine("Could not start process: \(error.localizedDescription)")
             return -1
         }
         await started?(process)
-        do {
-            for try await line in pipe.fileHandleForReading.bytes.lines {
-                await onLine(line)
-            }
-        } catch {}
+        for await line in lines { await onLine(line) }
         for await status in exit { return status }
         return process.terminationStatus
+    }
+
+    /// Splits a pipe's output into lines as it arrives.
+    private final class LineReader: @unchecked Sendable {
+        private var buffer = Data()   // only touched from the handle's readability callbacks, which are serial
+        private let output: AsyncStream<String>.Continuation
+
+        init(_ output: AsyncStream<String>.Continuation) { self.output = output }
+
+        func read(from handle: FileHandle) {
+            let data = handle.availableData
+            guard !data.isEmpty else {   // end of output
+                handle.readabilityHandler = nil
+                emit(buffer)
+                output.finish()
+                return
+            }
+            buffer.append(data)
+            while let newline = buffer.firstIndex(of: 0x0A) {
+                emit(buffer[..<newline])
+                buffer.removeSubrange(...newline)
+            }
+        }
+
+        private func emit(_ line: Data) {
+            let text = String(decoding: line, as: UTF8.self).trimmingCharacters(in: .newlines)
+            if !text.isEmpty { output.yield(text) }
+        }
     }
 }
