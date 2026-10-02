@@ -173,6 +173,8 @@ enum Template {
     ///
     ///     let verdict = try await ForgeAI.ask("What's in this photo?", images: [photo])
     ///
+    /// To read text, barcodes or faces, or to tag images, use Vision instead: it's on-device, instant and free.
+    ///
     /// Create or edit pictures with an image model:
     ///
     ///     let poster = try await ForgeAI.makeImage("a retro travel poster of Lisbon", aspectRatio: "3:4")

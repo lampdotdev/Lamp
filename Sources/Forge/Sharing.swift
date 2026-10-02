@@ -157,7 +157,7 @@ extension Sharing {
         ("Touches sensitive files (SSH keys, browser data, keychains)", [".ssh", "id_rsa", "id_ed25519", "Cookies", "Library/Keychains", "Google/Chrome", "Library/Safari", "Library/Mail", "Library/Messages"]),
         ("Deletes files", ["removeItem", "trashItem", "unlink("]),
         ("Simulates the keyboard or mouse, or reads other apps' windows", ["CGEvent", "AXUIElement", "CGEventTap"]),
-        ("Uses the camera or microphone", ["AVCaptureDevice", "AVCaptureSession", "AVAudioRecorder"]),
+        ("Uses the camera or microphone", ["AVCaptureDevice", "AVCaptureSession", "AVAudioRecorder", "AVAudioEngine", "SFSpeechRecognizer", "SpeechAnalyzer"]),
         ("Captures the screen", ["CGWindowListCreateImage", "ScreenCaptureKit", "SCScreenshotManager"]),
         ("Starts itself automatically or installs background items", ["SMAppService", "LaunchAgents", "LaunchDaemons", "SMLoginItem"]),
         ("Loads code at runtime (can hide what it does)", ["dlopen", "NSClassFromString", "perform(#selector", "NSSelectorFromString"]),

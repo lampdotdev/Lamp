@@ -572,6 +572,14 @@ final class Store: ObservableObject {
         let fm = FileManager.default
         let resources = project.builtURL.appendingPathComponent("Contents/Resources")
         try fm.createDirectory(at: resources, withIntermediateDirectories: true)
+        // Without these, macOS kills the app the moment it uses the mic, speech recognition or camera.
+        // Added here rather than in build.sh so apps made before this change get them too.
+        _ = await Shell.run("""
+            P="$FORGE_APP/Contents/Info.plist"
+            plutil -replace NSMicrophoneUsageDescription -string "$FORGE_NAME listens to your microphone." "$P" && \
+            plutil -replace NSSpeechRecognitionUsageDescription -string "$FORGE_NAME turns your speech into text." "$P" && \
+            plutil -replace NSCameraUsageDescription -string "$FORGE_NAME uses your camera." "$P"
+            """, cwd: project.dir, env: ["FORGE_APP": project.builtURL.path, "FORGE_NAME": project.name]) { _ in }
         if fm.fileExists(atPath: Icons.icnsURL(project).path) {
             try? fm.removeItem(at: resources.appendingPathComponent("AppIcon.icns"))
             try fm.copyItem(at: Icons.icnsURL(project), to: resources.appendingPathComponent("AppIcon.icns"))
