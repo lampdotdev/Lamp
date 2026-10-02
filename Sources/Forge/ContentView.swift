@@ -354,6 +354,9 @@ struct ProjectView: View {
         (store.logs[project.id] ?? []).filter { showDetails || !$0.isDetail }
     }
     private var busy: Bool { store.busy.contains(project.id) }
+    /// The chat area has to be about twice the build card's height before the card is pinned.
+    private static let roomToPinCard: CGFloat = 560
+
     /// The first turn of a new app, while it's still running.
     private var building: TurnProgress? {
         store.progress[project.id].flatMap { $0.newApp && $0.finished == nil ? $0 : nil }
@@ -371,8 +374,10 @@ struct ProjectView: View {
             ScrollViewReader { proxy in
                 GeometryReader { area in
                     ScrollView {
-                        // While a new app is being built, its card stays in view above the steps.
-                        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: building == nil ? [] : [.sectionHeaders]) {
+                        // While a new app is being built, its card stays in view above the steps, if there's
+                        // room: in a short window a pinned card would fill the chat and hide everything else.
+                        LazyVStack(alignment: .leading, spacing: 0,
+                                   pinnedViews: building != nil && area.size.height >= Self.roomToPinCard ? [.sectionHeaders] : []) {
                             if lines.isEmpty && queued.isEmpty {
                                 NewAppIntro(project: project)
                             }
