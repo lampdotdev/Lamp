@@ -373,6 +373,8 @@ struct ProjectView: View {
                     .padding(.horizontal, 20).padding(.vertical, 16)
                     .frame(maxWidth: .infinity)
                 }
+                // A chat opens on its latest messages, not its first.
+                .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
                 .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
                 .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
