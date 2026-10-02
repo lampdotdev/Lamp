@@ -9,7 +9,7 @@ A Mac app that builds Mac apps. Describe what you want, and Forge has an AI agen
 | What | Why | Notes |
 |---|---|---|
 | macOS 14 (Sonoma) or later | Forge and the apps it generates target macOS 14 | |
-| Apple's Command Line Tools (Xcode 15 or later) | Swift compiler, the macOS SDK and `git` | Free. **The full Xcode app is not required**, but works too. |
+| Apple's Command Line Tools (Xcode 15 or later) | Swift compiler, the macOS SDK and `git` | Free. **The full Xcode app is not required**, but works too. With Xcode 26, icons get native Liquid Glass rendering on macOS 26. |
 | An [OpenRouter](https://openrouter.ai/keys) key | Pays for the AI: the agent that writes apps, AI features inside apps, and icon artwork | Added in Forge's welcome screen and stored privately (see below) |
 
 Nothing else needs installing. The coding agent ([pi](https://github.com/badlogic/pi-mono)) is bundled inside `Forge.app`, and `build.sh` downloads a pinned, checksum-verified copy (about 30 MB). No Apple developer account, signing certificate or notarization is needed. Forge and every app it builds are ad-hoc signed and run only on your own Mac.
@@ -77,7 +77,7 @@ High-risk apps default to **Cancel**. When imported, the shared code is rebuilt 
 - **Agent loop:** each message runs the bundled [pi](https://github.com/badlogic/pi-mono) agent in JSON mode in the app's folder, with file tools only (read, edit, write, grep, find, ls) and no shell. Forge then runs `./build.sh` itself and sends any compiler errors back to pi, up to three times. After that it commits to the app's git repo, installs the app and relaunches it. Each app keeps one pi conversation, so the agent remembers earlier requests. **Undo** is `git reset` and starts a fresh conversation.
 - **Live editing:** every generated app has an **Edit with Forge** command (⇧⌘E) that jumps back to its chat.
 - **AI inside apps:** Forge runs a local gateway on `127.0.0.1:47811`. Generated apps call it through `ForgeAI.ask(...)` (text, images, typed JSON) and `ForgeAI.makeImage(...)` / `editImage(...)` / `editImages(...)` (create, edit or combine pictures with the image model from Settings) with a per-app token, so the API key never leaves Forge. Per-app usage shows in Forge.
-- **Icons:** the AI designs `icon.json` (SF Symbol and gradient). Forge renders it instantly and, with an OpenRouter key, swaps in generated artwork.
+- **Icons:** icons follow Apple's layered structure: one object on a calm background. The AI only chooses the object (`icon.json`: a `subject`, an SF Symbol and a background from a fixed palette). Forge controls the grid, margins and lighting. The icon starts as the SF Symbol. Forge then generates three artwork candidates of the object alone, cuts each out with Vision on the device, and has a vision model choose the one that best fits the guidelines. If the full **Xcode 26** app is installed, Forge also writes an Icon Composer document (`.forge/AppIcon.icon`) and compiles it with `actool`, so macOS 26 shows the icon in Liquid Glass with dark and tinted variants. With only the Command Line Tools, Forge draws the layers itself.
 - **Provider:** everything goes through OpenRouter with one OpenRouter key. pi uses its own config folder (`~/Library/Application Support/Forge/pi`), with update checks and telemetry off, so it never touches a pi you run yourself.
 
 ## Layout

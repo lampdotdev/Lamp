@@ -40,9 +40,10 @@ enum Agent {
     never ask the user for API keys. It accepts `images: [NSImage]` when the AI needs to look at photos or \
     screenshots. To create or edit pictures, use `ForgeAI.makeImage(...)`, `ForgeAI.editImage(...)` or \
     `ForgeAI.editImages(...)`; these take 10–60 seconds. Show a ProgressView while waiting and show errors in the UI.
-    - The app icon is defined in icon.json: `symbol` (an SF Symbol name), `background` (two hex colours, \
-    top-to-bottom gradient), `foreground` (symbol colour) and `art_prompt` (one sentence describing illustrated \
-    artwork). To change the icon, edit icon.json; Forge redraws it. Never create icon files yourself.
+    - The app icon is defined in icon.json: `subject` (the ONE tangible object the icon shows, as a short noun \
+    phrase, e.g. "a yellow legal pad with a red pencil"), `symbol` (an SF Symbol name shown until artwork is \
+    ready), `background` (one of \(Icons.backgrounds.map(\.name).joined(separator: ", "))) and `tint` (hex main \
+    colour of the object). To change the icon, edit icon.json; Forge redraws it. Never create icon files yourself.
     - Files the user attaches are saved in Attachments/ and bundled inside the app. When the app should use \
     one (a logo, a data file, a sound), load it with `ForgeAssets.url("name")`, `ForgeAssets.image("name")` or \
     `ForgeAssets.text("name")` from ForgeSupport.swift. Screenshots and mockups are usually just references for you.

@@ -301,10 +301,10 @@ final class Store: ObservableObject {
             if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
                let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
                 Icons.save(spec, for: project)
-                if let prompt = spec.art_prompt,
-                   let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
-                   NSImage(data: art) != nil {
-                    let url = Icons.artURL(project, prompt: prompt)
+                // Files from older Forge versions carry full-square artwork; only cut-out objects fit the new icons.
+                if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
+                   Icons.isCutOut(art) {
+                    let url = Icons.artURL(project, spec: spec)
                     try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                     try? art.write(to: url)
                 }
@@ -453,8 +453,16 @@ final class Store: ObservableObject {
         if fm.fileExists(atPath: Icons.icnsURL(project).path) {
             try? fm.removeItem(at: resources.appendingPathComponent("AppIcon.icns"))
             try fm.copyItem(at: Icons.icnsURL(project), to: resources.appendingPathComponent("AppIcon.icns"))
-            _ = await Shell.run("plutil -replace CFBundleIconFile -string AppIcon \"$FORGE_APP/Contents/Info.plist\"",
-                                cwd: project.dir, env: ["FORGE_APP": project.builtURL.path]) { _ in }
+            // With Xcode 26, the compiled Icon Composer icon lets macOS 26 draw it in Liquid Glass.
+            try? fm.removeItem(at: resources.appendingPathComponent("Assets.car"))
+            let hasCar = fm.fileExists(atPath: Icons.carURL(project).path)
+            if hasCar { try fm.copyItem(at: Icons.carURL(project), to: resources.appendingPathComponent("Assets.car")) }
+            let iconName = hasCar
+                ? "plutil -replace CFBundleIconName -string AppIcon \"$FORGE_APP/Contents/Info.plist\""
+                : "{ plutil -remove CFBundleIconName \"$FORGE_APP/Contents/Info.plist\" 2>/dev/null || true; }"
+            _ = await Shell.run("""
+                plutil -replace CFBundleIconFile -string AppIcon "$FORGE_APP/Contents/Info.plist" && \(iconName)
+                """, cwd: project.dir, env: ["FORGE_APP": project.builtURL.path]) { _ in }
         }
         // Files attached in Forge's chat ship inside the app, where ForgeAssets finds them.
         let attachments = project.dir.appendingPathComponent(Attachments.folder)
@@ -490,33 +498,38 @@ final class Store: ObservableObject {
             spec = await Icons.design(for: project)
             Icons.save(spec!, for: project)
         }
-        renderIcon(project, spec: spec!)
+        await renderIcon(project, spec: spec!)
     }
 
-    private func renderIcon(_ project: ForgeProject, spec: IconSpec) {
+    private func renderIcon(_ project: ForgeProject, spec: IconSpec) async {
         do {
-            icons[project.id] = try Icons.write(spec, art: Icons.cachedArt(project, spec: spec), for: project)
+            icons[project.id] = try await Icons.write(spec, art: Icons.cachedArt(project, spec: spec), for: project)
         } catch {
             log(project, .detail, "Icon render failed: \(error.localizedDescription)")
         }
     }
 
-    /// With an OpenRouter key, generates illustrated artwork in the background and swaps it in when ready.
+    /// With an OpenRouter key, generates artwork for the icon's object in the background (best of a few
+    /// candidates) and swaps it in when ready.
     private func upgradeIconArt(_ project: ForgeProject) {
         guard Provider.hasKey,
-              let spec = Icons.load(project), let prompt = spec.art_prompt, !prompt.trimmed.isEmpty,
+              let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
               Icons.cachedArt(project, spec: spec) == nil,
               artInProgress.insert(project.id).inserted else { return }
         Task {
             defer { artInProgress.remove(project.id) }
             do {
-                let data = try await Icons.generateArt(prompt)
-                let url = Icons.artURL(project, prompt: prompt)
+                let art = try await Icons.generateBestArt(spec, appName: project.name) { [weak self] in
+                    self?.log(project, .detail, $0)
+                }
+                let url = Icons.artURL(project, spec: spec)
                 try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try data.write(to: url)
+                guard let tiff = art.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?
+                    .representation(using: .png, properties: [:]) else { return }
+                try png.write(to: url)
                 // Only apply if the spec hasn't changed meanwhile and no build is in flight.
                 guard Icons.load(project) == spec, !busy.contains(project.id) else { return }
-                renderIcon(project, spec: spec)
+                await renderIcon(project, spec: spec)
                 try await deploy(project)
                 log(project, .status, "New icon artwork is in. It shows in the Dock after the app restarts.")
             } catch {
@@ -532,7 +545,7 @@ final class Store: ObservableObject {
         log(project, .status, "Designing a new icon…")
         let spec = await Icons.design(for: project, avoiding: Icons.load(project))
         Icons.save(spec, for: project)
-        renderIcon(project, spec: spec)
+        await renderIcon(project, spec: spec)
         if FileManager.default.fileExists(atPath: project.builtURL.path) {
             try? await deploy(project)
         }

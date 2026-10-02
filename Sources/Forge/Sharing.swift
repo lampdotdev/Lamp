@@ -51,9 +51,8 @@ enum Sharing {
         for name in ["APP.md", "icon.json"] where fm.fileExists(atPath: project.dir.appendingPathComponent(name).path) {
             try fm.copyItem(at: project.dir.appendingPathComponent(name), to: stage.appendingPathComponent(name))
         }
-        if let spec = Icons.load(project), let prompt = spec.art_prompt,
-           fm.fileExists(atPath: Icons.artURL(project, prompt: prompt).path) {
-            try fm.copyItem(at: Icons.artURL(project, prompt: prompt), to: stage.appendingPathComponent("icon-art.png"))
+        if let spec = Icons.load(project), fm.fileExists(atPath: Icons.artURL(project, spec: spec).path) {
+            try fm.copyItem(at: Icons.artURL(project, spec: spec), to: stage.appendingPathComponent("icon-art.png"))
         }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
