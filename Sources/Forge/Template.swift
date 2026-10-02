@@ -59,8 +59,11 @@ enum Template {
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{TOKEN}}", with: token(for: project))
             .replacingOccurrences(of: "{{PORT}}", with: String(Gateway.port))
-        try contents.write(to: project.dir.appendingPathComponent("Sources/ForgeSupport.swift"),
-                           atomically: true, encoding: .utf8)
+        // Left alone when it's already current, so its date only moves when the app needs a rebuild.
+        let url = project.dir.appendingPathComponent("Sources/ForgeSupport.swift")
+        if (try? String(contentsOf: url, encoding: .utf8)) != contents {
+            try contents.write(to: url, atomically: true, encoding: .utf8)
+        }
     }
 
     /// "pomodoro timer!" → "PomodoroTimer"
@@ -156,6 +159,11 @@ enum Template {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { snapshot() } }
             NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification,
                                                    object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { snapshot() }
+            }
+            // Forge asks for fresh pictures when its builder wants to look at the app.
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("dev.forge.snapshot.{{SLUG}}"), object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { snapshot() }
             }
             let log = folder.appendingPathComponent("log.txt")
