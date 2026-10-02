@@ -6,10 +6,15 @@ struct ContentView: View {
     @State private var showingNew = false
 
     var body: some View {
-        if store.setup.checked && !store.setup.ready {
-            SetupView()
-        } else {
-            main
+        Group {
+            if store.setup.checked && !store.setup.ready {
+                SetupView()
+            } else {
+                main
+            }
+        }
+        .sheet(item: $store.pendingImport) { pending in
+            ImportReviewView(pending: pending)
         }
     }
 
@@ -36,6 +41,10 @@ struct ContentView: View {
                     Button("Show in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
                     }
+                    Divider()
+                    ShareLink("Share…", item: SharedApp(project: project),
+                              preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
+                    Button("Export…") { store.chooseExport(project) }
                 }
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 200)
@@ -124,6 +133,11 @@ struct ProjectView: View {
                 Label("Open App", systemImage: "play.fill")
             }
             .disabled(busy)
+            ShareLink(item: SharedApp(project: project),
+                      preview: SharePreview(project.name, image: Image(systemName: "app.gift"))) {
+                Label("Share App", systemImage: "square.and.arrow.up")
+            }
+            .help("Send this app to someone with Forge")
             Button { Task { await store.undo(project) } } label: {
                 Label("Undo Last Change", systemImage: "arrow.uturn.backward")
             }
@@ -208,5 +222,88 @@ struct NewAppSheet: View {
                 .disabled(name.trimmed.isEmpty)
             }
         }
+    }
+}
+
+/// Shown before building an app someone else shared: what it does, what it can access, and any red flags.
+struct ImportReviewView: View {
+    @EnvironmentObject private var store: Store
+    let pending: Store.PendingImport
+
+    private var review: ImportReview? { pending.review }
+    private var highRisk: Bool { review?.risk == "high" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Open “\(pending.package.name)”?").font(.title2.bold())
+            Text("Someone shared this app with you. Forge will build it and open it on your Mac, where it can do anything an app you run can do.")
+                .foregroundStyle(.secondary)
+
+            if let review {
+                if !review.summary.isEmpty {
+                    section("What it does") { Text(review.summary) }
+                }
+                if !review.detected.isEmpty || !review.capabilities.isEmpty {
+                    section("What it can access") {
+                        ForEach(review.detected + review.capabilities.filter { !review.detected.contains($0) }, id: \.self) {
+                            Label($0, systemImage: "checkmark.shield").labelStyle(.titleAndIcon)
+                        }
+                    }
+                }
+                if !review.concerns.isEmpty {
+                    section("Concerns") {
+                        ForEach(review.concerns, id: \.self) {
+                            Label($0, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        }
+                    }
+                }
+                riskBadge(review.risk)
+                if let note = review.note {
+                    Text(note).font(.callout).foregroundStyle(.secondary)
+                }
+                Text("Forge's check is a guide, not a guarantee. Only open apps from people you trust.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("Checking what this app does…").foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 20)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { store.cancelImport() }
+                    .keyboardShortcut(highRisk || review == nil ? .defaultAction : .cancelAction)
+                Button(highRisk ? "Open Anyway" : "Build & Open", role: highRisk ? .destructive : nil) {
+                    store.confirmImport()
+                }
+                .disabled(review == nil)
+                .keyboardShortcut(highRisk || review == nil ? .cancelAction : .defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 480)
+    }
+
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.headline)
+            content()
+        }
+    }
+
+    private func riskBadge(_ risk: String) -> some View {
+        let (text, color, icon): (String, Color, String) = switch risk {
+        case "low": ("Looks safe", .green, "checkmark.seal.fill")
+        case "medium": ("Powerful, check it's what you expect", .yellow, "exclamationmark.circle.fill")
+        case "high": ("Looks risky. Don't open unless you trust the sender", .red, "xmark.octagon.fill")
+        default: ("Not checked by AI", .secondary, "questionmark.circle")
+        }
+        return Label(text, systemImage: icon)
+            .font(.callout.bold())
+            .foregroundStyle(color)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
 }

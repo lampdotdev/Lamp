@@ -12,6 +12,12 @@ struct ForgeApp: App {
                 .environmentObject(store)
                 .frame(minWidth: 760, minHeight: 480)
         }
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button("Import Shared App…") { store.chooseImport() }
+                    .keyboardShortcut("o")
+            }
+        }
         Settings {
             SettingsView().environmentObject(store)
         }

@@ -43,6 +43,21 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>UTExportedTypeDeclarations</key><array><dict>
+    <key>UTTypeIdentifier</key><string>dev.forge.forgeapp</string>
+    <key>UTTypeDescription</key><string>Forge App</string>
+    <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+    <key>UTTypeIconFile</key><string>AppIcon</string>
+    <key>UTTypeTagSpecification</key><dict>
+      <key>public.filename-extension</key><array><string>forgeapp</string></array>
+    </dict>
+  </dict></array>
+  <key>CFBundleDocumentTypes</key><array><dict>
+    <key>CFBundleTypeName</key><string>Forge App</string>
+    <key>CFBundleTypeRole</key><string>Viewer</string>
+    <key>LSHandlerRank</key><string>Owner</string>
+    <key>LSItemContentTypes</key><array><string>dev.forge.forgeapp</string></array>
+  </dict></array>
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLName</key><string>dev.forge.host</string>
     <key>CFBundleURLSchemes</key><array><string>forge</string></array>

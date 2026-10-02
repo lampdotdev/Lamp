@@ -47,7 +47,18 @@ Nothing else needs installing. The coding agent ([pi](https://github.com/badlogi
 - Type changes into the chat. Each change rebuilds and relaunches the app. **Undo** reverts the last change.
 - In any generated app, press **⇧⌘E** to jump back to its chat in Forge.
 - Generated apps are installed to `~/Applications/Forge Apps/`, so they show up in Spotlight and Launchpad.
-- Right-click an app in the sidebar for **New Icon** or **Show in Finder**. Toggle **Show Details** in the toolbar to see what the agent is doing.
+- Right-click an app in the sidebar for **New Icon**, **Show in Finder**, **Share…** or **Export…**. Toggle **Show Details** in the toolbar to see what the agent is doing.
+
+## Sharing apps
+
+Click **Share** (the toolbar button), or right-click an app and choose **Share…**, to send it through AirDrop, Messages, Mail and so on. You can also use **Export…** to save the file. Apps travel as small `.forgeapp` files containing the app's Swift code, `APP.md`, `icon.json` and icon artwork. Your chat, tokens, agent sessions and git history are never included.
+
+The recipient double-clicks the file, or uses **File → Import Shared App… (⌘O)**. Before anything is built, Forge shows a review:
+
+- **A fixed checklist** of what the code uses: shell commands, network, AppleScript, Keychain, SSH keys or browser data, deleting files, camera, screen capture, background items, runtime code loading, encoded blobs, and AI. This is plain text search, so comments in the code can't talk it out of anything.
+- **An AI review** using the building model. It summarises what the app does, what it can access and any concerns, with a low, medium or high risk rating. It's told to treat the code as untrusted and ignore any instructions in it.
+
+High-risk apps default to **Cancel**. When imported, the shared code is rebuilt with Forge's own `Package.swift`, `build.sh` and `ForgeSupport.swift`, so nothing in the file runs during the build. The app runs only when opened, and becomes a normal app the recipient can keep editing. The review is a guide, not a guarantee: only open apps from people you trust.
 
 ## Troubleshooting
 
@@ -79,6 +90,7 @@ Nothing else needs installing. The coding agent ([pi](https://github.com/badlogi
 | `Sources/Forge/Icons.swift` | Icon design, rendering and artwork generation |
 | `Sources/Forge/Provider.swift` | OpenRouter models, friendly errors, Keychain |
 | `Sources/Forge/Setup.swift` | First-run setup and Settings |
+| `Sources/Forge/Sharing.swift` | `.forgeapp` export and import, and the import review (checklist + AI) |
 | `Resources/make-icon.swift` | Draws Forge's own icon |
 | `Resources/THIRD_PARTY_NOTICES.md` | Licence for the bundled pi agent (MIT) |
 

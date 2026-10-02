@@ -42,6 +42,7 @@ final class Store: ObservableObject {
     @Published var setup = SetupCheck()
     @Published var usage: [String: AppUsage] = [:]
     @Published var icons: [String: NSImage] = [:]
+    @Published var pendingImport: PendingImport?
     private var artInProgress: Set<String> = []
     private var tokens: [String: String] = [:]   // gateway token → project id
     private var gateway: Gateway?
@@ -131,6 +132,10 @@ final class Store: ObservableObject {
     }
 
     func handle(url: URL) {
+        if url.isFileURL && url.pathExtension == "forgeapp" {
+            importApp(from: url)
+            return
+        }
         guard url.scheme == "forge",
               let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "app" })?.value else { return }
@@ -145,7 +150,7 @@ final class Store: ObservableObject {
     func create(name: String, brief: String) {
         let project: ForgeProject
         do {
-            project = try Template.scaffold(name: name, in: root)
+            project = try Template.scaffold(name: uniqueName(name), in: root)
         } catch {
             NSAlert(error: error).runModal()
             return
@@ -159,6 +164,137 @@ final class Store: ObservableObject {
             } else {
                 await send(brief.trimmed, to: project)
             }
+        }
+    }
+
+    /// Display names must be unique: each app installs as "<name>.app" in ~/Applications/Forge Apps.
+    private func uniqueName(_ name: String) -> String {
+        let taken = Set(projects.map { $0.name.lowercased() })
+        let base = name.trimmed
+        var candidate = base
+        var n = 2
+        while taken.contains(candidate.lowercased()) {
+            candidate = "\(base) \(n)"
+            n += 1
+        }
+        return candidate
+    }
+
+    // MARK: - Sharing
+
+    func chooseImport() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.forgeApp]
+        panel.message = "Choose a Forge app someone shared with you"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        importApp(from: url)
+    }
+
+    func chooseExport(_ project: ForgeProject) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.forgeApp]
+        panel.nameFieldStringValue = "\(project.name).forgeapp"
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        do {
+            let file = try Sharing.export(project)
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: file, to: destination)
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
+    struct PendingImport: Identifiable {
+        let id = UUID()
+        let package: Sharing.Package
+        var review: ImportReview?
+    }
+
+    /// Opens a shared `.forgeapp`: unpacks it, then shows a review (fixed checklist + AI check) before building.
+    func importApp(from file: URL) {
+        NSApp.activate()
+        guard setup.ready else {
+            let alert = NSAlert()
+            alert.messageText = "Finish setting up Forge first"
+            alert.informativeText = "Then open the shared app again."
+            alert.runModal()
+            return
+        }
+        let package: Sharing.Package
+        do {
+            package = try Sharing.open(file)
+        } catch {
+            NSAlert(error: error).runModal()
+            return
+        }
+        if let previous = pendingImport { try? FileManager.default.removeItem(at: previous.package.folder) }
+        let pending = PendingImport(package: package)
+        pendingImport = pending
+        Task {
+            let review = await Sharing.review(package)
+            if pendingImport?.id == pending.id { pendingImport?.review = review }
+        }
+    }
+
+    func cancelImport() {
+        if let pending = pendingImport { try? FileManager.default.removeItem(at: pending.package.folder) }
+        pendingImport = nil
+    }
+
+    func confirmImport() {
+        guard let pending = pendingImport else { return }
+        pendingImport = nil
+        finishImport(pending.package)
+    }
+
+    private func finishImport(_ package: Sharing.Package) {
+        defer { try? FileManager.default.removeItem(at: package.folder) }
+        let fm = FileManager.default
+        let project: ForgeProject
+        do {
+            project = try Template.scaffold(name: uniqueName(package.name), in: root)
+            // Swap the scaffold's code for the shared code; keep Forge's own ForgeSupport.swift.
+            let sources = project.dir.appendingPathComponent("Sources")
+            for item in try fm.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)
+            where item.lastPathComponent != "ForgeSupport.swift" {
+                try fm.removeItem(at: item)
+            }
+            let sharedSources = package.folder.appendingPathComponent("Sources").standardizedFileURL.path + "/"
+            for file in package.sources where file.lastPathComponent != "ForgeSupport.swift" {
+                let relative = file.standardizedFileURL.path.replacingOccurrences(of: sharedSources, with: "")
+                guard !relative.contains("..") else { continue }
+                let target = sources.appendingPathComponent(relative)
+                try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fm.copyItem(at: file, to: target)
+            }
+            let appMd = package.folder.appendingPathComponent("APP.md")
+            if fm.fileExists(atPath: appMd.path) {
+                try? fm.removeItem(at: project.dir.appendingPathComponent("APP.md"))
+                try fm.copyItem(at: appMd, to: project.dir.appendingPathComponent("APP.md"))
+            }
+            if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
+               let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
+                Icons.save(spec, for: project)
+                if let prompt = spec.art_prompt,
+                   let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
+                   NSImage(data: art) != nil {
+                    let url = Icons.artURL(project, prompt: prompt)
+                    try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try? art.write(to: url)
+                }
+            }
+        } catch {
+            NSAlert(error: error).runModal()
+            return
+        }
+
+        reload()
+        selection = project.id
+        log(project, .status, "Imported from a shared file. Building it now…")
+        Task {
+            _ = await Shell.run("git init -q && git add -A && \(Self.commit) -qm 'Imported from a shared file'",
+                                cwd: project.dir) { _ in }
+            await run(project)
         }
     }
 

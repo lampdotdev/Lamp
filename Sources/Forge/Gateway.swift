@@ -100,17 +100,21 @@ enum AppAI {
         let data: String
     }
 
-    static func complete(prompt: String, images: [Image], system: String, json: Bool) async throws -> (String, Double) {
+    /// `model` overrides the in-app model (an OpenRouter model ID), e.g. for Forge's own import review.
+    static func complete(prompt: String, images: [Image], system: String, json: Bool,
+                         model: String? = nil) async throws -> (String, Double) {
         var system = system
         if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
         guard Provider.hasKey else {
             throw Failure(message: "Forge needs an OpenRouter key before apps can use AI. Add one in Forge → Settings (⌘,).")
         }
-        let (text, cost) = try await viaOpenRouter(prompt: prompt, images: images, system: system)
+        let (text, cost) = try await viaOpenRouter(prompt: prompt, images: images, system: system,
+                                                   model: model ?? Self.model.openRouter)
         return (json ? stripFences(text) : text, cost)
     }
 
-    private static func viaOpenRouter(prompt: String, images: [Image], system: String) async throws -> (String, Double) {
+    private static func viaOpenRouter(prompt: String, images: [Image], system: String,
+                                      model: String) async throws -> (String, Double) {
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 120
@@ -124,7 +128,7 @@ enum AppAI {
         }
         messages.append(["role": "user", "content": content])
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": model.openRouter, "messages": messages, "usage": ["include": true],
+            "model": model, "messages": messages, "usage": ["include": true],
         ] as [String: Any])
 
         let (data, response) = try await URLSession.shared.data(for: request)
