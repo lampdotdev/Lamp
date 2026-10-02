@@ -304,6 +304,8 @@ struct AppMenu: View {
         Button("Open") { Task { await store.open(project) } }
         Button("Rebuild & Open") { Task { await store.run(project) } }
             .disabled(busy)
+        Button("Quit") { Task { await store.quitApp(project) } }
+            .disabled(!store.openApps.contains(project.id))
         Divider()
         Button("Rename…") { store.renaming = project }
             .disabled(busy)
@@ -552,6 +554,13 @@ struct ProjectView: View {
                 Label("Open App", systemImage: "play.fill")
             }
             .help("Open the app (right-click it in the sidebar to rebuild)")
+        }
+        ToolbarItem {
+            Button { Task { await store.quitApp(project) } } label: {
+                Label("Quit App", systemImage: "stop.fill")
+            }
+            .disabled(!store.openApps.contains(project.id))
+            .help(store.openApps.contains(project.id) ? "Quit the app" : "The app isn't open")
         }
         gap
         ToolbarItemGroup {
