@@ -835,21 +835,28 @@ final class Store: ObservableObject {
             guard let self else { return }
             for event in Agent.parseLine(line) {
                 switch event {
-                case .text(let text): log(project, .agent, text)
+                case .text(let text):
+                    progress[project.id]?.upcoming = nil
+                    log(project, .agent, text)
                 case .step(let tool):
                     streamingTool = tool
                     streamingArguments = ""
-                    note(TurnProgress.activity(tool: tool, partialArguments: ""), for: project)
+                    let activity = TurnProgress.activity(tool: tool, partialArguments: "")
+                    note(activity, for: project)
+                    if progress[project.id]?.upcoming != activity { progress[project.id]?.upcoming = activity }
                 case .stepArgs(let piece):
                     // The file name is among the first arguments; the rest is the file itself.
                     guard streamingArguments.count < 600 else { break }
                     streamingArguments += piece
                     let call = TurnProgress.call(tool: streamingTool, partialArguments: streamingArguments)
                     note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
+                    let activity = TurnProgress.activity(for: call)
+                    if progress[project.id]?.upcoming != activity { progress[project.id]?.upcoming = activity }
                 case .plan(let parts):
                     progress[project.id]?.plan = parts
                     progress[project.id]?.tickWrittenParts()
                 case .tool(let text, let fullCall):
+                    progress[project.id]?.upcoming = nil
                     log(project, .tool, text)
                     let call = ToolCall(text)
                     note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
@@ -877,6 +884,7 @@ final class Store: ObservableObject {
             }
         }
         running[project.id] = nil
+        progress[project.id]?.upcoming = nil
         endApprovals(for: project)
         log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost))
         recordAgent(project, cost: cost)

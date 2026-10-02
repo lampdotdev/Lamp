@@ -145,6 +145,8 @@ struct Transcript: View {
     let lines: [LogLine]
     let dir: URL
     let busy: Bool
+    /// What the model has started on but not finished, shown after everything else.
+    var upcoming: String? = nil
     /// Goes back to the version a request made, or (true) to the one before it.
     var goBack: ((LogLine, Bool) -> Void)?
 
@@ -156,12 +158,22 @@ struct Transcript: View {
             Group {
                 switch item {
                 case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack)
-                case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy)
+                case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && upcoming == nil)
                 case .statuses(let lines): StatusGroup(lines: lines, running: isLast && busy)
                 }
             }
             .padding(.top, ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item,
                                         isFinalAnswer: finalAnswers.contains(item.id)))
+        }
+        if let upcoming {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini).frame(width: 16)
+                Text(upcoming + "…")
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(.top, 6)
+            .transition(.opacity)
         }
     }
 

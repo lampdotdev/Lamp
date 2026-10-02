@@ -542,7 +542,8 @@ struct ProjectView: View {
     }
 
     private func transcript(_ lines: [LogLine], busy: Bool) -> some View {
-        Transcript(lines: lines, dir: project.dir, busy: busy) { line, before in
+        Transcript(lines: lines, dir: project.dir, busy: busy,
+                   upcoming: busy ? store.progress[project.id]?.upcoming : nil) { line, before in
             Task { await store.restore(project, toVersionOf: line, before: before) }
         }
     }

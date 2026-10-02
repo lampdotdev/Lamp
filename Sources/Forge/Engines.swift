@@ -283,7 +283,7 @@ extension Agent {
             env["FORGE_CLAUDE_ALLOWED"] = allowed
             env["FORGE_TOOL"] = ToolLocator.path(for: .claude) ?? "claude"
             var command = """
-            "$FORGE_TOOL" -p "$FORGE_PROMPT" --output-format stream-json --verbose \\
+            "$FORGE_TOOL" -p "$FORGE_PROMPT" --output-format stream-json --verbose --include-partial-messages \\
               --restricted --strict-mcp-config --disable-slash-commands \\
               --tools 'Read,Edit,Write,Glob,Grep,Bash,WebFetch,WebSearch' \\
               --permission-mode "$FORGE_CLAUDE_MODE" --allowedTools "$FORGE_CLAUDE_ALLOWED" \\
@@ -401,6 +401,21 @@ extension Agent {
                           call: callKey(block["name"] as? String ?? "Tool", block["input"] as? [String: Any] ?? [:]))
                 default: nil
                 }
+            }
+        case "stream_event":
+            // The message as it's written, so Forge can say what the model has started on: a long file
+            // takes minutes to write, and the finished message only arrives at the end.
+            let event = obj["event"] as? [String: Any] ?? [:]
+            switch event["type"] as? String {
+            case "content_block_start":
+                let block = event["content_block"] as? [String: Any] ?? [:]
+                return block["type"] as? String == "tool_use" ? [.step(block["name"] as? String ?? "")] : [.step("")]
+            case "content_block_delta":
+                let delta = event["delta"] as? [String: Any] ?? [:]
+                if delta["type"] as? String == "input_json_delta", let piece = delta["partial_json"] as? String {
+                    return [.stepArgs(piece)]
+                }
+            default: break
             }
         case "user":
             // A tool result: the tool has finished and the model is thinking about what's next.

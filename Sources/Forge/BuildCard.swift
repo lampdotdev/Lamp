@@ -20,6 +20,9 @@ struct TurnProgress {
     var failed = false
     /// What's happening right now, in plain words: "Writing Scanner.swift", "Building…".
     var activity = "Getting started"
+    /// What the model has started on but not finished ("Writing GameView.swift", "Thinking"), shown at the
+    /// end of the chat. nil once the step is logged.
+    var upcoming: String?
     /// The file being written or edited right now, if that's what the agent is doing.
     var currentFile: String?
     var plan: [PlanPart] = []
