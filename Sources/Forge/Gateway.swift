@@ -198,6 +198,63 @@ enum AppAI {
         return (answer.trimmed, 0)
     }
 
+    // MARK: Decisions (System One models such as TypeSafe's Jev)
+
+    /// Decision models: Jev through OpenRouter or directly through TypeSafe. Same request either way.
+    static let decisionModels: [(id: String, label: String, provider: String, model: String)] = [
+        ("openrouter:jev-latest", "Jev via OpenRouter", "openrouter", "jev-latest"),
+        ("typesafe:jev-latest", "Jev via TypeSafe", "typesafe", "jev-latest"),
+        ("typesafe:jev-preview", "Jev preview via TypeSafe", "typesafe", "jev-preview"),
+    ]
+
+    static var decisionModel: (id: String, label: String, provider: String, model: String) {
+        let saved = UserDefaults.standard.string(forKey: "decisionModel") ?? ""
+        if let chosen = decisionModels.first(where: { $0.id == saved }) { return chosen }
+        // Default to whichever key exists, preferring OpenRouter.
+        return KeyStore.openRouterKey == nil && KeyStore.key(for: "typesafe") != nil ? decisionModels[1] : decisionModels[0]
+    }
+
+    /// Sends `state` and typed `questions` (TypeSafe's System One format) to the decision model.
+    /// Returns the answers keyed like the questions, and the cost in USD.
+    static func decide(state: Any, questions: [String: Any]) async throws -> ([String: Any], Double) {
+        let choice = decisionModel
+        guard let key = KeyStore.key(for: choice.provider) else {
+            let name = choice.provider == "typesafe" ? "a TypeSafe" : "an OpenRouter"
+            throw Failure(message: "Decisions need \(name) key. Add one in Forge → Settings (⌘,) → AI.")
+        }
+        let endpoint = choice.provider == "typesafe" ? "https://api.typesafe.ai/v1/systemone"
+                                                     : "https://openrouter.ai/api/v1/systemone"
+        var request = URLRequest(url: URL(string: endpoint)!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Forge", forHTTPHeaderField: "X-Title")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["state": state, "model": choice.model,
+                                                                       "questions": questions] as [String: Any])
+        // Rate limits (429) and overload (529) are expected under load: back off and retry a few times.
+        for attempt in 0..<4 {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            if (status == 429 || status == 529) && attempt < 3 {
+                try await Task.sleep(for: .milliseconds(500 << attempt))
+                continue
+            }
+            guard status == 200, let answers = obj["answers"] as? [String: Any] else {
+                let error = obj["error"] as? [String: Any]
+                let detail = error?["message"] as? String ?? obj["detail"].map { "\($0)" } ?? "HTTP \(status)"
+                throw Failure(message: status == 422 ? "The decision request was invalid: \(detail)"
+                                                     : Provider.friendlyError("\(status) \(detail)"))
+            }
+            let usage = obj["usage"] as? [String: Any] ?? [:]
+            // Jev charges per input token ($0.042 per million); OpenRouter may report the exact cost.
+            let cost = usage["cost"] as? Double ?? Double(usage["input_tokens"] as? Int ?? 0) * 0.042 / 1_000_000
+            return (answers, cost)
+        }
+        throw Failure(message: "The decision model is busy. Try again in a moment.")
+    }
+
     /// Creates or edits an image with the image model from Settings, via OpenRouter's image API.
     /// `references` are input images to edit or combine. Returns PNG data and the cost in USD.
     static func image(prompt: String, references: [Image], aspectRatio: String?) async throws -> (Data, Double) {

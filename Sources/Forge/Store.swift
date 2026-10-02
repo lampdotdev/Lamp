@@ -709,7 +709,7 @@ final class Store: ObservableObject {
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
-        guard request.method == "POST", request.path == "/ai" || request.path == "/ai/image" else {
+        guard request.method == "POST", ["/ai", "/ai/image", "/ai/decide"].contains(request.path) else {
             return (404, ["error": "Not found"])
         }
         let token = request.headers["authorization"]?.replacingOccurrences(of: "Bearer ", with: "") ?? ""
@@ -718,6 +718,21 @@ final class Store: ObservableObject {
             return (401, ["error": "This app isn't registered with Forge."])
         }
         guard setup.ready else { return (503, ["error": "Forge isn't set up yet. Open Forge to finish setup."]) }
+        if request.path == "/ai/decide" {
+            guard let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any],
+                  let state = body["state"], let questions = body["questions"] as? [String: Any], !questions.isEmpty else {
+                return (400, ["error": "A decision needs `state` and at least one question."])
+            }
+            do {
+                let (answers, cost) = try await AppAI.decide(state: state, questions: questions)
+                record(project, cost: cost)
+                return (200, ["answers": answers])
+            } catch let failure as AppAI.Failure {
+                return (502, ["error": failure.message])
+            } catch {
+                return (502, ["error": "Couldn't reach the decision model: \(error.localizedDescription)"])
+            }
+        }
         guard let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any],
               let prompt = body["prompt"] as? String, !prompt.trimmed.isEmpty else {
             return (400, ["error": "Missing prompt."])

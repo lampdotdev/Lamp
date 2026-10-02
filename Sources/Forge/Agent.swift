@@ -40,7 +40,12 @@ enum Agent {
     `ForgeAI.ask(...)` from ForgeSupport.swift. Read its doc comment for usage. Never call AI APIs directly, \
     never ask the user for API keys. It accepts `images: [NSImage]` when the AI needs to look at photos or \
     screenshots. To create or edit pictures, use `ForgeAI.makeImage(...)`, `ForgeAI.editImage(...)` or \
-    `ForgeAI.editImages(...)`; these take 10–60 seconds. Show a ProgressView while waiting and show errors in the UI.
+    `ForgeAI.editImages(...)`; these take 10–60 seconds. For quick judgments where the app needs a decision \
+    rather than text (is this X? which of these options? how much, on a scale?), such as classifying, routing, \
+    filtering, prioritising, matching or moderating, use the decision calls `ForgeAI.isTrue`, `ForgeAI.choose`, \
+    `ForgeAI.rate` or `ForgeAI.decide`: they're fast and cheap and return probabilities plus confidence. Keep \
+    rules and calculations in code, and use confidence to decide when to act automatically versus ask the user. \
+    Decisions take text or JSON-friendly data, not images. Show a ProgressView while waiting and show errors in the UI.
     - The app icon is defined in icon.json: `subject` (the ONE tangible object the icon shows, as a short noun \
     phrase, e.g. "a yellow legal pad with a red pencil"), `symbol` (an SF Symbol name shown until artwork is \
     ready), `background` (one of \(Icons.backgrounds.map(\.name).joined(separator: ", "))) and `tint` (hex main \

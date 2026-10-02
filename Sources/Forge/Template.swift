@@ -179,7 +179,18 @@ enum Template {
     ///     let edited = try await ForgeAI.editImage(photo, "turn this into a watercolour painting")
     ///     let combined = try await ForgeAI.editImages([person, beach], "put the person from the first photo on this beach")
     ///
-    /// Text calls take a few seconds; image calls 10–60 seconds. Show a ProgressView, and show
+    /// Make quick decisions with a decision model (Jev): probabilities and confidence, not text.
+    /// Use these to classify, route, filter, prioritise, match or moderate.
+    ///
+    ///     let urgent = try await ForgeAI.isTrue("Does this message need a reply today?", about: email)   // 0…1
+    ///     let team = try await ForgeAI.choose("Which team should handle this?", from: ["billing", "bugs", "sales"], about: ticket)
+    ///     if team.confidence ?? 0 > 0.7 { route(to: team.choice!) } else { askUser() }
+    ///     let mood = try await ForgeAI.rate("How frustrated is the customer?", levels: ["Calm", "Annoyed", "Furious"], about: ticket)
+    ///
+    /// `about:` takes text, a dictionary/array, or any Encodable value. Ask several questions about the same
+    /// thing in one request with `ForgeAI.decide(about:_:)`; they run in parallel.
+    ///
+    /// Text calls take a few seconds; decisions well under a second; image calls 10–60 seconds. Show a ProgressView, and show
     /// `error.localizedDescription` on failure. Aspect ratios look like "1:1", "16:9", "3:4".
     enum ForgeAI {
         struct Failure: LocalizedError {
@@ -216,6 +227,51 @@ enum Template {
         /// Combines or edits several pictures following an instruction that can refer to them in order.
         static func editImages(_ images: [NSImage], _ instruction: String, aspectRatio: String? = nil) async throws -> NSImage {
             try await image(prompt: instruction, images: images, aspectRatio: aspectRatio)
+        }
+
+        // MARK: Decisions
+
+        /// The probability (0…1) that the answer to a yes/no question is yes.
+        static func isTrue(_ question: String, about state: Any, yes: String? = nil, no: String? = nil) async throws -> Double {
+            let answer = try await decide(about: state, ["q": .yesNo(question, yes: yes, no: no)])["q"]
+            guard let probability = answer?.probability else { throw Failure(message: "The decision model didn't answer.") }
+            return probability
+        }
+
+        /// Picks one option. Check `confidence` before acting on a close call; `probabilities` has every option.
+        static func choose(_ question: String, from options: [String], about state: Any) async throws -> ForgeDecision {
+            guard let answer = try await decide(about: state, ["q": .choice(question, options: options)])["q"] else {
+                throw Failure(message: "The decision model didn't answer.")
+            }
+            return answer
+        }
+
+        /// Places something on a scale of described levels. `score` runs from 0 to levels.count - 1 and can
+        /// land between levels.
+        static func rate(_ question: String, levels: [String], about state: Any) async throws -> ForgeDecision {
+            guard let answer = try await decide(about: state, ["q": .score(question, levels: levels)])["q"] else {
+                throw Failure(message: "The decision model didn't answer.")
+            }
+            return answer
+        }
+
+        /// Asks several questions about the same thing in one request. Answers come back under the same keys.
+        static func decide(about state: Any, _ questions: [String: ForgeQuestion]) async throws -> [String: ForgeDecision] {
+            let reply = try await post("/ai/decide", [
+                "state": try jsonState(state),
+                "questions": questions.mapValues(\.json),
+            ])
+            let answers = reply["answers"] as? [String: [String: Any]] ?? [:]
+            return answers.mapValues(ForgeDecision.init)
+        }
+
+        private static func jsonState(_ state: Any) throws -> Any {
+            if let text = state as? String { return text }
+            if JSONSerialization.isValidJSONObject(state) { return state }
+            if let value = state as? any Encodable {
+                return try JSONSerialization.jsonObject(with: JSONEncoder().encode(value), options: .fragmentsAllowed)
+            }
+            throw Failure(message: "Pass text, a dictionary or array, or an Encodable value to a decision.")
         }
 
         private static func image(prompt: String, images: [NSImage], aspectRatio: String?) async throws -> NSImage {
@@ -278,6 +334,56 @@ enum Template {
                   let jpeg = NSBitmapImageRep(cgImage: scaled).representation(using: .jpeg, properties: [.compressionFactor: 0.8])
             else { return nil }
             return ["media_type": "image/jpeg", "data": jpeg.base64EncodedString()]
+        }
+    }
+
+    /// A question for `ForgeAI.decide`. Put the full meaning in the question; give options/levels clear descriptions.
+    struct ForgeQuestion {
+        let json: [String: Any]
+
+        /// Yes/no. Optionally describe what counts as yes and no.
+        static func yesNo(_ question: String, yes: String? = nil, no: String? = nil) -> ForgeQuestion {
+            var json: [String: Any] = ["type": "noul", "instructions": question]
+            if yes != nil || no != nil { json["criteria"] = ["true": yes ?? "Yes", "false": no ?? "No"] }
+            return ForgeQuestion(json: json)
+        }
+
+        /// Pick one of these options. Include a "none of these" option when nothing may fit.
+        static func choice(_ question: String, options: [String]) -> ForgeQuestion {
+            ForgeQuestion(json: ["type": "choice", "instructions": question,
+                                 "criteria": Dictionary(uniqueKeysWithValues: options.map { ($0, NSNull()) })])
+        }
+
+        /// Pick one option, each with a description of when it applies.
+        static func choice(_ question: String, options: [String: String]) -> ForgeQuestion {
+            ForgeQuestion(json: ["type": "choice", "instructions": question, "criteria": options])
+        }
+
+        /// Rate on ordered levels (2–10), lowest first. Describe each level as a concrete situation.
+        static func score(_ question: String, levels: [String]) -> ForgeQuestion {
+            ForgeQuestion(json: ["type": "score", "instructions": question, "criteria": levels])
+        }
+    }
+
+    /// The answer to one decision question.
+    struct ForgeDecision {
+        /// Yes/no questions: the probability (0…1) that the answer is yes.
+        let probability: Double?
+        /// Choice questions: the most likely option.
+        let choice: String?
+        /// Score questions: 0…levels-1, weighted by probability, so it can land between levels.
+        let score: Double?
+        /// Every option (choice) or level index as text (score), with its probability.
+        let probabilities: [String: Double]
+        /// Choice and score: how concentrated the probabilities are (0…1). Low means a close call.
+        let confidence: Double?
+
+        init(_ json: [String: Any]) {
+            probability = json["noul"] as? Double
+            choice = json["choice"] as? String
+            score = json["score"] as? Double
+            probabilities = json["probabilities"] as? [String: Double] ?? [:]
+            confidence = json["confidence"] as? Double
         }
     }
 

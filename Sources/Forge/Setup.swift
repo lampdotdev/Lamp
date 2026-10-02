@@ -172,6 +172,7 @@ struct AISettings: View {
     @AppStorage("piProvider") private var provider = "openrouter"
     @AppStorage("appModel") private var appModel = "haiku"
     @AppStorage("imageModel") private var imageModel = Icons.artModels[0].id
+    @AppStorage("decisionModel") private var decisionModel = AppAI.decisionModel.id
     @State private var model = Builder.piModel
     @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore
 
@@ -232,6 +233,21 @@ struct AISettings: View {
             } header: {
                 Text("AI and images inside your apps")
             }
+
+            Section {
+                Picker("Decision model", selection: $decisionModel) {
+                    ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }
+                }
+                if decisionModel.hasPrefix("typesafe:") {
+                    KeyRow(provider: Self.typesafe, label: "TypeSafe key") { revision += 1 }
+                } else if KeyStore.openRouterKey == nil {
+                    Text("Add an OpenRouter key above, or switch to TypeSafe.").font(.caption).foregroundStyle(.orange)
+                }
+                Text("Fast, cheap typed judgments for apps: yes/no probabilities, picking from options, and rating on a scale, each with a calibrated confidence. Text in, decisions out.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } header: {
+                Text("Decisions inside your apps")
+            }
         }
         .formStyle(.grouped)
         .onChange(of: engine) { recheck() }
@@ -241,6 +257,9 @@ struct AISettings: View {
     }
 
     private func recheck() { Task { await store.recheckSetup() } }
+
+    static let typesafe = PiProvider(id: "typesafe", name: "TypeSafe", envVar: "TYPESAFE_API_KEY",
+                                     keyURL: "https://typesafe.ai")
 }
 
 /// API key for one provider: shows "saved" with a Remove button, or a field to add one.
