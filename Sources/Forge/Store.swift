@@ -71,7 +71,12 @@ final class Store: ObservableObject {
         }
     }
     /// Apps whose chat finished a turn while you were looking elsewhere.
-    @Published var unread: Set<String> = []
+    @Published var unread: Set<String> = [] {
+        didSet {
+            Notifier.shared.setBadge(unread.count)
+            for id in oldValue.subtracting(unread) { Notifier.shared.clear(id) }
+        }
+    }
     @Published var logs: [String: [LogLine]] = [:]
     @Published var busy: Set<String> = []
     @Published var queued: [String: [QueuedMessage]] = [:]
@@ -166,6 +171,11 @@ final class Store: ObservableObject {
         if let selection, NSApp?.isActive ?? true { unread.remove(selection) }
     }
 
+    /// Forge is in front with this app's chat on screen.
+    func isWatching(_ id: String?) -> Bool {
+        id != nil && selection == id && NSApp.isActive
+    }
+
     func reload() {
         let dirs = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
         projects = dirs.compactMap { dir in
@@ -244,8 +254,13 @@ final class Store: ObservableObject {
         guard url.scheme == "forge",
               let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "app" })?.value else { return }
+        showChat(slug)
+    }
+
+    /// Brings Forge to the front on an app's chat, ready to type.
+    func showChat(_ id: String) {
         reload()
-        selection = slug
+        selection = id
         chatFocusRequest += 1
         NSApp.activate()
     }
@@ -571,13 +586,17 @@ final class Store: ObservableObject {
                 if project.id != untitled.id { progress[project.id] = progress.removeValue(forKey: untitled.id) }
             }
             var worked = false
+            var result = TurnResult(end: .failed, watched: true)
             defer {
                 // A new app's card stays, showing the result; a later turn's activity line goes away.
                 if first { progress[project.id]?.finish(worked: worked) } else { progress[project.id] = nil }
                 if selection != project.id || !NSApp.isActive { unread.insert(project.id) }
+                // Messages queued meanwhile start the next turn straight away; tell the user once it's all done.
+                if !result.watched, (queued[project.id] ?? []).isEmpty { notify(project, after: result.end) }
                 finish(project)
             }
-            worked = await turn(messages, attachments: saved, on: project)
+            result = await turn(messages, attachments: saved, on: project)
+            worked = result.end != .failed
             if first && worked { await showResult(of: project) }
         }
     }
@@ -589,6 +608,36 @@ final class Store: ObservableObject {
               let picture = await Runtime.screenshots(of: project, since: started, waiting: 4).first,
               let image = NSImage(contentsOf: picture) else { return }
         progress[project.id]?.screenshot = image
+    }
+
+    /// Posts a notification for a turn that ended while the user was looking elsewhere.
+    /// Nothing for a turn the user stopped: it ends without an error.
+    private func notify(_ project: ForgeProject, after end: TurnEnd) {
+        let turnLines = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }
+        // An error wins: even a turn that otherwise worked (say, the app couldn't be installed) needs the user.
+        if let error = turnLines.first(where: { $0.kind == .error }) {
+            Notifier.shared.post(for: project, subtitle: "Needs your attention", body: error.text)
+            return
+        }
+        let reply = turnLines.first { $0.kind == .agent }.map { Self.plain($0.text) }
+        switch end {
+        case .changed:
+            Notifier.shared.post(for: project, subtitle: "Your change is ready", body: reply ?? "It's built and open.")
+        case .replied:
+            Notifier.shared.post(for: project, subtitle: "Replied", body: reply ?? "")
+        case .failed:
+            break
+        }
+    }
+
+    /// An agent reply without its Markdown, short enough for a notification.
+    private static func plain(_ markdown: String) -> String {
+        let text = markdown
+            .replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "`", with: "")
+            .replacingOccurrences(of: #"(?m)^#+\s*"#, with: "", options: .regularExpression)
+            .split(whereSeparator: \.isNewline).joined(separator: " ")
+        return text.count > 240 ? String(text.prefix(239)) + "…" : text
     }
 
     /// Marks the app idle again, then starts anything queued while it was busy.
@@ -608,25 +657,39 @@ final class Store: ObservableObject {
         return saved
     }
 
+    /// How a turn ended: the app changed, the agent only replied, or there's no working app
+    /// (the agent couldn't run or was stopped, or the app won't build or open).
+    enum TurnEnd { case changed, replied, failed }
+
+    struct TurnResult {
+        var end: TurnEnd
+        /// The user had this app's chat on screen, so there's nothing to notify about.
+        var watched: Bool
+    }
+
     /// One turn of the loop: agent edits → build (agent fixes failures) → commit → relaunch.
-    /// False when it ended without a working app: the agent couldn't run, or the app won't build or open.
-    private func turn(_ messages: [QueuedMessage], attachments saved: [String], on project: ForgeProject) async -> Bool {
+    private func turn(_ messages: [QueuedMessage], attachments saved: [String], on project: ForgeProject) async -> TurnResult {
         let prompt = messages.map(\.text).joined(separator: "\n\n")
 
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
         let notes = Attachments.note(for: saved) + Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project)
         looks[project.id] = Look()
-        guard await runAgent(prompt + notes, files: files, on: project) else { return false }
+        guard await runAgent(prompt + notes, files: files, on: project) else {
+            return TurnResult(end: .failed, watched: isWatching(project.id))
+        }
         // Only build when something changed: not after a question, and not again when the agent's last
         // look already built and opened exactly this code.
         try? Template.writeSupport(for: project)
         let changed = Runtime.sourcesChanged(project)
         if changed {
-            guard await buildFixingErrors(project) else { return false }
+            guard await buildFixingErrors(project) else { return TurnResult(end: .failed, watched: isWatching(project.id)) }
         }
+        // Opening the app brings it in front of Forge, so whether the user was watching is decided first.
+        let watched = isWatching(project.id)
         // Nothing is committed when the agent changed no files.
         var committed = await Shell.run("git add -A && \(Self.commit) -qm \"$FORGE_PROMPT\"", cwd: project.dir,
                                         env: ["FORGE_PROMPT": prompt]) { _ in } == 0
+        let edited = changed || committed
         var crash: String?
         if changed {
             crash = await install(project)
@@ -647,7 +710,7 @@ final class Store: ObservableObject {
             log(project, .status, "Fixing the crash…")
             guard await runAgent("The app builds, but it quit right after launching. Find the cause and fix it.\n\n\(crash!)",
                                  on: project),
-                  await buildFixingErrors(project) else { return false }
+                  await buildFixingErrors(project) else { return TurnResult(end: .failed, watched: watched) }
             let commit = committed ? "-q --amend --no-edit" : "-qm 'Fix a crash on launch'"
             if await Shell.run("git add -A && \(Self.commit) \(commit)", cwd: project.dir) { _ in } == 0 { committed = true }
             crash = await install(project)
@@ -655,7 +718,7 @@ final class Store: ObservableObject {
         if crash != nil {
             log(project, .error, "\(project.name) still quits right after opening. Try describing the change differently, or press Undo.")
         }
-        return crash == nil
+        return TurnResult(end: crash != nil ? .failed : edited ? .changed : .replied, watched: watched)
     }
 
     /// Builds the app, sending compiler errors back to the agent up to three times. False when it still doesn't build.

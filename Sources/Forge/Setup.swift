@@ -205,8 +205,10 @@ struct BuildingSettings: View {
     @AppStorage("engine") private var engine = Engine.pi.rawValue
     @AppStorage("piProvider") private var provider = "openrouter"
     @AppStorage("settingsTab") private var tab = "building"
+    @AppStorage("notify") private var notify = true
     @State private var model = Builder.piModel
     @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore
+    @State private var notificationsDenied = false
 
     private var selectedEngine: Engine { Engine(rawValue: engine) ?? .pi }
 
@@ -265,8 +267,29 @@ struct BuildingSettings: View {
                     Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
                 }
             }
+            Section {
+                Toggle("Notify me when an app is ready or needs me", isOn: $notify)
+                if notify && notificationsDenied {
+                    HStack {
+                        Text("Notifications are turned off for Forge in System Settings.")
+                            .font(.caption).foregroundStyle(.orange)
+                        Spacer()
+                        Button("Open System Settings") {
+                            let id = Bundle.main.bundleIdentifier ?? ""
+                            NSWorkspace.shared.open(URL(string:
+                                "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(id)")!)
+                        }
+                        .controlSize(.small)
+                    }
+                }
+            }
         }
         .settingsPane()
+        .onChange(of: notify) { Notifier.shared.setBadge(store.unread.count) }
+        .task { notificationsDenied = await Notifier.shared.isDenied() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { notificationsDenied = await Notifier.shared.isDenied() }
+        }
         .onChange(of: engine) { recheck() }
         .onChange(of: provider) { model = Builder.piModel; recheck() }
         .onChange(of: model) { Builder.piModel = model; recheck() }
