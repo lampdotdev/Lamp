@@ -4,8 +4,9 @@
  * - `look_at_app`: the agent can't run anything itself. This asks Forge (over its local gateway) to build
  *   the app with the agent's changes, open it, and report back: a picture of each window, what the app
  *   printed, and any build errors or crash.
- * - `plan`: the agent's checklist of what it's building. Forge reads the list from pi's event stream and
- *   shows it to the user on the build card, so the tool itself has nothing to do.
+ * - `plan`: the agent's checklist of what it's building, with the files behind each part. Forge reads the
+ *   list from pi's event stream, shows it on the build card, and ticks parts as their files are written,
+ *   so the tool itself has nothing to do.
  */
 
 import { readFile } from "node:fs/promises";
@@ -54,14 +55,18 @@ const plan = defineTool({
 	label: "Plan",
 	description:
 		"Shows the user what you're building, as a short checklist in Forge while they wait. For a new app, " +
-		"call it before writing any code with the 3 to 5 main parts, each in plain words the user would use " +
-		"(what they'll be able to do, not file or type names). Call it again with the same parts, marking " +
-		"each done as you finish it. Every call replaces the whole list.",
+		"call it once before writing any code with the 3 to 5 main parts, each in plain words the user would " +
+		"use (what they'll be able to do, not file or type names), and the files you'll write for each part. " +
+		"Forge ticks a part off when all of its files are written, so there's no need to call it again. " +
+		"Call it again only if the plan changes; every call replaces the whole list.",
 	parameters: Type.Object({
 		parts: Type.Array(
 			Type.Object({
 				title: Type.String({ description: "One part of the app, under ten words, in the user's words" }),
-				done: Type.Boolean({ description: "True once this part is written" }),
+				files: Type.Array(Type.String(), {
+					description: "File names you'll write for this part, e.g. Scanner.swift. Each file belongs to one part.",
+				}),
+				done: Type.Optional(Type.Boolean({ description: "True to tick this part yourself" })),
 			}),
 		),
 	}),

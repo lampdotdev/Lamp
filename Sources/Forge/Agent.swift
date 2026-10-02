@@ -31,9 +31,10 @@ enum Agent {
     and any build errors or crash, so you can check your work instead of guessing. Once your edits are in, use \
     it after changing the interface or after a fix you can't verify from the code, and fix what you see before \
     finishing. Skip it for small changes you're sure of.
-    - When you build a new app, call `plan` before writing any code, with its 3 to 5 main parts in the user's \
-    own words: what they'll be able to do, never file or type names. Call it again with the same parts as you \
-    finish each one. The user watches this list while they wait. Don't use it for small changes.
+    - When you build a new app, call `plan` once, before writing any code, with its 3 to 5 main parts in the \
+    user's own words (what they'll be able to do, never file or type names) and, for each part, the files \
+    you'll write for it. Forge ticks a part off when its files are written, so the user watches the list \
+    fill in while they wait. Give every file to exactly one part. Don't use it for small changes.
     """
 
     /// pi ships inside Forge.app (see build.sh).
@@ -208,7 +209,10 @@ enum Agent {
             var events: [AgentEvent] = [.tool(describe(name, args))]
             if name == "plan", let parts = args["parts"] as? [[String: Any]] {
                 events.append(.plan(parts.enumerated().compactMap { index, part in
-                    (part["title"] as? String).map { PlanPart(id: index, title: $0, done: part["done"] as? Bool ?? false) }
+                    (part["title"] as? String).map {
+                        PlanPart(id: index, title: $0, done: part["done"] as? Bool ?? false,
+                                 files: (part["files"] as? [String] ?? []).map { ($0 as NSString).lastPathComponent })
+                    }
                 }))
             }
             return events
