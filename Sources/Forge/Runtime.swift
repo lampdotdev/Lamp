@@ -77,6 +77,36 @@ enum Runtime {
         """
     }
 
+    /// Pictures the app has saved since `date`, frontmost window first. Waits a few seconds for the
+    /// first one, which the app takes shortly after it opens.
+    static func screenshots(of project: ForgeProject, since date: Date) async -> [URL] {
+        func fresh() -> [URL] {
+            ["screenshot.png", "screenshot-2.png", "screenshot-3.png"].map { folder(project).appendingPathComponent($0) }
+                .filter { (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast > date }
+        }
+        for _ in 0..<12 where fresh().isEmpty {
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        return fresh()
+    }
+
+    /// Whether the app's code or bundled files changed after the current build was made.
+    /// ForgeSupport.swift doesn't count: Forge rewrites it before every build.
+    static func sourcesChanged(_ project: ForgeProject) -> Bool {
+        guard let built = (try? builtURL(project).resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate else { return true }
+        let roots = ["Sources", "Attachments", "Package.swift", "icon.json"].map { project.dir.appendingPathComponent($0) }
+        for root in roots {
+            let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey])?
+                .compactMap { $0 as? URL } ?? []
+            for file in [root] + files where file.lastPathComponent != "ForgeSupport.swift" {
+                let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .isDirectoryKey])
+                if values?.isDirectory != true, let modified = values?.contentModificationDate, modified > built { return true }
+            }
+        }
+        return false
+    }
+
     // MARK: - Log
 
     /// The last lines of the latest launch's output.

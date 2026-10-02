@@ -56,6 +56,7 @@ cp "$BIN" "$APP/Contents/MacOS/Forge"
 [ -f Resources/AppIcon.icns ] || swift Resources/make-icon.swift Resources/AppIcon.icns
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp Resources/THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
+cp Resources/look-tool.ts "$APP/Contents/Resources/"   # pi extension: the agent's look_at_app tool
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
 # Only the server and its libraries (symlinks kept), not llama.cpp's other tools.
 mkdir -p "$APP/Contents/Resources/llama"

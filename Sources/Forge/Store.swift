@@ -86,6 +86,17 @@ final class Store: ObservableObject {
     @Published var deleting: ForgeProject?
     private var running: [String: Process] = [:]    // project id → agent process, for Stop
     private var stopped: Set<String> = []
+    private var looks: [String: Look] = [:]         // project id → the agent's looks at the app this turn
+
+    /// What the agent's `look_at_app` tool has done during the current turn.
+    private struct Look {
+        static let limit = 3
+        var count = 0
+        var inProgress = false
+        /// The app was built and opened by the last look, and this is how that launch went.
+        var installed = false
+        var crash: String?
+    }
     private var artInProgress: Set<String> = []
     private var iconDesigns: [String: Task<Void, Never>] = [:]   // icons designed from the first message
     private var tokens: [String: String] = [:]   // gateway token → project id
@@ -548,12 +559,28 @@ final class Store: ObservableObject {
 
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
         let notes = Attachments.note(for: saved) + Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project)
-        guard await runAgent(prompt + notes, files: files, on: project),
-              await buildFixingErrors(project) else { return }
+        looks[project.id] = Look()
+        guard await runAgent(prompt + notes, files: files, on: project) else { return }
+        // When the agent's last look already built and opened exactly this code, don't do it all again.
+        let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first
+        let look = looks[project.id] ?? Look()
+        let alreadyOpen = look.installed && (look.crash != nil || app != nil) && !Runtime.sourcesChanged(project)
+        if !alreadyOpen {
+            guard await buildFixingErrors(project) else { return }
+        }
         // Nothing is committed when the agent changed no files.
         var committed = await Shell.run("git add -A && \(Self.commit) -qm \"$FORGE_PROMPT\"", cwd: project.dir,
                                         env: ["FORGE_PROMPT": prompt]) { _ in } == 0
-        var crash = await install(project)
+        var crash: String?
+        if alreadyOpen {
+            crash = look.crash
+            if crash == nil {
+                app?.activate()
+                log(project, .status, "\(project.name) is ready")
+            }
+        } else {
+            crash = await install(project)
+        }
         // Like build errors, a crash on launch goes back to the agent. The fix joins this turn's commit,
         // so Undo still reverts the whole change.
         for _ in 0..<2 where crash != nil {
@@ -775,7 +802,8 @@ final class Store: ObservableObject {
     }
 
     /// Installs and opens the app. Returns what's known about the failure if it died straight away.
-    private func install(_ project: ForgeProject) async -> String? {
+    /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
+    private func install(_ project: ForgeProject, inFront: Bool = true) async -> String? {
         await prepareIcon(project)
         await quit(project)
         do {
@@ -785,7 +813,7 @@ final class Store: ObservableObject {
             return nil
         }
         let config = NSWorkspace.OpenConfiguration()
-        config.activates = true
+        config.activates = inFront
         var crash: String?
         do {
             let app = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
@@ -793,7 +821,7 @@ final class Store: ObservableObject {
                 log(project, .status, "\(project.name) quit right after opening. Looking at why…")
                 crash = await Runtime.launchReport(project)
                 log(project, .detail, crash!)
-            } else {
+            } else if inFront {
                 log(project, .status, "\(project.name) is ready")
             }
         } catch {
@@ -965,7 +993,7 @@ final class Store: ObservableObject {
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
-        guard request.method == "POST", ["/ai", "/ai/image", "/ai/decide"].contains(request.path) else {
+        guard request.method == "POST", ["/ai", "/ai/image", "/ai/decide", "/agent/look"].contains(request.path) else {
             return (404, ["error": "Not found"])
         }
         let token = request.headers["authorization"]?.replacingOccurrences(of: "Bearer ", with: "") ?? ""
@@ -974,6 +1002,7 @@ final class Store: ObservableObject {
             return (401, ["error": "This app isn't registered with Forge."])
         }
         guard setup.ready else { return (503, ["error": "Forge isn't set up yet. Open Forge to finish setup."]) }
+        if request.path == "/agent/look" { return await look(at: project) }
         if request.path == "/ai/decide" {
             guard let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any],
                   let state = body["state"], let questions = body["questions"] as? [String: Any], !questions.isEmpty else {
@@ -1014,6 +1043,42 @@ final class Store: ObservableObject {
         } catch {
             return (502, ["error": "Couldn't reach the AI: \(error.localizedDescription)"])
         }
+    }
+
+    /// The agent's `look_at_app` tool: builds what it has written so far, opens the app behind the
+    /// user's windows, and reports what happened. The pictures are sent as file paths for pi to read.
+    private func look(at project: ForgeProject) async -> (Int, [String: Any]) {
+        // Only for the agent Forge is running right now. The app knows the same token and must not
+        // be able to rebuild itself.
+        guard running[project.id] != nil, var look = looks[project.id] else {
+            return (409, ["error": "Forge isn't working on this app right now."])
+        }
+        guard !look.inProgress else { return (200, ["text": "Forge is already looking at the app. Wait for that result."]) }
+        guard look.count < Look.limit else {
+            return (200, ["text": "You've used your looks for this request. Finish up: Forge builds and opens the app when you're done."])
+        }
+        look.count += 1
+        look.inProgress = true
+        look.installed = false
+        looks[project.id] = look
+        defer { looks[project.id]?.inProgress = false }
+
+        if let errors = await build(project) {
+            return (200, ["text": "The app doesn't build yet. Fix these compiler errors:\n\n\(errors)"])
+        }
+        let launched = Date()
+        let crash = await install(project, inFront: false)
+        looks[project.id]?.installed = true
+        looks[project.id]?.crash = crash
+        if let crash {
+            return (200, ["text": "The app built, but it quit right after launching.\n\n\(crash)"])
+        }
+        let screenshots = await Runtime.screenshots(of: project, since: launched)
+        var text = "The app built and is running. " + (screenshots.isEmpty
+            ? "It has no window open, so there's no picture."
+            : "Pictures of its windows follow, frontmost first.")
+        if let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
+        return (200, ["text": text, "screenshots": screenshots.map(\.path)])
     }
 
     private func record(_ project: ForgeProject, cost: Double) {
