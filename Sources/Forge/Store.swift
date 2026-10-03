@@ -1107,6 +1107,12 @@ final class Store: ObservableObject {
     /// Opens the installed app, or brings it to the front if it's running. Only builds when there's
     /// nothing installed yet (or the installed copy was deleted).
     func open(_ project: ForgeProject) async {
+        // Built by an older Forge: rebuild it first, so it gets this Forge's fixes and building blocks.
+        // Not while it's running (that would quit it under the user); if the build fails, the old one opens.
+        if stamps[project.id]?.isOutdated == true, !busy.contains(project.id),
+           NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).isEmpty {
+            if await updateForThisForge(project) { return }
+        }
         if let running = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first {
             // Ask the app to show a window (opening a new one if all were closed); see ForgeWindows.
             DistributedNotificationCenter.default().postNotificationName(
@@ -1148,6 +1154,19 @@ final class Store: ObservableObject {
     }
 
     /// Rebuilds the app from its code, reinstalls it and relaunches it.
+    /// Rebuilds an app made by an older Forge and opens it. False if it didn't build, leaving the old one in place.
+    private func updateForThisForge(_ project: ForgeProject) async -> Bool {
+        guard busy.insert(project.id).inserted else { return false }
+        defer { finish(project) }
+        log(project, .status, "Updating \(project.name) for this version of Forge…")
+        guard await build(project) == nil else {
+            log(project, .status, "Couldn't update \(project.name), so it opened as it was")
+            return false
+        }
+        await installReportingCrash(project)
+        return true
+    }
+
     func run(_ project: ForgeProject) async {
         guard busy.insert(project.id).inserted else { return }
         defer { finish(project) }

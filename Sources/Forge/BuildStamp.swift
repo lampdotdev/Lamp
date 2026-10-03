@@ -2,7 +2,7 @@ import SwiftUI
 import CryptoKit
 
 /// Which Forge built an app. Forge writes it into the app's Info.plist after every build, so an app
-/// built by an older Forge can be told apart and its owner warned to rebuild it.
+/// built by an older Forge can be told apart and rebuilt when it's next opened from Forge.
 struct BuildStamp: Equatable {
     /// Forge's version, e.g. "0.2.0". Nil for apps built before stamps existed.
     var forge: String?
@@ -45,26 +45,4 @@ struct BuildStamp: Equatable {
 
     /// The same, to stand alone in the app's info panel.
     var summary: String { builder.prefix(1).uppercased() + builder.dropFirst() }
-}
-
-/// Shown above the message box when the app on screen was built by an older Forge.
-struct OutdatedBanner: View {
-    let name: String
-    let stamp: BuildStamp
-    let onRebuild: () -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.arrow.triangle.2.circlepath").foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(name) was built with \(stamp.builder)").font(.callout)
-                Text("Rebuild it to bring it up to date with this Forge (\(BuildStamp.current.forge ?? "")).")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button("Rebuild", action: onRebuild)
-        }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
-    }
 }

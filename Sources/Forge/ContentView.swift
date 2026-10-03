@@ -432,10 +432,6 @@ struct ProjectView: View {
                 }
             }
             Divider()
-            if !busy, let stamp = store.stamps[project.id], stamp.isOutdated {
-                OutdatedBanner(name: project.name, stamp: stamp) { Task { await store.run(project) } }
-                    .padding(.horizontal, 12).padding(.top, 10)
-            }
             if let approval = store.approvals[project.id] {
                 ApprovalCard(command: approval.command, explanation: approval.explanation,
                              onAllow: { store.answerApproval(for: project, allow: true) },
@@ -743,7 +739,7 @@ struct AppInfoView: View {
             Section("App") {
                 if let stamp = store.stamps[project.id] {
                     LabeledContent("Built with") {
-                        Text(stamp.summary).foregroundStyle(stamp.isOutdated ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                        Text(stamp.summary).foregroundStyle(.secondary)
                     }
                 }
                 LabeledContent("Bundle ID") { Text(project.bundleID).textSelection(.enabled) }
