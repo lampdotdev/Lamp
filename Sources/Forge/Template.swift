@@ -254,9 +254,10 @@ enum Template {
             }
             // ...and clicks, types and presses keys in it when the builder wants to try something (ForgeDriver).
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("dev.forge.use.{{SLUG}}"), object: nil, queue: .main) { note in
-                let actions = note.userInfo?["actions"] as? String, token = note.userInfo?["token"] as? String
-                MainActor.assumeIsolated { ForgeDriver.perform(actions, token: token) }
+                forName: Notification.Name("dev.forge.useApp.{{SLUG}}"), object: nil, queue: .main) { note in
+                let actions = note.userInfo?["actions"] as? String, id = note.userInfo?["id"] as? String
+                let token = note.userInfo?["token"] as? String
+                MainActor.assumeIsolated { ForgeDriver.perform(actions, id: id, token: token) }
             }
             let log = folder.appendingPathComponent("log.txt")
             let previous = folder.appendingPathComponent("previous-log.txt")
@@ -305,7 +306,7 @@ enum Template {
 
         /// The window with its title bar, at most 1400 pixels on the long side.
         @MainActor
-        private static func picture(of window: NSWindow) -> Data? {
+        static func picture(of window: NSWindow) -> Data? {
             guard let view = window.contentView?.superview ?? window.contentView else { return nil }
             let size = view.bounds.size
             let scale = scale(of: window)
@@ -642,8 +643,8 @@ enum Template {
 
     /// Lets Forge's builder use the app the way a person would: it clicks, types and presses keys in the front
     /// window, from inside the app, so no Accessibility permission is needed. Points are pixels in the latest
-    /// picture of that window (ForgeRuntime.snapshot), so the builder aims at what it saw. What happened goes to
-    /// .forge/runtime/use.txt, then a fresh picture is taken.
+    /// picture of that window (ForgeRuntime.snapshot), so the builder aims at what it saw. A fresh picture is
+    /// taken afterwards, then what happened goes to .forge/runtime/use.json, which tells Forge it's all ready.
     @MainActor
     enum ForgeDriver {
         struct Action: Decodable {
@@ -655,17 +656,21 @@ enum Template {
             var amount: Double?         // scroll: points, positive is down; wait: seconds
         }
 
-        static func perform(_ json: String?, token: String?) {
-            guard token == "{{TOKEN}}", let data = json?.data(using: .utf8),
+        static func perform(_ json: String?, id: String?, token: String?) {
+            guard token == "{{TOKEN}}", let id, let data = json?.data(using: .utf8),
                   let actions = try? JSONDecoder().decode([Action].self, from: data) else { return }
+            let front = ForgeRuntime.windowsOnScreen.first
+            let before = front.flatMap(ForgeRuntime.picture)
             var report: [String] = []
             func step(_ index: Int) {
                 guard index < actions.count else {
                     // Let the app react, then show the result.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                        try? report.joined(separator: "\n").write(to: ForgeRuntime.folder.appendingPathComponent("use.txt"),
-                                                                    atomically: true, encoding: .utf8)
+                        report.append(outcome(since: front, before))
                         ForgeRuntime.snapshot()
+                        let answer = ["id": id, "report": report.joined(separator: "\n")]
+                        try? JSONSerialization.data(withJSONObject: answer)
+                            .write(to: ForgeRuntime.folder.appendingPathComponent("use.json"), options: .atomic)
                     }
                     return
                 }
@@ -677,29 +682,48 @@ enum Template {
             step(0)
         }
 
+        /// What a person would notice at a glance once the actions are done. A click that missed leaves the
+        /// window looking exactly as it did, which is worth saying: otherwise the builder blames its code.
+        private static func outcome(since window: NSWindow?, _ picture: Data?) -> String {
+            guard let front = ForgeRuntime.windowsOnScreen.first else { return "The app has no window open now." }
+            if front !== window {
+                return "A different window is in front now" + (front.title.isEmpty ? "." : ": \"\(front.title)\".")
+            }
+            return ForgeRuntime.picture(of: front) == picture
+                ? "Nothing in the window changed: it looks exactly as it did before these actions."
+                : "The window looks different now."
+        }
+
         private static func run(_ action: Action) -> String {
             guard let window = ForgeRuntime.windowsOnScreen.first, let frame = window.contentView?.superview else {
                 return "\(action.action): the app has no window open"
             }
+            // Pictures run top-down in pixels; windows run bottom-up in points.
+            let scale = ForgeRuntime.scale(of: window)
+            let point = NSPoint(x: (action.x ?? 0) / scale, y: frame.bounds.height - (action.y ?? 0) / scale)
+            let size = "\(Int(frame.bounds.width * scale)) by \(Int(frame.bounds.height * scale))"
             switch action.action {
             case "click", "double_click":
                 guard let x = action.x, let y = action.y else { return "\(action.action): needs x and y" }
-                // Pictures run top-down in pixels; windows run bottom-up in points.
-                let scale = ForgeRuntime.scale(of: window)
-                let point = NSPoint(x: x / scale, y: frame.bounds.height - y / scale)
+                guard frame.bounds.contains(point) else {
+                    return "\(action.action) at \(Int(x)), \(Int(y)): outside the window, whose picture is \(size) pixels"
+                }
                 return "\(action.action) at \(Int(x)), \(Int(y)): " + click(at: point, in: window, count: action.action == "click" ? 1 : 2)
             case "type":
                 let text = action.text ?? ""
                 for character in text { send(String(character), code: 0, flags: [], to: window) }
-                return "typed \"\(text)\""
+                return "typed \"\(text)\" into \(focus(of: window))"
             case "key":
                 let name = action.key ?? ""
                 guard let (characters, code, flags) = key(name) else { return "key \(name): not a key I know" }
+                // Shortcuts belong to the menu bar and to buttons, which see them before whatever has focus.
+                if !flags.isDisjoint(with: [.command, .control]), let event = event(.keyDown, characters, code, flags, window) {
+                    if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return "pressed \(name): a menu command" }
+                    if window.performKeyEquivalent(with: event) { return "pressed \(name): a shortcut in the window" }
+                }
                 send(characters, code: code, flags: flags, to: window)
-                return "pressed \(name)"
+                return "pressed \(name), sent to \(focus(of: window))"
             case "scroll":
-                let scale = ForgeRuntime.scale(of: window)
-                let point = NSPoint(x: (action.x ?? 0) / scale, y: frame.bounds.height - (action.y ?? 0) / scale)
                 guard let view = frame.hitTest(point), let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
                                                                          wheel1: Int32(-(action.amount ?? 200)), wheel2: 0, wheel3: 0),
                       let event = NSEvent(cgEvent: cg) else { return "scroll: nothing to scroll there" }
@@ -714,7 +738,6 @@ enum Template {
 
         private static func click(at point: NSPoint, in window: NSWindow, count: Int) -> String {
             guard let frame = window.contentView?.superview, let view = frame.hitTest(point) else { return "nothing there" }
-            let swiftUI = String(describing: type(of: view)).contains("HostingView")
             for n in 1...count {
                 func event(_ type: NSEvent.EventType) -> NSEvent? {
                     NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
@@ -723,40 +746,66 @@ enum Template {
                 }
                 guard let down = event(.leftMouseDown), let up = event(.leftMouseUp) else { return "couldn't click" }
                 // Straight to the view: through the window, a click on an inactive window would only activate it.
-                if swiftUI {
-                    // SwiftUI's own views (plain buttons, toggles, tap gestures) take the mouse-up directly.
-                    view.mouseDown(with: down)
-                    view.mouseUp(with: up)
-                } else {
-                    // AppKit controls (buttons, fields, tables and their headers) track the mouse and read the
-                    // mouse-up from the event queue.
-                    NSApp.postEvent(up, atStart: false)
-                    view.mouseDown(with: down)
+                // AppKit controls (buttons, fields, column headers) track the mouse and take the mouse-up from the
+                // event queue. SwiftUI's own views (plain buttons, toggles, tap gestures) leave it there and want
+                // it handed to them.
+                NSApp.postEvent(up, atStart: true)
+                view.mouseDown(with: down)
+                if let unused = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
+                    view.mouseUp(with: unused)
                 }
             }
-            return describe(view, at: point)
+            // A row of a list, table or sidebar: AppKit only selects rows while the real mouse is held down, so
+            // select it directly. A double-click opens the row, as Return does.
+            if let table = sequence(first: view, next: \.superview).first(where: { $0 is NSTableView }) as? NSTableView,
+               view === table || !(view is NSControl) {
+                let row = table.row(at: table.convert(point, from: nil))
+                guard row >= 0 else { return "an empty part of a list" }
+                window.makeFirstResponder(table)
+                guard table.delegate?.tableView?(table, shouldSelectRow: row) != false else {
+                    return "row \(row + 1) of a list, which can't be selected"
+                }
+                table.selectRowIndexes([row], byExtendingSelection: false)
+                guard count == 2 else { return "row \(row + 1) of a list, now selected" }
+                send("\r", code: 36, flags: [], to: window)
+                return "row \(row + 1) of a list, selected and opened"
+            }
+            return describe(view)
         }
 
         /// A short name for what was clicked, when AppKit can say.
-        private static func describe(_ view: NSView, at point: NSPoint) -> String {
+        private static func describe(_ view: NSView) -> String {
             switch view {
             case let button as NSButton: return button.title.isEmpty ? "a button" : "the \"\(button.title)\" button"
             case is NSTextField, is NSTextView: return "a text field"
             case is NSTableHeaderView: return "a column header"
-            case let table as NSTableView:
-                let row = table.row(at: table.convert(point, from: nil))
-                return row >= 0 ? "row \(row + 1) of a list" : "a list"
+            case is NSSegmentedControl: return "a segmented control"
+            case is NSPopUpButton: return "a pop-up menu"
+            case is NSSlider: return "a slider"
             default: return "the app's content"
             }
         }
 
+        /// What typing and keys go to.
+        private static func focus(of window: NSWindow) -> String {
+            switch window.firstResponder {
+            case is NSText: return "a text field"
+            case is NSTableView: return "a list"
+            case nil, is NSWindow: return "the window (nothing has keyboard focus: click a text field or list first)"
+            default: return "the app's content"
+            }
+        }
+
+        private static func event(_ type: NSEvent.EventType, _ characters: String, _ code: UInt16, _ flags: NSEvent.ModifierFlags,
+                                  _ window: NSWindow) -> NSEvent? {
+            NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                             windowNumber: window.windowNumber, context: nil, characters: characters,
+                             charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)
+        }
+
         private static func send(_ characters: String, code: UInt16, flags: NSEvent.ModifierFlags, to window: NSWindow) {
             for type in [NSEvent.EventType.keyDown, .keyUp] {
-                guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags,
-                                                   timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                                                   context: nil, characters: characters, charactersIgnoringModifiers: characters,
-                                                   isARepeat: false, keyCode: code) else { continue }
-                window.sendEvent(event)
+                if let event = event(type, characters, code, flags, window) { window.sendEvent(event) }
             }
         }
 
