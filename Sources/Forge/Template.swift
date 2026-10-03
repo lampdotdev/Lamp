@@ -291,10 +291,15 @@ enum Template {
             }
         }
 
-        /// Open windows, frontmost first.
+        /// Open windows, frontmost first. A dialog or sheet comes before the window it's attached to: it's
+        /// what the user has to deal with first, and `orderedWindows` leaves those out.
         @MainActor
         static var windowsOnScreen: [NSWindow] {
-            NSApp.orderedWindows.filter { $0.isVisible && !$0.isMiniaturized && $0.frame.width > 40 && $0.frame.height > 40 }
+            func withSheets(_ window: NSWindow) -> [NSWindow] { (window.attachedSheet.map(withSheets) ?? []) + [window] }
+            var windows = NSApp.orderedWindows.flatMap(withSheets)
+            // Alerts and panels shown on their own.
+            windows.insert(contentsOf: NSApp.windows.filter { $0 is NSPanel && !$0.isSheet && !windows.contains($0) }, at: 0)
+            return windows.filter { $0.isVisible && !$0.isMiniaturized && $0.frame.width > 40 && $0.frame.height > 40 }
         }
 
         /// Picture pixels per window point: at most 1400 pixels on the long side, a size models see unscaled.
@@ -660,13 +665,13 @@ enum Template {
             guard token == "{{TOKEN}}", let id, let data = json?.data(using: .utf8),
                   let actions = try? JSONDecoder().decode([Action].self, from: data) else { return }
             let front = ForgeRuntime.windowsOnScreen.first
-            let before = front.flatMap(ForgeRuntime.picture)
+            let before = front.flatMap(ForgeRuntime.picture), dialog = front.map(isDialog) ?? false
             var report: [String] = []
             func step(_ index: Int) {
                 guard index < actions.count else {
                     // Let the app react, then show the result.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                        report.append(outcome(since: front, before))
+                        report.append(outcome(since: front, before, wasDialog: dialog))
                         ForgeRuntime.snapshot()
                         let answer = ["id": id, "report": report.joined(separator: "\n")]
                         try? JSONSerialization.data(withJSONObject: answer)
@@ -684,15 +689,21 @@ enum Template {
 
         /// What a person would notice at a glance once the actions are done. A click that missed leaves the
         /// window looking exactly as it did, which is worth saying: otherwise the builder blames its code.
-        private static func outcome(since window: NSWindow?, _ picture: Data?) -> String {
+        private static func outcome(since window: NSWindow?, _ picture: Data?, wasDialog: Bool) -> String {
             guard let front = ForgeRuntime.windowsOnScreen.first else { return "The app has no window open now." }
             if front !== window {
-                return "A different window is in front now" + (front.title.isEmpty ? "." : ": \"\(front.title)\".")
+                if isDialog(front) {
+                    return "A dialog or sheet is open now. It's the first picture, and clicks and keys go to it until it closes."
+                }
+                let name = front.title.isEmpty ? "another window" : "\"\(front.title)\""
+                return wasDialog ? "The dialog closed: \(name) is in front again." : "A different window is in front now: \(name)."
             }
             return ForgeRuntime.picture(of: front) == picture
                 ? "Nothing in the window changed: it looks exactly as it did before these actions."
                 : "The window looks different now."
         }
+
+        private static func isDialog(_ window: NSWindow) -> Bool { window.isSheet || window is NSPanel }
 
         private static func run(_ action: Action) -> String {
             guard let window = ForgeRuntime.windowsOnScreen.first, let frame = window.contentView?.superview else {
@@ -716,10 +727,13 @@ enum Template {
             case "key":
                 let name = action.key ?? ""
                 guard let (characters, code, flags) = key(name) else { return "key \(name): not a key I know" }
-                // Shortcuts belong to the menu bar and to buttons, which see them before whatever has focus.
-                if !flags.isDisjoint(with: [.command, .control]), let event = event(.keyDown, characters, code, flags, window) {
-                    if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return "pressed \(name): a menu command" }
-                    if window.performKeyEquivalent(with: event) { return "pressed \(name): a shortcut in the window" }
+                // Shortcuts belong to the menu bar and to buttons (a dialog's default button takes Return), which
+                // see a key before whatever has focus.
+                if let event = event(.keyDown, characters, code, flags, window) {
+                    if !flags.isDisjoint(with: [.command, .control]), NSApp.mainMenu?.performKeyEquivalent(with: event) == true {
+                        return "pressed \(name): a menu command"
+                    }
+                    if window.performKeyEquivalent(with: event) { return "pressed \(name): a button's shortcut in the window" }
                 }
                 send(characters, code: code, flags: flags, to: window)
                 return "pressed \(name), sent to \(focus(of: window))"
