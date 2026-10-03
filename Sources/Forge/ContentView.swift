@@ -1003,7 +1003,9 @@ struct ApprovalCard: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("The agent wants to run a command").font(.caption).foregroundStyle(.secondary)
             if let explanation {
-                Text(explanation.summary).font(.headline).fixedSize(horizontal: false, vertical: true)
+                // No fixedSize here: it makes SwiftUI size the text for its narrowest possible width, and that
+                // height became the whole window's minimum, growing the window past the screen.
+                Text(explanation.summary).font(.headline)
                 Label {
                     Text("\(explanation.risk.capitalized) risk").bold() + Text(explanation.why.isEmpty ? "" : ": \(explanation.why)")
                 } icon: {
