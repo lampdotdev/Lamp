@@ -61,8 +61,7 @@ enum ComputerUse {
 
     /// Downloads the pinned release, checks it, and puts CuaDriver.app in /Applications.
     static func install(progress: @escaping @MainActor (String) -> Void) async throws {
-        // Replacing CuaDriver, even with the same version, makes macOS drop its screen capture consent, so
-        // leave a current install alone. An upgrade asks for the permissions again (see ComputerUseSettings).
+        // A current install is left alone: replacing it would stop the running driver for nothing.
         if isInstalled, installedVersion == version { return }
         var info = utsname()
         uname(&info)
@@ -137,6 +136,10 @@ enum ComputerUse {
                     approve: @escaping (Action) async -> Bool) async throws -> (String, Double) {
         guard isInstalled else {
             throw Failure(message: "Using other apps isn't set up yet. Turn it on in Forge → Settings → Apps.")
+        }
+        // While the Mac is locked, apps don't expose their windows and screen capture is refused.
+        if (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true {
+            throw Failure(message: "The Mac is locked, so other apps can't be read. Try again once it's unlocked.")
         }
         guard let key = KeyStore.openRouterKey else {
             throw Failure(message: "Using other apps needs an OpenRouter key. Add one in Forge → Settings → Providers.")
