@@ -1143,27 +1143,35 @@ final class Store: ObservableObject {
               let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
             return (400, ["error": "use_app needs a list of actions."])
         }
-        guard NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first != nil else {
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
-        guard Self.binary(of: project, contains: "dev.forge.use.") else {
-            return (200, ["text": "The open app was built before use_app existed. Call look_at_app to rebuild it, then try again."])
+        guard Self.binary(of: project, contains: "dev.forge.useApp.") else {
+            return (200, ["text": "The open app was built before use_app could do this. Call look_at_app to rebuild it, then try again."])
         }
         log(project, .detail, "Trying the app: " + actions.compactMap { $0["action"] as? String }.joined(separator: ", "))
-        let asked = Date()
+        let id = UUID().uuidString
+        let printed = Runtime.logSize(project)
         DistributedNotificationCenter.default().postNotificationName(
-            Notification.Name("dev.forge.use.\(project.id)"), object: nil,
-            userInfo: ["actions": json, "token": Template.token(for: project)], deliverImmediately: true)
+            Notification.Name("dev.forge.useApp.\(project.id)"), object: nil,
+            userInfo: ["actions": json, "id": id, "token": Template.token(for: project)], deliverImmediately: true)
         let waits = actions.reduce(0.0) { $0 + (($1["action"] as? String) == "wait" ? min($1["amount"] as? Double ?? 1, 10) : 0) }
-        let screenshots = await Runtime.screenshots(of: project, since: asked, waiting: Double(actions.count) * 0.4 + waits + 5)
-        guard !screenshots.isEmpty else {
-            return (200, ["text": "The app didn't answer. It may have no window open, or it may be stuck."])
+        let wait = Double(actions.count) * 0.4 + waits + 5
+        guard let report = await Runtime.useReport(of: project, id: id, waiting: wait, while: { !app.isTerminated }) else {
+            guard app.isTerminated else {
+                return (200, ["text": "The app didn't answer. It may have no window open, or it may be stuck."])
+            }
+            return (200, ["text": "The app quit or crashed while doing that.\n\n" + (await Runtime.launchReport(project))])
         }
-        let report = (try? String(contentsOf: Runtime.folder(project).appendingPathComponent("use.txt"), encoding: .utf8)) ?? ""
-        var text = "What happened:\n\(report)\n\nPictures of its windows follow, frontmost first. Points for the next use_app " +
-            "are pixels in the first picture."
-        if let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
-        return (200, ["text": text, "screenshots": screenshots.map(\.path)])
+        var text = "What happened:\n\(report)"
+        // The agent may have edited the code since: what it's clicking is the app from before those edits.
+        if Runtime.sourcesChanged(project) {
+            text += "\n\nThis is the app as last built: it doesn't have the changes you've made to the code since. " +
+                "Call look_at_app to build and open them."
+        }
+        text += "\n\nPictures of its windows follow, frontmost first. Points for the next use_app are pixels in the first picture."
+        if let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
+        return (200, ["text": text, "screenshots": Runtime.pictures(of: project).map(\.path)])
     }
 
     /// Whether the installed app's binary contains a string, which says which Forge features it was built with.

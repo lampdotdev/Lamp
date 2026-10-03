@@ -106,6 +106,29 @@ enum Runtime {
         return fresh()
     }
 
+    /// What the app says happened when it carried out a `use_app` request (see `ForgeDriver` in the app). It
+    /// writes this after its fresh pictures, so once it's here they're ready too. nil if it never answers,
+    /// or `running` turns false: the app is gone.
+    @MainActor
+    static func useReport(of project: ForgeProject, id: String, waiting seconds: Double,
+                          while running: () -> Bool) async -> String? {
+        let url = folder(project).appendingPathComponent("use.json")
+        for _ in 0..<Int(seconds * 4) where running() {
+            if let data = try? Data(contentsOf: url),
+               let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], answer["id"] == id {
+                return answer["report"]
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        return nil
+    }
+
+    /// The pictures the app last saved of its windows, frontmost first.
+    static func pictures(of project: ForgeProject) -> [URL] {
+        ["screenshot.png", "screenshot-2.png", "screenshot-3.png"].map { folder(project).appendingPathComponent($0) }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
     /// Whether the app needs building: its code or bundled files changed after the current build was made,
     /// or there's no build at all.
     static func sourcesChanged(_ project: ForgeProject) -> Bool {
@@ -133,6 +156,19 @@ enum Runtime {
         let tail = String(decoding: data.suffix(8_000), as: UTF8.self)
             .split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).joined(separator: "\n").trimmed
         return tail.isEmpty ? nil : tail
+    }
+
+    /// How much the app has printed so far, to tell later what's new.
+    static func logSize(_ project: ForgeProject) -> Int {
+        ((try? logURL(project).resourceValues(forKeys: [.fileSizeKey]))?.fileSize) ?? 0
+    }
+
+    /// What the app has printed since its log was `offset` bytes long, at most the last 30 lines. nil if nothing.
+    static func log(of project: ForgeProject, from offset: Int) -> String? {
+        guard let data = try? Data(contentsOf: logURL(project)), data.count > offset else { return nil }
+        let lines = String(decoding: data.dropFirst(offset).suffix(8_000), as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: false).suffix(30).joined(separator: "\n").trimmed
+        return lines.isEmpty ? nil : lines
     }
 
     // MARK: - Crash reports

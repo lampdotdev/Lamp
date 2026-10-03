@@ -72,10 +72,15 @@ const useApp = defineTool({
 	label: "Use the app",
 	description:
 		"Uses the open app the way a person would: clicks, double-clicks, types, presses keys and scrolls in its " +
-		"front window, then shows you what happened, a fresh picture, and what the app printed. x and y are pixels " +
-		"in the latest picture of the front window from look_at_app or use_app. Use it to check that something " +
-		"works, not just how it looks: click a column header and see whether the list re-sorts, fill in a form " +
-		"and submit it. Call look_at_app first so your latest code is built and open.",
+		"front window, then shows you what each action landed on, whether the window changed, a fresh picture, and " +
+		"what the app printed meanwhile. x and y are pixels in the latest picture of the front window from " +
+		"look_at_app or use_app: aim at the middle of what you want. Use it to check that something works, not " +
+		"just how it looks: click a column header and see whether the list re-sorts, fill in a form and submit it. " +
+		"Clicking a row of a list, table or sidebar selects it; double-clicking opens it. Keys and typing go to " +
+		"whatever has keyboard focus, and shortcuts like cmd+n reach the menu bar. It can't drag, right-click, " +
+		"open menus or work in the system's open and save panels. It uses the app as last built: after " +
+		"editing code, call look_at_app first so your changes are built and open. If it says nothing in the " +
+		"window changed, the click most likely missed: look at the picture and aim again before changing any code.",
 	parameters: Type.Object({
 		actions: Type.Array(
 			Type.Object({
