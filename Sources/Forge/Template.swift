@@ -173,8 +173,9 @@ enum Template {
         }
     }
 
-    /// Lets Forge's Play button bring this app back with a window: macOS's "reopen" request doesn't make a
-    /// SwiftUI app open one when another app asks, so Forge sends this message instead.
+    /// Brings the app back with a window when there isn't one: clicking it in the Dock, opening it again from
+    /// Finder or Launchpad, and Forge's Play button. SwiftUI doesn't open a new window for macOS's "reopen"
+    /// request on its own, so this answers that request itself; Forge also sends its own message.
     enum ForgeWindows {
         static let start: Void = {
             DistributedNotificationCenter.default().addObserver(
@@ -182,7 +183,27 @@ enum Template {
             ) { _ in
                 MainActor.assumeIsolated { show() }
             }
+            // AppKit installs its own handler while launching, so take over once launching is done.
+            MainActor.assumeIsolated { ReopenHandler.shared.install() }
+            NotificationCenter.default.addObserver(forName: NSApplication.didFinishLaunchingNotification,
+                                                   object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { ReopenHandler.shared.install() }
+            }
         }()
+
+        @MainActor private final class ReopenHandler: NSObject {
+            static let shared = ReopenHandler()
+
+            func install() {
+                NSAppleEventManager.shared().setEventHandler(
+                    self, andSelector: #selector(reopen(_:reply:)),
+                    forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEReopenApplication))
+            }
+
+            @objc func reopen(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+                ForgeWindows.show()
+            }
+        }
 
         @MainActor static func show() {
             NSApp.unhide(nil)
