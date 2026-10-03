@@ -137,8 +137,6 @@ final class Store: ObservableObject {
 
     /// What the agent's `look_at_app` tool has done during the current turn.
     private struct Look {
-        static let limit = 3
-        var count = 0
         var inProgress = false
         /// The app was built and opened by the last look, and this is how that launch went.
         var installed = false
@@ -1739,10 +1737,6 @@ final class Store: ObservableObject {
             return (409, ["error": "Forge isn't working on this app right now."])
         }
         guard !look.inProgress else { return (200, ["text": "Forge is already looking at the app. Wait for that result."]) }
-        guard look.count < Look.limit else {
-            return (200, ["text": "You've used your looks for this request. Finish up: Forge builds and opens the app when you're done."])
-        }
-        look.count += 1
         look.inProgress = true
         look.installed = false
         looks[project.id] = look
@@ -1776,7 +1770,7 @@ final class Store: ObservableObject {
             screenshots = await Runtime.screenshots(of: project, since: launched)
         }
         var text = note + " " + (screenshots.isEmpty
-            ? "It has no window open, so there's no picture."
+            ? "It has no window open, so there's no picture. If it lives in the menu bar, use_app's bar_icon opens its panel."
             : "Pictures of its windows follow, frontmost first.")
         if let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
         return (200, ["text": text, "screenshots": screenshots.map(\.path)])

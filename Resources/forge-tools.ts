@@ -31,8 +31,8 @@ const lookAtApp = defineTool({
 	description:
 		"Builds the app with your changes, opens it, and shows you the result: a picture of its windows, " +
 		"what it printed, and any build errors or crash. Takes up to a minute. Use it after a change to the " +
-		"interface, or to check a fix you can't verify by reading the code. You get a few looks per request, " +
-		"so make your edits first and don't use it for small changes you're sure of.",
+		"interface, or to check a fix you can't verify by reading the code. Each look that has to rebuild takes " +
+		"a while, so make your edits first and don't use it for small changes you're sure of.",
 	parameters: Type.Object({}),
 
 	async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
@@ -82,6 +82,9 @@ const useApp = defineTool({
 		"you get its items; repeat the same action with `item` set to pick one (\"Sub > Deep\" for a submenu). " +
 		"`menu` does the same for the menu bar: without `item` it lists every command, with `item` like " +
 		"\"File > Export…\" it picks one. " +
+		"`bar_icon` is for an app that lives in the menu bar: it opens the panel behind the app's icon there, which " +
+		"becomes the first picture and takes clicks and keys like a window (escape closes it); if the icon shows a " +
+		"menu instead, it lists it, and `item` picks from it. " +
 		"When a dialog or sheet opens it becomes the first picture and takes the clicks and keys: click one of its " +
 		"buttons, or press escape to cancel. The system's save panel can only be answered with return (save where " +
 		"it says) or escape. It can't drag. It uses the app as last built: after editing code, call look_at_app " +
@@ -92,11 +95,12 @@ const useApp = defineTool({
 			Type.Object({
 				action: Type.Union([
 					Type.Literal("click"), Type.Literal("double_click"), Type.Literal("right_click"), Type.Literal("menu"),
+					Type.Literal("bar_icon"),
 					Type.Literal("type"), Type.Literal("key"), Type.Literal("scroll"), Type.Literal("wait"),
 				]),
 				x: Type.Optional(Type.Number({ description: "click, double_click, right_click, scroll: pixels from the picture's left" })),
 				y: Type.Optional(Type.Number({ description: "click, double_click, right_click, scroll: pixels from the picture's top" })),
-				item: Type.Optional(Type.String({ description: "click, right_click, menu: the menu item to pick by name, e.g. \"Export…\" or \"View > Zoom In\". Leave out to list the items." })),
+				item: Type.Optional(Type.String({ description: "click, right_click, menu, bar_icon: the menu item to pick by name, e.g. \"Export…\" or \"View > Zoom In\". Leave out to list the items." })),
 				text: Type.Optional(Type.String({ description: "type: the text, typed into whatever has focus (click a field first)" })),
 				key: Type.Optional(Type.String({ description: "key: return, escape, tab, delete, space, up, down, left, right, or a letter, with modifiers like cmd+a" })),
 				amount: Type.Optional(Type.Number({ description: "scroll: points, positive scrolls down; wait: seconds" })),
