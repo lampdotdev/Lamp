@@ -77,7 +77,9 @@ const useApp = defineTool({
 		"look_at_app or use_app: aim at the middle of what you want. Use it to check that something works, not " +
 		"just how it looks: click a column header and see whether the list re-sorts, fill in a form and submit it. " +
 		"Clicking a row of a list, table or sidebar selects it; double-clicking opens it. Keys and typing go to " +
-		"whatever has keyboard focus, and shortcuts like cmd+n reach the menu bar. It can't drag, right-click, " +
+		"whatever has keyboard focus, and shortcuts like cmd+n reach the menu bar. When a dialog or sheet opens it " +
+		"becomes the first picture and takes the clicks and keys: click one of its buttons, or press escape to cancel. " +
+		"It can't drag, right-click, " +
 		"open menus or work in the system's open and save panels. It uses the app as last built: after " +
 		"editing code, call look_at_app first so your changes are built and open. If it says nothing in the " +
 		"window changed, the click most likely missed: look at the picture and aim again before changing any code.",
