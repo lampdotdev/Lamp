@@ -134,6 +134,9 @@ struct AppSidebar: View {
                     Spacer()
                     if store.busy.contains(project.id) {
                         ProgressView().controlSize(.small)
+                    } else if store.problems[project.id] != nil {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                            .help(store.problems[project.id]?.title ?? "")
                     } else if store.unread.contains(project.id) {
                         ReadyDot()
                     }
@@ -437,6 +440,11 @@ struct ProjectView: View {
                              onAllow: { store.answerApproval(for: project, allow: true) },
                              onAllowAll: { store.answerApproval(for: project, allow: true, allowAll: true) },
                              onDeny: { store.answerApproval(for: project, allow: false) })
+                    .padding(.horizontal, 12).padding(.top, 10)
+            }
+            if let problem = store.problems[project.id], !busy, store.approvals[project.id] == nil {
+                ProblemCard(problem: problem, onFix: { store.fixProblem(in: project) },
+                            onDismiss: { store.dismissProblem(in: project) })
                     .padding(.horizontal, 12).padding(.top, 10)
             }
             if !attachments.isEmpty {

@@ -95,6 +95,8 @@ final class Store: ObservableObject {
     @Published var progress: [String: TurnProgress] = [:]
     /// Apps that are open right now, however they were started, so Forge can offer to quit them.
     @Published var openApps: Set<String> = []
+    /// What's wrong with each app right now: it crashed or printed errors since it was built (see Problems).
+    @Published var problems: [String: AppProblem] = [:]
     /// Which Forge built each installed app (see BuildStamp). Missing for apps that aren't built yet.
     @Published var stamps: [String: BuildStamp] = [:]
     @Published var chatFocusRequest = 0
@@ -695,6 +697,7 @@ final class Store: ObservableObject {
     private func finish(_ project: ForgeProject) {
         busy.remove(project.id)
         startQueued(project)
+        checkProblems(project)
     }
 
     /// Puts the messages in the chat and their files in Attachments/. Returns the saved file names.
@@ -1552,8 +1555,22 @@ final class Store: ObservableObject {
         refreshOpenApps()
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
-            workspace.addObserver(forName: name, object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated { Store.shared.refreshOpenApps() }
+            workspace.addObserver(forName: name, object: nil, queue: .main) { note in
+                let app = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier
+                MainActor.assumeIsolated {
+                    Store.shared.refreshOpenApps()
+                    guard name == NSWorkspace.didTerminateApplicationNotification,
+                          let project = Store.shared.projects.first(where: { $0.bundleID == app }) else { return }
+                    Store.shared.checkAfterQuit(project)
+                }
+            }
+        }
+        // Errors an open app prints show up while it runs.
+        for project in projects { checkProblems(project) }
+        Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                let store = Store.shared
+                for project in store.projects where store.openApps.contains(project.id) { store.checkProblems(project) }
             }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
@@ -1567,6 +1584,51 @@ final class Store: ObservableObject {
             .compactMap { $0.isTerminated ? nil : $0.bundleIdentifier }
             .filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
         if Set(ids) != openApps { openApps = Set(ids) }
+    }
+
+    // MARK: - Problems
+
+    /// Problems the user has dismissed, by app. A different crash or a new error shows again.
+    private var dismissedProblems: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: "dismissedProblems") as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "dismissedProblems") }
+    }
+
+    /// Looks for a crash or printed errors in an app's current build. Nothing is shown while the agent is
+    /// working on the app: it sees those itself, and is probably the one causing them.
+    func checkProblems(_ project: ForgeProject) {
+        var found = busy.contains(project.id) ? nil : Problems.current(in: project)
+        if found?.key == dismissedProblems[project.id] { found = nil }
+        guard found != problems[project.id] else { return }
+        let isNew = found != nil && found?.key != problems[project.id]?.key
+        problems[project.id] = found
+        // A crash is worth interrupting for when the user isn't looking at this app's chat.
+        if let found, isNew, found.crashed, selection != project.id || !NSApp.isActive {
+            Notifier.shared.post(for: project, subtitle: found.title, body: found.detail.isEmpty ? "Open Forge to fix it." : found.detail)
+        }
+    }
+
+    /// macOS takes a few seconds to write a crash report after an app dies.
+    private func checkAfterQuit(_ project: ForgeProject) {
+        Task {
+            for wait in [1, 4, 10] {
+                try? await Task.sleep(for: .seconds(wait))
+                checkProblems(project)
+                if problems[project.id]?.crashed == true { return }
+            }
+        }
+    }
+
+    /// Fix this: asks the agent to fix the problem. A crash's report is added to the request by `turn`.
+    func fixProblem(in project: ForgeProject) {
+        guard let problem = problems[project.id] else { return }
+        dismissProblem(in: project)
+        send(problem.request, to: project)
+    }
+
+    func dismissProblem(in project: ForgeProject) {
+        guard let problem = problems.removeValue(forKey: project.id) else { return }
+        dismissedProblems[project.id] = problem.key
     }
 
     /// Quits the app, for the Stop button. Asks it nicely first, then insists.
