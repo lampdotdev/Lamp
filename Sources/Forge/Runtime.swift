@@ -36,7 +36,7 @@ enum Runtime {
         }
         var parts: [String] = []
         if let crash { parts.append(crash) }
-        if let tail = logTail(project) { parts.append("Last lines the app printed:\n" + tail) }
+        if Privacy.sharesLog, let tail = logTail(project) { parts.append("Last lines the app printed:\n" + tail) }
         return parts.isEmpty ? "It left no crash report and printed nothing." : parts.joined(separator: "\n\n")
     }
 
@@ -46,9 +46,8 @@ enum Runtime {
         return """
 
 
-        Note from Forge: the app has crashed since it was last built. Fix the cause as part of this request.
-        What it printed is in .forge/runtime/log.txt (the latest launch) and .forge/runtime/previous-log.txt \
-        (the launch before).
+        Note from Forge: the app has crashed since it was last built. Fix the cause as part of this request.\
+        \(Privacy.sharesLog ? "\nWhat it printed is in .forge/runtime/log.txt (the latest launch) and .forge/runtime/previous-log.txt (the launch before)." : "")
 
         \(crash)
         """
@@ -62,7 +61,7 @@ enum Runtime {
         func modified(_ url: URL) -> Date? {
             (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
         }
-        guard let built = modified(builtURL(project)),
+        guard Privacy.sharesPictures, let built = modified(builtURL(project)),
               let taken = modified(folder(project).appendingPathComponent("screenshot.png")), taken > built
         else { return "" }
         let more = (2...3).map { "screenshot-\($0).png" }
