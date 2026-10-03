@@ -1180,6 +1180,7 @@ final class Store: ObservableObject {
         text += Privacy.sharesPictures
             ? "\n\nPictures of its windows follow, frontmost first. Points for the next use_app are pixels in the first picture."
             : "\n\n" + Privacy.picturesOff
+        if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
         return (200, ["text": text, "screenshots": Privacy.sharesPictures ? Runtime.pictures(of: project).map(\.path) : []])
     }
@@ -1792,6 +1793,7 @@ final class Store: ObservableObject {
         var text = note + " " + (screenshots.isEmpty
             ? "It has no window open, so there's no picture. If it lives in the menu bar, use_app's bar_icon opens its panel."
             : Privacy.sharesPictures ? "Pictures of its windows follow, frontmost first." : Privacy.picturesOff)
+        if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
         return (200, ["text": text, "screenshots": Privacy.sharesPictures ? screenshots.map(\.path) : []])
     }
