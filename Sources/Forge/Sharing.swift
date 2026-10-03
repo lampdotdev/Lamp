@@ -175,6 +175,7 @@ extension Sharing {
         ("Loads code at runtime (can hide what it does)", ["dlopen", "NSClassFromString", "perform(#selector", "NSSelectorFromString"]),
         ("Contains encoded data (can hide what it does)", ["Data(base64Encoded"]),
         ("Uses AI (your OpenRouter credit)", ["ForgeAI."]),
+        ("Reads or uses your other apps (Slack, Mail, your browser…)", ["ForgeComputer."]),
     ]
 
     static func review(_ package: Package) async -> ImportReview {

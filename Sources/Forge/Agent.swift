@@ -99,6 +99,13 @@ enum Agent {
     the menu bar, use SwiftUI's `MenuBarExtra` scene (with `.menuBarExtraStyle(.window)` for a panel), and add \
     `NSApp.setActivationPolicy(.accessory)` only if the user wants no Dock icon. Make the most of being on the \
     Mac: local files, drag and drop, the menu bar, keyboard shortcuts, and fitting into what the user already does.
+    - When the information or the job lives in another app the person uses (Slack, Mail, Messages, Notes, or a \
+    site in their browser such as Gmail, LinkedIn or a CRM), use `ForgeComputer.ask("…")` to read it or \
+    `ForgeComputer.perform("…")` to act there, from ForgeSupport.swift. It works with what they're already signed \
+    in to, with no API keys or connectors, and returns text (ask for JSON in the task when the app needs \
+    structure). Calls take 10–60 seconds, so run them when the person asks (a button), never on a timer, and \
+    show progress. `perform` asks the person before every click or keystroke. Prefer files, ForgeText and \
+    the web when they can do the job.
     - Keep the user's data with ForgeStore (in ForgeSupport.swift), backed by SQLite. Settings and small state: \
     `ForgeStore.load(T.self, from: "name")` / `ForgeStore.save(value, to: "name")`. Lists of things (notes, tasks, \
     files seen, history): `ForgeStore.collection("notes", of: Note.self)` with `put`, `get`, `delete`, `count` and \
