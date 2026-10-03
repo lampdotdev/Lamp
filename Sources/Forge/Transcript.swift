@@ -157,8 +157,8 @@ struct Transcript: View {
             let isLast = index == items.count - 1
             Group {
                 switch item {
-                case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack)
-                case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && upcoming == nil)
+                case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack).equatable()
+                case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && upcoming == nil).equatable()
                 case .statuses(let lines): StatusGroup(lines: lines, running: isLast && busy)
                 }
             }
@@ -194,12 +194,15 @@ struct Transcript: View {
     }
 }
 
-struct LogRow: View {
+/// Equatable so a row is only redrawn when its own line changes, not on every update during a turn.
+struct LogRow: View, Equatable {
     let line: LogLine
     let dir: URL
     var busy = false
     var goBack: ((LogLine, Bool) -> Void)?
     @State private var hovered = false
+
+    static func == (a: LogRow, b: LogRow) -> Bool { a.line == b.line && a.busy == b.busy && a.dir == b.dir }
 
     var body: some View {
         switch line.kind {
@@ -279,21 +282,29 @@ struct LogRow: View {
         }
     }
 
+    /// Parsed once per message: parsing markdown on every redraw adds up while an agent is streaming.
+    @MainActor private static var proseCache: [String: AttributedString] = [:]
+
     /// Inline markdown, with code spans set off by a faint background.
-    static func prose(_ text: String) -> AttributedString {
+    @MainActor static func prose(_ text: String) -> AttributedString {
+        if let cached = proseCache[text] { return cached }
+        if proseCache.count > 2000 { proseCache.removeAll() }
         var string = (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
             ?? AttributedString(text)
         let code = string.runs.filter { $0.inlinePresentationIntent?.contains(.code) == true }.map(\.range)
         for range in code { string[range].backgroundColor = Color.primary.opacity(0.07) }
+        proseCache[text] = string
         return string
     }
 }
 
 /// Consecutive tool calls. A single call shows as is; several collapse into one summary line.
-struct ToolGroup: View {
+struct ToolGroup: View, Equatable {
     let lines: [LogLine]
     let running: Bool
     @State private var expanded = false
+
+    static func == (a: ToolGroup, b: ToolGroup) -> Bool { a.running == b.running && a.lines == b.lines }
 
     var body: some View {
         let calls = lines.map { ToolCall($0.text) }

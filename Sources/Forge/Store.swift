@@ -31,7 +31,7 @@ struct AppUsage: Codable {
     var totalCost: Double { cost + (agentCost ?? 0) }
 }
 
-struct LogLine: Identifiable, Codable {
+struct LogLine: Identifiable, Codable, Equatable {
     enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary }
     var id = UUID()
     let kind: Kind

@@ -387,6 +387,10 @@ extension Agent {
     }
 
     static func parseClaude(_ line: String) -> [AgentEvent] {
+        // Most streamed lines are pieces of text or thinking, which Forge gets whole from the finished message.
+        // Skip them before parsing: there can be thousands per turn, all handled on the main thread.
+        if line.hasPrefix(#"{"type":"stream_event""#), line.contains(#""type":"content_block_delta""#),
+           !line.contains("input_json_delta") { return [] }
         guard let obj = json(line), let type = obj["type"] as? String else { return line.trimmed.isEmpty ? [] : [.raw(line)] }
         switch type {
         case "system":
