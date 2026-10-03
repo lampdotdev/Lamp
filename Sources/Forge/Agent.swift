@@ -38,8 +38,8 @@ enum Agent {
     and any build errors or crash, so you can check your work instead of guessing. Once your edits are in, use \
     it after changing the interface or after a fix you can't verify from the code, and fix what you see before \
     finishing. Skip it for small changes you're sure of.
-    - `use_app` then uses the open app like a person: clicks at points in its latest picture, types, presses keys \
-    and scrolls, and shows you the result. When the change is about behaviour (sorting, a button's effect, a form, \
+    - `use_app` then uses the open app like a person: clicks at points in its latest picture, types, presses keys, \
+    scrolls and picks from menus, and shows you the result. When the change is about behaviour (sorting, a button's effect, a form, \
     a flow between screens), try it with `use_app` before saying it works. It tells you what each click landed \
     on and whether the window changed: when nothing changed, the click probably missed, so aim again before \
     deciding the app is broken. It uses the app as last built, so call `look_at_app` again after editing code.
