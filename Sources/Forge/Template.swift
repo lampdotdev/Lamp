@@ -276,7 +276,7 @@ enum Template {
         }()
 
         /// Saves up to three open windows, frontmost first, as screenshot.png, screenshot-2.png and screenshot-3.png.
-        /// The app draws its own windows, so this needs no screen recording permission.
+        /// An app may picture its own windows without screen recording permission.
         @MainActor
         static func snapshot() {
             let windows = windowsOnScreen
@@ -309,7 +309,10 @@ enum Template {
             return min(window.backingScaleFactor, 1400 / max(size.width, size.height))
         }
 
-        /// The window with its title bar, at most 1400 pixels on the long side.
+        /// The window with its title bar, at most 1400 pixels on the long side. It's the window as the system
+        /// shows it, so video, maps and web pages are in the picture; asking for one's own windows needs no
+        /// screen recording permission. If the system has no picture (the app is hidden), the app draws one itself,
+        /// which leaves those out.
         @MainActor
         static func picture(of window: NSWindow) -> Data? {
             guard let view = window.contentView?.superview ?? window.contentView else { return nil }
@@ -320,8 +323,27 @@ enum Template {
                 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                 colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
             bitmap.size = size
-            view.cacheDisplay(in: view.bounds, to: bitmap)
+            if let shown = shown(window), let context = NSGraphicsContext(bitmapImageRep: bitmap) {
+                context.cgContext.interpolationQuality = .high
+                context.cgContext.draw(shown, in: CGRect(origin: .zero, size: size))
+            } else {
+                view.cacheDisplay(in: view.bounds, to: bitmap)
+            }
             return bitmap.representation(using: .png, properties: [:])
+        }
+
+        /// The window as the window server has it, without its shadow. The call is looked up by name: the SDK
+        /// marks it unavailable in favour of ScreenCaptureKit, which would ask for screen recording permission.
+        @MainActor
+        private static func shown(_ window: NSWindow) -> CGImage? {
+            typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+            guard window.windowNumber > 0, NSApp.isHidden == false,
+                  let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
+            // Only this window (1 << 3); its bounds without the shadow (1 << 0), at full resolution (1 << 3).
+            let image = unsafeBitCast(symbol, to: Capture.self)(.null, 1 << 3, UInt32(window.windowNumber), 1 | 1 << 3)?
+                .takeRetainedValue()
+            guard let image, image.width > 1, image.height > 1 else { return nil }
+            return image
         }
 
         /// Keeps a chatty app from filling the disk: past 1 MB, the log starts over.
@@ -646,18 +668,19 @@ enum Template {
         }
     }
 
-    /// Lets Forge's builder use the app the way a person would: it clicks, types and presses keys in the front
-    /// window, from inside the app, so no Accessibility permission is needed. Points are pixels in the latest
-    /// picture of that window (ForgeRuntime.snapshot), so the builder aims at what it saw. A fresh picture is
-    /// taken afterwards, then what happened goes to .forge/runtime/use.json, which tells Forge it's all ready.
+    /// Lets Forge's builder use the app the way a person would: it clicks, types, presses keys and picks from
+    /// menus in the front window, from inside the app, so no Accessibility permission is needed. Points are pixels
+    /// in the latest picture of that window (ForgeRuntime.snapshot), so the builder aims at what it saw. A fresh
+    /// picture is taken afterwards, then what happened goes to .forge/runtime/use.json, which tells Forge it's all ready.
     @MainActor
     enum ForgeDriver {
         struct Action: Decodable {
-            let action: String          // click, double_click, type, key, scroll, wait
+            let action: String          // click, double_click, right_click, menu, type, key, scroll, wait
             var x: Double?
             var y: Double?
             var text: String?
             var key: String?            // "return", "escape", "cmd+a", "down"…
+            var item: String?           // the menu item to pick: "Export…", "View > Zoom In"
             var amount: Double?         // scroll: points, positive is down; wait: seconds
         }
 
@@ -667,10 +690,19 @@ enum Template {
             let front = ForgeRuntime.windowsOnScreen.first
             let before = front.flatMap(ForgeRuntime.picture), dialog = front.map(isDialog) ?? false
             var report: [String] = []
+            // The last action that should have changed something: its line, and how its window looked before.
+            var last: (line: Int, window: NSWindow, picture: Data?)?
+            func note() {
+                defer { last = nil }
+                guard let last, ForgeRuntime.windowsOnScreen.first === last.window,
+                      ForgeRuntime.picture(of: last.window) == last.picture else { return }
+                report[last.line] += " (nothing changed on screen)"
+            }
             func step(_ index: Int) {
+                note()
                 guard index < actions.count else {
                     // Let the app react, then show the result.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    after(0.6) {
                         report.append(outcome(since: front, before, wasDialog: dialog))
                         ForgeRuntime.snapshot()
                         let answer = ["id": id, "report": report.joined(separator: "\n")]
@@ -680,17 +712,35 @@ enum Template {
                     return
                 }
                 let action = actions[index]
-                report.append(run(action))
                 let pause = action.action == "wait" ? min(action.amount ?? 1, 10) : 0.35
-                DispatchQueue.main.asyncAfter(deadline: .now() + pause) { step(index + 1) }
+                // The next step is set up first: a click that opens a save panel or an alert doesn't return until
+                // that closes, and the steps after it are how it gets answered.
+                after(pause) { step(index + 1) }
+                let line = report.count
+                report.append("\(action.action): opened something that waits for an answer before the app carries on")
+                if action.action != "wait", action.item == nil, let window = ForgeRuntime.windowsOnScreen.first,
+                   !(window is NSSavePanel) {
+                    last = (line, window, ForgeRuntime.picture(of: window))
+                }
+                report[line] = run(action)
+                // A menu that was only read out isn't expected to change anything.
+                if report[line].contains("\n") { last = nil }
             }
-            step(0)
+            after(0) { step(0) }
+        }
+
+        /// Steps run from run-loop timers, not the main dispatch queue: that queue stands still while a step is
+        /// inside a save panel or an alert, and with it the rest of the app.
+        private static func after(_ seconds: Double, _ work: @escaping @MainActor () -> Void) {
+            let timer = Timer(timeInterval: seconds, repeats: false) { _ in MainActor.assumeIsolated { work() } }
+            RunLoop.main.add(timer, forMode: .common)
         }
 
         /// What a person would notice at a glance once the actions are done. A click that missed leaves the
         /// window looking exactly as it did, which is worth saying: otherwise the builder blames its code.
         private static func outcome(since window: NSWindow?, _ picture: Data?, wasDialog: Bool) -> String {
             guard let front = ForgeRuntime.windowsOnScreen.first else { return "The app has no window open now." }
+            if let panel = front as? NSSavePanel { return filePanel(panel) }
             if front !== window {
                 if isDialog(front) {
                     return "A dialog or sheet is open now. It's the first picture, and clicks and keys go to it until it closes."
@@ -705,7 +755,18 @@ enum Template {
 
         private static func isDialog(_ window: NSWindow) -> Bool { window.isSheet || window is NSPanel }
 
+        /// The system's open and save panels are drawn by another process, so they can't be clicked from here.
+        private static func filePanel(_ panel: NSSavePanel) -> String {
+            let folder = panel.directoryURL?.path ?? "an unknown folder"
+            if panel is NSOpenPanel {
+                return "The system's open panel is showing \(folder). It can't be used from here: press escape to cancel it."
+            }
+            return "The system's save panel is open, about to save \"\(panel.nameFieldStringValue)\" in \(folder). It can't be " +
+                "clicked or typed in from here: press return to save there, or escape to cancel."
+        }
+
         private static func run(_ action: Action) -> String {
+            if action.action == "menu" { return menuBar(action.item) }
             guard let window = ForgeRuntime.windowsOnScreen.first, let frame = window.contentView?.superview else {
                 return "\(action.action): the app has no window open"
             }
@@ -713,13 +774,33 @@ enum Template {
             let scale = ForgeRuntime.scale(of: window)
             let point = NSPoint(x: (action.x ?? 0) / scale, y: frame.bounds.height - (action.y ?? 0) / scale)
             let size = "\(Int(frame.bounds.width * scale)) by \(Int(frame.bounds.height * scale))"
-            switch action.action {
-            case "click", "double_click":
-                guard let x = action.x, let y = action.y else { return "\(action.action): needs x and y" }
-                guard frame.bounds.contains(point) else {
-                    return "\(action.action) at \(Int(x)), \(Int(y)): outside the window, whose picture is \(size) pixels"
+            if let panel = window as? NSSavePanel, action.action != "wait" {
+                switch (action.action, action.key?.lowercased()) {
+                case ("key", "return") where !(panel is NSOpenPanel), ("key", "enter") where !(panel is NSOpenPanel):
+                    // The panel's own Save button answers to the real keyboard only; end it as that would.
+                    if let parent = panel.sheetParent { parent.endSheet(panel, returnCode: .OK) } else { NSApp.stopModal(withCode: .OK) }
+                    panel.orderOut(nil)
+                    return "pressed return: saved as \(panel.url?.path ?? panel.nameFieldStringValue)"
+                case ("key", "escape"):
+                    panel.cancel(nil)
+                    return "pressed escape: cancelled the panel"
+                default:
+                    return "\(action.action): " + filePanel(panel)
                 }
-                return "\(action.action) at \(Int(x)), \(Int(y)): " + click(at: point, in: window, count: action.action == "click" ? 1 : 2)
+            }
+            switch action.action {
+            case "click", "double_click", "right_click":
+                guard let x = action.x, let y = action.y else { return "\(action.action): needs x and y" }
+                let label = "\(action.action) at \(Int(x)), \(Int(y)): "
+                guard frame.bounds.contains(point) else { return label + "outside the window, whose picture is \(size) pixels" }
+                guard let view = frame.hitTest(point) else { return label + "nothing there" }
+                if action.action == "right_click" { return label + contextMenu(of: view, at: point, in: window, pick: action.item) }
+                // A pop-up button or pull-down menu: its menu would open on the user's screen and wait there.
+                if let popUp = sequence(first: view, next: \.superview).first(where: { $0 is NSPopUpButton }) as? NSPopUpButton {
+                    return label + self.popUp(popUp, pick: action.item)
+                }
+                if action.item != nil { return label + "there's no menu there, so `item` has nothing to pick from" }
+                return label + click(view, at: point, in: window, count: action.action == "click" ? 1 : 2)
             case "type":
                 let text = action.text ?? ""
                 for character in text { send(String(character), code: 0, flags: [], to: window) }
@@ -750,8 +831,129 @@ enum Template {
             }
         }
 
-        private static func click(at point: NSPoint, in window: NSWindow, count: Int) -> String {
-            guard let frame = window.contentView?.superview, let view = frame.hitTest(point) else { return "nothing there" }
+        // MARK: Menus
+
+        /// Menus are never opened: they'd appear on the user's screen and hold the app up until something is
+        /// picked. Their items are read out instead, and one is picked by name.
+
+        /// The menu bar: lists it, or picks "File > Export…".
+        private static func menuBar(_ path: String?) -> String {
+            guard let bar = NSApp.mainMenu else { return "menu: the app has no menu bar" }
+            guard let path, !path.isEmpty else { return "menu: the menu bar has\n" + list(bar, depth: 2) }
+            return "menu \"\(path)\": " + pick(path, in: bar)
+        }
+
+        /// A pop-up button (a picker) or pull-down menu.
+        private static func popUp(_ button: NSPopUpButton, pick path: String?) -> String {
+            guard let menu = button.menu else { return "a menu with nothing in it" }
+            // SwiftUI builds a Menu's items when its button is about to show them.
+            let willShow = Selector(("popUpButtonCell:willShowMenu:"))
+            if let builder = menu.delegate as? NSObject, builder.responds(to: willShow) { builder.perform(willShow, with: button.cell, with: menu) }
+            fill(menu)
+            guard menu.items.count > (button.pullsDown ? 1 : 0) else { return "a menu whose items can't be read from here" }
+            let kind = button.pullsDown ? "a pull-down menu" : "a pop-up menu, now set to \"\(button.titleOfSelectedItem ?? "")\","
+            guard let path else {
+                return "\(kind) with\n" + list(menu, depth: 2, skipFirst: button.pullsDown) +
+                    "\nIt wasn't opened. To pick one, click here again with `item` set to its name."
+            }
+            // A picker's items have no action of their own: choosing one is selecting it.
+            if !button.pullsDown, let index = menu.items.firstIndex(where: { matches($0, path) }), menu.items[index].isEnabled {
+                button.selectItem(at: index)
+                if let action = menu.items[index].action {
+                    NSApp.sendAction(action, to: menu.items[index].target, from: menu.items[index])
+                } else if let action = button.action {
+                    NSApp.sendAction(action, to: button.target, from: button)
+                }
+                return "\(kind) picked \"\(menu.items[index].title)\""
+            }
+            return "\(kind) " + pick(path, in: menu)
+        }
+
+        /// The menu a right-click would show.
+        private static func contextMenu(of view: NSView, at point: NSPoint, in window: NSWindow, pick path: String?) -> String {
+            guard let event = NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [],
+                                                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                 context: nil, eventNumber: 0, clickCount: 1, pressure: 1),
+                  let menu = sequence(first: view, next: \.superview).lazy.compactMap({ $0.menu(for: event) }).first else {
+                return "no menu appears there"
+            }
+            fill(menu)
+            guard let path else {
+                return "a menu with\n" + list(menu, depth: 2) + "\nIt wasn't opened. To pick one, right_click here again with `item` set to its name."
+            }
+            return pick(path, in: menu)
+        }
+
+        /// Menus fill themselves in just before they open.
+        private static func fill(_ menu: NSMenu) {
+            menu.delegate?.menuNeedsUpdate?(menu)
+            menu.update()
+        }
+
+        private static func matches(_ item: NSMenuItem, _ name: String) -> Bool {
+            func plain(_ text: String) -> String {
+                text.lowercased().replacingOccurrences(of: "...", with: "…").trimmingCharacters(in: .whitespaces)
+            }
+            return !item.isSeparatorItem && (plain(item.title) == plain(name) || plain(item.title) == plain(name) + "…")
+        }
+
+        /// Picks "Item" or "Submenu > Item" from a menu, the way choosing it by hand would.
+        private static func pick(_ path: String, in menu: NSMenu) -> String {
+            var menu = menu
+            let names = path.components(separatedBy: ">").map { $0.trimmingCharacters(in: .whitespaces) }
+            for (position, name) in names.enumerated() {
+                fill(menu)
+                guard let index = menu.items.firstIndex(where: { matches($0, name) }) else {
+                    return "there's no \"\(name)\" there. It has\n" + list(menu, depth: 1)
+                }
+                let item = menu.items[index]
+                if position < names.count - 1 {
+                    guard let submenu = item.submenu else { return "\"\(item.title)\" has no submenu" }
+                    menu = submenu
+                } else if let submenu = item.submenu {
+                    fill(submenu)
+                    return "\"\(item.title)\" is a submenu with\n" + list(submenu, depth: 1)
+                } else {
+                    guard item.isEnabled else { return "\"\(item.title)\" is greyed out right now" }
+                    menu.performActionForItem(at: index)
+                    return "picked \"\(item.title)\""
+                }
+            }
+            return "nothing to pick"
+        }
+
+        /// A menu's items, one per line, with what's ticked or greyed out.
+        private static func list(_ menu: NSMenu, depth: Int, indent: String = "  ", skipFirst: Bool = false) -> String {
+            var lines: [String] = []
+            // A pull-down menu's first item is its own title.
+            for item in menu.items.dropFirst(skipFirst ? 1 : 0) where !item.isSeparatorItem && !item.isHidden && !item.title.isEmpty {
+                var line = indent + "\"\(item.title)\""
+                if item.state == .on { line += " (ticked)" }
+                if !item.isEnabled, item.submenu == nil { line += " (greyed out)" }
+                if !item.keyEquivalent.isEmpty, item.submenu == nil { line += "  " + shortcut(item) }
+                lines.append(line)
+                if let submenu = item.submenu, depth > 1, lines.count < 80 {
+                    fill(submenu)
+                    lines.append(list(submenu, depth: depth - 1, indent: indent + "  "))
+                } else if item.submenu != nil {
+                    lines[lines.count - 1] += " ▸"
+                }
+            }
+            return lines.filter { !$0.isEmpty }.prefix(80).joined(separator: "\n")
+        }
+
+        private static func shortcut(_ item: NSMenuItem) -> String {
+            var keys: [String] = []
+            if item.keyEquivalentModifierMask.contains(.control) { keys.append("ctrl") }
+            if item.keyEquivalentModifierMask.contains(.option) { keys.append("option") }
+            if item.keyEquivalentModifierMask.contains(.shift) || item.keyEquivalent != item.keyEquivalent.lowercased() { keys.append("shift") }
+            if item.keyEquivalentModifierMask.contains(.command) { keys.append("cmd") }
+            return (keys + [item.keyEquivalent.lowercased()]).joined(separator: "+")
+        }
+
+        // MARK: Clicks and keys
+
+        private static func click(_ view: NSView, at point: NSPoint, in window: NSWindow, count: Int) -> String {
             for n in 1...count {
                 func event(_ type: NSEvent.EventType) -> NSEvent? {
                     NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
@@ -794,7 +996,6 @@ enum Template {
             case is NSTextField, is NSTextView: return "a text field"
             case is NSTableHeaderView: return "a column header"
             case is NSSegmentedControl: return "a segmented control"
-            case is NSPopUpButton: return "a pop-up menu"
             case is NSSlider: return "a slider"
             default: return "the app's content"
             }

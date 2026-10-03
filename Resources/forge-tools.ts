@@ -71,27 +71,32 @@ const useApp = defineTool({
 	name: "use_app",
 	label: "Use the app",
 	description:
-		"Uses the open app the way a person would: clicks, double-clicks, types, presses keys and scrolls in its " +
-		"front window, then shows you what each action landed on, whether the window changed, a fresh picture, and " +
+		"Uses the open app the way a person would: clicks, types, presses keys, scrolls and picks from menus in its " +
+		"front window, then shows you what each action landed on, whether anything changed, a fresh picture, and " +
 		"what the app printed meanwhile. x and y are pixels in the latest picture of the front window from " +
 		"look_at_app or use_app: aim at the middle of what you want. Use it to check that something works, not " +
 		"just how it looks: click a column header and see whether the list re-sorts, fill in a form and submit it. " +
 		"Clicking a row of a list, table or sidebar selects it; double-clicking opens it. Keys and typing go to " +
-		"whatever has keyboard focus, and shortcuts like cmd+n reach the menu bar. When a dialog or sheet opens it " +
-		"becomes the first picture and takes the clicks and keys: click one of its buttons, or press escape to cancel. " +
-		"It can't drag, right-click, " +
-		"open menus or work in the system's open and save panels. It uses the app as last built: after " +
-		"editing code, call look_at_app first so your changes are built and open. If it says nothing in the " +
-		"window changed, the click most likely missed: look at the picture and aim again before changing any code.",
+		"whatever has keyboard focus. " +
+		"Menus are read out to you, never opened: click a pop-up or pull-down button, or right_click something, and " +
+		"you get its items; repeat the same action with `item` set to pick one (\"Sub > Deep\" for a submenu). " +
+		"`menu` does the same for the menu bar: without `item` it lists every command, with `item` like " +
+		"\"File > Export…\" it picks one. " +
+		"When a dialog or sheet opens it becomes the first picture and takes the clicks and keys: click one of its " +
+		"buttons, or press escape to cancel. The system's save panel can only be answered with return (save where " +
+		"it says) or escape. It can't drag. It uses the app as last built: after editing code, call look_at_app " +
+		"first so your changes are built and open. If it says nothing changed, the click most likely missed: look " +
+		"at the picture and aim again before changing any code.",
 	parameters: Type.Object({
 		actions: Type.Array(
 			Type.Object({
 				action: Type.Union([
-					Type.Literal("click"), Type.Literal("double_click"), Type.Literal("type"),
-					Type.Literal("key"), Type.Literal("scroll"), Type.Literal("wait"),
+					Type.Literal("click"), Type.Literal("double_click"), Type.Literal("right_click"), Type.Literal("menu"),
+					Type.Literal("type"), Type.Literal("key"), Type.Literal("scroll"), Type.Literal("wait"),
 				]),
-				x: Type.Optional(Type.Number({ description: "click, double_click, scroll: pixels from the picture's left" })),
-				y: Type.Optional(Type.Number({ description: "click, double_click, scroll: pixels from the picture's top" })),
+				x: Type.Optional(Type.Number({ description: "click, double_click, right_click, scroll: pixels from the picture's left" })),
+				y: Type.Optional(Type.Number({ description: "click, double_click, right_click, scroll: pixels from the picture's top" })),
+				item: Type.Optional(Type.String({ description: "click, right_click, menu: the menu item to pick by name, e.g. \"Export…\" or \"View > Zoom In\". Leave out to list the items." })),
 				text: Type.Optional(Type.String({ description: "type: the text, typed into whatever has focus (click a field first)" })),
 				key: Type.Optional(Type.String({ description: "key: return, escape, tab, delete, space, up, down, left, right, or a letter, with modifiers like cmd+a" })),
 				amount: Type.Optional(Type.Number({ description: "scroll: points, positive scrolls down; wait: seconds" })),
