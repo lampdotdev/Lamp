@@ -279,6 +279,7 @@ enum Template {
         /// An app may picture its own windows without screen recording permission.
         @MainActor
         static func snapshot() {
+            ForgeDriver.keepBarPanel()
             let windows = windowsOnScreen
             guard !windows.isEmpty else { return }   // nothing on screen: keep the last pictures
             for index in 0..<3 {
@@ -675,7 +676,7 @@ enum Template {
     @MainActor
     enum ForgeDriver {
         struct Action: Decodable {
-            let action: String          // click, double_click, right_click, menu, type, key, scroll, wait
+            let action: String          // click, double_click, right_click, menu, bar_icon, type, key, scroll, wait
             var x: Double?
             var y: Double?
             var text: String?
@@ -687,6 +688,8 @@ enum Template {
         static func perform(_ json: String?, id: String?, token: String?) {
             guard token == "{{TOKEN}}", let id, let data = json?.data(using: .utf8),
                   let actions = try? JSONDecoder().decode([Action].self, from: data) else { return }
+            barPanelUsed = Date()
+            keepBarPanel()
             let front = ForgeRuntime.windowsOnScreen.first
             let before = front.flatMap(ForgeRuntime.picture), dialog = front.map(isDialog) ?? false
             var report: [String] = []
@@ -699,10 +702,12 @@ enum Template {
                 report[last.line] += " (nothing changed on screen)"
             }
             func step(_ index: Int) {
+                keepBarPanel()
                 note()
                 guard index < actions.count else {
                     // Let the app react, then show the result.
                     after(0.6) {
+                        keepBarPanel()
                         report.append(outcome(since: front, before, wasDialog: dialog))
                         ForgeRuntime.snapshot()
                         let answer = ["id": id, "report": report.joined(separator: "\n")]
@@ -712,7 +717,7 @@ enum Template {
                     return
                 }
                 let action = actions[index]
-                let pause = action.action == "wait" ? min(action.amount ?? 1, 10) : 0.35
+                let pause = action.action == "wait" ? min(action.amount ?? 1, 10) : action.action == "bar_icon" ? 1 : 0.35
                 // The next step is set up first: a click that opens a save panel or an alert doesn't return until
                 // that closes, and the steps after it are how it gets answered.
                 after(pause) { step(index + 1) }
@@ -723,6 +728,7 @@ enum Template {
                     last = (line, window, ForgeRuntime.picture(of: window))
                 }
                 report[line] = run(action)
+                if action.action != "bar_icon" { keepBarPanel() }
                 // A menu that was only read out isn't expected to change anything.
                 if report[line].contains("\n") { last = nil }
             }
@@ -742,6 +748,10 @@ enum Template {
             guard let front = ForgeRuntime.windowsOnScreen.first else { return "The app has no window open now." }
             if let panel = front as? NSSavePanel { return filePanel(panel) }
             if front !== window {
+                if isBarPanel(front) {
+                    return "The panel behind the app's menu bar icon is open now. It's the first picture, and clicks and keys go " +
+                        "to it until it closes (escape closes it)."
+                }
                 if isDialog(front) {
                     return "A dialog or sheet is open now. It's the first picture, and clicks and keys go to it until it closes."
                 }
@@ -755,6 +765,9 @@ enum Template {
 
         private static func isDialog(_ window: NSWindow) -> Bool { window.isSheet || window is NSPanel }
 
+        /// The panel SwiftUI shows for a MenuBarExtra with the window style.
+        private static func isBarPanel(_ window: NSWindow) -> Bool { String(describing: type(of: window)).contains("MenuBarExtra") }
+
         /// The system's open and save panels are drawn by another process, so they can't be clicked from here.
         private static func filePanel(_ panel: NSSavePanel) -> String {
             let folder = panel.directoryURL?.path ?? "an unknown folder"
@@ -767,6 +780,7 @@ enum Template {
 
         private static func run(_ action: Action) -> String {
             if action.action == "menu" { return menuBar(action.item) }
+            if action.action == "bar_icon" { return barIcon(action.item) }
             guard let window = ForgeRuntime.windowsOnScreen.first, let frame = window.contentView?.superview else {
                 return "\(action.action): the app has no window open"
             }
@@ -787,6 +801,10 @@ enum Template {
                 default:
                     return "\(action.action): " + filePanel(panel)
                 }
+            }
+            if isBarPanel(window), action.action == "key", action.key?.lowercased() == "escape" {
+                releaseBarPanel()
+                return "pressed escape: closed the menu bar icon's panel"
             }
             switch action.action {
             case "click", "double_click", "right_click":
@@ -842,6 +860,98 @@ enum Template {
             guard let path, !path.isEmpty else { return "menu: the menu bar has\n" + list(bar, depth: 2) }
             return "menu \"\(path)\": " + pick(path, in: bar)
         }
+
+        /// The app's icon in the menu bar (a MenuBarExtra or status item): opens the panel behind it, or reads out
+        /// and picks from its menu. The system owns the icon itself, so a click can't be sent to it; the item is
+        /// asked to present instead.
+        private static func barIcon(_ pick: String?) -> String {
+            let owner = Selector(("statusItem"))
+            var items: [NSStatusItem] = []
+            for window in NSApp.windows where window.responds(to: owner) {
+                if let item = window.perform(owner)?.takeUnretainedValue() as? NSStatusItem, item.button?.window != nil,
+                   !items.contains(item) { items.append(item) }
+            }
+            guard let item = items.first(where: \.isVisible) ?? items.first else { return "bar_icon: the app has no icon in the menu bar" }
+            if let menu = item.menu {
+                fill(menu)
+                guard let pick else {
+                    return "bar_icon: the icon shows a menu with\n" + list(menu, depth: 2) +
+                        "\nIt wasn't opened. To pick one, use bar_icon again with `item` set to its name."
+                }
+                return "bar_icon: " + self.pick(pick, in: menu)
+            }
+            if NSApp.windows.contains(where: { isBarPanel($0) && $0.isVisible }) {
+                return "bar_icon: its panel is already open: it's the first picture. Escape closes it."
+            }
+            // Presenting makes this app active, and the panel closes again when it stops being active. So the app
+            // the user was in gets the keyboard straight back, and the panel is put back up without it.
+            let previous = NSWorkspace.shared.frontmostApplication
+            let present = Selector(("_requestExpandedInterfaceSession"))
+            if item.responds(to: present) { item.perform(present) } else { item.button?.performClick(nil) }
+            holdsBarPanel = true
+            barPanelUsed = Date()
+            if let panel = NSApp.windows.first(where: isBarPanel) { setQuiet(panel, true) }   // it's kept between openings
+            // As soon as the panel exists, the keyboard goes back to where it was.
+            var tries = 0
+            func handBack() {
+                tries += 1
+                guard NSApp.windows.contains(where: isBarPanel) || tries > 50 else { return after(0.02) { handBack() } }
+                keepBarPanel()
+                NSApp.deactivate()
+                if let previous, previous != .current { previous.activate() }
+                after(0.3) { keepBarPanel() }
+            }
+            handBack()
+            // The user gets the panel back to themselves once the builder has left it alone for a while.
+            let idle = Timer(timeInterval: 10, repeats: true) { timer in
+                MainActor.assumeIsolated {
+                    guard !holdsBarPanel || Date().timeIntervalSince(barPanelUsed) > 90 else { return }
+                    releaseBarPanel()
+                    timer.invalidate()
+                }
+            }
+            RunLoop.main.add(idle, forMode: .common)
+            return "bar_icon: asked the app's menu bar icon to open"
+        }
+
+        /// Whether the builder has the icon's panel open. The panel closes itself whenever the app stops being
+        /// active, which is most of the time while the builder works, so it's put back up. And while the builder
+        /// has it, it can't take the keyboard: a panel can hold it even when its app isn't the active one, and
+        /// would swallow what the user types elsewhere.
+        private static var holdsBarPanel = false
+        private static var barPanelUsed = Date()
+
+        static func keepBarPanel() {
+            guard holdsBarPanel, let panel = NSApp.windows.first(where: isBarPanel) else { return }
+            setQuiet(panel, true)
+            if panel.isKeyWindow { panel.orderOut(nil) }
+            if !panel.isVisible { panel.orderFrontRegardless() }
+        }
+
+        private static func releaseBarPanel() {
+            holdsBarPanel = false
+            guard let panel = NSApp.windows.first(where: isBarPanel) else { return }
+            setQuiet(panel, false)
+            panel.orderOut(nil)
+        }
+
+        /// Makes a window refuse the keyboard, or accept it again. Its class's `canBecomeKey` is replaced once with
+        /// one that says no for windows marked quiet and otherwise answers as before.
+        private static func setQuiet(_ panel: NSWindow, _ quiet: Bool) {
+            let mark = unsafeBitCast(#selector(getter: NSWindow.canBecomeKey), to: UnsafeRawPointer.self)
+            objc_setAssociatedObject(panel, mark, quiet ? true : nil, .OBJC_ASSOCIATION_RETAIN)
+            guard quiet, let kind: AnyClass = object_getClass(panel), !quietClasses.contains(ObjectIdentifier(kind)) else { return }
+            quietClasses.insert(ObjectIdentifier(kind))
+            let selector = #selector(getter: NSWindow.canBecomeKey)
+            guard let before = class_getMethodImplementation(kind, selector) else { return }
+            let answer = unsafeBitCast(before, to: (@convention(c) (AnyObject, Selector) -> Bool).self)
+            let replacement: @convention(block) (AnyObject) -> Bool = { window in
+                objc_getAssociatedObject(window, mark) != nil ? false : answer(window, selector)
+            }
+            class_replaceMethod(kind, selector, imp_implementationWithBlock(replacement), "c@:")
+        }
+
+        private static var quietClasses: Set<ObjectIdentifier> = []
 
         /// A pop-up button (a picker) or pull-down menu.
         private static func popUp(_ button: NSPopUpButton, pick path: String?) -> String {
