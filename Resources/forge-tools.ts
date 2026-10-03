@@ -13,6 +13,9 @@
  * - `list_versions`, `name_version`, `restore_version`: Forge saves a version of the app after every request.
  *   These let the agent see them, name one, and bring one back when the user asks. Forge does the work.
  * - `web_fetch`: reads a web page (or any URL) as text. Reading needs no approval.
+ * - pi's file tools (read, edit, write, grep, find, ls) are checked before they run: inside the app's folder
+ *   they need nothing, outside it Forge decides (system files are fine, Forge's own keys never, the rest asks
+ *   the user), and the running app's log and pictures follow the user's privacy settings.
  * - Shell commands (pi's `bash` tool) need the user's approval: before each one runs, this asks Forge, which
  *   shows the command in the app's chat with Allow / Allow All This Turn / Deny, and blocks it if denied.
  * - `plan`: the agent's checklist of what it's building, with the files behind each part. Forge reads the
@@ -203,6 +206,52 @@ async function askForge(command: string, signal?: AbortSignal): Promise<string |
 	}
 }
 
+/** pi's own file tools: where each one points is checked before it runs. */
+const fileTools = new Set(["read", "edit", "write", "grep", "find", "ls"]);
+
+/** The path with `~`, `..` and links worked out; a link inside the app's folder could lead out of it. */
+async function resolved(given: string): Promise<string> {
+	const expanded = given === "~" || given.startsWith("~/") ? path.join(process.env.HOME ?? "", given.slice(1)) : given;
+	let existing = path.resolve(expanded);
+	const rest: string[] = [];
+	// A file about to be created doesn't exist yet: work out the nearest folder that does.
+	for (;;) {
+		try {
+			return path.join(await realpath(existing), ...rest);
+		} catch {
+			const parent = path.dirname(existing);
+			if (parent === existing) return path.resolve(expanded);
+			rest.unshift(path.basename(existing));
+			existing = parent;
+		}
+	}
+}
+
+/**
+ * Asks Forge whether a file tool may touch a path; resolves to an error message when it may not. Paths inside the
+ * app's folder need no asking, except what the running app saves there (its log and pictures), which the user
+ * can keep from the agent in Forge's settings.
+ */
+async function checkFile(tool: string, given: string, signal?: AbortSignal): Promise<string | undefined> {
+	const [target, home] = await Promise.all([resolved(given), resolved(".")]);
+	const inside = target === home || target.startsWith(home + path.sep);
+	if (inside && !target.startsWith(path.join(home, ".forge", "runtime") + path.sep)) return undefined;
+	const url = process.env.FORGE_APPROVE_URL;
+	if (!url) return inside ? undefined : "Files outside the app's folder need approval in Forge, and Forge isn't available.";
+	try {
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.FORGE_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify({ file_tool: tool, path: given }),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(3_600_000)]) : AbortSignal.timeout(3_600_000),
+		});
+		const reply = (await response.json()) as { allow?: boolean; reason?: string };
+		return reply.allow ? undefined : (reply.reason ?? "The user didn't allow that.");
+	} catch {
+		return "Couldn't ask the user about that file.";
+	}
+}
+
 /** Files and folders Forge generates or depends on: never the agent's to delete. */
 const protectedPaths = [".forge", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/ForgeSupport.swift"];
 
@@ -303,6 +352,12 @@ const restoreVersion = defineTool({
 
 export default function (pi: ExtensionAPI) {
 	pi.on("tool_call", async (event, ctx) => {
+		if (fileTools.has(event.toolName)) {
+			const given = (event.input as { path?: unknown }).path;
+			if (typeof given !== "string" || given === "") return undefined;   // no path: the app's own folder
+			const reason = await checkFile(event.toolName, given, ctx.signal);
+			return reason ? { block: true, reason } : undefined;
+		}
 		if (event.toolName !== "bash") return undefined;
 		const reason = await askForge(String((event.input as { command?: unknown }).command ?? ""), ctx.signal);
 		return reason ? { block: true, reason } : undefined;

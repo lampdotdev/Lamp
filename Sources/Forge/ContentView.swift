@@ -433,7 +433,7 @@ struct ProjectView: View {
             }
             Divider()
             if let approval = store.approvals[project.id] {
-                ApprovalCard(command: approval.command, explanation: approval.explanation,
+                ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation,
                              onAllow: { store.answerApproval(for: project, allow: true) },
                              onAllowAll: { store.answerApproval(for: project, allow: true, allowAll: true) },
                              onDeny: { store.answerApproval(for: project, allow: false) })
@@ -974,6 +974,7 @@ struct ImportReviewView: View {
 
 /// A shell command the agent wants to run, explained in plain words. Nothing runs until the user allows it.
 struct ApprovalCard: View {
+    var title = "The agent wants to run a command"
     let command: String
     let explanation: Store.CommandExplanation?
     let onAllow: () -> Void
@@ -1001,7 +1002,7 @@ struct ApprovalCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("The agent wants to run a command").font(.caption).foregroundStyle(.secondary)
+            Text(title).font(.caption).foregroundStyle(.secondary)
             if let explanation {
                 // No fixedSize here: it makes SwiftUI size the text for its narrowest possible width, and that
                 // height became the whole window's minimum, growing the window past the screen.

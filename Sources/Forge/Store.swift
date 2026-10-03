@@ -103,10 +103,12 @@ final class Store: ObservableObject {
     @Published var icons: [String: NSImage] = [:]
     @Published var pendingImport: PendingImport?
 
-    /// A shell command an agent wants to run, waiting for the user (see ApprovalCard).
+    /// A shell command an agent wants to run, or a file outside the app's folder it wants, waiting for the user
+    /// (see ApprovalCard).
     struct PendingApproval: Identifiable {
         let id = UUID()
         let command: String
+        var title = "The agent wants to run a command"
         let answer: CheckedContinuation<Bool, Never>
         var explanation: CommandExplanation?
     }
@@ -1058,7 +1060,8 @@ final class Store: ObservableObject {
 
     /// Waits for the user to allow or deny a shell command. One request per app at a time; others queue.
     /// There's no timeout: commands wait until the user answers, stops the turn, or the turn ends.
-    func requestApproval(for project: ForgeProject, command: String) async -> Bool {
+    func requestApproval(for project: ForgeProject, command: String, title: String? = nil,
+                         explanation given: CommandExplanation? = nil) async -> Bool {
         guard !command.trimmed.isEmpty else { return false }
         if allowAllThisTurn.contains(project.id) {
             log(project, .detail, "Ran (allowed for this turn): \(command)")
@@ -1067,16 +1070,17 @@ final class Store: ObservableObject {
         while approvals[project.id] != nil { try? await Task.sleep(for: .milliseconds(200)) }
         guard busy.contains(project.id) else { return false }   // the turn ended while queued
         NSApp.requestUserAttention(.informationalRequest)
-        note("Waiting for your OK to run a command", for: project)
+        note(title == nil ? "Waiting for your OK to run a command" : "Waiting for your OK", for: project)
         return await withCheckedContinuation { continuation in
-            let pending = PendingApproval(command: command, answer: continuation)
+            var pending = PendingApproval(command: command, answer: continuation, explanation: given)
+            if let title { pending.title = title }
             approvals[project.id] = pending
             // Explain it while the card is up; the card shows the raw command until (and if) this arrives.
-            Task {
+            if given == nil { Task {
                 if let explanation = await explain(command, for: project), approvals[project.id]?.id == pending.id {
                     approvals[project.id]?.explanation = explanation
                 }
-            }
+            } }
         }
     }
 
@@ -1084,7 +1088,7 @@ final class Store: ObservableObject {
         guard let pending = approvals.removeValue(forKey: project.id) else { return }
         if allowAll { allowAllThisTurn.insert(project.id) }
         log(project, .detail, (allow ? "Allowed: " : "Denied: ") + pending.command)
-        note(allow ? "Running a command" : "Thinking", for: project)
+        note(allow && pending.title.contains("command") ? "Running a command" : "Thinking", for: project)
         pending.answer.resume(returning: allow)
     }
 
@@ -1173,9 +1177,11 @@ final class Store: ObservableObject {
             text += "\n\nThis is the app as last built: it doesn't have the changes you've made to the code since. " +
                 "Call look_at_app to build and open them."
         }
-        text += "\n\nPictures of its windows follow, frontmost first. Points for the next use_app are pixels in the first picture."
-        if let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
-        return (200, ["text": text, "screenshots": Runtime.pictures(of: project).map(\.path)])
+        text += Privacy.sharesPictures
+            ? "\n\nPictures of its windows follow, frontmost first. Points for the next use_app are pixels in the first picture."
+            : "\n\n" + Privacy.picturesOff
+        if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
+        return (200, ["text": text, "screenshots": Privacy.sharesPictures ? Runtime.pictures(of: project).map(\.path) : []])
     }
 
     /// Whether the installed app's binary contains a string, which says which Forge features it was built with.
@@ -1615,6 +1621,20 @@ final class Store: ObservableObject {
         if request.path.hasPrefix("/agent/versions") { return await versions(request, of: project) }
         if route == "/agent/approve" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+            // One of the agent's file tools, about to touch something outside the app's folder or in its runtime folder.
+            if let tool = body["file_tool"] as? String, let path = body["path"] as? String {
+                switch Privacy.verdict(tool: tool, path: path, project: project) {
+                case .allow: return (200, ["allow": true])
+                case .deny(let reason): return (200, ["allow": false, "reason": reason])
+                case .ask:
+                    let card = Privacy.explanation(tool: tool, path: path, project: project)
+                    let allowed = await requestApproval(for: project, command: card.command,
+                                                        title: "The agent wants a file outside this app's folder",
+                                                        explanation: card.explanation)
+                    return (200, ["allow": allowed, "reason": allowed ? "Approved in Forge."
+                        : "The user didn't allow that. It's outside the app's folder; work with what's inside it, or say what you need and why."])
+                }
+            }
             // pi's extension sends {"command"}; Claude Code's hook sends {"tool_input": {"command"}}.
             let input = body["tool_input"] as? [String: Any] ?? [:]
             let tool = body["tool_name"] as? String ?? "Bash"
@@ -1771,9 +1791,9 @@ final class Store: ObservableObject {
         }
         var text = note + " " + (screenshots.isEmpty
             ? "It has no window open, so there's no picture. If it lives in the menu bar, use_app's bar_icon opens its panel."
-            : "Pictures of its windows follow, frontmost first.")
-        if let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
-        return (200, ["text": text, "screenshots": screenshots.map(\.path)])
+            : Privacy.sharesPictures ? "Pictures of its windows follow, frontmost first." : Privacy.picturesOff)
+        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
+        return (200, ["text": text, "screenshots": Privacy.sharesPictures ? screenshots.map(\.path) : []])
     }
 
     private func record(_ project: ForgeProject, cost: Double) {

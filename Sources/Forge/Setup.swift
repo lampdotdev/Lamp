@@ -257,6 +257,9 @@ struct BuildingSettings: View {
     @AppStorage("settingsTab") private var tab = "building"
     @AppStorage("notify") private var notify = true
     @AppStorage("commandApproval") private var approval = CommandApproval.auto.rawValue
+    @AppStorage("askOutsideFolder") private var askOutsideFolder = true
+    @AppStorage("shareAppLog") private var shareLog = true
+    @AppStorage("shareAppPictures") private var sharePictures = true
     @State private var model = Builder.piModel
     @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore
     @State private var notificationsDenied = false
@@ -332,6 +335,16 @@ struct BuildingSettings: View {
                     Text("Claude Code's auto mode isn't available for your account, so Forge asks before every command.")
                         .font(.caption).foregroundStyle(.orange)
                 }
+            }
+            Section("Privacy") {
+                Toggle("Ask before the agent opens files outside an app's folder", isOn: $askOutsideFolder)
+                Text("The agent works in the app's own folder. Anything else on your Mac it wants to read or change, it asks for first; system and developer files don't count. Forge's keys and your other apps are always off limits."
+                     + (selectedEngine == .pi ? "" : " This applies to Forge's built-in agent; \(selectedEngine.title) follows its own rules."))
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Show the agent what an app prints while it runs", isOn: $shareLog)
+                Toggle("Show the agent pictures of an app's windows", isOn: $sharePictures)
+                Text("Both help the agent find and fix problems, and both go to the AI model you chose. Turn them off for apps that show or print things you'd rather keep to yourself.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 Toggle("Notify me when an app is ready or needs me", isOn: $notify)
