@@ -144,7 +144,11 @@ struct SetupView: View {
 
     private func use(_ engine: Engine) {
         Builder.engine = engine
-        Task { await store.recheckSetup() }
+        Task {
+            // Bundled with a desktop app but never signed in on its own: sign in through the browser now.
+            if await EngineSignIn.isSignedIn(engine) == false { _ = await EngineSignIn.signIn(engine) }
+            await store.recheckSetup()
+        }
     }
 
     /// Checks the key with OpenRouter before saving it, so a typo shows up now rather than at the first build.
@@ -313,9 +317,17 @@ struct BuildingSettings: View {
                     ModelPicker(provider: provider, model: $model, revision: revision)
                 } else {
                     let path = ToolLocator.path(for: selectedEngine)
-                    LabeledContent("Installed", value: path.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "Not found")
+                    if let path, let app = ToolLocator.desktopApp(for: path) {
+                        LabeledContent("Installed", value: "With \(app)")
+                            .help((path as NSString).abbreviatingWithTildeInPath)
+                    } else {
+                        LabeledContent("Installed", value: path.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "Not found")
+                    }
+                    if path != nil, selectedEngine != .opencode {
+                        EngineSignInRow(engine: selectedEngine)
+                    }
                     Text(selectedEngine == .codex
-                         ? "Codex runs commands inside its own sandbox, limited to the app's folder; it can't ask for approval."
+                         ? "Codex runs commands inside its own sandbox, limited to the app's folder."
                          : selectedEngine == .opencode
                             ? "opencode can't ask for approval, so it only runs commands when that's set to Never."
                             : "Uses your Claude Code sign-in, without your personal hooks, plugins or connectors.")
@@ -1026,5 +1038,37 @@ private struct LocalAISheet: View {
                 addError = error.localizedDescription
             }
         }
+    }
+}
+
+/// Whether Claude Code or Codex is signed in, with a button that signs in through the browser.
+struct EngineSignInRow: View {
+    let engine: Engine
+    @State private var signedIn: Bool?
+    @State private var signingIn = false
+
+    var body: some View {
+        LabeledContent("Signed in") {
+            if signingIn {
+                HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Finish in your browser…").foregroundStyle(.secondary) }
+            } else {
+                switch signedIn {
+                case true?: Label("Yes", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                case false?: Button("Sign In…") { Task { await signIn() } }
+                case nil: ProgressView().controlSize(.small)
+                }
+            }
+        }
+        .task(id: engine) {
+            signedIn = nil
+            signedIn = await EngineSignIn.isSignedIn(engine) ?? true
+        }
+    }
+
+    private func signIn() async {
+        signingIn = true
+        _ = await EngineSignIn.signIn(engine)
+        signedIn = await EngineSignIn.isSignedIn(engine) ?? true
+        signingIn = false
     }
 }

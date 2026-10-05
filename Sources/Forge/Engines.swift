@@ -178,10 +178,11 @@ enum ToolLocator {
     /// the newest version wins rather than whichever comes first in PATH.
     static func path(named tool: String) -> String? {
         lock.lock()
-        if let cached = chosen[tool] { lock.unlock(); return cached }
+        // The Claude app replaces its bundled copy when it updates, so a remembered path can disappear.
+        if let cached = chosen[tool], FileManager.default.isExecutableFile(atPath: cached) { lock.unlock(); return cached }
         lock.unlock()
         var seen = Set<String>()
-        let candidates = userPath.split(separator: ":").map { "\($0)/\(tool)" }.filter {
+        let candidates = (userPath.split(separator: ":").map { "\($0)/\(tool)" } + desktopCopies(of: tool)).filter {
             FileManager.default.isExecutableFile(atPath: $0)
                 && seen.insert(URL(fileURLWithPath: $0).resolvingSymlinksInPath().path).inserted
         }
@@ -194,6 +195,35 @@ enum ToolLocator {
         chosen[tool] = best
         lock.unlock()
         return best
+    }
+
+    /// Copies bundled with the desktop apps, so someone with only the Claude or ChatGPT app can build with
+    /// them: the Claude app keeps Claude Code in its support folder (one folder per version), and the
+    /// ChatGPT app ships Codex inside its bundle.
+    static func desktopCopies(of tool: String) -> [String] {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        switch tool {
+        case "claude":
+            let root = home + "/Library/Application Support/Claude/claude-code"
+            return ((try? fm.contentsOfDirectory(atPath: root)) ?? []).flatMap { version in
+                ((try? fm.contentsOfDirectory(atPath: "\(root)/\(version)")) ?? []).map {
+                    "\(root)/\(version)/\($0)/claude.app/Contents/MacOS/claude"
+                }
+            }
+        case "codex":
+            return ["/Applications/ChatGPT.app", home + "/Applications/ChatGPT.app"]
+                .map { $0 + "/Contents/Resources/codex-cli/bin/codex" }
+        default:
+            return []
+        }
+    }
+
+    /// Which desktop app a tool came with, for Settings: "the Claude app", or nil for a command-line install.
+    static func desktopApp(for path: String) -> String? {
+        if path.contains("/Application Support/Claude/claude-code/") { return "the Claude app" }
+        if path.contains("/ChatGPT.app/") { return "the ChatGPT app" }
+        return nil
     }
 
     /// The numbers in `<tool> --version` (e.g. "codex-cli 0.160.0" → [0, 160, 0]); [] if it can't tell.
@@ -496,5 +526,54 @@ extension Agent {
             break
         }
         return events
+    }
+}
+
+/// Whether Claude Code or Codex is signed in, and signing in without Terminal: both tools' login commands
+/// open the browser and finish on their own.
+enum EngineSignIn {
+    /// nil when Forge can't tell (opencode, or the tool didn't answer).
+    static func isSignedIn(_ engine: Engine) async -> Bool? {
+        guard let tool = ToolLocator.path(for: engine) else { return nil }
+        switch engine {
+        case .claude:
+            let (status, output) = await run(tool, ["auth", "status"], timeout: 20)
+            guard status == 0, let info = try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any]
+            else { return status == 0 ? nil : false }
+            return info["loggedIn"] as? Bool
+        case .codex:
+            let (status, output) = await run(tool, ["login", "status"], timeout: 20)
+            return status == 0 && output.localizedCaseInsensitiveContains("logged in")
+        default:
+            return nil
+        }
+    }
+
+    /// Runs the tool's sign-in, which opens the browser, and waits for it (up to 10 minutes).
+    static func signIn(_ engine: Engine) async -> Bool {
+        guard let tool = ToolLocator.path(for: engine) else { return false }
+        let arguments = engine == .claude ? ["auth", "login"] : ["login"]
+        return await run(tool, arguments, timeout: 600).status == 0
+    }
+
+    private static func run(_ tool: String, _ arguments: [String], timeout: TimeInterval) async -> (status: Int32, output: String) {
+        await withCheckedContinuation { continuation in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: tool)
+            process.arguments = arguments
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = ToolLocator.userPath
+            process.environment = env
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            process.standardInput = FileHandle.nullDevice
+            process.terminationHandler = { process in
+                let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                continuation.resume(returning: (process.terminationStatus, output))
+            }
+            do { try process.run() } catch { continuation.resume(returning: (-1, "")); return }
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { if process.isRunning { process.terminate() } }
+        }
     }
 }
