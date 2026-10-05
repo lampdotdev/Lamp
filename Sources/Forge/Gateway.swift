@@ -123,10 +123,10 @@ enum AppAI {
         let chosen = Self.model(for: appModel)
         var system = system
         if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
-        let (text, cost): (String, Double)
+        var (text, cost): (String, Double)
         if Provider.hasKey {
             (text, cost) = try await viaOpenRouter(prompt: prompt, images: images, system: system,
-                                                   model: model ?? chosen.openRouter)
+                                                   model: model ?? chosen.openRouter, json: json)
         } else if Builder.engine == .pi {
             // No OpenRouter key: use whatever builds apps.
             switch Builder.piProvider {
@@ -148,7 +148,25 @@ enum AppAI {
         } else {
             throw Failure(message: "Apps' AI features need an OpenRouter key, or a working builder. Set one up in Forge → Settings (⌘,).")
         }
-        return (json ? stripFences(text) : text, cost)
+        guard json else { return (text, cost) }
+        // A JSON reply that doesn't parse (cut off, or wrapped in prose) is useless to the app: ask once more,
+        // saying so, before giving up. Apps decode the reply themselves, so it has to be whole.
+        var reply = stripFences(text)
+        if !isJSON(reply) {
+            let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
+            if Provider.hasKey {
+                let (retry, more) = try await viaOpenRouter(prompt: again, images: images, system: system,
+                                                            model: model ?? chosen.openRouter, json: true)
+                cost += more
+                reply = stripFences(retry)
+            }
+            if !isJSON(reply) { throw Failure(message: "The AI's reply wasn't valid JSON, even on a second try. Ask for less at once.") }
+        }
+        return (reply, cost)
+    }
+
+    private static func isJSON(_ text: String) -> Bool {
+        (try? JSONSerialization.jsonObject(with: Data(text.utf8), options: [.fragmentsAllowed])) != nil
     }
 
     /// One-shot pi call (no tools, no session) with the builder's provider and model. Covers every
@@ -380,7 +398,7 @@ enum AppAI {
     }
 
     private static func viaOpenRouter(prompt: String, images: [Image], system: String,
-                                      model: String) async throws -> (String, Double) {
+                                      model: String, json: Bool = false) async throws -> (String, Double) {
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 120
@@ -393,9 +411,14 @@ enum AppAI {
             ["type": "image_url", "image_url": ["url": "data:\($0.mediaType);base64,\($0.data)"]]
         }
         messages.append(["role": "user", "content": content])
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": model, "messages": messages, "usage": ["include": true],
-        ] as [String: Any])
+        var body: [String: Any] = ["model": model, "messages": messages, "usage": ["include": true]]
+        if json {
+            // Structured output: the model must return a JSON object, and gets room for a long one (a plan
+            // with scripts in it can run to thousands of tokens; a cut-off reply is what breaks apps).
+            body["response_format"] = ["type": "json_object"]
+            body["max_tokens"] = 16_000
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         // Anthropic's safety classifier sometimes refuses an ordinary request (finish_reason "content_filter",
         // empty reply, HTTP 200): about 1 in 20 identical benign requests in others' measurements, and more
