@@ -412,9 +412,67 @@ struct AppsSettings: View {
                 Text("Fast, cheap typed judgments for apps: yes/no probabilities, picking from options, and rating on a scale, each with a calibrated confidence. Text in, decisions out.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            ComputerUseSettings()
         }
         .settingsPane()
         .onAppear { revision += 1 }   // keys may have changed in the Providers tab
+    }
+}
+
+/// Turns apps' use of the other apps on the Mac (ForgeComputer) on or off. Turning it on installs CuaDriver if
+/// needed and asks for its permissions; turning it off stops apps using it (CuaDriver stays installed).
+struct ComputerUseSettings: View {
+    @AppStorage("computerUse") private var enabled = false
+    @State private var status: ComputerUse.Status?
+    @State private var working: String?
+    @State private var problem: String?
+
+    var body: some View {
+        Section {
+            Toggle("Let apps use your other apps", isOn: Binding(get: { enabled }, set: { on in
+                if on { Task { await turnOn() } } else { enabled = false; problem = nil }
+            }))
+            .disabled(working != nil)
+            if let working {
+                HStack(spacing: 6) { ProgressView().controlSize(.small); Text(working).foregroundStyle(.secondary) }
+                    .font(.callout)
+            } else if enabled, status == .needsPermission {
+                LabeledContent("CuaDriver needs permission") {
+                    Button("Allow Access…") { Task { await allow() } }
+                }
+            }
+            if let problem {
+                Text(problem).font(.caption).foregroundStyle(.orange)
+            }
+            Text("Lets your apps read and use your other apps, such as Slack, Mail, or Gmail and LinkedIn in your browser, with the accounts you're already signed in to. Turning it on adds CuaDriver (from Cua, open source) to Applications, and macOS asks you to allow it Accessibility and Screen Recording. Apps ask before every click or keystroke. Needs an OpenRouter key.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .task { status = await ComputerUse.status() }
+    }
+
+    private func turnOn() async {
+        problem = nil
+        do {
+            try await ComputerUse.install { working = $0 }
+            status = await ComputerUse.status()
+            if status != .ready { await allow() }
+            enabled = status == .ready
+        } catch {
+            problem = error.localizedDescription
+        }
+        working = nil
+    }
+
+    private func allow() async {
+        working = "Waiting for you to allow access in System Settings…"
+        await ComputerUse.requestPermissions()
+        status = await ComputerUse.status()
+        working = nil
+        if status == .ready {
+            enabled = true
+        } else {
+            problem = "CuaDriver doesn't have both permissions yet. Allow Accessibility and Screen Recording for CuaDriver in System Settings → Privacy & Security, then try again."
+        }
     }
 }
 

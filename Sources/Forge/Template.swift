@@ -1183,6 +1183,36 @@ enum Template {
         }
     }
 
+    /// Does a task with the other apps on this Mac, the way the person would, using what they're already
+    /// signed in to: Slack, Mail, Messages, Notes, Chrome or Safari (Gmail, LinkedIn, a CRM…), and so on.
+    /// Forge drives those apps in the background and returns the answer as text. Use it when the information
+    /// lives in another app and there's no file or API to read instead.
+    ///
+    ///     let brief = try await ForgeComputer.ask("Summarise the LinkedIn profile open in Chrome as a prospect brief")
+    ///     let recent = try await ForgeComputer.ask("List the 5 newest emails in Gmail in Chrome as JSON: [{from, subject, time}]")
+    ///     try await ForgeComputer.perform("In Slack, open #sales and post: Demo moved to 3pm")
+    ///
+    /// `ask` only looks (reads windows and scrolls). `perform` may also click, type and press keys, and the
+    /// person approves each of those in Forge first. Both take 10–60 seconds: show progress, run them only when
+    /// the person asks, and show `error.localizedDescription` on failure (for example when using other apps
+    /// isn't set up yet in Forge's Settings). The first use asks the person to turn it on.
+    enum ForgeComputer {
+        static func ask(_ task: String) async throws -> String {
+            try await run(task, act: false)
+        }
+
+        @discardableResult
+        static func perform(_ task: String) async throws -> String {
+            try await run(task, act: true)
+        }
+
+        private static func run(_ task: String, act: Bool) async throws -> String {
+            let reply = try await ForgeAI.post("/ai/computer", ["task": task, "act": act], timeout: 900)
+            guard let text = reply["text"] as? String else { throw ForgeAI.Failure(message: "Using other apps failed.") }
+            return text
+        }
+    }
+
     /// AI for this app, using the same AI account as Forge. No API keys needed.
     ///
     ///     let summary = try await ForgeAI.ask("Summarise these notes:\n\(notes)")
@@ -1332,10 +1362,11 @@ enum Template {
             return text
         }
 
-        private static func post(_ path: String, _ body: [String: Any]) async throws -> [String: Any] {
+        fileprivate static func post(_ path: String, _ body: [String: Any],
+                                     timeout: TimeInterval = 240) async throws -> [String: Any] {
             var request = URLRequest(url: URL(string: "http://127.0.0.1:{{PORT}}" + path)!)
             request.httpMethod = "POST"
-            request.timeoutInterval = 240
+            request.timeoutInterval = timeout
             request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)

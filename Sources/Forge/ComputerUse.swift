@@ -1,0 +1,661 @@
+import AppKit
+import CryptoKit
+import Foundation
+
+/// Lets apps read and use the other apps on the Mac (Slack, Mail, Chrome with Gmail or LinkedIn, …) with the
+/// person's own sign-ins, through trycua's cua-driver (github.com/trycua/cua, MIT).
+///
+/// cua-driver works through macOS Accessibility and window captures, in the background, without taking over
+/// the pointer. It runs as CuaDriver.app in /Applications, which holds the Accessibility and Screen Recording
+/// permissions; Forge installs it on demand (a pinned, checksummed and signature-checked release) rather than
+/// shipping it in every download. Forge talks to it over MCP and runs the agent loop itself: a model gets the
+/// task and a short list of the driver's tools, and works until it can answer.
+///
+/// Reading is always allowed. Clicking, typing and pressing keys only happen when the app asked to act
+/// (`ForgeComputer.perform`), and each one waits for the person's OK in a Forge dialog.
+enum ComputerUse {
+    static let version = "0.32.0"
+    private static let teamID = "YCK386LBJ7"   // Cua AI, Inc.
+    private static let releases: [String: (file: String, sha256: String)] = [
+        "arm64": ("cua-driver-rs-0.32.0-darwin-arm64.tar.gz", "31f278f38015616a02142ccbb396721897cee4892927db103a31b297f60035a9"),
+        "x86_64": ("cua-driver-rs-0.32.0-darwin-x86_64.tar.gz", "0322e9316d81fbe34cbe8efe2eae83a32cf4dd86b9f34639cc0a4b3a6ed74868"),
+    ]
+
+    /// The person's choice in Settings → Apps. Off until they turn it on, even if CuaDriver is already installed.
+    static var enabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "computerUse") }
+        set { UserDefaults.standard.set(newValue, forKey: "computerUse") }
+    }
+
+    static let app = URL(fileURLWithPath: "/Applications/CuaDriver.app")
+    static var executable: URL { app.appendingPathComponent("Contents/MacOS/cua-driver") }
+
+    struct Failure: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    // MARK: Setup
+
+    enum Status: Equatable {
+        case notInstalled
+        case needsPermission
+        case ready
+    }
+
+    static var isInstalled: Bool { FileManager.default.isExecutableFile(atPath: executable.path) }
+
+    static func status() async -> Status {
+        guard isInstalled else { return .notInstalled }
+        // The daemon answers with its own permission state (it holds them, not Forge). Right after an install
+        // it may not be up yet, and the answer has no permissions in it: ask again shortly.
+        for attempt in 0..<4 {
+            let output = await capture(executable.path, ["permissions", "status", "--json"])
+            let info = (try? JSONSerialization.jsonObject(with: Data(output.utf8))) as? [String: Any] ?? [:]
+            if let accessibility = info["accessibility"] as? Bool, let screen = info["screen_recording"] as? Bool {
+                return accessibility && screen ? .ready : .needsPermission
+            }
+            if attempt < 3 { try? await Task.sleep(for: .seconds(2)) }
+        }
+        return .needsPermission
+    }
+
+    /// The installed CuaDriver's version, e.g. "0.32.0".
+    static var installedVersion: String? {
+        NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist"))?["CFBundleShortVersionString"] as? String
+    }
+
+    /// Downloads the pinned release, checks it, and puts CuaDriver.app in /Applications.
+    static func install(progress: @escaping @MainActor (String) -> Void) async throws {
+        // A current install is left alone: replacing it would stop the running driver for nothing.
+        if isInstalled, installedVersion == version { return }
+        var info = utsname()
+        uname(&info)
+        let machine = withUnsafeBytes(of: &info.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        guard let release = releases[machine.hasPrefix("arm64") ? "arm64" : "x86_64"] else {
+            throw Failure(message: "Using other apps isn't available on this Mac.")
+        }
+        await progress("Downloading…")
+        let url = URL(string: "https://github.com/trycua/cua/releases/download/cua-driver-rs-v\(version)/\(release.file)")!
+        let (download, response) = try await URLSession.shared.download(from: url)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw Failure(message: "Couldn't download the helper. Check your internet connection and try again.")
+        }
+        await progress("Checking…")
+        let data = try Data(contentsOf: download, options: .mappedIfSafe)
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard digest == release.sha256 else { throw Failure(message: "The download didn't match the expected file.") }
+
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("forge-cua-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+        guard await run("/usr/bin/tar", ["-xzf", download.path, "-C", work.path]) == 0,
+              let folder = try FileManager.default.contentsOfDirectory(at: work, includingPropertiesForKeys: nil).first
+        else { throw Failure(message: "Couldn't unpack the helper.") }
+        let unpacked = folder.appendingPathComponent("CuaDriver.app")
+        guard signedByCua(unpacked) else { throw Failure(message: "The helper isn't signed by its developer.") }
+
+        await progress("Installing…")
+        _ = await run("/usr/bin/pkill", ["-f", "CuaDriver.app/Contents/MacOS/cua-driver"])
+        try? FileManager.default.removeItem(at: app)
+        if await run("/usr/bin/ditto", [unpacked.path, app.path]) != 0 {
+            // /Applications is writable by administrators only. A standard account (common on work Macs) gets
+            // macOS's own password prompt instead, for someone who can approve it.
+            let script = """
+            do shell script "/bin/rm -rf " & quoted form of "\(app.path)" & " && /usr/bin/ditto " & \
+            quoted form of "\(unpacked.path)" & " " & quoted form of "\(app.path)" with administrator privileges \
+            with prompt "Forge needs to add CuaDriver to the Applications folder so your apps can use your other apps."
+            """
+            guard await run("/usr/bin/osascript", ["-e", script]) == 0, isInstalled else {
+                throw Failure(message: "Couldn't add CuaDriver to the Applications folder. It needs an administrator's password; on a work Mac, ask your IT team.")
+            }
+        }
+        _ = await run("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
+                      ["-f", app.path])
+        // Content-free product telemetry is on by default; Forge turns it off.
+        _ = await run(executable.path, ["telemetry", "disable"])
+    }
+
+    /// Opens macOS's permission requests for CuaDriver and waits until they're answered.
+    static func requestPermissions() async {
+        _ = await run(executable.path, ["permissions", "grant"])
+    }
+
+    private static func signedByCua(_ bundle: URL) -> Bool {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(bundle as CFURL, [], &code) == errSecSuccess, let code,
+              SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSCheckAllArchitectures), nil) == errSecSuccess
+        else { return false }
+        var info: CFDictionary?
+        SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &info)
+        return (info as? [String: Any])?[kSecCodeInfoTeamIdentifier as String] as? String == teamID
+    }
+
+    // MARK: Running a task
+
+    /// Tools that only look. Scrolling changes nothing, so it counts as looking.
+    static let readTools: Set<String> = ["list_apps", "list_windows", "get_window_state", "zoom", "scroll"]
+    /// Tools that act, each confirmed by the person first.
+    static let actTools: Set<String> = ["click", "double_click", "right_click", "type_text", "press_key", "hotkey",
+                                        "set_value", "invoke_menu", "launch_app"]
+
+    /// What a step wants to do, for the person to approve.
+    struct Action {
+        let tool: String
+        /// The app it acts in, worked out from the process, not taken from the model.
+        let target: String
+        /// What will actually happen, built from the tool's arguments: the exact text typed, the keys pressed,
+        /// the element clicked (named from the last window read), the menu chosen.
+        let details: String
+        /// The model's own description. Shown second: it can be wrong, or steered by what's on screen.
+        let intent: String?
+    }
+
+    /// Describes an action from its real arguments. `labels` maps element tokens to what the person sees.
+    static func describe(_ tool: String, _ arguments: [String: Any], labels: [String: String]) -> Action {
+        let pid = (arguments["pid"] as? Int) ?? (arguments["pid"] as? NSNumber)?.intValue
+        let app = pid.flatMap { NSRunningApplication(processIdentifier: pid_t($0))?.localizedName }
+        let bundle = arguments["bundle_id"] as? String
+        let target = app ?? (arguments["name"] as? String) ?? bundle ?? "an app"
+        let element: String? = (arguments["element_token"] as? String).map { labels[$0] ?? "an unnamed item" }
+        let spot = element ?? "a spot in the window"
+        func quoted(_ text: String) -> String {
+            text.count > 600 ? "“\(text.prefix(600))…” (\(text.count - 600) more characters)" : "“\(text)”"
+        }
+        func keys(_ list: [String]) -> String {
+            let symbols = ["cmd": "⌘", "command": "⌘", "shift": "⇧", "option": "⌥", "alt": "⌥", "ctrl": "⌃",
+                           "control": "⌃", "return": "⏎", "enter": "⏎", "tab": "⇥", "escape": "⎋", "esc": "⎋",
+                           "delete": "⌫", "space": "Space", "up": "↑", "down": "↓", "left": "←", "right": "→"]
+            return list.map { symbols[$0.lowercased()] ?? $0.uppercased() }.joined()
+        }
+        let details: String
+        switch tool {
+        case "click":
+            let count = arguments["count"] as? Int ?? 1
+            let verb = arguments["button"] as? String == "right" ? "Right-click" : count > 1 ? "Double-click" : "Click"
+            details = "\(verb) \(spot)"
+        case "double_click": details = "Double-click \(spot)"
+        case "right_click": details = "Right-click \(spot)"
+        case "type_text":
+            details = "Type \(quoted(arguments["text"] as? String ?? ""))" + (element.map { " into \($0)" } ?? "")
+        case "set_value":
+            details = "Set \(element ?? "a field") to \(quoted("\(arguments["value"] ?? "")"))"
+        case "press_key":
+            let modifiers = arguments["modifiers"] as? [String] ?? []
+            details = "Press \(keys(modifiers + [arguments["key"] as? String ?? "?"]))"
+        case "hotkey":
+            details = "Press \(keys(arguments["keys"] as? [String] ?? []))"
+        case "invoke_menu":
+            details = "Choose \((arguments["path"] as? [String] ?? []).joined(separator: " → ")) from the menu"
+        case "launch_app":
+            let urls = arguments["urls"] as? [String] ?? []
+            details = "Open \(target)" + (urls.isEmpty ? "" : " with \(urls.joined(separator: ", "))")
+        default:
+            details = tool.replacingOccurrences(of: "_", with: " ")
+        }
+        return Action(tool: tool, target: target, details: details, intent: nil)
+    }
+
+    /// "the “Send” button": what a person would call an element from the last window read.
+    private static func label(of element: [String: Any]) -> String? {
+        let text = [element["label"], element["title"], element["value"], element["description"]]
+            .compactMap { ($0 as? String)?.trimmed }.first { !$0.isEmpty }
+        guard let text else { return nil }
+        let kinds = ["AXButton": "button", "AXLink": "link", "AXTextField": "text field", "AXTextArea": "text box",
+                     "AXMenuItem": "menu item", "AXCheckBox": "checkbox", "AXRadioButton": "option",
+                     "AXPopUpButton": "menu", "AXTab": "tab", "AXRow": "row", "AXCell": "item"]
+        let kind = kinds[element["role"] as? String ?? ""] ?? "item"
+        return "the “\(text.prefix(80))” \(kind)"
+    }
+
+    /// Runs `task` and returns the model's answer, plus the cost in USD. `approve` is asked before every action
+    /// and returns false to refuse it.
+    static func run(task: String, appName: String, allowActions: Bool, model: String,
+                    approve: @escaping (Action) async -> Bool) async throws -> (String, Double) {
+        guard isInstalled else {
+            throw Failure(message: "Using other apps isn't set up yet. Turn on “Let apps use your other apps” in Forge → Settings → Apps.")
+        }
+        // While the Mac is locked, apps don't expose their windows and screen capture is refused.
+        if (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true {
+            throw Failure(message: "The Mac is locked, so other apps can't be read. Try again once it's unlocked.")
+        }
+        guard let key = KeyStore.openRouterKey else {
+            throw Failure(message: "Using other apps needs an OpenRouter key. Add one in Forge → Settings → Providers.")
+        }
+        let client = try MCPClient(executable: executable, arguments: ["mcp"])
+        defer { client.close() }
+        let instructions = try await client.initialize()
+        let allowed = allowActions ? readTools.union(actTools) : readTools
+        let tools = try await client.listTools().filter { allowed.contains($0.name) }.map { tool -> [String: Any] in
+            var schema = tool.inputSchema
+            if actTools.contains(tool.name) {
+                // Every action carries a plain description, shown to the person before it happens.
+                var properties = schema["properties"] as? [String: Any] ?? [:]
+                properties["intent"] = ["type": "string",
+                                        "description": "What this does, in plain words for the person approving it, e.g. “Click Send in Slack”."]
+                schema["properties"] = properties
+                schema["required"] = ((schema["required"] as? [String]) ?? []) + ["intent"]
+            }
+            return ["type": "function", "function": ["name": tool.name, "description": tool.description, "parameters": schema]]
+        }
+
+        let system = """
+        You use the apps on this Mac on behalf of "\(appName)", an app the person made, to do one task, then answer.
+        The person is signed in to their apps and browsers already; work with what's there.
+        \(allowActions
+            ? "You may click, type and press keys when the task needs it. Each action is shown to the person to approve first, so give every action a clear `intent`. Never send, post, delete, buy or change settings unless the task asks for exactly that."
+            : "Only look: you can read windows and scroll, but not click, type or change anything.")
+        Find the right window with list_windows, read it with get_window_state, and scroll to see more. A web page \
+        that's open but not in front: find it with list_browser_tabs and bring it forward with show_browser_tab, \
+        then read its window. Prefer the \
+        element tree to the picture when both have what you need. Keep going until you can answer, then reply \
+        with only the answer, in the form the task asks for. If you can't do it, say what stopped you.
+
+        About the tools:
+        \(instructions)
+        """
+        let allTools = tools + BrowserTabs.tools
+        var messages: [[String: Any]] = [["role": "system", "content": system], ["role": "user", "content": task]]
+        var cost = 0.0
+        var labels: [String: String] = [:]   // element tokens from the windows read so far
+        // Turning the setting off stops a task that's already running, before its next step.
+        let stopped = Failure(message: "Using other apps was turned off, so Forge stopped the task.")
+        for _ in 0..<40 {
+            guard enabled else { throw stopped }
+            let (message, stepCost) = try await complete(messages: messages, tools: allTools, model: model, key: key)
+            cost += stepCost
+            messages.append(message)
+            let calls = message["tool_calls"] as? [[String: Any]] ?? []
+            if calls.isEmpty {
+                return ((message["content"] as? String ?? "").trimmed, cost)
+            }
+            var pictures: [[String: Any]] = []
+            for call in calls {
+                let function = call["function"] as? [String: Any] ?? [:]
+                let name = function["name"] as? String ?? ""
+                var arguments = ((function["arguments"] as? String).flatMap {
+                    try? JSONSerialization.jsonObject(with: Data($0.utf8))
+                } as? [String: Any]) ?? [:]
+                let intent = arguments.removeValue(forKey: "intent") as? String
+                guard enabled else { throw stopped }
+                var reply: String
+                if BrowserTabs.handles(name) {
+                    reply = await BrowserTabs.call(name, arguments)
+                } else if !allowed.contains(name) {
+                    reply = "That tool isn't available for this task."
+                } else if actTools.contains(name), !(await approve({
+                    let described = describe(name, arguments, labels: labels)
+                    return Action(tool: name, target: described.target, details: described.details, intent: intent)
+                }())) {
+                    reply = "The person declined this action. Don't try it another way; finish with what you have, or say what you needed."
+                } else {
+                    guard enabled else { throw stopped }   // it may have been turned off during the dialog
+                    if name == "get_window_state", arguments["max_image_dimension"] == nil { arguments["max_image_dimension"] = 1024 }
+                    do {
+                        let result = try await client.call(name, arguments: arguments)
+                        reply = result.text.isEmpty ? "Done." : String(result.text.prefix(60_000))
+                        if name == "list_windows", let windows = visibleWindows(result.structured) { reply = windows }
+                        if name == "get_window_state",
+                           let elements = (result.structured as? [String: Any])?["elements"] as? [[String: Any]] {
+                            for element in elements {
+                                if let token = element["element_token"] as? String, let name = label(of: element) {
+                                    labels[token] = name
+                                }
+                            }
+                        }
+                        pictures += result.images.map {
+                            ["type": "image_url", "image_url": ["url": compact($0.data, mimeType: $0.mimeType)]]
+                        }
+                    } catch {
+                        reply = "Error: \(error.localizedDescription)"
+                    }
+                }
+                messages.append(["role": "tool", "tool_call_id": call["id"] as? String ?? "", "content": reply])
+            }
+            // Tool results are text; pictures from them follow as one message the model can see.
+            if !pictures.isEmpty {
+                messages.append(["role": "user", "content": [["type": "text", "text": "Pictures from those steps:"]] + pictures.suffix(2)])
+            }
+            // Keep only the latest pictures: older ones are stale and costly.
+            var seen = 0
+            for index in messages.indices.reversed() where messages[index]["role"] as? String == "user"
+                && (messages[index]["content"] as? [[String: Any]])?.first?["text"] as? String == "Pictures from those steps:" {
+                seen += 1
+                if seen > 1 { messages[index]["content"] = "(An earlier picture, removed to save space.)" }
+            }
+        }
+        throw Failure(message: "The task took too many steps, so Forge stopped it.")
+    }
+
+    /// The driver's pictures are PNGs, around a megabyte each: as JPEGs they're a tenth of that, which keeps each
+    /// request small enough to upload reliably.
+    private static func compact(_ base64: String, mimeType: String) -> String {
+        guard let data = Data(base64Encoded: base64), let bitmap = NSBitmapImageRep(data: data),
+              let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.7]) else {
+            return "data:\(mimeType);base64,\(base64)"
+        }
+        return "data:image/jpeg;base64,\(jpeg.base64EncodedString())"
+    }
+
+    /// list_windows lists every window on the Mac, hundreds of them, most off screen or untitled. The model only
+    /// needs the ones a person could be looking at.
+    private static func visibleWindows(_ structured: Any?) -> String? {
+        guard let windows = (structured as? [String: Any])?["windows"] as? [[String: Any]] else { return nil }
+        let lines = windows.compactMap { window -> String? in
+            guard window["is_on_screen"] as? Bool == true, let title = window["title"] as? String, !title.isEmpty,
+                  let pid = window["pid"] as? Int, let id = window["window_id"] as? Int else { return nil }
+            return "pid=\(pid) window_id=\(id) app=\(window["app_name"] as? String ?? "?") title=\(title)"
+        }
+        return lines.isEmpty ? "No visible windows." : "Visible windows:\n" + lines.joined(separator: "\n")
+    }
+
+    private static func complete(messages: [[String: Any]], tools: [[String: Any]], model: String,
+                                 key: String) async throws -> ([String: Any], Double) {
+        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 180
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Forge", forHTTPHeaderField: "X-Title")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": model, "messages": messages, "tools": tools, "usage": ["include": true],
+        ] as [String: Any])
+        // A dropped connection mid-upload is worth one more try.
+        var reply: (Data, URLResponse)?
+        for attempt in 0..<2 {
+            do {
+                reply = try await URLSession.shared.data(for: request)
+                break
+            } catch let error as URLError where attempt == 0 && error.code != .cancelled {
+                try await Task.sleep(for: .seconds(1))
+            }
+        }
+        guard let (data, response) = reply else { throw Failure(message: "Couldn't reach the AI.") }
+        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200, let message = ((obj["choices"] as? [[String: Any]])?.first?["message"]) as? [String: Any] else {
+            let detail = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
+            throw Failure(message: Provider.friendlyError("\(status) \(detail)"))
+        }
+        var kept: [String: Any] = ["role": "assistant", "content": message["content"] as? String ?? ""]
+        if let calls = message["tool_calls"] { kept["tool_calls"] = calls }
+        return (kept, (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0)
+    }
+
+    // MARK: Processes
+
+    @discardableResult
+    private static func run(_ tool: String, _ arguments: [String]) async -> Int32 {
+        await withCheckedContinuation { continuation in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: tool)
+            process.arguments = arguments
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+            do { try process.run() } catch { continuation.resume(returning: -1) }
+        }
+    }
+
+    private static func capture(_ tool: String, _ arguments: [String]) async -> String {
+        await withCheckedContinuation { continuation in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: tool)
+            process.arguments = arguments
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+            process.terminationHandler = { _ in
+                continuation.resume(returning: String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+            }
+            do { try process.run() } catch { continuation.resume(returning: "") }
+        }
+    }
+}
+
+/// A minimal MCP client over stdio (newline-delimited JSON-RPC), enough for one server's tools.
+final class MCPClient: @unchecked Sendable {
+    struct Tool {
+        let name: String
+        let description: String
+        let inputSchema: [String: Any]
+    }
+
+    struct CallResult {
+        let text: String
+        let images: [(mimeType: String, data: String)]
+        var structured: Any? = nil
+    }
+
+    private let process = Process()
+    private let input = Pipe()
+    private let output = Pipe()
+    private let lock = NSLock()
+    private var buffer = Data()
+    private var waiting: [Int: CheckedContinuation<[String: Any], Error>] = [:]
+    private var nextID = 1
+
+    init(executable: URL, arguments: [String]) throws {
+        process.executableURL = executable
+        process.arguments = arguments
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let chunk = handle.availableData
+            guard let self else { return }
+            if chunk.isEmpty { self.failAll(); return }
+            self.receive(chunk)
+        }
+        process.terminationHandler = { [weak self] _ in self?.failAll() }
+        try process.run()
+    }
+
+    /// Starts the session; returns the server's instructions.
+    func initialize() async throws -> String {
+        let result = try await request("initialize", [
+            "protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any],
+            "clientInfo": ["name": "Forge", "version": BuildStamp.current.forge ?? "0"],
+        ])
+        notify("notifications/initialized")
+        return result["instructions"] as? String ?? ""
+    }
+
+    func listTools() async throws -> [Tool] {
+        let result = try await request("tools/list", [:])
+        return (result["tools"] as? [[String: Any]] ?? []).compactMap { tool in
+            guard let name = tool["name"] as? String else { return nil }
+            return Tool(name: name, description: tool["description"] as? String ?? "",
+                        inputSchema: tool["inputSchema"] as? [String: Any] ?? ["type": "object"])
+        }
+    }
+
+    func call(_ name: String, arguments: [String: Any]) async throws -> CallResult {
+        let result = try await request("tools/call", ["name": name, "arguments": arguments])
+        var texts: [String] = []
+        var images: [(String, String)] = []
+        for item in result["content"] as? [[String: Any]] ?? [] {
+            switch item["type"] as? String {
+            case "text": if let text = item["text"] as? String { texts.append(text) }
+            case "image":
+                if let data = item["data"] as? String { images.append((item["mimeType"] as? String ?? "image/png", data)) }
+            default: break
+            }
+        }
+        var text = texts.joined(separator: "\n")
+        // Some tools put their data only in structuredContent and give a one-line summary as text
+        // ("Found 12 window(s)."). Long text, like a window's element tree, already says it all.
+        if text.count < 500, let structured = result["structuredContent"],
+           let data = try? JSONSerialization.data(withJSONObject: structured, options: [.sortedKeys]) {
+            text += (text.isEmpty ? "" : "\n") + String(decoding: data, as: UTF8.self)
+        }
+        if result["isError"] as? Bool == true { throw ComputerUse.Failure(message: text.isEmpty ? "The step failed." : text) }
+        return CallResult(text: text, images: images, structured: result["structuredContent"])
+    }
+
+    func close() {
+        output.fileHandleForReading.readabilityHandler = nil
+        if process.isRunning { process.terminate() }
+        failAll()
+    }
+
+    private func request(_ method: String, _ params: [String: Any]) async throws -> [String: Any] {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.lock()
+            let id = nextID
+            nextID += 1
+            waiting[id] = continuation
+            lock.unlock()
+            send(["jsonrpc": "2.0", "id": id, "method": method, "params": params])
+        }
+    }
+
+    private func notify(_ method: String) { send(["jsonrpc": "2.0", "method": method]) }
+
+    private func send(_ message: [String: Any]) {
+        guard var data = try? JSONSerialization.data(withJSONObject: message) else { return }
+        data.append(0x0A)
+        try? input.fileHandleForWriting.write(contentsOf: data)
+    }
+
+    private func receive(_ chunk: Data) {
+        lock.lock()
+        buffer.append(chunk)
+        var replies: [(CheckedContinuation<[String: Any], Error>, Result<[String: Any], Error>)] = []
+        while let newline = buffer.firstIndex(of: 0x0A) {
+            let line = buffer[buffer.startIndex..<newline]
+            buffer.removeSubrange(buffer.startIndex...newline)
+            guard let message = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
+                  let id = message["id"] as? Int, let continuation = waiting.removeValue(forKey: id) else { continue }
+            if let error = message["error"] as? [String: Any] {
+                replies.append((continuation, .failure(ComputerUse.Failure(message: error["message"] as? String ?? "The helper failed."))))
+            } else {
+                replies.append((continuation, .success(message["result"] as? [String: Any] ?? [:])))
+            }
+        }
+        lock.unlock()
+        for (continuation, result) in replies { continuation.resume(with: result) }
+    }
+
+    private func failAll() {
+        lock.lock()
+        let pending = waiting
+        waiting.removeAll()
+        lock.unlock()
+        for continuation in pending.values {
+            continuation.resume(throwing: ComputerUse.Failure(message: "The helper stopped unexpectedly."))
+        }
+    }
+}
+
+/// Lists and switches browser tabs through the browsers' own AppleScript support. Browsers don't expose their
+/// tab strips to Accessibility, so this is how a page that's open but not in front gets read. Switching a tab
+/// changes nothing on the page, so it's allowed even when an app only asked to look. macOS asks the person
+/// once per browser before Forge may do this.
+enum BrowserTabs {
+    /// Chromium browsers share Chrome's scripting terms; Safari has its own.
+    private static let chromium = ["com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.canary",
+                                   "com.brave.Browser", "com.microsoft.edgemac", "company.thebrowser.Browser",
+                                   "org.chromium.Chromium", "com.vivaldi.Vivaldi", "net.imput.helium"]
+    private static let safari = "com.apple.Safari"
+
+    static let tools: [[String: Any]] = [
+        ["type": "function", "function": [
+            "name": "list_browser_tabs",
+            "description": "Lists every open tab in the running web browsers (Chrome, Safari, Arc, Brave, Edge…): browser, window number, tab number, whether it's the active tab, title and URL.",
+            "parameters": ["type": "object", "properties": [:] as [String: Any]],
+        ] as [String: Any]],
+        ["type": "function", "function": [
+            "name": "show_browser_tab",
+            "description": "Makes a tab the active tab of its window and brings that window to the front of its browser, so get_window_state can read it. Use the browser, window and tab numbers from list_browser_tabs.",
+            "parameters": ["type": "object", "required": ["browser", "window", "tab"], "properties": [
+                "browser": ["type": "string", "description": "The browser's name as list_browser_tabs gave it"],
+                "window": ["type": "integer"],
+                "tab": ["type": "integer"],
+            ] as [String: Any]],
+        ] as [String: Any]],
+    ]
+
+    static func handles(_ tool: String) -> Bool { tool == "list_browser_tabs" || tool == "show_browser_tab" }
+
+    private static var running: [(name: String, id: String)] {
+        NSWorkspace.shared.runningApplications.compactMap { app in
+            guard let id = app.bundleIdentifier, id == safari || chromium.contains(id) else { return nil }
+            return (app.localizedName ?? id, id)
+        }
+    }
+
+    static func call(_ tool: String, _ arguments: [String: Any]) async -> String {
+        let browsers = running
+        guard !browsers.isEmpty else { return "No supported web browser is running." }
+        if tool == "list_browser_tabs" {
+            var lines: [String] = []
+            for browser in browsers {
+                let output = await osascript(listScript(browser.id))
+                if output.hasPrefix("error:") {
+                    lines.append("\(browser.name): couldn't list tabs (\(String(output.dropFirst(6)).trimmed)). The person may need to allow Forge to control \(browser.name).")
+                    continue
+                }
+                for row in output.split(separator: "\n") {
+                    let fields = row.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+                    guard fields.count >= 5 else { continue }
+                    lines.append("browser=\(browser.name) window=\(fields[0]) tab=\(fields[1])\(fields[2] == "true" ? " (active)" : "") title=\(fields[3]) url=\(fields[4])")
+                }
+            }
+            return lines.isEmpty ? "No tabs are open." : lines.joined(separator: "\n")
+        }
+        guard let name = arguments["browser"] as? String,
+              let browser = browsers.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }),
+              let window = arguments["window"] as? Int, let tab = arguments["tab"] as? Int else {
+            return "Give browser, window and tab from list_browser_tabs."
+        }
+        let output = await osascript(showScript(browser.id, window: window, tab: tab))
+        return output.hasPrefix("error:") ? "Couldn't switch tabs: \(String(output.dropFirst(6)).trimmed)" : "Showing that tab."
+    }
+
+    private static func listScript(_ id: String) -> String {
+        let tabs = id == safari ? "(index of current tab of window w) is t" : "(active tab index of window w) is t"
+        let title = id == safari ? "name" : "title"
+        return """
+        set out to ""
+        tell application id "\(id)"
+          repeat with w from 1 to count of windows
+            repeat with t from 1 to count of tabs of window w
+              set out to out & w & (character id 9) & t & (character id 9) & (\(tabs)) & (character id 9) & \
+                (\(title) of tab t of window w) & (character id 9) & (URL of tab t of window w) & linefeed
+            end repeat
+          end repeat
+        end tell
+        return out
+        """
+    }
+
+    private static func showScript(_ id: String, window: Int, tab: Int) -> String {
+        let select = id == safari ? "set current tab of window \(window) to tab \(tab) of window \(window)"
+                                  : "set active tab index of window \(window) to \(tab)"
+        return """
+        tell application id "\(id)"
+          \(select)
+          set index of window \(window) to 1
+        end tell
+        """
+    }
+
+    /// Runs AppleScript in osascript; errors come back as "error: …".
+    private static func osascript(_ script: String) async -> String {
+        await withCheckedContinuation { continuation in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = ["-e", script]
+            let out = Pipe(), err = Pipe()
+            process.standardOutput = out
+            process.standardError = err
+            process.terminationHandler = { process in
+                let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                let error = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                continuation.resume(returning: process.terminationStatus == 0 ? text : "error: " + error)
+            }
+            do { try process.run() } catch { continuation.resume(returning: "error: \(error.localizedDescription)") }
+        }
+    }
+}

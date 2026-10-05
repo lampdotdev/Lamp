@@ -1606,7 +1606,7 @@ final class Store: ObservableObject {
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
-        let paths = ["/ai", "/ai/image", "/ai/decide", "/agent/look", "/agent/use", "/agent/approve",
+        let paths = ["/ai", "/ai/image", "/ai/decide", "/ai/computer", "/agent/look", "/agent/use", "/agent/approve",
                      "/agent/versions", "/agent/versions/name", "/agent/versions/restore"]
         guard request.method == "POST", paths.contains(route) else {
             return (404, ["error": "Not found"])
@@ -1667,6 +1667,7 @@ final class Store: ObservableObject {
             }
             return (200, ["allow": allowed, "reason": reason])
         }
+        if request.path == "/ai/computer" { return await useComputer(for: project, request: request.body) }
         if request.path == "/ai/decide" {
             guard let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any],
                   let state = body["state"], let questions = body["questions"] as? [String: Any], !questions.isEmpty else {
@@ -1709,6 +1710,64 @@ final class Store: ObservableObject {
             return (502, ["error": failure.message])
         } catch {
             return (502, ["error": "Couldn't reach the AI: \(error.localizedDescription)"])
+        }
+    }
+
+    /// `ForgeComputer.ask` / `.perform` from an app: a task done with the other apps on the Mac (see ComputerUse).
+    private func useComputer(for project: ForgeProject, request body: Data) async -> (Int, [String: Any]) {
+        guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+              let task = (json["task"] as? String)?.trimmed, !task.isEmpty else { return (400, ["error": "Missing task."]) }
+        let allowActions = json["act"] as? Bool ?? false
+        guard ComputerUse.enabled, await ComputerUse.status() == .ready else {
+            NSApp.activate()
+            let alert = NSAlert()
+            alert.messageText = "\(project.name) wants to use your other apps"
+            alert.informativeText = "To let apps read and use apps like Slack, Mail or your browser, turn on “Let apps use your other apps” in Forge's settings."
+            alert.addButton(withTitle: "Open Settings")
+            alert.addButton(withTitle: "Not Now")
+            if alert.runModal() == .alertFirstButtonReturn {
+                UserDefaults.standard.set("apps", forKey: "settingsTab")
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            }
+            return (503, ["error": "Using other apps is turned off. Turn on “Let apps use your other apps” in Forge → Settings → Apps, then try again."])
+        }
+        // Haiku is too easily lost in other apps' windows; such tasks get Sonnet unless the app chose Opus.
+        let chosen = AppAI.model(for: AppModels.load(project).text)
+        let model = chosen.id == "opus" ? chosen.openRouter : AppAI.models.first { $0.id == "sonnet" }!.openRouter
+        var allowAll = false
+        do {
+            let (text, cost) = try await ComputerUse.run(task: task, appName: project.name, allowActions: allowActions,
+                                                         model: model) { [weak self] action in
+                guard let self, ComputerUse.enabled else { return false }
+                if allowAll { return true }
+                let answer = await self.confirm(action, for: project)
+                if answer == .allowAll { allowAll = true }
+                return answer != .deny
+            }
+            record(project, cost: cost)
+            return (200, ["text": text])
+        } catch {
+            return (502, ["error": error.localizedDescription])
+        }
+    }
+
+    private enum ActionAnswer { case allow, allowAll, deny }
+
+    /// Asks the person before an app clicks, types or presses keys in another app.
+    private func confirm(_ action: ComputerUse.Action, for project: ForgeProject) async -> ActionAnswer {
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = "\(project.name) wants to use \(action.target)"
+        alert.informativeText = action.details
+            + (action.intent.map { "\n\nThe AI says it's doing this to: \($0)" } ?? "")
+        alert.icon = NSWorkspace.shared.icon(forFile: project.installedURL.path)
+        alert.addButton(withTitle: "Allow")
+        alert.addButton(withTitle: "Allow All for This Task")
+        alert.addButton(withTitle: "Don't Allow")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return .allow
+        case .alertSecondButtonReturn: return .allowAll
+        default: return .deny
         }
     }
 
