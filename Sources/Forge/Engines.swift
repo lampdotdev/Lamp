@@ -76,6 +76,26 @@ enum Builder {
         set { UserDefaults.standard.set(newValue, forKey: "piProvider") }
     }
 
+    /// The model Claude Code or Codex builds with; "" leaves it to the tool's own default (for Claude Code,
+    /// the account's default, since Forge runs it without the person's settings). Claude Code starts on
+    /// Opus, like Forge's other builders.
+    static func engineModel(_ engine: Engine) -> String {
+        UserDefaults.standard.string(forKey: "engineModel.\(engine.rawValue)") ?? (engine == .claude ? "opus" : "")
+    }
+
+    static func setEngineModel(_ model: String, for engine: Engine) {
+        UserDefaults.standard.set(model.trimmed, forKey: "engineModel.\(engine.rawValue)")
+    }
+
+    /// Claude Code's choices: its own short names, and the full ID for models without one.
+    static let claudeModels: [(id: String, label: String)] = [
+        ("", "Claude Code's default"),
+        ("claude-fable-5-1", "Fable"),
+        ("opus", "Opus"),
+        ("sonnet", "Sonnet"),
+        ("haiku", "Haiku"),
+    ]
+
     /// The model for the current pi provider; each provider remembers its own.
     static var piModel: String {
         get {
@@ -129,7 +149,9 @@ enum Builder {
             }
             return "\(piModel.isEmpty ? "No model" : piModel) via \(provider)"
         default:
-            return engine.title
+            let model = engineModel(engine)
+            guard !model.isEmpty else { return engine.title }
+            return "\(engine.title), \(claudeModels.first { $0.id == model }?.label ?? model)"
         }
     }
 }
@@ -322,6 +344,11 @@ extension Agent {
               --append-system-prompt "$FORGE_SYSTEM"
             """
             if session != nil { command += " --resume \"$FORGE_SESSION\"" }
+            let model = Builder.engineModel(.claude)
+            if !model.isEmpty {
+                env["FORGE_MODEL"] = model
+                command += " --model \"$FORGE_MODEL\""
+            }
             return AgentRun(command: command, env: env)
         case .codex:
             // Isolated from the user's own Codex setup (--ignore-user-config --ignore-rules: their model, MCP
@@ -338,7 +365,9 @@ extension Agent {
             let hook = Bundle.main.resourceURL?.appendingPathComponent("forge-approve.sh").path ?? "forge-approve.sh"
             env["FORGE_CODEX_HOOKS"] = approval == .never ? "hooks={}"
                 : #"hooks.PreToolUse=[{matcher="^Bash$",hooks=[{type="command",timeout=3600,command="'"# + hook + #"'"}]}]"#
-            let options = """
+            let codexModel = Builder.engineModel(.codex)
+            if !codexModel.isEmpty { env["FORGE_MODEL"] = codexModel }
+            let options = (codexModel.isEmpty ? "" : "-m \"$FORGE_MODEL\" ") + """
             --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check \\
               -c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true \\
               -c web_search="live" -c "$FORGE_CODEX_INSTRUCTIONS" -c "$FORGE_CODEX_HOOKS"

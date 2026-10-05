@@ -270,6 +270,12 @@ struct BuildingSettings: View {
 
     private var selectedEngine: Engine { Engine(rawValue: engine) ?? .pi }
 
+    /// The model Claude Code or Codex builds with ("" for the tool's default).
+    private func engineModel(_ engine: Engine) -> Binding<String> {
+        Binding(get: { _ = revision; return Builder.engineModel(engine) },
+                set: { Builder.setEngineModel($0, for: engine); revision += 1 })
+    }
+
     /// Providers added in Settings → Providers, plus the current one even if its key was removed.
     private var addedProviders: [PiProvider] {
         _ = revision
@@ -325,6 +331,13 @@ struct BuildingSettings: View {
                     }
                     if path != nil, selectedEngine != .opencode {
                         EngineSignInRow(engine: selectedEngine)
+                    }
+                    if selectedEngine == .claude {
+                        Picker("Model", selection: engineModel(.claude)) {
+                            ForEach(Builder.claudeModels, id: \.id) { Text($0.label).tag($0.id) }
+                        }
+                    } else if selectedEngine == .codex {
+                        TextField("Model", text: engineModel(.codex), prompt: Text("Codex's default"))
                     }
                     Text(selectedEngine == .codex
                          ? "Codex runs commands inside its own sandbox, limited to the app's folder."
