@@ -21,6 +21,12 @@ enum ComputerUse {
         "x86_64": ("cua-driver-rs-0.32.0-darwin-x86_64.tar.gz", "0322e9316d81fbe34cbe8efe2eae83a32cf4dd86b9f34639cc0a4b3a6ed74868"),
     ]
 
+    /// The person's choice in Settings → Apps. Off until they turn it on, even if CuaDriver is already installed.
+    static var enabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "computerUse") }
+        set { UserDefaults.standard.set(newValue, forKey: "computerUse") }
+    }
+
     static let app = URL(fileURLWithPath: "/Applications/CuaDriver.app")
     static var executable: URL { app.appendingPathComponent("Contents/MacOS/cua-driver") }
 
@@ -135,7 +141,7 @@ enum ComputerUse {
     static func run(task: String, appName: String, allowActions: Bool, model: String,
                     approve: @escaping (Action) async -> Bool) async throws -> (String, Double) {
         guard isInstalled else {
-            throw Failure(message: "Using other apps isn't set up yet. Turn it on in Forge → Settings → Apps.")
+            throw Failure(message: "Using other apps isn't set up yet. Turn on “Let apps use your other apps” in Forge → Settings → Apps.")
         }
         // While the Mac is locked, apps don't expose their windows and screen capture is refused.
         if (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true {

@@ -419,24 +419,26 @@ struct AppsSettings: View {
     }
 }
 
-/// Turns on apps' use of the other apps on the Mac (ForgeComputer): installs CuaDriver and asks for its permissions.
+/// Turns apps' use of the other apps on the Mac (ForgeComputer) on or off. Turning it on installs CuaDriver if
+/// needed and asks for its permissions; turning it off stops apps using it (CuaDriver stays installed).
 struct ComputerUseSettings: View {
+    @AppStorage("computerUse") private var enabled = false
     @State private var status: ComputerUse.Status?
     @State private var working: String?
     @State private var problem: String?
 
     var body: some View {
         Section {
-            LabeledContent("Using other apps") {
-                if let working {
-                    HStack(spacing: 6) { ProgressView().controlSize(.small); Text(working).foregroundStyle(.secondary) }
-                } else {
-                    switch status {
-                    case .ready: Label("On", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                    case .needsPermission: Button("Allow Access…") { Task { await allow() } }
-                    case .notInstalled: Button("Turn On…") { Task { await turnOn() } }
-                    case nil: ProgressView().controlSize(.small)
-                    }
+            Toggle("Let apps use your other apps", isOn: Binding(get: { enabled }, set: { on in
+                if on { Task { await turnOn() } } else { enabled = false; problem = nil }
+            }))
+            .disabled(working != nil)
+            if let working {
+                HStack(spacing: 6) { ProgressView().controlSize(.small); Text(working).foregroundStyle(.secondary) }
+                    .font(.callout)
+            } else if enabled, status == .needsPermission {
+                LabeledContent("CuaDriver needs permission") {
+                    Button("Allow Access…") { Task { await allow() } }
                 }
             }
             if let problem {
@@ -452,7 +454,9 @@ struct ComputerUseSettings: View {
         problem = nil
         do {
             try await ComputerUse.install { working = $0 }
-            await allow()
+            status = await ComputerUse.status()
+            if status != .ready { await allow() }
+            enabled = status == .ready
         } catch {
             problem = error.localizedDescription
         }
@@ -464,7 +468,11 @@ struct ComputerUseSettings: View {
         await ComputerUse.requestPermissions()
         status = await ComputerUse.status()
         working = nil
-        if status != .ready { problem = "CuaDriver doesn't have both permissions yet. Allow Accessibility and Screen Recording for CuaDriver in System Settings → Privacy & Security, then try again." }
+        if status == .ready {
+            enabled = true
+        } else {
+            problem = "CuaDriver doesn't have both permissions yet. Allow Accessibility and Screen Recording for CuaDriver in System Settings → Privacy & Security, then try again."
+        }
     }
 }
 

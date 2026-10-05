@@ -1718,18 +1718,18 @@ final class Store: ObservableObject {
         guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let task = (json["task"] as? String)?.trimmed, !task.isEmpty else { return (400, ["error": "Missing task."]) }
         let allowActions = json["act"] as? Bool ?? false
-        guard await ComputerUse.status() == .ready else {
+        guard ComputerUse.enabled, await ComputerUse.status() == .ready else {
             NSApp.activate()
             let alert = NSAlert()
             alert.messageText = "\(project.name) wants to use your other apps"
-            alert.informativeText = "To let apps read and use apps like Slack, Mail or your browser, turn on Using Other Apps in Forge's settings."
+            alert.informativeText = "To let apps read and use apps like Slack, Mail or your browser, turn on “Let apps use your other apps” in Forge's settings."
             alert.addButton(withTitle: "Open Settings")
             alert.addButton(withTitle: "Not Now")
             if alert.runModal() == .alertFirstButtonReturn {
                 UserDefaults.standard.set("apps", forKey: "settingsTab")
                 NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
             }
-            return (503, ["error": "Using other apps isn't turned on yet. Turn it on in Forge → Settings → Apps, then try again."])
+            return (503, ["error": "Using other apps is turned off. Turn on “Let apps use your other apps” in Forge → Settings → Apps, then try again."])
         }
         // Haiku is too easily lost in other apps' windows; such tasks get Sonnet unless the app chose Opus.
         let chosen = AppAI.model(for: AppModels.load(project).text)
