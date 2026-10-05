@@ -1150,6 +1150,7 @@ final class Store: ObservableObject {
         }
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
+        config.arguments = ["-ForgeInFront", "YES"]   // see install
         do {
             _ = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
         } catch {
@@ -1410,6 +1411,8 @@ final class Store: ObservableObject {
         }
         let config = NSWorkspace.OpenConfiguration()
         config.activates = inFront
+        // An app that lives in the menu bar opens its panel, so there's something to see (ForgeMenuBar).
+        if inFront { config.arguments = ["-ForgeInFront", "YES"] }
         note("Opening \(project.name)…", for: project)
         var crash: String?
         do {

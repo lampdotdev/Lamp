@@ -176,7 +176,8 @@ enum Template {
 
     /// Brings the app back with a window when there isn't one: clicking it in the Dock, opening it again from
     /// Finder or Launchpad, and Forge's Play button. SwiftUI doesn't open a new window for macOS's "reopen"
-    /// request on its own, so this answers that request itself; Forge also sends its own message.
+    /// request on its own, so this answers that request itself; Forge also sends its own message. An app that
+    /// lives in the menu bar (ForgeMenuBar) shows its panel.
     enum ForgeWindows {
         static let start: Void = {
             DistributedNotificationCenter.default().addObserver(
@@ -215,6 +216,9 @@ enum Template {
                       let menu = item.menu {
                 // SwiftUI's File ▸ New … Window (⌘N).
                 menu.performActionForItem(at: menu.index(of: item))
+            } else if !windows.contains(where: \.isVisible), ForgeMenuBar.isInstalled {
+                // An app that lives in the menu bar: the panel behind its icon is its window.
+                return ForgeMenuBar.show()
             }
             NSApp.activate()
             NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
@@ -866,13 +870,7 @@ enum Template {
         /// and picks from its menu. The system owns the icon itself, so a click can't be sent to it; the item is
         /// asked to present instead.
         private static func barIcon(_ pick: String?) -> String {
-            let owner = Selector(("statusItem"))
-            var items: [NSStatusItem] = []
-            for window in NSApp.windows where window.responds(to: owner) {
-                if let item = window.perform(owner)?.takeUnretainedValue() as? NSStatusItem, item.button?.window != nil,
-                   !items.contains(item) { items.append(item) }
-            }
-            guard let item = items.first(where: \.isVisible) ?? items.first else { return "bar_icon: the app has no icon in the menu bar" }
+            guard let item = ForgeMenuBar.statusItem else { return "bar_icon: the app has no icon in the menu bar" }
             if let menu = item.menu {
                 fill(menu)
                 guard let pick else {
@@ -930,10 +928,14 @@ enum Template {
         }
 
         private static func releaseBarPanel() {
+            ForgeMenuBar.close()
+            NSApp.windows.first(where: isBarPanel)?.orderOut(nil)
+        }
+
+        /// The panel has closed (the app closes it to open Settings, say), so the builder no longer has it.
+        static func forgetBarPanel() {
             holdsBarPanel = false
-            guard let panel = NSApp.windows.first(where: isBarPanel) else { return }
-            setQuiet(panel, false)
-            panel.orderOut(nil)
+            if let panel = NSApp.windows.first(where: isBarPanel) { setQuiet(panel, false) }
         }
 
         /// Makes a window refuse the keyboard, or accept it again. Its class's `canBecomeKey` is replaced once with
@@ -2118,6 +2120,275 @@ enum Template {
                 if sound { content.sound = .default }
                 center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
             }
+        }
+    }
+
+    /// An app that lives in the menu bar: an icon there, a panel that drops down from it, and no Dock icon.
+    /// Use it as the app's scene, instead of SwiftUI's MenuBarExtra:
+    ///
+    ///     var body: some Scene {
+    ///         ForgeMenuBar("Focus Timer", systemImage: "timer") { PanelView() }
+    ///             .commands { ForgeCommands() }
+    ///         Settings { SettingsView() }
+    ///     }
+    ///     ForgeMenuBar { PanelView() } label: { Image(systemName: "timer"); Text(model.timeLeft) }   // a label that changes
+    ///
+    /// Such an app has no Dock icon and no menus, so give the panel its own buttons for Settings and Quit:
+    ///
+    ///     Button("Settings…") { ForgeMenuBar.openSettings() }   // in front of everything, every time
+    ///     Button("Quit") { NSApp.terminate(nil) }
+    ///     ForgeMenuBar.close()                                  // closes the panel, e.g. after an action in it
+    ///
+    /// It keeps the app within reach, which a bare MenuBarExtra doesn't. When the icon is hidden (no room next to
+    /// the notch, a full menu bar, or switched off in System Settings) the panel opens as a normal window, so the
+    /// app never runs with nothing to click. Opening the app again (Finder, Spotlight, Forge's Play button,
+    /// `ForgeWindows.show()`) shows the panel. And while one of the app's windows is open (Settings, or any
+    /// Window scene) the app is in the Dock and the app switcher, so that window can't get lost behind others.
+    /// `dockIcon: true` keeps the Dock icon all the time, for an app that also has a main window.
+    struct ForgeMenuBar: Scene {
+        private let content: () -> AnyView
+        private let label: () -> AnyView
+
+        init<Content: View, Icon: View>(dockIcon: Bool = false, @ViewBuilder content: @escaping () -> Content,
+                                        @ViewBuilder label: @escaping () -> Icon) {
+            let panel = { AnyView(content()) }
+            self.content = panel
+            self.label = { AnyView(label()) }
+            MainActor.assumeIsolated { Self.install(panel, dockIcon: dockIcon) }
+        }
+
+        init<Content: View>(_ title: String, systemImage: String, dockIcon: Bool = false,
+                            @ViewBuilder content: @escaping () -> Content) {
+            self.init(dockIcon: dockIcon, content: content) { Image(systemName: systemImage).accessibilityLabel(title) }
+        }
+
+        var body: some Scene {
+            MenuBarExtra {
+                content().background(SettingsOpener())
+            } label: {
+                label()
+            }
+            .menuBarExtraStyle(.window)
+        }
+
+        // MARK: From the panel
+
+        /// Opens the app's Settings scene and brings it in front of other apps, however often it's asked.
+        @MainActor static func openSettings() {
+            close()
+            // A window of an app with no Dock icon opens behind whatever the person is using.
+            holdDockIcon = Date().addingTimeInterval(1.5)
+            if !keepsDockIcon { NSApp.setActivationPolicy(.regular) }
+            NSApp.activate()
+            if let settingsAction {
+                settingsAction()
+            } else if let item = settingsItem(in: NSApp.mainMenu), let menu = item.menu {
+                menu.performActionForItem(at: menu.index(of: item))
+            }
+            // The window takes a moment to exist the first time.
+            var tries = 0
+            Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
+                MainActor.assumeIsolated {
+                    tries += 1
+                    if let window = NSApp.windows.first(where: isSettings), window.isVisible {
+                        NSApp.activate()
+                        window.makeKeyAndOrderFront(nil)
+                    } else if tries < 25 {
+                        return
+                    } else {
+                        print("ForgeMenuBar.openSettings: no Settings window opened. Does the app have a `Settings { }` scene?")
+                    }
+                    timer.invalidate()
+                    holdDockIcon = .distantPast
+                    syncDockIcon()
+                }
+            }
+        }
+
+        /// Closes the panel under the icon.
+        @MainActor static func close() {
+            let panel = NSApp.windows.first { isPanel($0) && $0.isVisible }
+            // The icon has to hear of it, or it goes on believing its panel is open and won't open it again.
+            let session = Selector(("expandedInterfaceSession")), cancel = NSSelectorFromString("cancel")
+            if let item = statusItem, item.responds(to: session) {
+                if let open = item.perform(session)?.takeUnretainedValue(), open.responds(to: cancel) { _ = open.perform(cancel) }
+            } else if panel != nil {
+                statusItem?.button?.performClick(nil)   // before macOS 26, the icon's button opens and closes it
+            }
+            if panel?.isVisible == true { panel?.orderOut(nil) }
+            ForgeDriver.forgetBarPanel()
+        }
+
+        /// Shows the app: the panel under its icon, or a window with the same contents when the icon is hidden.
+        @MainActor static func show() {
+            if iconIsVisible { openPanel() } else { showWindow() }
+        }
+
+        // MARK: Internals
+
+        @MainActor private static var panelContent: (() -> AnyView)?
+        @MainActor private static var keepsDockIcon = false
+        @MainActor private static var settingsAction: (() -> Void)?
+        @MainActor private static var window: NSWindow?
+        /// Until then the app stays in the Dock although it has no window yet: one is on its way.
+        @MainActor private static var holdDockIcon = Date.distantPast
+        @MainActor private static var wasActive = false
+        @MainActor private static let changes = Changes()
+
+        @MainActor static var isInstalled: Bool { panelContent != nil }
+
+        /// Says when the app's scene was built again, so the window shows what the panel would.
+        private final class Changes: ObservableObject {}
+
+        /// The panel's contents in a window of their own.
+        private struct WindowContent: View {
+            @ObservedObject var changes: Changes
+
+            var body: some View {
+                ForgeMenuBar.panelContent?()
+            }
+        }
+
+        /// `openSettings` only exists inside a view, so the panel hands it over for `ForgeMenuBar.openSettings()`.
+        private struct SettingsOpener: View {
+            @Environment(\.openSettings) private var openSettings
+
+            var body: some View {
+                Color.clear.onAppear { ForgeMenuBar.settingsAction = { openSettings() } }
+            }
+        }
+
+        @MainActor private static func install(_ content: @escaping () -> AnyView, dockIcon: Bool) {
+            let first = panelContent == nil
+            panelContent = content
+            keepsDockIcon = dockIcon
+            guard first else {
+                DispatchQueue.main.async { changes.objectWillChange.send() }
+                return
+            }
+            ForgeRuntime.start
+            ForgeWindows.start
+            if !dockIcon { NSApplication.shared.setActivationPolicy(.accessory) }
+            let center = NotificationCenter.default
+            center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { wasActive = true }
+            }
+            center.addObserver(forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated {
+                    syncDockIcon()
+                    // Once the icon has had a moment to take its place.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { arrive() }
+                }
+            }
+            // The Dock icon follows the app's windows, however they were opened and closed.
+            for name in [NSApplication.didUpdateNotification, NSWindow.didBecomeKeyNotification,
+                         NSWindow.didChangeOcclusionStateNotification] {
+                center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                    MainActor.assumeIsolated { syncDockIcon() }
+                }
+            }
+            center.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { _ in
+                DispatchQueue.main.async { syncDockIcon() }
+            }
+        }
+
+        /// Just after launch. Opened by the person (not at login, nor behind their windows), the app shows itself:
+        /// an app that starts with nothing but an icon, which may well be hidden, looks like it quit.
+        /// Forge says so when it opens the app in front (`-ForgeInFront YES`).
+        @MainActor private static func arrive() {
+            let inFront = NSApp.isActive || wasActive || UserDefaults.standard.bool(forKey: "ForgeInFront")
+            if inFront, !hasWindow { show() }
+        }
+
+        /// The app's icon in the menu bar (a MenuBarExtra or a status item of its own).
+        @MainActor static var statusItem: NSStatusItem? {
+            let items = iconWindows.map(\.item)
+            return items.first(where: \.isVisible) ?? items.first
+        }
+
+        /// The windows the menu bar draws the app's icons in: one for each display.
+        @MainActor private static var iconWindows: [(item: NSStatusItem, window: NSWindow)] {
+            let owner = Selector(("statusItem"))
+            return NSApp.windows.compactMap { window in
+                guard window.responds(to: owner), let item = window.perform(owner)?.takeUnretainedValue() as? NSStatusItem,
+                      item.button?.window != nil else { return nil }
+                return (item, window)
+            }
+        }
+
+        /// Whether the person can see the icon. macOS keeps an icon it has no room for, but shows it nowhere.
+        @MainActor private static var iconIsVisible: Bool {
+            guard let item = statusItem, item.isVisible else { return false }
+            // For trying the hidden case on a Mac whose menu bar has room.
+            if let pretend = ProcessInfo.processInfo.environment["FORGE_MENU_BAR_ICON"] { return pretend != "hidden" }
+            // Nothing is on show while the display sleeps or the screen is locked, which says nothing about the icon.
+            let session = CGSessionCopyCurrentDictionary() as? [String: Any]
+            if CGDisplayIsAsleep(CGMainDisplayID()) != 0 || session?["CGSSessionScreenIsLocked"] != nil { return true }
+            return iconWindows.contains { icon in
+                icon.item == item && icon.window.occlusionState.contains(.visible)
+                    && NSScreen.screens.contains { $0.frame.intersects(icon.window.frame) }
+            }
+        }
+
+        /// The panel SwiftUI shows for a MenuBarExtra with the window style.
+        @MainActor private static func isPanel(_ window: NSWindow) -> Bool {
+            String(describing: type(of: window)).contains("MenuBarExtra")
+        }
+
+        @MainActor private static func isSettings(_ window: NSWindow) -> Bool {
+            window.identifier?.rawValue.contains("Settings") == true
+        }
+
+        /// A window the person would look for in the Dock: Settings, a Window scene, the panel as a window.
+        @MainActor private static var hasWindow: Bool {
+            NSApp.windows.contains {
+                ($0.isVisible || $0.isMiniaturized) && $0.styleMask.contains(.titled) && !($0 is NSPanel) && !isPanel($0)
+            }
+        }
+
+        @MainActor private static func syncDockIcon() {
+            guard !keepsDockIcon, Date() > holdDockIcon else { return }
+            let wanted: NSApplication.ActivationPolicy = hasWindow ? .regular : .accessory
+            guard NSApp.activationPolicy() != wanted else { return }
+            NSApp.setActivationPolicy(wanted)
+            // A window that opened while the app had no Dock icon is behind the others.
+            if wanted == .regular {
+                NSApp.activate()
+                NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+            }
+        }
+
+        @MainActor private static func openPanel() {
+            guard let item = statusItem, !NSApp.windows.contains(where: { isPanel($0) && $0.isVisible }) else { return }
+            close()   // the panel was hidden behind the icon's back
+            // The panel closes as soon as the app isn't the active one.
+            NSApp.activate()
+            let present = Selector(("_requestExpandedInterfaceSession"))
+            if item.responds(to: present) { item.perform(present) } else { item.button?.performClick(nil) }
+        }
+
+        @MainActor private static func showWindow() {
+            if window == nil {
+                let made = NSWindow(contentViewController: NSHostingController(rootView: WindowContent(changes: changes)))
+                made.styleMask = [.titled, .closable, .miniaturizable]
+                made.title = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
+                made.isReleasedWhenClosed = false
+                made.center()
+                window = made
+                print("ForgeMenuBar: the app's menu bar icon is hidden, so its panel opened as a window instead")
+            }
+            holdDockIcon = .distantPast
+            window?.makeKeyAndOrderFront(nil)
+            syncDockIcon()
+            NSApp.activate()
+        }
+
+        private static func settingsItem(in menu: NSMenu?) -> NSMenuItem? {
+            for item in menu?.items ?? [] {
+                if item.keyEquivalent == ",", item.keyEquivalentModifierMask == .command { return item }
+                if let found = settingsItem(in: item.submenu) { return found }
+            }
+            return nil
         }
     }
 
