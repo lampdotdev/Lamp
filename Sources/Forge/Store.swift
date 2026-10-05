@@ -596,6 +596,15 @@ final class Store: ObservableObject {
         startQueued(project)
     }
 
+    /// The version label for a request without words: what was sent.
+    static func label(attachments names: [String]) -> String {
+        "Sent \(names.count == 1 ? names[0] : "\(names.count) files")"
+    }
+
+    static func label(for line: LogLine) -> String {
+        line.text.isEmpty ? label(attachments: line.attachments ?? []) : line.text
+    }
+
     /// The first message bootstraps the app: it names an untitled app, then designs the icon
     /// while the agent builds the first version. Returns the app as it is now.
     private func bootstrap(_ project: ForgeProject, brief: String) async -> ForgeProject {
@@ -636,7 +645,11 @@ final class Store: ObservableObject {
             let asked = (logs[project.id] ?? []).filter { $0.kind == .user }.suffix(messages.count).map(\.id)
             if first {
                 let untitled = project
-                project = await bootstrap(project, brief: messages.map(\.text).joined(separator: "\n\n"))
+                let words = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
+                let brief = words.isEmpty
+                    ? "An app made from the attached file\(saved.count == 1 ? "" : "s"): \(saved.joined(separator: ", "))"
+                    : words
+                project = await bootstrap(project, brief: brief)
                 if project.id != untitled.id { progress[project.id] = progress.removeValue(forKey: untitled.id) }
             }
             var worked = false
@@ -730,7 +743,17 @@ final class Store: ObservableObject {
     /// `asked` are the chat lines of the requests, which are linked to the version the turn makes.
     private func turn(_ messages: [QueuedMessage], attachments saved: [String], asked: [UUID],
                       on project: ForgeProject) async -> TurnResult {
-        let prompt = messages.map(\.text).joined(separator: "\n\n")
+        var prompt = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
+        // Attachments with no words: usually a screenshot or mockup meaning "like this", or a file to use.
+        if prompt.isEmpty {
+            prompt = """
+            The user sent only the attached file\(saved.count == 1 ? "" : "s"), with no message. Work out what \
+            they most likely want from it: a screenshot or mockup usually means "make the app look or work like \
+            this" (or, if it shows this app, "fix what's wrong here"); a document or data file usually means \
+            "use this in the app". If it's clear, do it. If it could mean several different things, ask one \
+            short question instead of guessing.
+            """
+        }
 
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
         let notes = Attachments.note(for: saved) + Versions.note(for: project) + Runtime.crashNote(for: project)
@@ -756,8 +779,10 @@ final class Store: ObservableObject {
         // Opening the app brings it in front of Forge, so whether the user was watching is decided first.
         let watched = isWatching(project.id)
         // Nothing is committed when the agent changed no files.
+        let label = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n").nilIfEmpty
+            ?? Self.label(attachments: saved)
         var committed = await Shell.run("git add -A && \(Self.commit) -qm \"$FORGE_PROMPT\"", cwd: project.dir,
-                                        env: ["FORGE_PROMPT": prompt]) { _ in } == 0
+                                        env: ["FORGE_PROMPT": label]) { _ in } == 0
         let edited = changed || committed
         var crash: String?
         if changed {
@@ -1318,7 +1343,7 @@ final class Store: ObservableObject {
         for version in versions where !linked.contains(version.id) {
             let message = plain(version.message)
             guard let match = chat[index...].firstIndex(where: {
-                $0.kind == .user && $0.version == nil && plain($0.text) == message
+                $0.kind == .user && $0.version == nil && plain(Self.label(for: $0)) == message
             }) else { continue }
             chat[match].version = version.id
             index = chat.index(after: match)

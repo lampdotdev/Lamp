@@ -262,12 +262,15 @@ struct LogRow: View, Equatable {
                         .opacity(hovered ? 1 : 0)
                         .help("Go back to how the app was around this request")
                     }
-                    Text(line.text)
-                        .textSelection(.enabled)
-                        .lineSpacing(2)
-                        .padding(.horizontal, 12).padding(.vertical, 8)
-                        .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
-                        .frame(maxWidth: 480, alignment: .trailing)
+                    // A message that's only attachments shows just them.
+                    if !line.text.isEmpty {
+                        Text(line.text)
+                            .textSelection(.enabled)
+                            .lineSpacing(2)
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
+                            .frame(maxWidth: 480, alignment: .trailing)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
