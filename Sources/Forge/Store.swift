@@ -626,8 +626,9 @@ final class Store: ObservableObject {
               busy.insert(project.id).inserted else { return }
         queued[project.id] = nil
         let first = !(logs[project.id] ?? []).contains { $0.kind == .user }
-        // An imported app's first message isn't a new app: it has already been built.
-        let newApp = first && Template.isScaffold(project)
+        // Still a new app until a request has made its first version: after the agent only asked questions,
+        // the answers start the build and get the build card. An imported app has already been built.
+        let newApp = Template.isScaffold(project) && !hasVersions(project)
         progress[project.id] = TurnProgress(newApp: newApp)
         Task {
             var project = project
@@ -641,8 +642,13 @@ final class Store: ObservableObject {
             var worked = false
             var result = TurnResult(end: .failed, watched: true)
             defer {
-                // A new app's card stays, showing the result; a later turn's activity line goes away.
-                if newApp { progress[project.id]?.finish(worked: worked) } else { progress[project.id] = nil }
+                // A new app's card stays, showing the result; a later turn's activity line goes away. So does a
+                // new app's card when the agent only asked questions: nothing was built, and the answers bring it back.
+                if newApp && result.end != .replied {
+                    progress[project.id]?.finish(worked: worked)
+                } else {
+                    progress[project.id] = nil
+                }
                 if selection != project.id || !NSApp.isActive { unread.insert(project.id) }
                 // Messages queued meanwhile start the next turn straight away; tell the user once it's all done.
                 if !result.watched, (queued[project.id] ?? []).isEmpty { notify(project, after: result.end) }
@@ -650,7 +656,7 @@ final class Store: ObservableObject {
             }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
             worked = result.end != .failed
-            if newApp && worked { await showResult(of: project) }
+            if newApp && result.end == .changed { await showResult(of: project) }
         }
     }
 
@@ -735,6 +741,11 @@ final class Store: ObservableObject {
         guard await runAgent(prompt + notes, files: files, on: project) else {
             return TurnResult(end: .failed, watched: isWatching(project.id))
         }
+        // A new app the agent didn't touch: it only replied (say, with questions about a vague request).
+        // There's nothing worth building or opening yet; the answers start the first build.
+        if !hasVersions(project), await !agentChangedFiles(project) {
+            return TurnResult(end: .replied, watched: isWatching(project.id))
+        }
         // Only build when something changed: not after a question, and not again when the agent's last
         // look already built and opened exactly this code.
         try? Template.writeSupport(for: project)
@@ -787,6 +798,23 @@ final class Store: ObservableObject {
             versionsRevision += 1
         }
         return TurnResult(end: crash != nil ? .failed : edited ? .changed : .replied, watched: watched)
+    }
+
+    /// Whether any request has made a version of this app yet (its messages are linked to the versions they made).
+    private func hasVersions(_ project: ForgeProject) -> Bool {
+        (logs[project.id] ?? []).contains { $0.kind == .user && $0.version != nil }
+    }
+
+    /// Whether the agent changed any of the app's files this turn. Forge's own writes don't count: it
+    /// regenerates ForgeSupport.swift, designs the icon (icon.json) while the agent works, and saves the
+    /// request's attachments before the agent starts.
+    private func agentChangedFiles(_ project: ForgeProject) async -> Bool {
+        var output = ""
+        let ignored = "':!Sources/ForgeSupport.swift' ':!icon.json' ':!\(Attachments.folder)'"
+        _ = await Shell.run("git status --porcelain -- . \(ignored)", cwd: project.dir) {
+            output += $0
+        }
+        return !output.trimmed.isEmpty
     }
 
     /// Builds the app, sending compiler errors back to the agent up to three times. False when it still doesn't build.

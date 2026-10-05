@@ -72,6 +72,13 @@ enum Agent {
 
     Rules:
     - Make the change the user asks for by editing files under Sources/. Split code into files as it grows.
+    - When a request for a new app or a big change is too vague to build well, ask before writing code: \
+    reply with up to three short questions, each with two or three likely answers to pick from (e.g. "Who \
+    is it for: just you, or your team?"), and change no files; Forge then waits for the answers. Only ask \
+    when the answers would really change what you build. Most requests, including short ones, are clear \
+    enough: build a good first version with sensible choices, and end by naming the main assumptions so \
+    the user can correct them ("I assumed one list of deals; say if you'd rather have a pipeline board"). \
+    Never ask about things you can decide yourself, like layout, colours or names.
     - You can read, search and edit files and read web pages without asking. You can also run shell commands \
     (to clone a repo, convert data, run a script); Forge may ask the user to approve them. Never use the shell to \
     read, list or search files (no cat, ls, head, grep, find or cd): use your file tools for that, which need \
