@@ -89,9 +89,12 @@ enum AppAI {
         ("claude-fable-5-1", "Smartest (Claude Fable, priciest)", "anthropic/claude-fable-5.1"),
     ]
 
+    /// Sonnet: Haiku is cheaper but noticeably worse, so it's only used when someone picks it.
+    static var defaultModel: (id: String, label: String, openRouter: String) { models.first { $0.id == "sonnet" }! }
+
     static var model: (id: String, label: String, openRouter: String) {
-        let id = UserDefaults.standard.string(forKey: "appModel") ?? "haiku"
-        return models.first { $0.id == id } ?? models[0]
+        let id = UserDefaults.standard.string(forKey: "appModel") ?? defaultModel.id
+        return models.first { $0.id == id } ?? defaultModel
     }
 
     /// The text model for one app: its own choice (info panel), or the default from Settings.

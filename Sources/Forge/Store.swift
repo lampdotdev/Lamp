@@ -1753,8 +1753,7 @@ final class Store: ObservableObject {
             return (503, ["error": "Using other apps is turned off. Turn on “Let apps use your other apps” in Forge → Settings → Apps, then try again."])
         }
         // The model the app chose in its info panel; Sonnet if it hasn't chosen one.
-        let model = AppAI.models.first { $0.id == (AppModels.load(project).text ?? "sonnet") }?.openRouter
-            ?? AppAI.models.first { $0.id == "sonnet" }!.openRouter
+        let model = AppAI.models.first { $0.id == AppModels.load(project).text }?.openRouter ?? AppAI.defaultModel.openRouter
         var allowAll = false
         do {
             let (text, cost) = try await ComputerUse.run(task: task, appName: project.name, allowActions: allowActions,

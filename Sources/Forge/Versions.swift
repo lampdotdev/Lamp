@@ -236,7 +236,7 @@ enum VersionTitles {
         \(diff)
         """
         guard let (text, _) = try? await AppAI.complete(prompt: request, images: [], system: "", json: true,
-                                                         model: AppAI.models[0].openRouter),
+                                                         model: AppAI.defaultModel.openRouter),
               let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
               let raw = object["title"] as? String else { return nil }
         let title = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
