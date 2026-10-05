@@ -47,14 +47,18 @@ enum Provider {
 
     /// Suggested building models when using OpenRouter (any model from the full list also works).
     static let models: [(id: String, label: String)] = [
-        ("anthropic/claude-opus-5.5", "Best quality (Claude Opus)"),
+        ("anthropic/claude-fable-5.1", "Smartest, priciest (Claude Fable)"),
+        ("anthropic/claude-opus-5.5", "Best at coding (Claude Opus)"),
         ("anthropic/claude-sonnet-5.5", "Faster & cheaper (Claude Sonnet)"),
     ]
+
+    /// The default building model through OpenRouter.
+    static let defaultModel = "anthropic/claude-opus-5.5"
 
     /// The OpenRouter model used to review shared apps and as the default builder.
     static var model: String {
         if Builder.engine == .pi, Builder.piProvider == "openrouter", !Builder.piModel.isEmpty { return Builder.piModel }
-        return models[0].id
+        return defaultModel
     }
 
     static func friendlyError(_ raw: String) -> String {

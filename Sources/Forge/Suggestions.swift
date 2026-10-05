@@ -46,7 +46,7 @@ enum NextStep {
         let conversation = conversationText(lines.filter { $0.kind == .user || $0.kind == .agent }.suffix(historyLimit))
         let request = "\(prompt)\nThe app is called \(project.name).\n\nHere is the conversation:\n\(conversation)"
         guard let (text, _) = try? await AppAI.complete(prompt: request, images: [], system: "", json: true,
-                                                         model: AppAI.models[0].openRouter),
+                                                         model: AppAI.defaultModel.openRouter),
               let data = text.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let raw = object["suggestion"] as? String,
@@ -102,7 +102,7 @@ enum AppName {
     static func suggest(for brief: String) async -> String? {
         let request = "\(prompt)\n\nThe user asked for:\n\(brief.prefix(4000))"
         guard let (text, _) = try? await AppAI.complete(prompt: request, images: [], system: "", json: true,
-                                                         model: AppAI.models[0].openRouter),
+                                                         model: AppAI.defaultModel.openRouter),
               let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
               let raw = object["name"] as? String else { return nil }
         let name = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")

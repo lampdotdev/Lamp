@@ -406,7 +406,7 @@ struct BuildingSettings: View {
 
 /// The AI, images and decisions that apps use while they run.
 struct AppsSettings: View {
-    @AppStorage("appModel") private var appModel = "haiku"
+    @AppStorage("appModel") private var appModel = AppAI.defaultModel.id
     @AppStorage("imageModel") private var imageModel = Icons.artModels[0].id
     @AppStorage("decisionModel") private var decisionModel = AppAI.decisionModel.id
     @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore

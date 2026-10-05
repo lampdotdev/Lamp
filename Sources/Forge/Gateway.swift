@@ -83,14 +83,18 @@ final class Gateway: @unchecked Sendable {
 /// Runs an in-app AI request with whatever Forge is connected to.
 enum AppAI {
     static let models: [(id: String, label: String, openRouter: String)] = [
-        ("haiku", "Fast & cheap (Claude Haiku)", "anthropic/claude-haiku-4.5"),
-        ("sonnet", "Smarter (Claude Sonnet)", "anthropic/claude-sonnet-5.5"),
-        ("opus", "Smartest (Claude Opus, pricier)", "anthropic/claude-opus-5.5"),
+        ("claude-fable-5-1", "Smartest, priciest (Claude Fable)", "anthropic/claude-fable-5.1"),
+        ("opus", "Best at coding (Claude Opus)", "anthropic/claude-opus-5.5"),
+        ("sonnet", "Faster & cheaper (Claude Sonnet)", "anthropic/claude-sonnet-5.5"),
+        ("haiku", "Fastest, cheapest (Claude Haiku)", "anthropic/claude-haiku-4.5"),
     ]
 
+    /// Sonnet: Haiku is cheaper but noticeably worse, so it's only used when someone picks it.
+    static var defaultModel: (id: String, label: String, openRouter: String) { models.first { $0.id == "sonnet" }! }
+
     static var model: (id: String, label: String, openRouter: String) {
-        let id = UserDefaults.standard.string(forKey: "appModel") ?? "haiku"
-        return models.first { $0.id == id } ?? models[0]
+        let id = UserDefaults.standard.string(forKey: "appModel") ?? defaultModel.id
+        return models.first { $0.id == id } ?? defaultModel
     }
 
     /// The text model for one app: its own choice (info panel), or the default from Settings.
