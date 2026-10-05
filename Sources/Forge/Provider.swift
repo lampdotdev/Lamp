@@ -63,6 +63,9 @@ enum Provider {
         if text.contains("401") || text.contains("authenticat") || text.contains("api key") || text.contains("unauthorized") {
             return "Your \(name) key or sign-in didn't work. Check it in Forge → Settings (⌘,)."
         }
+        if text.contains("reached your") && text.contains("limit") || text.contains("usage limit") {
+            return "Your plan's limit for this model is used up. Pick another model in Forge → Settings → Building, or try again later."
+        }
         if text.contains("402") || text.contains("credit") || text.contains("insufficient") || text.contains("quota") {
             return "Your \(name) account is out of credit or quota. Top it up, or pick another provider in Settings."
         }
