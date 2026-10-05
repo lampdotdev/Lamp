@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/appcast.xml", "destination": "/api/appcast" },
+    { "source": "/download/:tag", "destination": "/api/download?tag=:tag" }
+  ]
+}

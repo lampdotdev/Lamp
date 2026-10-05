@@ -13,6 +13,7 @@ struct ForgeApp: App {
                 .frame(minWidth: 760, minHeight: 480)
         }
         .commands {
+            CheckForUpdatesCommand()
             CommandGroup(replacing: .newItem) {
                 Button("New App") { store.create() }
                     .keyboardShortcut("n")

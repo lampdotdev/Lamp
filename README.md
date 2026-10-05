@@ -159,6 +159,8 @@ Local models are slower and much less capable than the best cloud models for who
 | `Sources/Forge/ComputerUse.swift` | Using other apps: installing CuaDriver, an MCP client, and the agent loop behind `ForgeComputer` |
 | `Sources/Forge/Sharing.swift` | `.forgeapp` export and import, and the import review (checklist + AI) |
 | `Resources/forge-tools.ts` | The agent's `look_at_app`, `use_app`, `plan` and `delete_file` tools (a pi extension) |
+| `Sources/Forge/Updater.swift` | Updates for release builds (Sparkle); the feed is served by `updates/` (see RELEASING.md) |
+| `updates/` | The Vercel app that serves the update feed and downloads from the private GitHub releases |
 | `Resources/Icon/` | How Forge's own icon was made: its `icon.json`, the chosen artwork and the Icon Composer document. It comes from the same pipeline as the apps' icons; the results are `Resources/AppIcon.icns`, `Resources/Assets.car` (Liquid Glass on macOS 26) and `Resources/AppIcon.png` |
 | `Resources/THIRD_PARTY_NOTICES.md` | Licences for the bundled pi agent and llama.cpp (both MIT) |
 
