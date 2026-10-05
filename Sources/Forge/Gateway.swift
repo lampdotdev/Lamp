@@ -102,7 +102,11 @@ enum AppAI {
         models.first { $0.id == choice } ?? model
     }
 
-    struct Failure: Error { let message: String }
+    struct Failure: Error {
+        let message: String
+        /// What was billed before the failure (both JSON attempts, say), so the app's usage still counts it.
+        var cost: Double = 0
+    }
 
     /// Whether apps' text AI can answer: an OpenRouter key, or whatever builds apps.
     static var canAnswer: Bool {
@@ -123,6 +127,31 @@ enum AppAI {
         let chosen = Self.model(for: appModel)
         var system = system
         if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
+        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen)
+        guard json else { return (text, cost) }
+        // A JSON reply that doesn't parse (cut off, or wrapped in prose) is useless to the app: ask once more,
+        // through the same provider, saying so, before giving up. Both attempts are billed, so the cost goes
+        // with the failure too.
+        var reply = stripFences(text)
+        if !isJSON(reply) {
+            let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
+            do {
+                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen)
+                cost += more
+                reply = stripFences(retry)
+            } catch let failure as Failure {
+                throw Failure(message: failure.message, cost: cost)
+            }
+            if !isJSON(reply) {
+                throw Failure(message: "The AI's reply wasn't valid JSON, even on a second try. Ask for less at once.", cost: cost)
+            }
+        }
+        return (reply, cost)
+    }
+
+    /// One request through whichever provider the app's AI is set up with.
+    private static func dispatch(prompt: String, images: [Image], system: String, json: Bool, model: String?,
+                                 chosen: (id: String, label: String, openRouter: String)) async throws -> (String, Double) {
         var (text, cost): (String, Double)
         if Provider.hasKey {
             (text, cost) = try await viaOpenRouter(prompt: prompt, images: images, system: system,
@@ -148,21 +177,7 @@ enum AppAI {
         } else {
             throw Failure(message: "Apps' AI features need an OpenRouter key, or a working builder. Set one up in Forge → Settings (⌘,).")
         }
-        guard json else { return (text, cost) }
-        // A JSON reply that doesn't parse (cut off, or wrapped in prose) is useless to the app: ask once more,
-        // saying so, before giving up. Apps decode the reply themselves, so it has to be whole.
-        var reply = stripFences(text)
-        if !isJSON(reply) {
-            let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
-            if Provider.hasKey {
-                let (retry, more) = try await viaOpenRouter(prompt: again, images: images, system: system,
-                                                            model: model ?? chosen.openRouter, json: true)
-                cost += more
-                reply = stripFences(retry)
-            }
-            if !isJSON(reply) { throw Failure(message: "The AI's reply wasn't valid JSON, even on a second try. Ask for less at once.") }
-        }
-        return (reply, cost)
+        return (text, cost)
     }
 
     private static func isJSON(_ text: String) -> Bool {
