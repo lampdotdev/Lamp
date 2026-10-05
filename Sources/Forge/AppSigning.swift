@@ -21,13 +21,22 @@ enum AppSigning {
     static func identity() async -> String {
         if let cached { return cached }
         guard let script = Bundle.main.resourceURL?.appendingPathComponent("signing-identity.sh"),
-              FileManager.default.isExecutableFile(atPath: script.path) else { return "-" }
+              FileManager.default.isExecutableFile(atPath: script.path) else {
+            print("AppSigning: signing-identity.sh is missing from the app; signing ad hoc")
+            return "-"
+        }
         var lines: [String] = []
-        let status = await Shell.run("\"$FORGE_SCRIPT\" 2>/dev/null", cwd: FileManager.default.temporaryDirectory,
+        let status = await Shell.run("\"$FORGE_SCRIPT\"", cwd: FileManager.default.temporaryDirectory,
                                      env: ["FORGE_SCRIPT": script.path]) { lines.append($0) }
         let name = status == 0 ? lines.last?.trimmed ?? "" : ""
+        if name.isEmpty {
+            // Ad hoc signing loses the app's permissions on every rebuild and stops macOS asking for
+            // Location Services at all, so say why it happened.
+            print("AppSigning: couldn't make the signing identity (exit \(status)); signing ad hoc:\n" + lines.joined(separator: "\n"))
+        }
         let identity = name.isEmpty ? "-" : name
-        cached = identity
+        // A failure isn't remembered: the next install tries again (the keychain may have been fixed since).
+        if identity != "-" { cached = identity }
         return identity
     }
 }
