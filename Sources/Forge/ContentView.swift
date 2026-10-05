@@ -648,7 +648,7 @@ struct ProjectView: View {
         let files = attachments
         draft = ""
         attachments = []
-        store.send(text.isEmpty ? "Use the attached files." : text, attachments: files, to: project)
+        store.send(text, attachments: files, to: project)
     }
 
     private func chooseFiles() {
