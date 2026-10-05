@@ -148,6 +148,7 @@ enum Template {
     import SwiftUI
     import AppKit
     import SQLite3
+    import JavaScriptCore
     import Carbon.HIToolbox
     import CryptoKit
     import CoreServices
@@ -1192,6 +1193,223 @@ enum Template {
         }
     }
 
+    /// Behaviour the AI writes while the app runs: small JavaScript functions against an API the app exposes.
+    /// Use it when the app needs logic nobody wrote in advance: what happens when two invented objects meet,
+    /// how a new kind of actor behaves, a rule the person just described. The AI gets the exposed functions'
+    /// names and docs and writes the function body; the app runs it in a sealed JavaScript context.
+    ///
+    ///     let world = ForgeScript()
+    ///     world.expose("spawn", "spawn(name, x, y): adds a new thing at a point. Returns its id.") { args in
+    ///         scene.spawn(args[0].toString(), at: args[1].toDouble(), args[2].toDouble())
+    ///     }
+    ///     world.expose("push", "push(id, dx, dy): pushes a thing.") { args in physics.push(args[0].toString(), args[1].toDouble(), args[2].toDouble()); return nil }
+    ///     world.exposeAsync("isTrue", "isTrue(question, about): asks the decision model; returns a boolean.") { args in
+    ///         try await ForgeAI.isTrue(args[0].toString(), about: args[1].toObject())
+    ///     }
+    ///     // Later, when a magnet first meets a key:
+    ///     let rule = try await world.write("the rule for when a \(a.name) touches a \(b.name)",
+    ///                                      parameters: ["a", "b"], for: "magnet|key")
+    ///     try await world.run(rule, with: [a.dictionary, b.dictionary])
+    ///
+    /// Scripts run in a context that only has what the app exposed plus plain JavaScript (no files, network or
+    /// Mac access), with a time limit. `write` caches scripts by key in ForgeStore, so a behaviour is written
+    /// once and reused; `forget(key)` throws one away. Keep the exposed API small and well described: that's
+    /// what makes the AI's scripts correct. Keep movement, rendering and physics in Swift; scripts decide what
+    /// should happen, not how to draw it. Report script errors to the person only when it matters to them.
+    @MainActor
+    final class ForgeScript {
+        struct Failure: LocalizedError {
+            let message: String
+            var errorDescription: String? { message }
+        }
+
+        /// A script the AI wrote: the source of a JavaScript function `(params...) => { ... }`.
+        struct Script: Codable, Identifiable, Equatable {
+            var id: String          // the cache key
+            var parameters: [String]
+            var source: String
+            var request: String
+        }
+
+        private let context: JSContext
+        private var api: [(name: String, doc: String)] = []
+        private var pending: [String: Task<Script, Error>] = [:]
+        private let scripts = ForgeStore.collection("forge_scripts", of: Script.self)
+        /// A sentence about the app, so the AI knows what the scripts are for: "Draw is a kids' cartoon puzzle
+        /// game where written words become doodles that interact." Set it once; it goes into every request.
+        var purpose = ""
+        /// How many loop iterations and function calls a script may make per run before it's stopped, so a
+        /// runaway loop can't freeze the app. Async waits (isTrue, ask) don't count.
+        var stepLimit = 100_000
+
+        init() {
+            context = JSContext(virtualMachine: JSVirtualMachine())!
+            context.exceptionHandler = { _, exception in
+                print("ForgeScript: \(exception?.toString() ?? "error")")
+            }
+            // Helpers scripts can rely on.
+            context.evaluateScript("""
+            const console = { log: (...args) => __log(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')) };
+            let __steps = 0;
+            function __step() { if (++__steps > __stepLimit) throw new Error('The script ran too long and was stopped.'); }
+            """)
+            let log: @convention(block) (String) -> Void = { print("script: \($0)") }
+            context.setObject(log, forKeyedSubscript: "__log" as NSString)
+        }
+
+        // MARK: Exposing the app
+
+        /// A function scripts can call. `doc` is one line in the form "name(args): what it does", which is what
+        /// the AI sees. The handler gets the arguments as JSValues and returns a value (or nil) back to the script.
+        func expose(_ name: String, _ doc: String, _ handler: @escaping ([JSValue]) -> Any?) {
+            api.append((name, doc))
+            let block: @convention(block) () -> Any? = {
+                let args = JSContext.currentArguments() as? [JSValue] ?? []
+                return handler(args)
+            }
+            context.setObject(block, forKeyedSubscript: name as NSString)
+        }
+
+        /// A function that awaits something (the decision model, a text model). Scripts call it with `await`.
+        func exposeAsync(_ name: String, _ doc: String, _ handler: @escaping ([JSValue]) async throws -> Any?) {
+            api.append((name, doc))
+            let block: @convention(block) () -> JSValue = { [context] in
+                let args = JSContext.currentArguments() as? [JSValue] ?? []
+                // A promise the script awaits; resolved on the main actor when the Swift work finishes.
+                let promise = JSValue(newPromiseIn: context) { resolve, reject in
+                    Task { @MainActor in
+                        do {
+                            let result = try await handler(args)
+                            resolve?.call(withArguments: [result ?? NSNull()])
+                        } catch {
+                            reject?.call(withArguments: [error.localizedDescription])
+                        }
+                    }
+                }
+                return promise ?? JSValue(undefinedIn: context)
+            }
+            context.setObject(block, forKeyedSubscript: name as NSString)
+        }
+
+        /// What the AI is told it can call.
+        var apiDescription: String { api.map { "- " + $0.doc }.joined(separator: "\n") }
+
+        // MARK: Writing scripts
+
+        /// Asks the AI for a function that does `what`, taking `parameters`, using only the exposed API.
+        /// Cached under `key`; the same key gives the same script until `forget(key)`.
+        func write(_ what: String, parameters: [String], for key: String, context extra: String = "") async throws -> Script {
+            if let saved = scripts.get(key) { return saved }
+            if let running = pending[key] { return try await running.value }
+            let task = Task<Script, Error> { @MainActor in
+                let system = """
+                You help a Mac app add behaviour while it runs by writing a small JavaScript function. \
+                \(purpose.isEmpty ? "" : purpose + " ")The app offers these functions:
+                \(apiDescription)
+
+                Use only those and plain JavaScript (Math, JSON, arrays, strings): there is no browser, Node, \
+                timers or imports. Functions described as async must be awaited. Keep it to a few lines that make \
+                the described thing happen. Reply with just the function body: no function keyword, no name, no \
+                fences, no explanation.
+                """
+                let prompt = """
+                Write the body of an async function with parameters (\(parameters.joined(separator: ", "))) that does: \
+                \(what)
+                \(extra.isEmpty ? "" : "\nContext:\n" + extra)
+                """
+                // Sonnet: it writes these reliably, where Opus's safety classifier often refuses code requests.
+                var body = try await ForgeAI.ask(prompt, system: system, model: "sonnet")
+                body = Self.stripFences(body)
+                let script = Script(id: key, parameters: parameters, source: body, request: what)
+                try compile(script)   // fails now, not when it first runs
+                scripts.put(script)
+                return script
+            }
+            pending[key] = task
+            defer { pending[key] = nil }
+            return try await task.value
+        }
+
+        func forget(_ key: String) { scripts.delete(key) }
+        func forgetAll() { scripts.deleteAll() }
+
+        // MARK: Running scripts
+
+        /// Runs the script with the given arguments (JSON-friendly values: numbers, strings, arrays, dictionaries)
+        /// and returns what it returned, as a Swift value. Throws if the script fails or runs past `timeLimit`.
+        @discardableResult
+        func run(_ script: Script, with arguments: [Any] = []) async throws -> Any? {
+            let function = try compile(script)
+            context.exception = nil
+            context.setObject(stepLimit, forKeyedSubscript: "__stepLimit" as NSString)
+            context.evaluateScript("__steps = 0;")
+            guard let result = function.call(withArguments: arguments.map { $0 }) else {
+                throw Failure(message: "The script didn't run.")
+            }
+            if let exception = context.exception { throw Failure(message: "Script error: \(exception.toString() ?? "unknown")") }
+            // An async function returns a promise: wait for it.
+            if result.isObject, result.hasProperty("then") {
+                return try await withCheckedThrowingContinuation { continuation in
+                    let onDone: @convention(block) (JSValue) -> Void = { continuation.resume(returning: Self.swift($0)) }
+                    let onFail: @convention(block) (JSValue) -> Void = {
+                        continuation.resume(throwing: Failure(message: "Script error: \($0.toString() ?? "unknown")"))
+                    }
+                    result.invokeMethod("then", withArguments: [
+                        JSValue(object: onDone, in: context)!, JSValue(object: onFail, in: context)!,
+                    ])
+                }
+            }
+            return Self.swift(result)
+        }
+
+        private var compiled: [String: JSValue] = [:]
+
+        @discardableResult
+        private func compile(_ script: Script) throws -> JSValue {
+            let cacheKey = script.id + "\u{1}" + script.source
+            if let function = compiled[cacheKey] { return function }
+            context.exception = nil
+            // Every loop body and every function body charges a step, so a runaway loop stops at stepLimit.
+            let body = Self.instrument(script.source)
+            let source = "(async function(\(script.parameters.joined(separator: ", "))) { __step();\n\(body)\n})"
+            guard let function = context.evaluateScript(source), function.isObject, context.exception == nil else {
+                throw Failure(message: "The script has a syntax error: \(context.exception?.toString() ?? "unknown")")
+            }
+            compiled[cacheKey] = function
+            return function
+        }
+
+        /// Inserts a step charge at the start of loop bodies and function bodies. A regex pass, not a parser: it
+        /// covers the loops models actually write (`for (…) {`, `while (…) {`, `do {`, `=> {`, `function … {`).
+        static func instrument(_ source: String) -> String {
+            source.replacingOccurrences(
+                of: #"(\b(?:for|while)\s*\([^{}]*\)\s*\{|\bdo\s*\{|=>\s*\{|\bfunction\b[^{]*\{)"#,
+                with: "$1 __step();", options: .regularExpression)
+        }
+
+        private static func stripFences(_ text: String) -> String {
+            var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if t.hasPrefix("```") {
+                t = String(t.drop(while: { $0 != "\n" }).dropFirst())
+                if let end = t.range(of: "```", options: .backwards) { t = String(t[..<end.lowerBound]) }
+            }
+            // A whole function instead of a body: unwrap it.
+            if let open = t.range(of: "{"), t.hasPrefix("async function") || t.hasPrefix("function") || t.contains("=>") && t.firstIndex(of: "{").map({ t.distance(from: t.startIndex, to: $0) < 80 }) == true {
+                if let close = t.range(of: "}", options: .backwards) { t = String(t[open.upperBound..<close.lowerBound]) }
+            }
+            return t.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        /// JSValue → plain Swift (String, Double, Bool, [Any], [String: Any] or nil).
+        static func swift(_ value: JSValue) -> Any? {
+            if value.isUndefined || value.isNull { return nil }
+            if value.isBoolean { return value.toBool() }
+            if value.isNumber { return value.toDouble() }
+            if value.isString { return value.toString() }
+            return value.toObject()
+        }
+    }
+
     /// Does a task with the other apps on this Mac, the way the person would, using what they're already
     /// signed in to: Slack, Mail, Messages, Notes, Chrome or Safari (Gmail, LinkedIn, a CRM…), and so on.
     /// Forge drives those apps in the background and returns the answer as text. Use it when the information
@@ -1295,9 +1513,10 @@ enum Template {
         }
 
         /// `data` is text from outside the app (an email, a web page, a file) for the AI to work on, not obey.
+        /// `model` overrides the app's text model for one call, by Forge's id ("sonnet", "opus", "haiku", "claude-fable-5-1").
         static func ask(_ prompt: String, data: String? = nil, images: [NSImage] = [],
-                        system: String? = nil) async throws -> String {
-            try await call(prompt: prompt, data: data, images: images, system: system, json: false)
+                        system: String? = nil, model: String? = nil) async throws -> String {
+            try await call(prompt: prompt, data: data, images: images, system: system, json: false, model: model)
         }
 
         /// Asks for JSON and decodes it. Describe the exact JSON shape in the prompt. `Date` properties
@@ -1626,7 +1845,7 @@ enum Template {
         }
 
         private static func call(prompt: String, data: String?, images: [NSImage], system: String?,
-                                 json: Bool) async throws -> String {
+                                 json: Bool, model: String? = nil) async throws -> String {
             var prompt = prompt
             var rules = [system ?? "", present]
             if let data, !data.isEmpty {
@@ -1634,10 +1853,12 @@ enum Template {
                 prompt = fence.prompt
                 rules.append(fence.rules)
             }
-            let reply = try await post("/ai", [
+            var body: [String: Any] = [
                 "prompt": prompt, "system": rules.filter { !$0.isEmpty }.joined(separator: "\n\n"), "json": json,
                 "images": images.compactMap(encode),
-            ])
+            ]
+            if let model { body["model"] = model }
+            let reply = try await post("/ai", body)
             guard let text = reply["text"] as? String else { throw Failure(message: "The AI request failed.") }
             return text
         }

@@ -1731,7 +1731,7 @@ final class Store: ObservableObject {
             let (text, cost) = try await AppAI.complete(prompt: prompt, images: images,
                                                          system: body["system"] as? String ?? "",
                                                          json: body["json"] as? Bool ?? false,
-                                                         appModel: AppModels.load(project).text)
+                                                         appModel: body["model"] as? String ?? AppModels.load(project).text)
             record(project, cost: cost)
             return (200, ["text": text])
         } catch let failure as AppAI.Failure {

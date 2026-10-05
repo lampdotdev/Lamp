@@ -397,17 +397,28 @@ enum AppAI {
             "model": model, "messages": messages, "usage": ["include": true],
         ] as [String: Any])
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
-        guard (response as? HTTPURLResponse)?.statusCode == 200,
-              let choices = obj["choices"] as? [[String: Any]],
-              let text = (choices.first?["message"] as? [String: Any])?["content"] as? String else {
+        // Anthropic's safety classifier sometimes refuses an ordinary request (finish_reason "content_filter",
+        // empty reply, HTTP 200): about 1 in 20 identical benign requests in others' measurements, and more
+        // under bursts. It's random, so asking again gets the answer.
+        var cost = 0.0
+        for attempt in 0..<3 {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-            throw Failure(message: Provider.friendlyError("\(status) \(message)"))
+            let choice = (obj["choices"] as? [[String: Any]])?.first
+            cost += (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0
+            guard status == 200, let choice else {
+                let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
+                throw Failure(message: Provider.friendlyError("\(status) \(message)"))
+            }
+            let text = (choice["message"] as? [String: Any])?["content"] as? String ?? ""
+            if choice["finish_reason"] as? String == "content_filter" {
+                if attempt < 2 { try await Task.sleep(for: .milliseconds(400 << attempt)); continue }
+                throw Failure(message: "The AI provider's content filter cut the reply off. Try rewording the request.")
+            }
+            return (text, cost)
         }
-        let cost = (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0
-        return (text, cost)
+        throw Failure(message: "The AI didn't answer.")
     }
 
     private static func stripFences(_ text: String) -> String {

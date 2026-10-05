@@ -176,6 +176,7 @@ extension Sharing {
         ("Contains encoded data (can hide what it does)", ["Data(base64Encoded"]),
         ("Uses AI (your OpenRouter credit)", ["ForgeAI."]),
         ("Reads or uses your other apps (Slack, Mail, your browser…)", ["ForgeComputer."]),
+        ("Runs code the AI writes while the app runs (in a sealed context)", ["ForgeScript"]),
     ]
 
     static func review(_ package: Package) async -> ImportReview {
