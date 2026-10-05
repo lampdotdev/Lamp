@@ -134,6 +134,12 @@ if [[ "$SIGN_ID" == "Developer ID Application:"* ]]; then
   PI_ENTITLEMENTS=(--entitlements Resources/pi.entitlements)
   APP_ENTITLEMENTS=(--entitlements Resources/Forge.entitlements)
   QUIET=/dev/stdout
+elif [[ "$SIGN_ID" != "-" ]]; then
+  # Local: Forge's own keychain, which signing-identity.sh unlocks, so codesign never asks.
+  SIGN=(codesign --force --keychain "$HOME/Library/Application Support/Forge/Signing/forge-signing.keychain-db" -s "$SIGN_ID")
+  PI_ENTITLEMENTS=()
+  APP_ENTITLEMENTS=()
+  QUIET=/dev/null
 else
   SIGN=(codesign --force -s "$SIGN_ID")
   PI_ENTITLEMENTS=()
