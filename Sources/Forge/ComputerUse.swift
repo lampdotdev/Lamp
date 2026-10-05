@@ -205,13 +205,13 @@ enum ComputerUse {
                           !(await approve(Action(tool: name, summary: intent ?? name.replacingOccurrences(of: "_", with: " ")))) {
                     reply = "The person declined this action. Don't try it another way; finish with what you have, or say what you needed."
                 } else {
-                    if name == "get_window_state", arguments["max_image_dimension"] == nil { arguments["max_image_dimension"] = 1280 }
+                    if name == "get_window_state", arguments["max_image_dimension"] == nil { arguments["max_image_dimension"] = 1024 }
                     do {
                         let result = try await client.call(name, arguments: arguments)
                         reply = result.text.isEmpty ? "Done." : String(result.text.prefix(60_000))
                         if name == "list_windows", let windows = visibleWindows(result.structured) { reply = windows }
                         pictures += result.images.map {
-                            ["type": "image_url", "image_url": ["url": "data:\($0.mimeType);base64,\($0.data)"]]
+                            ["type": "image_url", "image_url": ["url": compact($0.data, mimeType: $0.mimeType)]]
                         }
                     } catch {
                         reply = "Error: \(error.localizedDescription)"
@@ -232,6 +232,16 @@ enum ComputerUse {
             }
         }
         throw Failure(message: "The task took too many steps, so Forge stopped it.")
+    }
+
+    /// The driver's pictures are PNGs, around a megabyte each: as JPEGs they're a tenth of that, which keeps each
+    /// request small enough to upload reliably.
+    private static func compact(_ base64: String, mimeType: String) -> String {
+        guard let data = Data(base64Encoded: base64), let bitmap = NSBitmapImageRep(data: data),
+              let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.7]) else {
+            return "data:\(mimeType);base64,\(base64)"
+        }
+        return "data:image/jpeg;base64,\(jpeg.base64EncodedString())"
     }
 
     /// list_windows lists every window on the Mac, hundreds of them, most off screen or untitled. The model only
@@ -257,7 +267,17 @@ enum ComputerUse {
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": model, "messages": messages, "tools": tools, "usage": ["include": true],
         ] as [String: Any])
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // A dropped connection mid-upload is worth one more try.
+        var reply: (Data, URLResponse)?
+        for attempt in 0..<2 {
+            do {
+                reply = try await URLSession.shared.data(for: request)
+                break
+            } catch let error as URLError where attempt == 0 && error.code != .cancelled {
+                try await Task.sleep(for: .seconds(1))
+            }
+        }
+        guard let (data, response) = reply else { throw Failure(message: "Couldn't reach the AI.") }
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200, let message = ((obj["choices"] as? [[String: Any]])?.first?["message"]) as? [String: Any] else {
