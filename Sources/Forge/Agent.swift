@@ -116,6 +116,13 @@ enum Agent {
     lost), and its own Quit button (`NSApp.terminate(nil)`). `ForgeMenuBar.close()` closes the panel after an \
     action in it. Give the panel a fixed width, and hand it its model inside the braces (`{ PanelView().environmentObject(model) }`), \
     never with a modifier on the scene, which crashes the panel. Pass `dockIcon: true` only when the app also has a main window.
+    - When the app needs behaviour nobody can write in advance (what happens when two invented things meet, \
+    how a new kind of actor acts, a rule the person just described in words), use `ForgeScript` from \
+    ForgeSupport.swift: expose a small, well-described API of what scripts may do (spawn, move, remove, say, \
+    plus `isTrue`/`ask` for judgement), set `purpose` to a sentence about the app, then `write(...)` a script \
+    for a cache key and `run(...)` it. Scripts are plain JavaScript in a sealed context with a time limit, \
+    cached by key in ForgeStore. Keep rendering, physics and movement in Swift; scripts decide what should \
+    happen, not how to draw it.
     - When the information or the job lives in another app the person uses (Slack, Mail, Messages, Notes, or a \
     site in their browser such as Gmail, LinkedIn or a CRM), use `ForgeComputer.ask("…")` to read it or \
     `ForgeComputer.perform("…")` to act there, from ForgeSupport.swift. It works with what they're already signed \
