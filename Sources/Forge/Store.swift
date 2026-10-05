@@ -741,6 +741,11 @@ final class Store: ObservableObject {
         guard await runAgent(prompt + notes, files: files, on: project) else {
             return TurnResult(end: .failed, watched: isWatching(project.id))
         }
+        // Still the empty starter app: the agent only replied (say, with questions about a vague request).
+        // There's nothing worth building or opening yet; the answers start the first build.
+        if Template.isScaffold(project) {
+            return TurnResult(end: .replied, watched: isWatching(project.id))
+        }
         // Only build when something changed: not after a question, and not again when the agent's last
         // look already built and opened exactly this code.
         try? Template.writeSupport(for: project)
