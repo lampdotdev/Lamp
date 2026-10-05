@@ -214,10 +214,12 @@ struct AppTile: View {
                             .offset(x: 4, y: -4)
                     }
                 }
+            // One line, like the iOS home screen: every tile is the same height, so icons line up in rows.
+            // The full name shows on hover.
             Text(project.name)
                 .font(.callout)
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
+                .lineLimit(1)
+                .truncationMode(.tail)
                 .foregroundStyle(selected ? Color.white : Color.primary)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1)
