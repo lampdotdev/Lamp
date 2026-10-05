@@ -120,7 +120,7 @@ enum Agent {
     how a new kind of actor acts, a rule the person just described in words), use `ForgeScript` from \
     ForgeSupport.swift: expose a small, well-described API of what scripts may do (spawn, move, remove, say, \
     plus `isTrue`/`ask` for judgement), set `purpose` to a sentence about the app, then `write(...)` a script \
-    for a cache key and `run(...)` it. Scripts are plain JavaScript in a sealed context with a step limit, \
+    for a cache key and `run(...)` it. Scripts are plain JavaScript in a sealed context with a time limit, \
     cached by key in ForgeStore. Keep rendering, physics and movement in Swift; scripts decide what should \
     happen, not how to draw it.
     - When the information or the job lives in another app the person uses (Slack, Mail, Messages, Notes, or a \

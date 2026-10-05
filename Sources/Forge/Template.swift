@@ -1193,6 +1193,13 @@ enum Template {
         }
     }
 
+    /// JavaScriptCore's execution limit. It's in the framework but not its public headers; it has been stable
+    /// since 2013 and is what Mac apps that host scripts use to stop runaway code.
+    private typealias JSShouldTerminateCallback = @convention(c) (JSContextRef?, UnsafeMutableRawPointer?) -> Bool
+    @_silgen_name("JSContextGroupSetExecutionTimeLimit")
+    private func JSContextGroupSetExecutionTimeLimit(_ group: JSContextGroupRef?, _ limit: Double,
+                                                     _ callback: JSShouldTerminateCallback?, _ context: UnsafeMutableRawPointer?)
+
     /// Behaviour the AI writes while the app runs: small JavaScript functions against an API the app exposes.
     /// Use it when the app needs logic nobody wrote in advance: what happens when two invented objects meet,
     /// how a new kind of actor behaves, a rule the person just described. The AI gets the exposed functions'
@@ -1238,23 +1245,24 @@ enum Template {
         /// A sentence about the app, so the AI knows what the scripts are for: "Draw is a kids' cartoon puzzle
         /// game where written words become doodles that interact." Set it once; it goes into every request.
         var purpose = ""
-        /// How many loop iterations and function calls a script may make per run before it's stopped, so a
-        /// runaway loop can't freeze the app. Async waits (isTrue, ask) don't count.
-        var stepLimit = 100_000
+        /// How long a script's JavaScript may run, per run, before the engine stops it (so a runaway loop
+        /// can't freeze the app). Time spent awaiting an exposed async function (isTrue, ask) doesn't count:
+        /// the engine is idle then.
+        var timeLimit: TimeInterval = 2
 
         init() {
             context = JSContext(virtualMachine: JSVirtualMachine())!
-            context.exceptionHandler = { _, exception in
-                print("ForgeScript: \(exception?.toString() ?? "error")")
+            // Keep the exception on the context so run() can report it (the default handler would drop it).
+            context.exceptionHandler = { context, exception in
+                context?.exception = exception
             }
             // Helpers scripts can rely on.
             context.evaluateScript("""
             const console = { log: (...args) => __log(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')) };
-            let __steps = 0;
-            function __step() { if (++__steps > __stepLimit) throw new Error('The script ran too long and was stopped.'); }
             """)
             let log: @convention(block) (String) -> Void = { print("script: \($0)") }
             context.setObject(log, forKeyedSubscript: "__log" as NSString)
+            applyTimeLimit()
         }
 
         // MARK: Exposing the app
@@ -1341,18 +1349,22 @@ enum Template {
         func run(_ script: Script, with arguments: [Any] = []) async throws -> Any? {
             let function = try compile(script)
             context.exception = nil
-            context.setObject(stepLimit, forKeyedSubscript: "__stepLimit" as NSString)
-            context.evaluateScript("__steps = 0;")
-            guard let result = function.call(withArguments: arguments.map { $0 }) else {
-                throw Failure(message: "The script didn't run.")
+            applyTimeLimit()
+            let result = function.call(withArguments: arguments.map { $0 })
+            if let exception = context.exception {
+                let text = exception.toString() ?? "unknown"
+                throw Failure(message: text.contains("execution terminated")
+                              ? "The script ran for more than \(timeLimit) seconds and was stopped." : "Script error: \(text)")
             }
-            if let exception = context.exception { throw Failure(message: "Script error: \(exception.toString() ?? "unknown")") }
+            guard let result else { throw Failure(message: "The script didn't run.") }
             // An async function returns a promise: wait for it.
             if result.isObject, result.hasProperty("then") {
                 return try await withCheckedThrowingContinuation { continuation in
                     let onDone: @convention(block) (JSValue) -> Void = { continuation.resume(returning: Self.swift($0)) }
-                    let onFail: @convention(block) (JSValue) -> Void = {
-                        continuation.resume(throwing: Failure(message: "Script error: \($0.toString() ?? "unknown")"))
+                    let onFail: @convention(block) (JSValue) -> Void = { [timeLimit] in
+                        let text = $0.toString() ?? "unknown"
+                        continuation.resume(throwing: Failure(message: text.contains("execution terminated")
+                            ? "The script ran for more than \(timeLimit) seconds and was stopped." : "Script error: \(text)"))
                     }
                     result.invokeMethod("then", withArguments: [
                         JSValue(object: onDone, in: context)!, JSValue(object: onFail, in: context)!,
@@ -1369,9 +1381,7 @@ enum Template {
             let cacheKey = script.id + "\u{1}" + script.source
             if let function = compiled[cacheKey] { return function }
             context.exception = nil
-            // Every loop body and every function body charges a step, so a runaway loop stops at stepLimit.
-            let body = Self.instrument(script.source)
-            let source = "(async function(\(script.parameters.joined(separator: ", "))) { __step();\n\(body)\n})"
+            let source = "(async function(\(script.parameters.joined(separator: ", "))) {\n\(script.source)\n})"
             guard let function = context.evaluateScript(source), function.isObject, context.exception == nil else {
                 throw Failure(message: "The script has a syntax error: \(context.exception?.toString() ?? "unknown")")
             }
@@ -1379,12 +1389,13 @@ enum Template {
             return function
         }
 
-        /// Inserts a step charge at the start of loop bodies and function bodies. A regex pass, not a parser: it
-        /// covers the loops models actually write (`for (…) {`, `while (…) {`, `do {`, `=> {`, `function … {`).
-        static func instrument(_ source: String) -> String {
-            source.replacingOccurrences(
-                of: #"(\b(?:for|while)\s*\([^{}]*\)\s*\{|\bdo\s*\{|=>\s*\{|\bfunction\b[^{]*\{)"#,
-                with: "$1 __step();", options: .regularExpression)
+        /// The engine's own execution limit: it interrupts the script wherever it is, whatever loop or call form
+        /// it used, so no source rewriting is needed and strings and comments are never touched. The limit
+        /// applies to the whole context (every run shares it), and each JavaScript section of a run restarts
+        /// the clock, since the engine only counts time while it's executing.
+        private func applyTimeLimit() {
+            let group = JSContextGetGroup(context.jsGlobalContextRef)
+            JSContextGroupSetExecutionTimeLimit(group, timeLimit, { _, _ in true }, nil)
         }
 
         private static func stripFences(_ text: String) -> String {
@@ -1393,9 +1404,12 @@ enum Template {
                 t = String(t.drop(while: { $0 != "\n" }).dropFirst())
                 if let end = t.range(of: "```", options: .backwards) { t = String(t[..<end.lowerBound]) }
             }
-            // A whole function instead of a body: unwrap it.
-            if let open = t.range(of: "{"), t.hasPrefix("async function") || t.hasPrefix("function") || t.contains("=>") && t.firstIndex(of: "{").map({ t.distance(from: t.startIndex, to: $0) < 80 }) == true {
-                if let close = t.range(of: "}", options: .backwards) { t = String(t[open.upperBound..<close.lowerBound]) }
+            // The whole reply is one function (`async function (a, b) { … }`, `function f(a) { … }`,
+            // `(a, b) => { … }`, `async (a) => { … }`) rather than a body: take the body out of it. A body that
+            // merely contains an arrow callback is left alone, since the wrapper must enclose the entire reply.
+            let wrapper = #"^(?:async\s+)?(?:function\b[^{]*|\([^()]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)\s*\{"#
+            if let open = t.range(of: wrapper, options: .regularExpression), t.hasSuffix("}") {
+                t = String(t[open.upperBound..<t.index(before: t.endIndex)])
             }
             return t.trimmingCharacters(in: .whitespacesAndNewlines)
         }
