@@ -98,8 +98,17 @@ enum ComputerUse {
         await progress("Installing…")
         _ = await run("/usr/bin/pkill", ["-f", "CuaDriver.app/Contents/MacOS/cua-driver"])
         try? FileManager.default.removeItem(at: app)
-        guard await run("/usr/bin/ditto", [unpacked.path, app.path]) == 0 else {
-            throw Failure(message: "Couldn't add CuaDriver to your Applications folder.")
+        if await run("/usr/bin/ditto", [unpacked.path, app.path]) != 0 {
+            // /Applications is writable by administrators only. A standard account (common on work Macs) gets
+            // macOS's own password prompt instead, for someone who can approve it.
+            let script = """
+            do shell script "/bin/rm -rf " & quoted form of "\(app.path)" & " && /usr/bin/ditto " & \
+            quoted form of "\(unpacked.path)" & " " & quoted form of "\(app.path)" with administrator privileges \
+            with prompt "Forge needs to add CuaDriver to the Applications folder so your apps can use your other apps."
+            """
+            guard await run("/usr/bin/osascript", ["-e", script]) == 0, isInstalled else {
+                throw Failure(message: "Couldn't add CuaDriver to the Applications folder. It needs an administrator's password; on a work Mac, ask your IT team.")
+            }
         }
         _ = await run("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
                       ["-f", app.path])
@@ -133,7 +142,70 @@ enum ComputerUse {
     /// What a step wants to do, for the person to approve.
     struct Action {
         let tool: String
-        let summary: String   // the model's own description of the step
+        /// The app it acts in, worked out from the process, not taken from the model.
+        let target: String
+        /// What will actually happen, built from the tool's arguments: the exact text typed, the keys pressed,
+        /// the element clicked (named from the last window read), the menu chosen.
+        let details: String
+        /// The model's own description. Shown second: it can be wrong, or steered by what's on screen.
+        let intent: String?
+    }
+
+    /// Describes an action from its real arguments. `labels` maps element tokens to what the person sees.
+    static func describe(_ tool: String, _ arguments: [String: Any], labels: [String: String]) -> Action {
+        let pid = (arguments["pid"] as? Int) ?? (arguments["pid"] as? NSNumber)?.intValue
+        let app = pid.flatMap { NSRunningApplication(processIdentifier: pid_t($0))?.localizedName }
+        let bundle = arguments["bundle_id"] as? String
+        let target = app ?? (arguments["name"] as? String) ?? bundle ?? "an app"
+        let element: String? = (arguments["element_token"] as? String).map { labels[$0] ?? "an unnamed item" }
+        let spot = element ?? "a spot in the window"
+        func quoted(_ text: String) -> String {
+            text.count > 600 ? "“\(text.prefix(600))…” (\(text.count - 600) more characters)" : "“\(text)”"
+        }
+        func keys(_ list: [String]) -> String {
+            let symbols = ["cmd": "⌘", "command": "⌘", "shift": "⇧", "option": "⌥", "alt": "⌥", "ctrl": "⌃",
+                           "control": "⌃", "return": "⏎", "enter": "⏎", "tab": "⇥", "escape": "⎋", "esc": "⎋",
+                           "delete": "⌫", "space": "Space", "up": "↑", "down": "↓", "left": "←", "right": "→"]
+            return list.map { symbols[$0.lowercased()] ?? $0.uppercased() }.joined()
+        }
+        let details: String
+        switch tool {
+        case "click":
+            let count = arguments["count"] as? Int ?? 1
+            let verb = arguments["button"] as? String == "right" ? "Right-click" : count > 1 ? "Double-click" : "Click"
+            details = "\(verb) \(spot)"
+        case "double_click": details = "Double-click \(spot)"
+        case "right_click": details = "Right-click \(spot)"
+        case "type_text":
+            details = "Type \(quoted(arguments["text"] as? String ?? ""))" + (element.map { " into \($0)" } ?? "")
+        case "set_value":
+            details = "Set \(element ?? "a field") to \(quoted("\(arguments["value"] ?? "")"))"
+        case "press_key":
+            let modifiers = arguments["modifiers"] as? [String] ?? []
+            details = "Press \(keys(modifiers + [arguments["key"] as? String ?? "?"]))"
+        case "hotkey":
+            details = "Press \(keys(arguments["keys"] as? [String] ?? []))"
+        case "invoke_menu":
+            details = "Choose \((arguments["path"] as? [String] ?? []).joined(separator: " → ")) from the menu"
+        case "launch_app":
+            let urls = arguments["urls"] as? [String] ?? []
+            details = "Open \(target)" + (urls.isEmpty ? "" : " with \(urls.joined(separator: ", "))")
+        default:
+            details = tool.replacingOccurrences(of: "_", with: " ")
+        }
+        return Action(tool: tool, target: target, details: details, intent: nil)
+    }
+
+    /// "the “Send” button": what a person would call an element from the last window read.
+    private static func label(of element: [String: Any]) -> String? {
+        let text = [element["label"], element["title"], element["value"], element["description"]]
+            .compactMap { ($0 as? String)?.trimmed }.first { !$0.isEmpty }
+        guard let text else { return nil }
+        let kinds = ["AXButton": "button", "AXLink": "link", "AXTextField": "text field", "AXTextArea": "text box",
+                     "AXMenuItem": "menu item", "AXCheckBox": "checkbox", "AXRadioButton": "option",
+                     "AXPopUpButton": "menu", "AXTab": "tab", "AXRow": "row", "AXCell": "item"]
+        let kind = kinds[element["role"] as? String ?? ""] ?? "item"
+        return "the “\(text.prefix(80))” \(kind)"
     }
 
     /// Runs `task` and returns the model's answer, plus the cost in USD. `approve` is asked before every action
@@ -185,6 +257,7 @@ enum ComputerUse {
         let allTools = tools + BrowserTabs.tools
         var messages: [[String: Any]] = [["role": "system", "content": system], ["role": "user", "content": task]]
         var cost = 0.0
+        var labels: [String: String] = [:]   // element tokens from the windows read so far
         for _ in 0..<40 {
             let (message, stepCost) = try await complete(messages: messages, tools: allTools, model: model, key: key)
             cost += stepCost
@@ -206,8 +279,10 @@ enum ComputerUse {
                     reply = await BrowserTabs.call(name, arguments)
                 } else if !allowed.contains(name) {
                     reply = "That tool isn't available for this task."
-                } else if actTools.contains(name),
-                          !(await approve(Action(tool: name, summary: intent ?? name.replacingOccurrences(of: "_", with: " ")))) {
+                } else if actTools.contains(name), !(await approve({
+                    let described = describe(name, arguments, labels: labels)
+                    return Action(tool: name, target: described.target, details: described.details, intent: intent)
+                }())) {
                     reply = "The person declined this action. Don't try it another way; finish with what you have, or say what you needed."
                 } else {
                     if name == "get_window_state", arguments["max_image_dimension"] == nil { arguments["max_image_dimension"] = 1024 }
@@ -215,6 +290,14 @@ enum ComputerUse {
                         let result = try await client.call(name, arguments: arguments)
                         reply = result.text.isEmpty ? "Done." : String(result.text.prefix(60_000))
                         if name == "list_windows", let windows = visibleWindows(result.structured) { reply = windows }
+                        if name == "get_window_state",
+                           let elements = (result.structured as? [String: Any])?["elements"] as? [[String: Any]] {
+                            for element in elements {
+                                if let token = element["element_token"] as? String, let name = label(of: element) {
+                                    labels[token] = name
+                                }
+                            }
+                        }
                         pictures += result.images.map {
                             ["type": "image_url", "image_url": ["url": compact($0.data, mimeType: $0.mimeType)]]
                         }

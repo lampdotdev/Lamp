@@ -1757,8 +1757,9 @@ final class Store: ObservableObject {
     private func confirm(_ action: ComputerUse.Action, for project: ForgeProject) async -> ActionAnswer {
         NSApp.activate()
         let alert = NSAlert()
-        alert.messageText = "\(project.name) wants to use another app"
-        alert.informativeText = action.summary
+        alert.messageText = "\(project.name) wants to use \(action.target)"
+        alert.informativeText = action.details
+            + (action.intent.map { "\n\nThe AI says it's doing this to: \($0)" } ?? "")
         alert.icon = NSWorkspace.shared.icon(forFile: project.installedURL.path)
         alert.addButton(withTitle: "Allow")
         alert.addButton(withTitle: "Allow All for This Task")
