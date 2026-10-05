@@ -1507,11 +1507,21 @@ final class Store: ObservableObject {
         }
         // Signed from Forge's own keychain, which the script unlocks, so nobody is asked for keychain access.
         let identity = await AppSigning.identity()
-        _ = await Shell.run(identity == "-" ? "codesign --force -s - \"$FORGE_APP\""
-                                            : "codesign --force --keychain \"$FORGE_KEYCHAIN\" -s \"$FORGE_IDENTITY\" \"$FORGE_APP\"",
-                            cwd: project.dir,
-                            env: ["FORGE_APP": project.builtURL.path, "FORGE_IDENTITY": identity,
-                                  "FORGE_KEYCHAIN": AppSigning.keychain]) { _ in }
+        var signed = false
+        if identity != "-" {
+            var output: [String] = []
+            signed = await Shell.run("codesign --force --keychain \"$FORGE_KEYCHAIN\" -s \"$FORGE_IDENTITY\" \"$FORGE_APP\" 2>&1",
+                                     cwd: project.dir,
+                                     env: ["FORGE_APP": project.builtURL.path, "FORGE_IDENTITY": identity,
+                                           "FORGE_KEYCHAIN": AppSigning.keychain]) { output.append($0) } == 0
+            if !signed { print("Signing \(project.name) with \(identity) failed:\n" + output.joined(separator: "\n")) }
+        }
+        if !signed {
+            // Ad hoc keeps the app installable, but macOS won't remember its permissions across rebuilds and
+            // won't ask for Location Services at all, so this is logged rather than silent.
+            _ = await Shell.run("codesign --force -s - \"$FORGE_APP\"", cwd: project.dir,
+                                env: ["FORGE_APP": project.builtURL.path]) { _ in }
+        }
 
         try fm.createDirectory(at: Self.installDir, withIntermediateDirectories: true)
         let staging = Self.installDir.appendingPathComponent(".\(project.exe)-\(UUID().uuidString).app")
