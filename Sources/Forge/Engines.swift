@@ -90,10 +90,10 @@ enum Builder {
     /// Claude Code's choices: its own short names, and the full ID for models without one.
     static let claudeModels: [(id: String, label: String)] = [
         ("", "Claude Code's default"),
-        ("claude-fable-5-1", "Fable (best quality)"),
+        ("claude-fable-5-1", "Fable"),
         ("opus", "Opus"),
-        ("sonnet", "Sonnet (faster, cheaper)"),
-        ("haiku", "Haiku (fastest)"),
+        ("sonnet", "Sonnet"),
+        ("haiku", "Haiku"),
     ]
 
     /// The model for the current pi provider; each provider remembers its own.
