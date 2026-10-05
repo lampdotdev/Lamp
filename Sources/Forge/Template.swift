@@ -245,6 +245,13 @@ enum Template {
             let fm = FileManager.default
             // Only on a Mac where Forge has this app's project.
             guard fm.fileExists(atPath: folder.deletingLastPathComponent().path) else { return }
+            // Launched by Forge to run the app's checks: do that and quit, with no windows.
+            if ForgeCheck.isChecking {
+                try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                try? fm.removeItem(at: folder.appendingPathComponent("checks.json"))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { ForgeCheck.runAll() }
+                return
+            }
             try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
             // Pictures: once the first window has settled, and whenever the user leaves the app
             // (often to ask Forge for a change).
@@ -391,7 +398,10 @@ enum Template {
     enum ForgeStore {
         static let folder: URL = {
             let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            let url = base.appendingPathComponent(Bundle.main.bundleIdentifier ?? "{{EXE}}")
+            // Forge's checks run against a scratch copy of the data folder, never the person's own data.
+            let name = (Bundle.main.bundleIdentifier ?? "{{EXE}}") + (ForgeCheck.isChecking ? ".forge-check" : "")
+            let url = base.appendingPathComponent(name)
+            if ForgeCheck.isChecking { try? FileManager.default.removeItem(at: url) }
             try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
             return url
         }()
@@ -2428,6 +2438,68 @@ enum Template {
         static func copy(_ text: String) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
+        }
+    }
+
+    /// Checks that the app does its job, written by Forge's builder as it changes the app and run by Forge
+    /// after every build. Each check is a few lines of Swift against the app's own code (its model, store or
+    /// logic), so it tests behaviour, not how things look. Register them at launch, in a `ForgeChecks.swift`:
+    ///
+    ///     enum Checks {
+    ///         static func register() {
+    ///             ForgeCheck.register("a saved note is still there after reloading") {
+    ///                 let notes = NoteStore(); let n = notes.add("hello"); try notes.reload()
+    ///                 try ForgeCheck.expect(notes.all().contains { $0.id == n.id }, "note \(n.id) was lost")
+    ///             }
+    ///             ForgeCheck.register("sorting by date puts the newest first") { … }
+    ///         }
+    ///     }
+    ///
+    /// and call `Checks.register()` from the App's `init`. Checks run headlessly (no windows), in a scratch data
+    /// folder so they never touch the person's data; use `ForgeStore` as normal. Use `ForgeCheck.expect` for
+    /// assertions and `throw` for failures. Keep each check small and specific to a behaviour the app promises.
+    enum ForgeCheck {
+        struct Failure: LocalizedError {
+            let message: String
+            var errorDescription: String? { message }
+        }
+
+        nonisolated(unsafe) private static var checks: [(name: String, body: () async throws -> Void)] = []
+
+        static func register(_ name: String, _ body: @escaping () async throws -> Void) {
+            checks.append((name, body))
+        }
+
+        static func expect(_ condition: Bool, _ message: String) throws {
+            if !condition { throw Failure(message: message) }
+        }
+
+        /// True while the app is running Forge's checks: skip anything that needs a window or a person.
+        static let isChecking = CommandLine.arguments.contains("--forge-check")
+
+        /// Runs every check and writes the results for Forge, then quits. Called by ForgeRuntime at launch
+        /// when `--forge-check` is passed. Data goes to a scratch folder, so the person's own data is untouched.
+        static func runAll() {
+            guard isChecking else { return }
+            Task { @MainActor in
+                var results: [[String: Any]] = []
+                let started = Date()
+                for check in checks {
+                    let t = Date()
+                    do {
+                        try await check.body()
+                        results.append(["name": check.name, "passed": true, "seconds": Date().timeIntervalSince(t)])
+                    } catch {
+                        results.append(["name": check.name, "passed": false, "error": error.localizedDescription,
+                                        "seconds": Date().timeIntervalSince(t)])
+                    }
+                }
+                let report: [String: Any] = ["checks": results, "count": checks.count, "seconds": Date().timeIntervalSince(started)]
+                if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
+                    try? data.write(to: ForgeRuntime.folder.appendingPathComponent("checks.json"), options: .atomic)
+                }
+                exit(0)
+            }
         }
     }
 

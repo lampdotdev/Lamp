@@ -816,6 +816,25 @@ final class Store: ObservableObject {
         if crash != nil {
             log(project, .error, "\(project.name) still quits right after opening. Try describing the change differently, or press Undo.")
         }
+        // The app's own checks (ForgeCheck): failures go back to the agent like build errors, and the fix joins
+        // this turn's commit. Only when something was built this turn.
+        if crash == nil && edited {
+            var failures = await Runtime.runChecks(project)
+            for _ in 0..<2 where failures != nil {
+                note("Checking the app…", for: project)
+                log(project, .status, "Fixing what the checks found…")
+                guard await runAgent("The app builds and opens, but its own checks fail. Fix the behaviour (or the check, if the check is wrong) so they pass.\n\n\(failures!)",
+                                     on: project),
+                      await buildFixingErrors(project) else { return TurnResult(end: .failed, watched: watched) }
+                let commit = committed ? "-q --amend --no-edit" : "-qm 'Fix what the checks found'"
+                if await Shell.run("git add -A && \(Self.commit) \(commit)", cwd: project.dir) { _ in } == 0 { committed = true }
+                crash = await install(project)
+                failures = crash == nil ? await Runtime.runChecks(project) : nil
+            }
+            if let failures {
+                log(project, .error, "Some of \(project.name)'s checks still fail:\n\(failures)")
+            }
+        }
         // After the crash fixes, which amend the commit, so the name and the links stay on the version that's kept.
         if committed || pendingNames[project.id] != nil, let head = await Versions.head(project) {
             if let name = pendingNames.removeValue(forKey: project.id) { await Versions.name(project, head, name) }

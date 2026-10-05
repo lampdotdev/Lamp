@@ -40,6 +40,34 @@ enum Runtime {
         return parts.isEmpty ? "It left no crash report and printed nothing." : parts.joined(separator: "\n\n")
     }
 
+    /// Runs the app's own checks (ForgeCheck in ForgeSupport.swift): launches the installed app with
+    /// `--forge-check`, which runs them headlessly against scratch data and writes checks.json, then quits.
+    /// Returns nil when every check passed (or there are none), or a report of the failures for the agent.
+    static func runChecks(_ project: ForgeProject) async -> String? {
+        let report = folder(project).appendingPathComponent("checks.json")
+        try? FileManager.default.removeItem(at: report)
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = false
+        config.arguments = ["--forge-check"]
+        config.createsNewApplicationInstance = true
+        guard let app = try? await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config) else { return nil }
+        // Checks are small; a minute is generous. Past that, the app is stuck and the person's turn shouldn't be.
+        for _ in 0..<120 where !app.isTerminated && !FileManager.default.fileExists(atPath: report.path) {
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        if !app.isTerminated { app.forceTerminate() }
+        guard let data = try? Data(contentsOf: report),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let checks = json["checks"] as? [[String: Any]] else {
+            // No report: the app has no checks, or it crashed before writing one (the crash path reports that).
+            return nil
+        }
+        let failed = checks.filter { $0["passed"] as? Bool != true }
+        guard !failed.isEmpty else { return nil }
+        let lines = failed.map { "- \($0["name"] as? String ?? "check"): \($0["error"] as? String ?? "failed")" }
+        return "\(failed.count) of \(checks.count) checks failed:\n" + lines.joined(separator: "\n")
+    }
+
     /// Added to a request when the current build has crashed, so the agent knows without being told.
     static func crashNote(for project: ForgeProject) -> String {
         guard let crash = crash(of: project) else { return "" }
