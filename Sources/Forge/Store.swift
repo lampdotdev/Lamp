@@ -1738,7 +1738,7 @@ final class Store: ObservableObject {
         do {
             let (text, cost) = try await ComputerUse.run(task: task, appName: project.name, allowActions: allowActions,
                                                          model: model) { [weak self] action in
-                guard let self else { return false }
+                guard let self, ComputerUse.enabled else { return false }
                 if allowAll { return true }
                 let answer = await self.confirm(action, for: project)
                 if answer == .allowAll { allowAll = true }

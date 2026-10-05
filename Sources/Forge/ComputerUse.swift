@@ -258,7 +258,10 @@ enum ComputerUse {
         var messages: [[String: Any]] = [["role": "system", "content": system], ["role": "user", "content": task]]
         var cost = 0.0
         var labels: [String: String] = [:]   // element tokens from the windows read so far
+        // Turning the setting off stops a task that's already running, before its next step.
+        let stopped = Failure(message: "Using other apps was turned off, so Forge stopped the task.")
         for _ in 0..<40 {
+            guard enabled else { throw stopped }
             let (message, stepCost) = try await complete(messages: messages, tools: allTools, model: model, key: key)
             cost += stepCost
             messages.append(message)
@@ -274,6 +277,7 @@ enum ComputerUse {
                     try? JSONSerialization.jsonObject(with: Data($0.utf8))
                 } as? [String: Any]) ?? [:]
                 let intent = arguments.removeValue(forKey: "intent") as? String
+                guard enabled else { throw stopped }
                 var reply: String
                 if BrowserTabs.handles(name) {
                     reply = await BrowserTabs.call(name, arguments)
@@ -285,6 +289,7 @@ enum ComputerUse {
                 }())) {
                     reply = "The person declined this action. Don't try it another way; finish with what you have, or say what you needed."
                 } else {
+                    guard enabled else { throw stopped }   // it may have been turned off during the dialog
                     if name == "get_window_state", arguments["max_image_dimension"] == nil { arguments["max_image_dimension"] = 1024 }
                     do {
                         let result = try await client.call(name, arguments: arguments)
