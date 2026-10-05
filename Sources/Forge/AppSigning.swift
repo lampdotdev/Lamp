@@ -16,6 +16,20 @@ enum AppSigning {
     static let keychain = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Forge/Signing/forge-signing.keychain-db").path
 
+    /// Whether an app is signed with a certificate (as opposed to ad hoc), judged by its designated requirement.
+    static func isCertificateSigned(_ app: URL) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        process.arguments = ["-d", "-r-", app.path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        guard (try? process.run()) != nil else { return false }
+        process.waitUntilExit()
+        let text = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        return text.contains("certificate leaf")
+    }
+
     /// The identity to sign with, or "-" (ad-hoc) if one can't be made.
     @MainActor
     static func identity() async -> String {

@@ -1506,6 +1506,11 @@ final class Store: ObservableObject {
             try fm.copyItem(at: attachments, to: resources.appendingPathComponent(Attachments.folder))
         }
         // Signed from Forge's own keychain, which the script unlocks, so nobody is asked for keychain access.
+        // Files copied into the bundle (attachments, icon artwork, an edited Info.plist) can carry Finder
+        // metadata and resource forks. codesign accepts those for an ad hoc signature but refuses them for a
+        // certificate one ("resource fork, Finder information, or similar detritus not allowed"), which is
+        // how apps silently ended up ad hoc. Strip them first.
+        _ = await Shell.run("xattr -cr \"$FORGE_APP\"", cwd: project.dir, env: ["FORGE_APP": project.builtURL.path]) { _ in }
         let identity = await AppSigning.identity()
         var signed = false
         if identity != "-" {
@@ -1514,8 +1519,14 @@ final class Store: ObservableObject {
                                      cwd: project.dir,
                                      env: ["FORGE_APP": project.builtURL.path, "FORGE_IDENTITY": identity,
                                            "FORGE_KEYCHAIN": AppSigning.keychain]) { output.append($0) } == 0
+            // Trust the result, not the exit status: check the app really carries the certificate.
+            if signed && !AppSigning.isCertificateSigned(project.builtURL) {
+                signed = false
+                output.append("codesign returned 0 but the app is not certificate-signed")
+            }
             if !signed { print("Signing \(project.name) with \(identity) failed:\n" + output.joined(separator: "\n")) }
         }
+        print("Install \(project.name): identity=\(identity) signed=\(signed)")
         if !signed {
             // Ad hoc keeps the app installable, but macOS won't remember its permissions across rebuilds and
             // won't ask for Location Services at all, so this is logged rather than silent.
