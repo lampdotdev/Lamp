@@ -9,5 +9,7 @@
 <dict>
   <!-- Dictation (macOS still asks the user first) -->
   <key>com.apple.security.device.audio-input</key><true/>
+  <!-- Listing and switching browser tabs for apps that read web pages (macOS asks the user first) -->
+  <key>com.apple.security.automation.apple-events</key><true/>
 </dict>
 </plist>

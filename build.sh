@@ -115,6 +115,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   </dict></array>
   <key>NSMicrophoneUsageDescription</key><string>Forge listens to your microphone when you dictate a change.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Forge turns your dictation into text for the prompt box.</string>
+  <key>NSAppleEventsUsageDescription</key><string>Forge lists and switches your browser tabs when one of your apps reads a web page you have open.</string>
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLName</key><string>dev.forge.host</string>
     <key>CFBundleURLSchemes</key><array><string>forge</string></array>

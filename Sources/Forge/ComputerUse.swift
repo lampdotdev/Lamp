@@ -173,17 +173,20 @@ enum ComputerUse {
         \(allowActions
             ? "You may click, type and press keys when the task needs it. Each action is shown to the person to approve first, so give every action a clear `intent`. Never send, post, delete, buy or change settings unless the task asks for exactly that."
             : "Only look: you can read windows and scroll, but not click, type or change anything.")
-        Find the right window with list_windows, read it with get_window_state, and scroll to see more. Prefer the \
+        Find the right window with list_windows, read it with get_window_state, and scroll to see more. A web page \
+        that's open but not in front: find it with list_browser_tabs and bring it forward with show_browser_tab, \
+        then read its window. Prefer the \
         element tree to the picture when both have what you need. Keep going until you can answer, then reply \
         with only the answer, in the form the task asks for. If you can't do it, say what stopped you.
 
         About the tools:
         \(instructions)
         """
+        let allTools = tools + BrowserTabs.tools
         var messages: [[String: Any]] = [["role": "system", "content": system], ["role": "user", "content": task]]
         var cost = 0.0
         for _ in 0..<40 {
-            let (message, stepCost) = try await complete(messages: messages, tools: tools, model: model, key: key)
+            let (message, stepCost) = try await complete(messages: messages, tools: allTools, model: model, key: key)
             cost += stepCost
             messages.append(message)
             let calls = message["tool_calls"] as? [[String: Any]] ?? []
@@ -199,7 +202,9 @@ enum ComputerUse {
                 } as? [String: Any]) ?? [:]
                 let intent = arguments.removeValue(forKey: "intent") as? String
                 var reply: String
-                if !allowed.contains(name) {
+                if BrowserTabs.handles(name) {
+                    reply = await BrowserTabs.call(name, arguments)
+                } else if !allowed.contains(name) {
                     reply = "That tool isn't available for this task."
                 } else if actTools.contains(name),
                           !(await approve(Action(tool: name, summary: intent ?? name.replacingOccurrences(of: "_", with: " ")))) {
@@ -451,6 +456,118 @@ final class MCPClient: @unchecked Sendable {
         lock.unlock()
         for continuation in pending.values {
             continuation.resume(throwing: ComputerUse.Failure(message: "The helper stopped unexpectedly."))
+        }
+    }
+}
+
+/// Lists and switches browser tabs through the browsers' own AppleScript support. Browsers don't expose their
+/// tab strips to Accessibility, so this is how a page that's open but not in front gets read. Switching a tab
+/// changes nothing on the page, so it's allowed even when an app only asked to look. macOS asks the person
+/// once per browser before Forge may do this.
+enum BrowserTabs {
+    /// Chromium browsers share Chrome's scripting terms; Safari has its own.
+    private static let chromium = ["com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.canary",
+                                   "com.brave.Browser", "com.microsoft.edgemac", "company.thebrowser.Browser",
+                                   "org.chromium.Chromium", "com.vivaldi.Vivaldi", "net.imput.helium"]
+    private static let safari = "com.apple.Safari"
+
+    static let tools: [[String: Any]] = [
+        ["type": "function", "function": [
+            "name": "list_browser_tabs",
+            "description": "Lists every open tab in the running web browsers (Chrome, Safari, Arc, Brave, Edge…): browser, window number, tab number, whether it's the active tab, title and URL.",
+            "parameters": ["type": "object", "properties": [:] as [String: Any]],
+        ] as [String: Any]],
+        ["type": "function", "function": [
+            "name": "show_browser_tab",
+            "description": "Makes a tab the active tab of its window and brings that window to the front of its browser, so get_window_state can read it. Use the browser, window and tab numbers from list_browser_tabs.",
+            "parameters": ["type": "object", "required": ["browser", "window", "tab"], "properties": [
+                "browser": ["type": "string", "description": "The browser's name as list_browser_tabs gave it"],
+                "window": ["type": "integer"],
+                "tab": ["type": "integer"],
+            ] as [String: Any]],
+        ] as [String: Any]],
+    ]
+
+    static func handles(_ tool: String) -> Bool { tool == "list_browser_tabs" || tool == "show_browser_tab" }
+
+    private static var running: [(name: String, id: String)] {
+        NSWorkspace.shared.runningApplications.compactMap { app in
+            guard let id = app.bundleIdentifier, id == safari || chromium.contains(id) else { return nil }
+            return (app.localizedName ?? id, id)
+        }
+    }
+
+    static func call(_ tool: String, _ arguments: [String: Any]) async -> String {
+        let browsers = running
+        guard !browsers.isEmpty else { return "No supported web browser is running." }
+        if tool == "list_browser_tabs" {
+            var lines: [String] = []
+            for browser in browsers {
+                let output = await osascript(listScript(browser.id))
+                if output.hasPrefix("error:") {
+                    lines.append("\(browser.name): couldn't list tabs (\(String(output.dropFirst(6)).trimmed)). The person may need to allow Forge to control \(browser.name).")
+                    continue
+                }
+                for row in output.split(separator: "\n") {
+                    let fields = row.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+                    guard fields.count >= 5 else { continue }
+                    lines.append("browser=\(browser.name) window=\(fields[0]) tab=\(fields[1])\(fields[2] == "true" ? " (active)" : "") title=\(fields[3]) url=\(fields[4])")
+                }
+            }
+            return lines.isEmpty ? "No tabs are open." : lines.joined(separator: "\n")
+        }
+        guard let name = arguments["browser"] as? String,
+              let browser = browsers.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }),
+              let window = arguments["window"] as? Int, let tab = arguments["tab"] as? Int else {
+            return "Give browser, window and tab from list_browser_tabs."
+        }
+        let output = await osascript(showScript(browser.id, window: window, tab: tab))
+        return output.hasPrefix("error:") ? "Couldn't switch tabs: \(String(output.dropFirst(6)).trimmed)" : "Showing that tab."
+    }
+
+    private static func listScript(_ id: String) -> String {
+        let tabs = id == safari ? "(index of current tab of window w) is t" : "(active tab index of window w) is t"
+        let title = id == safari ? "name" : "title"
+        return """
+        set out to ""
+        tell application id "\(id)"
+          repeat with w from 1 to count of windows
+            repeat with t from 1 to count of tabs of window w
+              set out to out & w & (character id 9) & t & (character id 9) & (\(tabs)) & (character id 9) & \
+                (\(title) of tab t of window w) & (character id 9) & (URL of tab t of window w) & linefeed
+            end repeat
+          end repeat
+        end tell
+        return out
+        """
+    }
+
+    private static func showScript(_ id: String, window: Int, tab: Int) -> String {
+        let select = id == safari ? "set current tab of window \(window) to tab \(tab) of window \(window)"
+                                  : "set active tab index of window \(window) to \(tab)"
+        return """
+        tell application id "\(id)"
+          \(select)
+          set index of window \(window) to 1
+        end tell
+        """
+    }
+
+    /// Runs AppleScript in osascript; errors come back as "error: …".
+    private static func osascript(_ script: String) async -> String {
+        await withCheckedContinuation { continuation in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = ["-e", script]
+            let out = Pipe(), err = Pipe()
+            process.standardOutput = out
+            process.standardError = err
+            process.terminationHandler = { process in
+                let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                let error = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                continuation.resume(returning: process.terminationStatus == 0 ? text : "error: " + error)
+            }
+            do { try process.run() } catch { continuation.resume(returning: "error: \(error.localizedDescription)") }
         }
     }
 }
