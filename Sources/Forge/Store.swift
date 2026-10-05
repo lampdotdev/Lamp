@@ -821,7 +821,7 @@ final class Store: ObservableObject {
     private func buildFixingErrors(_ project: ForgeProject) async -> Bool {
         var errors = await build(project)
         for _ in 0..<3 where errors != nil {
-            log(project, .status, "Fixing a build problem…")
+            log(project, .status, "Fixing a problem…")
             guard await runAgent("The app failed to build. Fix these compiler errors:\n\n\(errors!)",
                                  on: project) else { return false }
             errors = await build(project)
@@ -869,43 +869,32 @@ final class Store: ObservableObject {
             for event in Agent.parseLine(line) {
                 switch event {
                 case .text(let text):
-                    progress[project.id]?.upcoming = nil
                     log(project, .agent, text)
                 case .step(let tool):
                     streamingTool = tool
                     streamingArguments = ""
-                    let activity = TurnProgress.activity(tool: tool, partialArguments: "")
-                    note(activity, for: project)
-                    if progress[project.id]?.upcoming != activity { progress[project.id]?.upcoming = activity }
+                    note(TurnProgress.activity(tool: tool, partialArguments: ""), for: project)
                 case .stepArgs(let piece):
                     // The file name is among the first arguments; the rest is the file itself.
                     guard streamingArguments.count < 600 else { break }
                     streamingArguments += piece
                     let call = TurnProgress.call(tool: streamingTool, partialArguments: streamingArguments)
                     note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
-                    let activity = TurnProgress.activity(for: call)
-                    if progress[project.id]?.upcoming != activity { progress[project.id]?.upcoming = activity }
                 case .plan(let parts):
                     progress[project.id]?.plan = parts
                     progress[project.id]?.tickWrittenParts()
                 case .tool(let text, let fullCall):
-                    progress[project.id]?.upcoming = nil
                     log(project, .tool, text)
                     let call = ToolCall(text)
                     note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
-                    if call.action == .write || call.action == .edit, !call.argument.isEmpty,
-                       progress[project.id]?.files.last != call.argument {
-                        progress[project.id]?.files.removeAll { $0 == call.argument }
-                        progress[project.id]?.files.append(call.argument)
-                        progress[project.id]?.tickWrittenParts()
-                    }
+                    if let file = TurnProgress.file(changedBy: call) { progress[project.id]?.wrote(file) }
                     toolCalls += 1
                     // Compared in full: six different searches of one file all read "grep cache.json".
                     repeats = fullCall == lastTool ? repeats + 1 : 1
                     lastTool = fullCall
                     if repeats >= 6 || toolCalls > 150, failure == nil {
                         failure = repeats >= 6
-                            ? "The model got stuck repeating the same step (\(text)), so Forge stopped it."
+                            ? "The model got stuck repeating the same step, so Forge stopped it."
                             : "The model made over 150 changes in one go, so Forge stopped it."
                         running[project.id]?.terminate()
                     }
@@ -917,7 +906,6 @@ final class Store: ObservableObject {
             }
         }
         running[project.id] = nil
-        progress[project.id]?.upcoming = nil
         endApprovals(for: project)
         log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost))
         recordAgent(project, cost: cost)

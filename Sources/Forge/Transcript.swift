@@ -33,7 +33,7 @@ struct ToolCall {
         "grep": .search, "glob": .search, "find": .search, "search": .search,
         "delete_file": .delete,
         "ls": .list, "list": .list,
-        "webfetch": .web, "websearch": .web,
+        "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
     ]
 
@@ -85,6 +85,30 @@ struct ToolCall {
         case .delegate: "started \(n("subtask", "subtasks"))"
         case .other: n("step", "steps")
         }
+    }
+}
+
+extension LogLine {
+    /// The chat as most people read it: what they asked, what the agent answered and what happened to the
+    /// app. The agent's working is left out, both its steps and what it says between them, which is where
+    /// the file names and code are; the progress line stands in for it. Agent Details shows everything.
+    static func visible(_ lines: [LogLine], details: Bool, busy: Bool) -> [LogLine] {
+        if details { return lines }
+        // The last thing the agent says in a run is its answer. A run ends with its summary, so while
+        // one is going there's no telling yet whether the latest message is the answer.
+        var answers: Set<UUID> = []
+        var latest: UUID?
+        for line in lines {
+            switch line.kind {
+            case .agent: latest = line.id
+            case .summary, .user:
+                if let latest { answers.insert(latest) }
+                latest = nil
+            default: break
+            }
+        }
+        if !busy, let latest { answers.insert(latest) }
+        return lines.filter { $0.kind == .agent ? answers.contains($0.id) : !$0.isDetail }
     }
 }
 
@@ -145,36 +169,34 @@ struct Transcript: View {
     let lines: [LogLine]
     let dir: URL
     let busy: Bool
-    /// What the model has started on but not finished, shown after everything else.
-    var upcoming: String? = nil
+    /// The turn's progress line or build card is on screen. It's the one spinner, and the one place that
+    /// says what's happening now, so nothing here repeats it.
+    var progressShown = false
     /// Goes back to the version a request made, or (true) to the one before it.
     var goBack: ((LogLine, Bool) -> Void)?
 
     var body: some View {
-        let items = ChatItem.items(lines)
+        let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(lines) : lines)
         let finalAnswers = Self.finalAnswers(in: lines, busy: busy)
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
             let isLast = index == items.count - 1
             Group {
                 switch item {
                 case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack).equatable()
-                case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && upcoming == nil).equatable()
-                case .statuses(let lines): StatusGroup(lines: lines, running: isLast && busy)
+                case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && !progressShown).equatable()
+                case .statuses(let lines): StatusGroup(lines: lines, running: isLast && busy && !progressShown)
                 }
             }
             .padding(.top, ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item,
                                         isFinalAnswer: finalAnswers.contains(item.id)))
         }
-        if let upcoming {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.mini).frame(width: 16)
-                Text(upcoming + "…")
-            }
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .padding(.top, 6)
-            .transition(.opacity)
-        }
+    }
+
+    /// Without the step at the end that's still going ("Building…"): the progress line is saying it.
+    private static func withoutStepInProgress(_ lines: [LogLine]) -> [LogLine] {
+        var lines = lines
+        while let last = lines.last, last.kind == .status, last.text.hasSuffix("…") { lines.removeLast() }
+        return lines
     }
 
     /// The last agent message of each finished turn: the answer people actually read.
@@ -402,20 +424,62 @@ struct StatusGroup: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(lines) { line in
-                HStack(spacing: 6) {
-                    Group {
-                        if running && line.id == lines.last?.id && line.text.hasSuffix("…") {
-                            ProgressView().controlSize(.mini)
-                        } else {
-                            Image(systemName: "checkmark.circle")
+                if let command = RanCommand.command(in: line) {
+                    RanCommand(command: command)
+                } else {
+                    HStack(spacing: 6) {
+                        Group {
+                            if running && line.id == lines.last?.id && line.text.hasSuffix("…") {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Image(systemName: "checkmark.circle")
+                            }
                         }
+                        .frame(width: 16)
+                        Text(line.text)
                     }
-                    .frame(width: 16)
-                    Text(line.text)
                 }
             }
         }
         .font(.callout)
         .foregroundStyle(.secondary)
+    }
+}
+
+/// A command the agent ran without asking ("Ran: git clone …"). The chat says that it happened; the command
+/// itself is a click away, for anyone who wants to see it.
+struct RanCommand: View {
+    let command: String
+    @State private var expanded = false
+
+    static func command(in line: LogLine) -> String? {
+        line.kind == .status && line.text.hasPrefix("Ran: ") ? String(line.text.dropFirst(5)) : nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle").frame(width: 16)
+                    Text("Ran a command")
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Show the command")
+            if expanded {
+                Text(command)
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .textSelection(.enabled)
+                    .padding(.leading, 22)
+            }
+        }
     }
 }

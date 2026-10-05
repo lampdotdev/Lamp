@@ -359,7 +359,7 @@ struct ProjectView: View {
     @State private var dismissedSuggestion: String?
 
     private var lines: [LogLine] {
-        (store.logs[project.id] ?? []).filter { showDetails || !$0.isDetail }
+        LogLine.visible(store.logs[project.id] ?? [], details: showDetails, busy: busy)
     }
     private var busy: Bool { store.busy.contains(project.id) }
     /// The chat area has to be about twice the build card's height before the card is pinned.
@@ -395,19 +395,16 @@ struct ProjectView: View {
                                 // does follows it.
                                 transcript(Array(lines[...request]), busy: false)
                                 Section {
-                                    transcript(Array(lines[(request + 1)...]), busy: busy)
+                                    transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy)
                                 } header: {
                                     BuildCard(project: project, progress: card)
                                         .padding(.top, 16).padding(.bottom, 12)
                                         .background(Color(nsColor: .textBackgroundColor))
                                 }
                             } else {
-                                transcript(lines, busy: busy)
-                                if let progress = store.progress[project.id], busy,
-                                   !(lines.last.map { $0.kind == .status && $0.text.hasSuffix("…") } ?? false) {
-                                    // Not next to a status like "Building…", which says the same thing.
-                                    ActivityRow(progress: progress).padding(.top, 12)
-                                }
+                                let progress = busy ? store.progress[project.id] : nil
+                                transcript(lines, busy: busy, progressShown: progress != nil)
+                                if let progress { ActivityRow(progress: progress).padding(.top, 12) }
                             }
                             ForEach(queued) { message in
                                 QueuedRow(message: message) { store.unqueue(message, from: project) }
@@ -541,9 +538,8 @@ struct ProjectView: View {
         }
     }
 
-    private func transcript(_ lines: [LogLine], busy: Bool) -> some View {
-        Transcript(lines: lines, dir: project.dir, busy: busy,
-                   upcoming: busy ? store.progress[project.id]?.upcoming : nil) { line, before in
+    private func transcript(_ lines: [LogLine], busy: Bool, progressShown: Bool = false) -> some View {
+        Transcript(lines: lines, dir: project.dir, busy: busy, progressShown: progressShown) { line, before in
             Task { await store.restore(project, toVersionOf: line, before: before) }
         }
     }
