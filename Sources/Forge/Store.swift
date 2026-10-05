@@ -626,9 +626,9 @@ final class Store: ObservableObject {
               busy.insert(project.id).inserted else { return }
         queued[project.id] = nil
         let first = !(logs[project.id] ?? []).contains { $0.kind == .user }
-        // Still a new app until its first version is built: after the agent only asked questions, the
-        // answers start the build and get the build card. An imported app has already been built.
-        let newApp = Template.isScaffold(project)
+        // Still a new app until a request has made its first version: after the agent only asked questions,
+        // the answers start the build and get the build card. An imported app has already been built.
+        let newApp = Template.isScaffold(project) && !hasVersions(project)
         progress[project.id] = TurnProgress(newApp: newApp)
         Task {
             var project = project
@@ -741,9 +741,9 @@ final class Store: ObservableObject {
         guard await runAgent(prompt + notes, files: files, on: project) else {
             return TurnResult(end: .failed, watched: isWatching(project.id))
         }
-        // Still the empty starter app: the agent only replied (say, with questions about a vague request).
+        // A new app the agent didn't touch: it only replied (say, with questions about a vague request).
         // There's nothing worth building or opening yet; the answers start the first build.
-        if Template.isScaffold(project) {
+        if !hasVersions(project), await !agentChangedFiles(project) {
             return TurnResult(end: .replied, watched: isWatching(project.id))
         }
         // Only build when something changed: not after a question, and not again when the agent's last
@@ -798,6 +798,21 @@ final class Store: ObservableObject {
             versionsRevision += 1
         }
         return TurnResult(end: crash != nil ? .failed : edited ? .changed : .replied, watched: watched)
+    }
+
+    /// Whether any request has made a version of this app yet (its messages are linked to the versions they made).
+    private func hasVersions(_ project: ForgeProject) -> Bool {
+        (logs[project.id] ?? []).contains { $0.kind == .user && $0.version != nil }
+    }
+
+    /// Whether the agent changed any of the app's files this turn. Forge's own writes don't count: it
+    /// regenerates ForgeSupport.swift, and designs the icon (icon.json) while the agent works.
+    private func agentChangedFiles(_ project: ForgeProject) async -> Bool {
+        var output = ""
+        _ = await Shell.run("git status --porcelain -- . ':!Sources/ForgeSupport.swift' ':!icon.json'", cwd: project.dir) {
+            output += $0
+        }
+        return !output.trimmed.isEmpty
     }
 
     /// Builds the app, sending compiler errors back to the agent up to three times. False when it still doesn't build.
