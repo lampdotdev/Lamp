@@ -766,6 +766,10 @@ final class Store: ObservableObject {
             crash = look.crash
             if crash == nil {
                 if let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first {
+                    // The look opened it behind the user's windows. Now it's theirs: it shows itself, as when it's
+                    // opened again. An app that lives in the menu bar opens its panel (see ForgeWindows).
+                    DistributedNotificationCenter.default().postNotificationName(
+                        Notification.Name("dev.forge.showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
                     app.activate()
                     log(project, .status, "\(project.name) is ready")
                 } else {

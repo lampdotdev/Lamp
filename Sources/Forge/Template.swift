@@ -906,9 +906,10 @@ enum Template {
                 MainActor.assumeIsolated {
                     guard !holdsBarPanel || Date().timeIntervalSince(barPanelUsed) > 90 else { return }
                     releaseBarPanel()
-                    timer.invalidate()
                 }
             }
+            barPanelIdle?.invalidate()
+            barPanelIdle = idle
             RunLoop.main.add(idle, forMode: .common)
             return "bar_icon: asked the app's menu bar icon to open"
         }
@@ -918,6 +919,9 @@ enum Template {
         /// has it, it can't take the keyboard: a panel can hold it even when its app isn't the active one, and
         /// would swallow what the user types elsewhere.
         private static var holdsBarPanel = false
+        static var hasBarPanel: Bool { holdsBarPanel }
+        /// Gives the panel back once the builder has left it alone for a while.
+        private static var barPanelIdle: Timer?
         private static var barPanelUsed = Date()
 
         static func keepBarPanel() {
@@ -935,6 +939,8 @@ enum Template {
         /// The panel has closed (the app closes it to open Settings, say), so the builder no longer has it.
         static func forgetBarPanel() {
             holdsBarPanel = false
+            barPanelIdle?.invalidate()   // or it would close a panel the person opened since
+            barPanelIdle = nil
             if let panel = NSApp.windows.first(where: isBarPanel) { setQuiet(panel, false) }
         }
 
@@ -2145,6 +2151,10 @@ enum Template {
     /// `ForgeWindows.show()`) shows the panel. And while one of the app's windows is open (Settings, or any
     /// Window scene) the app is in the Dock and the app switcher, so that window can't get lost behind others.
     /// `dockIcon: true` keeps the Dock icon all the time, for an app that also has a main window.
+    ///
+    /// Hand the panel its model inside the braces (`{ PanelView().environmentObject(model) }`), never with a
+    /// modifier on the scene: macOS shows a panel before the scene's environment has reached it, which crashes a
+    /// view that reads an environment object, and the window that stands in for a hidden icon never gets it.
     struct ForgeMenuBar: Scene {
         private let content: () -> AnyView
         private let label: () -> AnyView
@@ -2221,6 +2231,8 @@ enum Template {
 
         /// Shows the app: the panel under its icon, or a window with the same contents when the icon is hidden.
         @MainActor static func show() {
+            // Forge's builder had the panel open to look at it, in a state that can't take the keyboard.
+            if ForgeDriver.hasBarPanel { close() }
             if iconIsVisible { openPanel() } else { showWindow() }
         }
 

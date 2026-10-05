@@ -114,7 +114,8 @@ enum Agent {
     no menus, so the panel needs its own Settings button, which calls `ForgeMenuBar.openSettings()` (never \
     `SettingsLink` or `openSettings`: from a menu bar app those open the window behind other apps, where it gets \
     lost), and its own Quit button (`NSApp.terminate(nil)`). `ForgeMenuBar.close()` closes the panel after an \
-    action in it. Give the panel a fixed width. Pass `dockIcon: true` only when the app also has a main window.
+    action in it. Give the panel a fixed width, and hand it its model inside the braces (`{ PanelView().environmentObject(model) }`), \
+    never with a modifier on the scene, which crashes the panel. Pass `dockIcon: true` only when the app also has a main window.
     - When the information or the job lives in another app the person uses (Slack, Mail, Messages, Notes, or a \
     site in their browser such as Gmail, LinkedIn or a CRM), use `ForgeComputer.ask("…")` to read it or \
     `ForgeComputer.perform("…")` to act there, from ForgeSupport.swift. It works with what they're already signed \
