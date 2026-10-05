@@ -47,8 +47,8 @@ enum Provider {
 
     /// Suggested building models when using OpenRouter (any model from the full list also works).
     static let models: [(id: String, label: String)] = [
-        ("anthropic/claude-fable-5.1", "Best quality (Claude Fable, pricier)"),
-        ("anthropic/claude-opus-5.5", "Claude Opus"),
+        ("anthropic/claude-fable-5.1", "Smartest, priciest (Claude Fable)"),
+        ("anthropic/claude-opus-5.5", "Best at coding (Claude Opus)"),
         ("anthropic/claude-sonnet-5.5", "Faster & cheaper (Claude Sonnet)"),
     ]
 

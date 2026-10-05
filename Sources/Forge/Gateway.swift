@@ -83,10 +83,10 @@ final class Gateway: @unchecked Sendable {
 /// Runs an in-app AI request with whatever Forge is connected to.
 enum AppAI {
     static let models: [(id: String, label: String, openRouter: String)] = [
-        ("haiku", "Fast & cheap (Claude Haiku)", "anthropic/claude-haiku-4.5"),
-        ("sonnet", "Smarter (Claude Sonnet)", "anthropic/claude-sonnet-5.5"),
-        ("opus", "Claude Opus (pricier)", "anthropic/claude-opus-5.5"),
-        ("claude-fable-5-1", "Smartest (Claude Fable, priciest)", "anthropic/claude-fable-5.1"),
+        ("claude-fable-5-1", "Smartest, priciest (Claude Fable)", "anthropic/claude-fable-5.1"),
+        ("opus", "Best at coding (Claude Opus)", "anthropic/claude-opus-5.5"),
+        ("sonnet", "Faster & cheaper (Claude Sonnet)", "anthropic/claude-sonnet-5.5"),
+        ("haiku", "Fastest, cheapest (Claude Haiku)", "anthropic/claude-haiku-4.5"),
     ]
 
     /// Sonnet: Haiku is cheaper but noticeably worse, so it's only used when someone picks it.
