@@ -51,7 +51,7 @@ Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/
    open build/Forge.app
    ```
 
-   The first build takes about a minute. It also creates a self-signed **Forge Local Signing** certificate in your login keychain (see `scripts/signing-identity.sh`). That gives every build the same signature. It's only used to sign Forge on your Mac. It produces `build/Forge.app`, which you can drag into `/Applications` if you like.
+   The first build takes about a minute. It also creates a self-signed **Forge App Signing** certificate in Forge's own keychain, `~/Library/Application Support/Forge/Signing` (see `scripts/signing-identity.sh`). That gives every build the same signature. Forge's keychain has a password Forge generated and keeps beside it, so signing never asks for keychain access the way the login keychain does. It's only used to sign Forge on your Mac. It produces `build/Forge.app`, which you can drag into `/Applications` if you like.
 
 3. **Finish setup in the app.** On first launch, Forge checks for anything missing:
    - **App-building tools:** if the Command Line Tools are missing, Forge opens Apple's installer right away (click **Install**, then **Agree**). It then checks every few seconds and carries on by itself when they're installed, so there's no button to press afterwards.
@@ -71,7 +71,7 @@ Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/
 - In any generated app, press **⇧⌘E** to jump back to its chat in Forge.
 - While an app is open, the toolbar's Play button becomes a Stop button that quits it (**Quit** is also in the app's right-click menu). That's the way to stop a menu bar app, which has no Dock icon to quit from. To bring an open app to the front instead, double-click it in the sidebar.
 - Every app records which Forge built it. When an app was built by an older Forge, it gets an orange badge in the sidebar and a banner above the message box with a **Rebuild** button. The app's info panel shows the version under **Built with**.
-- Apps are signed with Forge's local certificate ("Forge Local Signing", made in your login keychain the first time and never shared), so permissions you grant an app, such as Files and Folders or Screen Recording, survive rebuilds instead of being asked for again after every change.
+- Apps are signed with Forge's local certificate ("Forge App Signing", made in Forge's own keychain the first time and never shared, so building never asks for keychain access), so permissions you grant an app, such as Files and Folders or Screen Recording, survive rebuilds instead of being asked for again after every change.
 - Generated apps are installed to `~/Applications/Forge Apps/`, so they show up in Spotlight and Launchpad.
 - If you're in another app when Forge finishes, it sends a notification saying the app is ready, has a reply, or needs your attention. Click it to jump to that chat. macOS asks for permission the first time one is sent. Turn notifications off in **Settings → Building**. The Dock icon shows how many chats you haven't seen.
 - Double-click an app in the sidebar to build and open it. A blue dot means its chat has a reply you haven't seen. The buttons at the bottom of the sidebar switch between a list and icon tiles.

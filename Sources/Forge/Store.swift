@@ -1473,8 +1473,13 @@ final class Store: ObservableObject {
         if fm.fileExists(atPath: attachments.path) {
             try fm.copyItem(at: attachments, to: resources.appendingPathComponent(Attachments.folder))
         }
-        _ = await Shell.run("codesign --force -s \"$FORGE_IDENTITY\" \"$FORGE_APP\"", cwd: project.dir,
-                            env: ["FORGE_APP": project.builtURL.path, "FORGE_IDENTITY": await AppSigning.identity()]) { _ in }
+        // Signed from Forge's own keychain, which the script unlocks, so nobody is asked for keychain access.
+        let identity = await AppSigning.identity()
+        _ = await Shell.run(identity == "-" ? "codesign --force -s - \"$FORGE_APP\""
+                                            : "codesign --force --keychain \"$FORGE_KEYCHAIN\" -s \"$FORGE_IDENTITY\" \"$FORGE_APP\"",
+                            cwd: project.dir,
+                            env: ["FORGE_APP": project.builtURL.path, "FORGE_IDENTITY": identity,
+                                  "FORGE_KEYCHAIN": AppSigning.keychain]) { _ in }
 
         try fm.createDirectory(at: Self.installDir, withIntermediateDirectories: true)
         let staging = Self.installDir.appendingPathComponent(".\(project.exe)-\(UUID().uuidString).app")
