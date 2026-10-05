@@ -96,3 +96,15 @@ Re-run a release (e.g. to rebuild the DMG) against its tag:
 ```bash
 gh workflow run mac-release.yml --ref v0.2.0 -f version=0.2.0
 ```
+
+## Updates (Sparkle)
+
+Release builds of Forge update themselves with [Sparkle](https://sparkle-project.org) 2. Once a day, and from **Forge → Check for Updates…**, Forge reads the update feed at `https://forge-updates.vercel.app/appcast.xml`. When there's a newer release, Sparkle shows its standard window with the release notes and an **Install** button. Builds from source, which have no Apple Team ID, don't check for updates.
+
+- **Signing:** every update is signed with an Ed25519 key. The release workflow runs `scripts/sparkle-sign.swift` on the DMG, using the `SPARKLE_PRIVATE_KEY` secret in the `release` environment, and attaches the result to the release as `sparkle.json`. Sparkle checks the signature against `SUPublicEDKey` in `build.sh`, and it also requires the new app to be signed by the same Developer ID team. A local backup of the private key is in `~/Library/Application Support/Forge/Signing/sparkle-private-key` on Matt's Mac; keep a copy in 1Password. Losing the key means shipping a new public key in a release that users install by hand.
+- **The feed:** `updates/` is a small Vercel app (project `forge-updates` on the Roo Code team) that keeps the repo private:
+  - `/appcast.xml` builds the feed from the GitHub releases that have a `sparkle.json`, with each release's notes.
+  - `/download/<tag>` redirects to GitHub's short-lived download link for that release's DMG.
+  - It reads the releases with `GITHUB_TOKEN`, a fine-grained token with **Contents: read-only** on `RooCodeInc/Forge` only.
+  - Deploy with `cd updates && vercel deploy --prod --scope roo-code`.
+- **Only newer releases appear:** releases before the first one with `sparkle.json` aren't in the feed, because Sparkle couldn't verify them. Copies of Forge from before Sparkle was added need one manual update to a release that includes it.

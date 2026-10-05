@@ -72,6 +72,10 @@ APP="${BUILD_DIR:-build}/Forge.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Forge"
+# Sparkle (updates for release builds). Forge isn't sandboxed, so Sparkle's XPC services aren't needed.
+mkdir -p "$APP/Contents/Frameworks"
+ditto "$(dirname "$BIN")/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
+rm -rf "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices" "$APP/Contents/Frameworks/Sparkle.framework/XPCServices"
 # Forge's icon, made with the same pipeline as the apps' icons (see Resources/Icon): the classic .icns,
 # plus the compiled Icon Composer icon that macOS 26 draws in Liquid Glass.
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
@@ -95,6 +99,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>Forge</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleIconName</key><string>AppIcon</string>
+  <key>SUFeedURL</key><string>https://forge-updates.vercel.app/appcast.xml</string>
+  <key>SUPublicEDKey</key><string>/CAEd8+y31zAUX1M2jdBf+0plXRw1Bv5IEdrX6r6irA=</string>
+  <key>SUEnableAutomaticChecks</key><true/>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
   <key>CFBundleVersion</key><string>$APP_BUILD</string>
@@ -150,6 +157,10 @@ fi
 find "$APP/Contents/Resources/pi" -name '*.node' -exec "${SIGN[@]}" {} \; >$QUIET 2>&1
 find "$APP/Contents/Resources/llama" -type f \( -name '*.dylib' -o -name 'llama-server' \) -exec "${SIGN[@]}" {} \; >$QUIET 2>&1
 "${SIGN[@]}" "${PI_ENTITLEMENTS[@]}" "$APP/Contents/Resources/pi/pi" >$QUIET 2>&1
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
+"${SIGN[@]}" "$SPARKLE/Autoupdate" >$QUIET 2>&1
+"${SIGN[@]}" "$SPARKLE/Updater.app" >$QUIET 2>&1
+"${SIGN[@]}" "$APP/Contents/Frameworks/Sparkle.framework" >$QUIET 2>&1
 "${SIGN[@]}" "${APP_ENTITLEMENTS[@]}" "$APP" >$QUIET 2>&1
 [ "$SIGN_ID" = "-" ] && echo "Signed ad-hoc (macOS may ask for Keychain access after each rebuild)"
 echo "Built $APP"

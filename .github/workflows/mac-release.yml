@@ -7,6 +7,7 @@
 #   NOTARY_APPLE_ID         Apple ID used for notarization
 #   NOTARY_TEAM_ID          Apple Developer Team ID
 #   NOTARY_PASSWORD         App-specific password for that Apple ID
+#   SPARKLE_PRIVATE_KEY     Ed25519 key that signs updates (base64); its public half is SUPublicEDKey in build.sh
 name: Mac release
 
 on:
@@ -70,10 +71,15 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           ./release.sh "$VERSION"
 
+      - name: Sign the update for Sparkle
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: swift scripts/sparkle-sign.swift "dist/Forge-$VERSION.dmg" "$VERSION" > dist/sparkle.json
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v$VERSION" "dist/Forge-$VERSION.dmg" \
+          gh release create "v$VERSION" "dist/Forge-$VERSION.dmg" dist/sparkle.json \
             --title "Forge $VERSION" --generate-notes || \
-          gh release upload "v$VERSION" "dist/Forge-$VERSION.dmg" --clobber
+          gh release upload "v$VERSION" "dist/Forge-$VERSION.dmg" dist/sparkle.json --clobber
