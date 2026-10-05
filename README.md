@@ -63,6 +63,7 @@ Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/
 
 - A new app's empty chat shows six ideas to start from (a Downloads sorter, screenshot notes, a clipboard history, a reading queue, a focus timer and a photo studio). Clicking one fills in the request, ready to change before you send it. They go away once you start typing.
 - Click **New App** at the bottom of the app list, give the app a name and (optionally) describe it. Forge builds it and opens it, usually in under a minute.
+- If a request is too vague to build well ("an app for my sales stuff"), the agent asks up to three short questions, each with likely answers, before writing any code; answering starts the build. Clear requests are built straight away, and the agent ends by naming the main assumptions it made so you can correct them.
 - Type changes into the chat. Each change rebuilds and relaunches the app. **Undo** reverts the last change. **Return** sends, and **Shift-Return** starts a new line.
 - While a new app's first version is built, the chat shows a build card: the app's name and icon as they're chosen, the agent's plan with each part ticked off as it's written, what it's doing right now, and at the end a picture of the app's real window. Later changes show one line with the current step and the time so far.
 - You can keep typing while Forge works. Messages sent in the meantime wait in the chat (click the ✕ to take one back) and go out together as the next change.
