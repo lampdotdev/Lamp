@@ -129,6 +129,23 @@ enum Agent {
     lost), and its own Quit button (`NSApp.terminate(nil)`). `ForgeMenuBar.close()` closes the panel after an \
     action in it. Give the panel a fixed width, and hand it its model inside the braces (`{ PanelView().environmentObject(model) }`), \
     never with a modifier on the scene, which crashes the panel. Pass `dockIcon: true` only when the app also has a main window.
+    - When the app itself needs Full Disk Access (other apps' data such as notification history, Mail, Messages \
+    or Safari; or scanning the whole disk), Screen Recording (screenshots, recordings, other apps' windows) or \
+    Accessibility (reading or controlling other apps), use `ForgePermissions` from ForgeSupport.swift. Never \
+    write your own check, list of steps, System Settings link, Finder reveal or relaunch for these. Wrap what \
+    needs it: `ForgePermissionGate(.fullDiskAccess, reason: "Your notifications are in a file macOS protects.") \
+    { SummaryView() }` shows the contents once the permission is on, and until then a screen that takes the \
+    person to the switch in System Settings, gets the app into the list there, notices by itself when it's \
+    switched on, and offers Quit & Reopen when macOS needs that. When only one feature needs it, don't gate the \
+    whole app or ask at launch: check `ForgePermissions.has(.screenRecording)` when the feature is used and show \
+    `ForgePermissionView(.screenRecording, reason: "…") { /* now on */ }` in a sheet. `@StateObject var access = \
+    ForgePermissionState(.accessibility)` gives a live `isOn` for your own controls. Ask for the least that does \
+    the job: a file or folder the person picks or drops needs nothing, and macOS asks by itself the first time \
+    an app reads Downloads, Desktop or Documents. Only the person can turn one of these on (in System Settings, \
+    which is the app's own permission and not something Forge approves), so when you look at the app you'll \
+    see that screen: say plainly that what's behind it is untested and that they turn it on once. It is once: \
+    Forge signs every build of the app the same way, so a permission stays on through your changes. Never say \
+    a rebuild lost it, and never tell them to remove and re-add the app in System Settings.
     - When the app needs behaviour nobody can write in advance (what happens when two invented things meet, \
     how a new kind of actor acts, a rule the person just described in words), use `ForgeScript` from \
     ForgeSupport.swift: expose a small, well-described API of what scripts may do (spawn, move, remove, say, \
