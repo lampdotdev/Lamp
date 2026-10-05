@@ -102,7 +102,7 @@ enum Builder {
             if let saved = UserDefaults.standard.string(forKey: "piModel.\(piProvider)"), !saved.isEmpty { return saved }
             if piProvider == "openrouter" {   // from before the provider picker
                 let old = UserDefaults.standard.string(forKey: "model") ?? ""
-                return old.contains("/") ? old : Provider.models[0].id
+                return old.contains("/") ? old : Provider.defaultModel
             }
             if piProvider == localProvider { return LocalModels.installedIDs().first ?? "" }
             return ""

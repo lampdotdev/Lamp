@@ -85,7 +85,8 @@ enum AppAI {
     static let models: [(id: String, label: String, openRouter: String)] = [
         ("haiku", "Fast & cheap (Claude Haiku)", "anthropic/claude-haiku-4.5"),
         ("sonnet", "Smarter (Claude Sonnet)", "anthropic/claude-sonnet-5.5"),
-        ("opus", "Smartest (Claude Opus, pricier)", "anthropic/claude-opus-5.5"),
+        ("opus", "Claude Opus (pricier)", "anthropic/claude-opus-5.5"),
+        ("claude-fable-5-1", "Smartest (Claude Fable, priciest)", "anthropic/claude-fable-5.1"),
     ]
 
     static var model: (id: String, label: String, openRouter: String) {
