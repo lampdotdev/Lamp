@@ -1752,10 +1752,9 @@ final class Store: ObservableObject {
             }
             return (503, ["error": "Using other apps is turned off. Turn on “Let apps use your other apps” in Forge → Settings → Apps, then try again."])
         }
-        // Haiku is too easily lost in other apps' windows; such tasks get Sonnet instead. Any other choice
-        // (Sonnet, Opus, Fable) is used as is.
-        let chosen = AppAI.model(for: AppModels.load(project).text)
-        let model = chosen.id == "haiku" ? AppAI.models.first { $0.id == "sonnet" }!.openRouter : chosen.openRouter
+        // The model the app chose in its info panel; Sonnet if it hasn't chosen one.
+        let model = AppAI.models.first { $0.id == (AppModels.load(project).text ?? "sonnet") }?.openRouter
+            ?? AppAI.models.first { $0.id == "sonnet" }!.openRouter
         var allowAll = false
         do {
             let (text, cost) = try await ComputerUse.run(task: task, appName: project.name, allowActions: allowActions,
