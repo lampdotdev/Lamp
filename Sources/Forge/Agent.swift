@@ -102,10 +102,20 @@ enum Agent {
     `await ForgeText.recognize(in: nsImage)`; `.forgeDropFiles { urls in }` on any view and `ForgeDropZone("Drop \
     screenshots here") { urls in }` for an empty state (Finder files, images from other apps, links); \
     `ForgeClipboardWatcher { item in }` (item.text / image / fileURLs; keep it alive) and \
-    `ForgeClipboardWatcher.copy(text)`; `ForgeNotifications.send("Title", body: "…")`. For an app that lives in \
-    the menu bar, use SwiftUI's `MenuBarExtra` scene (with `.menuBarExtraStyle(.window)` for a panel), and add \
-    `NSApp.setActivationPolicy(.accessory)` only if the user wants no Dock icon. Make the most of being on the \
+    `ForgeClipboardWatcher.copy(text)`; `ForgeNotifications.send("Title", body: "…")`. Make the most of being on the \
     Mac: local files, drag and drop, the menu bar, keyboard shortcuts, and fitting into what the user already does.
+    - An app that lives in the menu bar uses `ForgeMenuBar` from ForgeSupport.swift as its scene, instead of \
+    `MenuBarExtra`: `ForgeMenuBar("Focus Timer", systemImage: "timer") { PanelView() }`, or `ForgeMenuBar { PanelView() } \
+    label: { … }` for an icon or text that changes, with `.commands { ForgeCommands() }` on it and a `Settings` \
+    scene beside it. It gives the app an icon with a panel and no Dock icon, and keeps it within reach: it opens \
+    the panel as a normal window when the icon is hidden (a full menu bar, the notch), shows the panel when the \
+    app is opened again, and puts the app in the Dock while one of its windows is open. So never call \
+    `NSApp.setActivationPolicy` or add a window just to make the app reachable. Such an app has no Dock icon and \
+    no menus, so the panel needs its own Settings button, which calls `ForgeMenuBar.openSettings()` (never \
+    `SettingsLink` or `openSettings`: from a menu bar app those open the window behind other apps, where it gets \
+    lost), and its own Quit button (`NSApp.terminate(nil)`). `ForgeMenuBar.close()` closes the panel after an \
+    action in it. Give the panel a fixed width, and hand it its model inside the braces (`{ PanelView().environmentObject(model) }`), \
+    never with a modifier on the scene, which crashes the panel. Pass `dockIcon: true` only when the app also has a main window.
     - When the information or the job lives in another app the person uses (Slack, Mail, Messages, Notes, or a \
     site in their browser such as Gmail, LinkedIn or a CRM), use `ForgeComputer.ask("…")` to read it or \
     `ForgeComputer.perform("…")` to act there, from ForgeSupport.swift. It works with what they're already signed \
