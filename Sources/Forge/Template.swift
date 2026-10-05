@@ -1552,7 +1552,7 @@ enum Template {
     ///     if team.confidence ?? 0 > 0.7 { route(to: team.choice!) } else { askUser() }
     ///     let mood = try await ForgeAI.rate("How frustrated is the customer?", levels: ["Calm", "Annoyed", "Furious"], about: ticket)
     ///
-    /// `about:` takes text, a dictionary/array, or any Encodable value. Ask several questions about the same
+    /// `about:` takes text, a number, a dictionary/array, or any Encodable value. Ask several questions about the same
     /// thing in one request with `ForgeAI.decide(about:_:)`; they run in parallel.
     ///
     /// To judge many items, pass them all with `each:`. Forge runs about 12 at a time, retries, keeps the
@@ -1578,7 +1578,8 @@ enum Template {
     ///
     ///     let summary = try await ForgeAI.ask("Summarise this notification in one line.", data: notification.body)
     ///
-    /// Dates: `ask` already tells the AI the current date, time and time zone. When a date goes to the AI, write
+    /// Dates: `ask` already tells the AI the current date, time and time zone, with a calendar of the weeks
+    /// around today so "Thursday" or "a week from Sunday" lands on the right day. When a date goes to the AI, write
     /// it with `ForgeAI.when(date)` ("Mon 5 Oct 2026 at 15:00 (in 44 minutes)"); Dates inside `about:` are written
     /// that way for you. When a date comes back, ask for ISO 8601 and decode it into a `Date` property with
     /// `ask(as:)`, or use `ForgeAI.date(from:)`. Keep the `Date` and work out "in 44 minutes" or "overdue" in code
@@ -1665,7 +1666,7 @@ enum Template {
         /// Asks several questions about the same thing in one request. Answers come back under the same keys.
         static func decide(about state: Any, _ questions: [String: ForgeQuestion]) async throws -> [String: ForgeDecision] {
             let reply = try await post("/ai/decide", [
-                "state": try jsonState(state),
+                "state": try decisionState(state),
                 "questions": questions.mapValues(\.json),
             ])
             let answers = reply["answers"] as? [String: [String: Any]] ?? [:]
@@ -1692,6 +1693,14 @@ enum Template {
             default:
                 throw Failure(message: "Pass text, a dictionary or array, or an Encodable value to a decision.")
             }
+        }
+
+        /// The decision model only takes text, a dictionary or an array as the whole state, so a lone number
+        /// or true/false goes as its text ("42") rather than being refused.
+        private static func decisionState(_ state: Any) throws -> Any {
+            let json = try jsonState(state)
+            guard json is NSNumber || json is NSNull else { return json }
+            return String(decoding: try JSONSerialization.data(withJSONObject: json, options: .fragmentsAllowed), as: UTF8.self)
         }
 
         // MARK: Decisions about many items
@@ -1751,7 +1760,7 @@ enum Template {
             for (index, item) in items.enumerated() {
                 do {
                     let state = about(item)
-                    let body = try JSONSerialization.data(withJSONObject: ["state": try jsonState(state), "questions": questionJSON])
+                    let body = try JSONSerialization.data(withJSONObject: ["state": try decisionState(state), "questions": questionJSON])
                     guard remember != nil else {
                         requests.append((index, body))
                         continue
@@ -1876,7 +1885,8 @@ enum Template {
             return nil
         }
 
-        /// What every text request is told about the present, so "today", "tomorrow" and "in two hours" come out right.
+        /// What every text request is told about the present, so "today", "tomorrow", "in two hours" and
+        /// "a week from Sunday" come out right.
         private static var present: String {
             let formatter = DateFormatter()
             formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -1888,7 +1898,28 @@ enum Template {
             return "It is now \(formatter.string(from: now)) for the person (\(iso.string(from: now)), time zone "
                 + "\(TimeZone.current.identifier)). Use this for anything that depends on the present, such as today, "
                 + "tomorrow, how long until something, or whether it is over. Write dates and times in JSON as ISO 8601 "
-                + "with that UTC offset."
+                + "with that UTC offset.\n\nRead the date of a weekday off this calendar; never work it out:\n"
+                + calendar(around: now)
+        }
+
+        /// Last week and the four weeks from today, seven days to a line, so a weekday's date is read off
+        /// rather than counted and "a week from Sunday" is the Sunday one line down. Left to count, the AI puts
+        /// weekdays on the wrong date: asked for that on Mon 5 Oct it answered Mon 12 Oct or Mon 19 Oct.
+        private static func calendar(around now: Date) -> String {
+            let calendar = Calendar.current
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "EEE yyyy-MM-dd"
+            let rows = ["The last seven days", "Today and the coming days",
+                        "A week after each of those (\"a week from Sunday\", \"a week on Sunday\", \"Sunday week\")",
+                        "Two weeks after", "Three weeks after"]
+            return rows.enumerated().map { row, title in
+                title + ": " + (0..<7).map { column in
+                    let day = calendar.date(byAdding: .day, value: (row - 1) * 7 + column, to: now) ?? now
+                    let note = [7: "today ", 8: "tomorrow ", 14: "a week from today ", 15: "a week from tomorrow "][row * 7 + column]
+                    return (note ?? "") + formatter.string(from: day)
+                }.joined(separator: ", ")
+            }.joined(separator: "\n")
         }
 
         // MARK: Text from outside
