@@ -2470,8 +2470,10 @@ enum Template {
         /// Events in a date range, soonest first, across every calendar (or just the named ones).
         static func events(from: Date, to: Date, calendars: [String]? = nil) async throws -> [Event] {
             try await authorize()
-            let cals = store.calendars(for: .event).filter { calendars == nil || calendars!.contains($0.title) }
-            let predicate = store.predicateForEvents(withStart: from, end: to, calendars: cals.isEmpty ? nil : cals)
+            let all = store.calendars(for: .event)
+            let cals = calendars.map { names in all.filter { names.contains($0.title) } }
+            if let cals, cals.isEmpty { return [] }   // a filter that matches no calendar means no events, not every event
+            let predicate = store.predicateForEvents(withStart: from, end: to, calendars: cals)
             return store.events(matching: predicate).sorted { $0.startDate < $1.startDate }.map { e in
                 Event(id: e.eventIdentifier, title: e.title ?? "", start: e.startDate, end: e.endDate, isAllDay: e.isAllDay,
                       location: e.location, notes: e.notes, calendar: e.calendar.title,
@@ -2534,8 +2536,10 @@ enum Template {
         /// Reminders that aren't done yet, across every list (or just the named ones), due-soonest first.
         static func open(lists: [String]? = nil) async throws -> [Reminder] {
             try await authorize()
-            let cals = store.calendars(for: .reminder).filter { lists == nil || lists!.contains($0.title) }
-            let predicate = store.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: cals.isEmpty ? nil : cals)
+            let all = store.calendars(for: .reminder)
+            let cals = lists.map { names in all.filter { names.contains($0.title) } }
+            if let cals, cals.isEmpty { return [] }
+            let predicate = store.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: cals)
             let found: [EKReminder] = await withCheckedContinuation { c in store.fetchReminders(matching: predicate) { c.resume(returning: $0 ?? []) } }
             return found.map { r in
                 Reminder(id: r.calendarItemIdentifier, title: r.title ?? "", notes: r.notes, due: r.dueDateComponents?.date,
@@ -2577,8 +2581,11 @@ enum Template {
         }
 
         private static let store = CNContactStore()
-        private static let keys: [CNKeyDescriptor] = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactOrganizationNameKey,
-                                                       CNContactJobTitleKey, CNContactEmailAddressesKey, CNContactPhoneNumbersKey] as [CNKeyDescriptor]
+        // The formatter reads more than the name parts (name prefixes, contact type…): ask for everything it
+        // needs, or formatting a fetched contact raises an exception the app can't catch.
+        private static let keys: [CNKeyDescriptor] = [CNContactFormatter.descriptorForRequiredKeys(for: .fullName),
+                                                       CNContactOrganizationNameKey as CNKeyDescriptor, CNContactJobTitleKey as CNKeyDescriptor,
+                                                       CNContactEmailAddressesKey as CNKeyDescriptor, CNContactPhoneNumbersKey as CNKeyDescriptor]
 
         private static func authorize() async throws {
             if CNContactStore.authorizationStatus(for: .contacts) == .authorized { return }
@@ -2634,38 +2641,28 @@ enum Template {
             let isRead: Bool
         }
 
-        /// Newest messages in the inbox(es), newest first.
+        /// Newest messages across every account's inbox, newest first.
         static func inbox(limit: Int = 20) async throws -> [Message] {
-            try await messages(script: """
-            set out to ""
-            tell application "Mail"
-              set n to 0
-              repeat with acct in accounts
-                try
-                  set mb to mailbox "INBOX" of acct
-                  repeat with m in (messages of mb)
-                    if n ≥ \(limit) then exit repeat
-                    set out to out & my row(m, name of mb)
-                    set n to n + 1
-                  end repeat
-                end try
-              end repeat
-            end tell
-            return out
-            """)
+            try await messages(limit: limit, filter: "")
         }
 
         /// Messages whose subject or sender contains the text, newest first.
         static func search(_ query: String, limit: Int = 20) async throws -> [Message] {
-            let q = query.replacingOccurrences(of: "\"", with: "\\\"")
-            return try await messages(script: """
+            let q = literal(query)
+            return try await messages(limit: limit, filter: " whose subject contains \(q) or sender contains \(q)")
+        }
+
+        /// Takes up to `limit` newest from each account's inbox (Mail lists them newest first), then merges
+        /// and sorts by date before applying the limit, so one busy account can't crowd out the others.
+        private static func messages(limit: Int, filter: String) async throws -> [Message] {
+            let found = try await messages(script: """
             set out to ""
             tell application "Mail"
-              set n to 0
               repeat with acct in accounts
                 try
                   set mb to mailbox "INBOX" of acct
-                  repeat with m in (messages of mb whose subject contains "\(q)" or sender contains "\(q)")
+                  set n to 0
+                  repeat with m in (messages of mb\(filter))
                     if n ≥ \(limit) then exit repeat
                     set out to out & my row(m, name of mb)
                     set n to n + 1
@@ -2675,6 +2672,12 @@ enum Template {
             end tell
             return out
             """)
+            return Array(found.sorted { $0.date > $1.date }.prefix(limit))
+        }
+
+        /// Text as an AppleScript string literal: backslashes first, then quotes.
+        private static func literal(_ text: String) -> String {
+            "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
         }
 
         /// The full text of one message.
@@ -2696,12 +2699,11 @@ enum Template {
 
         /// Opens a new draft in Mail, filled in, for the person to look over and send.
         static func draft(to: [String], subject: String, body: String, cc: [String] = []) async throws {
-            func esc(_ s: String) -> String { s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") }
-            let recipients = to.map { "make new to recipient at end of to recipients with properties {address:\"\(esc($0))\"}" }
-            let ccs = cc.map { "make new cc recipient at end of cc recipients with properties {address:\"\(esc($0))\"}" }
+            let recipients = to.map { "make new to recipient at end of to recipients with properties {address:\(literal($0))}" }
+            let ccs = cc.map { "make new cc recipient at end of cc recipients with properties {address:\(literal($0))}" }
             _ = try await run("""
             tell application "Mail"
-              set msg to make new outgoing message with properties {subject:"\(esc(subject))", content:"\(esc(body))", visible:true}
+              set msg to make new outgoing message with properties {subject:\(literal(subject)), content:\(literal(body)), visible:true}
               tell msg
                 \((recipients + ccs).joined(separator: "\n    "))
               end tell
@@ -2748,6 +2750,8 @@ enum Template {
         }
 
         /// Runs AppleScript against Mail. A refused Automation permission comes back as a plain message.
+        /// Output is read while the script runs: a long message body would otherwise fill the pipe and the
+        /// script could never finish.
         private static func run(_ script: String) async throws -> String {
             try await withCheckedThrowingContinuation { continuation in
                 let process = Process()
@@ -2756,9 +2760,20 @@ enum Template {
                 let out = Pipe(), err = Pipe()
                 process.standardOutput = out
                 process.standardError = err
+                let group = DispatchGroup()
+                var outData = Data(), errData = Data()
+                for (pipe, sink) in [(out, 0), (err, 1)] {
+                    group.enter()
+                    DispatchQueue.global().async {
+                        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                        if sink == 0 { outData = data } else { errData = data }
+                        group.leave()
+                    }
+                }
                 process.terminationHandler = { process in
-                    let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                    let error = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                    group.wait()
+                    let text = String(decoding: outData, as: UTF8.self)
+                    let error = String(decoding: errData, as: UTF8.self)
                     if process.terminationStatus == 0 { continuation.resume(returning: text); return }
                     let message = error.contains("-1743") || error.lowercased().contains("not allowed")
                         ? "This app isn't allowed to control Mail. Allow it in System Settings → Privacy & Security → Automation."
