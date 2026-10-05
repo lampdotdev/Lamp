@@ -18,16 +18,18 @@ struct TurnProgress {
     var finished: Date?
     /// The turn ended without a working app.
     var failed = false
-    /// What's happening right now, in plain words: "Writing Scanner.swift", "Building…".
+    /// What's happening right now, in the user's words rather than the code's: "Working on the interface",
+    /// "Building…". It's the one place a turn in progress says what it's doing.
     var activity = "Getting started"
-    /// What the model has started on but not finished ("Writing GameView.swift", "Thinking"), shown at the
-    /// end of the chat. nil once the step is logged.
-    var upcoming: String?
-    /// The file being written or edited right now, if that's what the agent is doing.
+    /// The file being written or edited right now, if that's what the agent is doing. Never shown: it
+    /// tells which part of the plan is being worked on.
     var currentFile: String?
     var plan: [PlanPart] = []
-    /// Files written so far, newest last. Shown when the agent gave no plan.
+    /// Files written so far, newest last. Never shown: they tick the plan's parts.
     var files: [String] = []
+    /// What the agent has worked on so far, as the user was told ("Working on the interface"), newest last.
+    /// Shown when the agent gave no plan.
+    var steps: [String] = []
     /// The app's window once it has opened: the card's last frame.
     var screenshot: NSImage?
 
@@ -54,6 +56,20 @@ struct TurnProgress {
         }
     }
 
+    /// The agent wrote or edited a file.
+    mutating func wrote(_ file: String) {
+        if files.last != file {
+            files.removeAll { $0 == file }
+            files.append(file)
+            tickWrittenParts()
+        }
+        let step = Self.area(of: file)
+        if steps.last != step {
+            steps.removeAll { $0 == step }
+            steps.append(step)
+        }
+    }
+
     /// The turn is over. When the app was built and opened, everything planned is done.
     mutating func finish(worked: Bool) {
         finished = Date()
@@ -63,30 +79,57 @@ struct TurnProgress {
 
     var stage: String {
         if finished != nil { return failed ? "Not finished" : "Ready" }
-        if activity.hasPrefix("Building") || activity.hasPrefix("Fixing a build") { return "Building" }
+        if activity.hasPrefix("Building") || activity.hasPrefix("Fixing a problem") { return "Building" }
         if activity.hasPrefix("Opening") { return "Opening" }
-        return plan.isEmpty && files.isEmpty ? "Planning" : "Writing code"
+        return plan.isEmpty && files.isEmpty ? "Planning" : "Creating"
     }
 
-    /// The step the agent's tool call amounts to, in the present tense.
+    /// What the agent's tool call amounts to for someone who never sees the code: no file names, no tools.
     static func activity(for call: ToolCall) -> String {
-        let file = call.argument
-        if call.name == "look_at_app" { return "Checking the result" }
-        if call.name == "use_app" { return "Trying the app" }
+        if call.name == "look_at_app" { return "Checking how it looks" }
+        if call.name == "use_app" { return "Trying it out" }
+        if call.name.hasSuffix("_version") || call.name.hasSuffix("_versions") { return "Looking at earlier versions" }
         switch call.action {
-        case .read: return file.hasPrefix("screenshot") ? "Looking at the app" : file.isEmpty ? "Reading the code" : "Reading \(file)"
-        case .write: return file.isEmpty ? "Writing a file" : "Writing \(file)"
-        case .edit: return file.isEmpty ? "Editing a file" : "Editing \(file)"
-        case .delete: return file.isEmpty ? "Deleting a file" : "Deleting \(file)"
+        case .read: return call.argument.hasPrefix("screenshot") ? "Looking at your app" : "Looking things over"
+        case .write, .edit: return area(of: call.argument)
+        case .delete: return "Tidying up"
         case .run: return "Running a command"
-        case .search: return "Searching the code"
-        case .list: return "Looking through the files"
+        case .search, .list: return "Looking things over"
         case .web: return "Looking something up"
-        case .plan: return "Planning"
-        case .delegate: return "Working on a subtask"
-        case .other: return "Working"
+        case .plan: return "Planning your app"
+        case .delegate, .other: return "Working on your app"
         }
     }
+
+    /// The part of the app a file belongs to, going by the words in its name: "DealRowView.swift" is the
+    /// interface, "Theme.swift" is how it looks. A guess, which is all a progress line needs.
+    static func area(of file: String) -> String {
+        let name = (file as NSString).deletingPathExtension
+        if file.lowercased() == "app.md" { return "Taking notes for next time" }
+        if file.lowercased() == "icon.json" { return "Designing the icon" }
+        if name.hasSuffix("App") { return "Putting the pieces together" }
+        let words = Set(name
+            .replacingOccurrences(of: #"(?<=[a-z0-9])(?=[A-Z])|[^A-Za-z0-9]+"#, with: " ", options: .regularExpression)
+            .lowercased().split(separator: " ")
+            .map { $0.count > 3 && $0.hasSuffix("s") ? String($0.dropLast()) : String($0) })
+        return areas.first { !words.isDisjoint(with: $0.words) }?.activity ?? "Working on your app"
+    }
+
+    /// In order: "SettingsView" is the settings, not just any part of the interface.
+    private static let areas: [(activity: String, words: Set<String>)] = [
+        ("Making your app look nice", ["theme", "style", "color", "colour", "font", "appearance", "design",
+                                       "animation", "effect", "background", "gradient"]),
+        ("Working on the settings", ["setting", "preference"]),
+        ("Working on the interface", ["view", "screen", "window", "sidebar", "toolbar", "row", "cell", "panel",
+                                      "sheet", "menu", "button", "card", "form", "picker", "chart", "list",
+                                      "detail", "editor", "popover", "command"]),
+        ("Setting up what your app remembers", ["model", "store", "storage", "data", "database", "state",
+                                                "persistence", "record", "library", "history"]),
+        ("Working behind the scenes", ["service", "client", "api", "network", "fetcher", "sync",
+                                       "manager", "engine", "controller", "provider", "parser",
+                                       "importer", "exporter", "watcher", "monitor", "scanner",
+                                       "calculator", "logic", "helper", "util", "extension"]),
+    ]
 
     /// The same, from a tool call that is still streaming in: its name and the arguments so far.
     static func activity(tool: String, partialArguments: String) -> String {
@@ -164,7 +207,7 @@ struct BuildCard: View {
         .open: "circle", .started: "circle.lefthalf.filled", .active: "circle.dotted", .done: "checkmark.circle.fill",
     ]
 
-    /// The agent's plan with ticks, the files written when there's no plan, or blank bars before either.
+    /// The agent's plan with ticks, what it has worked on when there's no plan, or blank bars before either.
     @ViewBuilder
     private var outline: some View {
         if !progress.plan.isEmpty {
@@ -180,12 +223,15 @@ struct BuildCard: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-        } else if !progress.files.isEmpty {
+        } else if !progress.steps.isEmpty {
             VStack(alignment: .leading, spacing: 7) {
-                ForEach(progress.files.suffix(5), id: \.self) { file in
-                    Label(file, systemImage: "checkmark.circle.fill")
+                ForEach(progress.steps.suffix(5), id: \.self) { step in
+                    // The step it's on right now is still open; the footer says so.
+                    let current = progress.finished == nil && step == progress.activity
+                    Label(step, systemImage: current ? "circle.dotted" : "checkmark.circle.fill")
                         .labelStyle(.titleAndIcon)
                         .foregroundStyle(.secondary)
+                        .symbolEffect(.pulse, isActive: current)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
