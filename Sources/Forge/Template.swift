@@ -1365,30 +1365,25 @@ enum Template {
             return answers.mapValues(ForgeDecision.init)
         }
 
-        /// `relative` adds how far away each date is ("in 44 minutes"); saved verdicts are matched without it.
-        private static func jsonState(_ state: Any, relative: Bool = true) throws -> Any {
-            if let text = state as? String { return text }
-            let state = plain(state, relative: relative)
-            if JSONSerialization.isValidJSONObject(state) { return state }
-            if let value = state as? any Encodable {
+        /// What the decision model is sent: text, numbers, dictionaries and arrays as they are, dates as
+        /// `when` writes them, file URLs as paths, and Encodable values (alone or inside a collection) as their
+        /// JSON. `identity` is for matching saved verdicts: dates keep their exact moment and no "in 44 minutes".
+        private static func jsonState(_ state: Any, identity: Bool = false) throws -> Any {
+            switch state {
+            case is String, is NSNumber, is NSNull: return state
+            case let date as Date: return identity ? date.timeIntervalSinceReferenceDate : when(date)
+            case let url as URL: return url.isFileURL ? url.path : url.absoluteString
+            case let dictionary as [String: Any]: return try dictionary.mapValues { try jsonState($0, identity: identity) }
+            case let array as [Any]: return try array.map { try jsonState($0, identity: identity) }
+            case let value as any Encodable:
                 let encoder = JSONEncoder()
                 encoder.dateEncodingStrategy = .custom { date, encoder in
                     var container = encoder.singleValueContainer()
-                    try container.encode(ForgeAI.when(date, relative: relative))
+                    if identity { try container.encode(date.timeIntervalSinceReferenceDate) } else { try container.encode(ForgeAI.when(date)) }
                 }
                 return try JSONSerialization.jsonObject(with: encoder.encode(value), options: .fragmentsAllowed)
-            }
-            throw Failure(message: "Pass text, a dictionary or array, or an Encodable value to a decision.")
-        }
-
-        /// Dates and file URLs inside a dictionary or array, as text the decision model can read.
-        private static func plain(_ value: Any, relative: Bool) -> Any {
-            switch value {
-            case let date as Date: return when(date, relative: relative)
-            case let url as URL: return url.isFileURL ? url.path : url.absoluteString
-            case let dictionary as [String: Any]: return dictionary.mapValues { plain($0, relative: relative) }
-            case let array as [Any]: return array.map { plain($0, relative: relative) }
-            default: return value
+            default:
+                throw Failure(message: "Pass text, a dictionary or array, or an Encodable value to a decision.")
             }
         }
 
@@ -1455,7 +1450,7 @@ enum Template {
                         continue
                     }
                     // The same item and questions give the same key, however far away its dates are by now.
-                    let identity = try JSONSerialization.data(withJSONObject: ["state": try jsonState(state, relative: false),
+                    let identity = try JSONSerialization.data(withJSONObject: ["state": try jsonState(state, identity: true),
                                                                                "questions": questionJSON], options: .sortedKeys)
                     let key = SHA256.hash(data: identity).map { String(format: "%02x", $0) }.joined()
                     if let saved = ForgeStore.query(
@@ -1472,28 +1467,33 @@ enum Template {
             var done = total - requests.count
             if let progress, done > 0 { await progress(done, total) }
 
-            var judged = 0, failed = 0
+            var judged = 0, failed = 0, running = 0, next = 0
+            var lastProblem = "The decision model didn't answer."
             try await withThrowingTaskGroup(of: Outcome.self) { group in
-                var next = 0
-                func start(_ group: inout ThrowingTaskGroup<Outcome, Error>) {
-                    guard next < requests.count else { return }
-                    let request = requests[next]
-                    next += 1
-                    group.addTask {
-                        try Task.checkCancellation()
-                        do {
-                            let reply = try await post("/ai/decide", body: request.body)
-                            guard let answers = reply["answers"] as? [String: Any], !answers.isEmpty else {
-                                return Outcome(index: request.index, error: "The decision model didn't answer.")
+                // When the first five answers are all failures, nothing may be getting through (no key, offline):
+                // no new requests start until one already on its way succeeds, rather than failing hundreds of times.
+                func startMore(_ group: inout ThrowingTaskGroup<Outcome, Error>) {
+                    while running < max(1, concurrency), next < requests.count, judged > 0 || failed < 5 {
+                        let request = requests[next]
+                        next += 1
+                        running += 1
+                        group.addTask {
+                            try Task.checkCancellation()
+                            do {
+                                let reply = try await post("/ai/decide", body: request.body)
+                                guard let answers = reply["answers"] as? [String: Any], !answers.isEmpty else {
+                                    return Outcome(index: request.index, error: "The decision model didn't answer.")
+                                }
+                                return Outcome(index: request.index, answers: try JSONSerialization.data(withJSONObject: answers))
+                            } catch let error where !(error is CancellationError) && (error as? URLError)?.code != .cancelled {
+                                return Outcome(index: request.index, error: error.localizedDescription)
                             }
-                            return Outcome(index: request.index, answers: try JSONSerialization.data(withJSONObject: answers))
-                        } catch let error where !(error is CancellationError) && (error as? URLError)?.code != .cancelled {
-                            return Outcome(index: request.index, error: error.localizedDescription)
                         }
                     }
                 }
-                for _ in 0..<max(1, concurrency) { start(&group) }
+                startMore(&group)
                 while let outcome = try await group.next() {
+                    running -= 1
                     outcomes[outcome.index] = outcome
                     if let answers = outcome.answers {
                         judged += 1
@@ -1503,16 +1503,17 @@ enum Template {
                         }
                     } else {
                         failed += 1
-                        // Nothing is getting through (no key, offline): stop rather than fail hundreds of times.
-                        if judged == 0 && failed >= 5 {
-                            group.cancelAll()
-                            throw Failure(message: outcome.error ?? "The decision model didn't answer.")
-                        }
+                        lastProblem = outcome.error ?? lastProblem
                     }
                     done += 1
                     if let progress { await progress(done, total) }
-                    start(&group)
+                    startMore(&group)
                 }
+            }
+            // Items never sent because nothing was getting through fail like the ones before them.
+            if next < requests.count {
+                for request in requests[next...] { outcomes[request.index] = Outcome(index: request.index, error: lastProblem) }
+                if let progress { await progress(total, total) }
             }
             if !outcomes.contains(where: { $0?.answers != nil }), let problem = outcomes.compactMap({ $0?.error }).first {
                 throw Failure(message: problem)
@@ -1529,11 +1530,10 @@ enum Template {
 
         /// A date the way an AI should read it, in the person's time zone, with how far away it is worked out
         /// here rather than left for the AI to get wrong: "Mon 5 Oct 2026 at 15:00 (in 44 minutes)".
-        static func when(_ date: Date, now: Date = Date(), relative: Bool = true) -> String {
+        static func when(_ date: Date, now: Date = Date()) -> String {
             let formatter = DateFormatter()
             formatter.locale = Locale(identifier: "en_US_POSIX")
             formatter.dateFormat = "EEE d MMM yyyy 'at' HH:mm"
-            guard relative else { return formatter.string(from: date) }
             let seconds = date.timeIntervalSince(now)
             let minutes = Int((abs(seconds) / 60).rounded())
             let amount: String
