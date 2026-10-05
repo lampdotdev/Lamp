@@ -1288,7 +1288,10 @@ enum Template {
         /// A function that awaits something (the decision model, a text model). Scripts call it with `await`.
         func exposeAsync(_ name: String, _ doc: String, _ handler: @escaping ([JSValue]) async throws -> Any?) {
             api.append((name, doc))
-            let block: @convention(block) () -> JSValue = { [context] in
+            // Registered blocks live as long as the context, which this object owns: capture it weakly so the
+            // context's function doesn't keep the owner (and its compiled scripts) alive after it's let go.
+            let block: @convention(block) () -> JSValue = { [weak self] in
+                guard let self, let context = JSContext.current() else { return JSValue(undefinedIn: JSContext.current()) }
                 let args = JSContext.currentArguments() as? [JSValue] ?? []
                 // A promise the script awaits; resolved on the main actor when the Swift work finishes.
                 let caller = self.current
@@ -1448,41 +1451,33 @@ enum Template {
                 if let end = t.range(of: "```", options: .backwards) { t = String(t[..<end.lowerBound]) }
             }
             // The whole reply is one function (`async function (a, b) { … }`, `function f(a) { … }`,
-            // `(a, b) => { … }`, `async (a) => { … }`) rather than a body: take the body out of it. A body that
-            // merely contains an arrow callback is left alone, since the wrapper must enclose the entire reply.
+            // `(a, b) => { … }`, `async (a) => { … }`) rather than a body: take the body out of it. Whether the
+            // wrapper really encloses the entire reply is decided by the JavaScript parser, not by scanning
+            // the text: the reply must parse as a single function expression, and what's inside the braces
+            // must parse as a function body. A reply that starts with a helper function and goes on, or has
+            // callbacks, regex literals or braces in strings, isn't one expression and is kept as is.
             let wrapper = #"^(?:async\s+)?(?:function\b[^{]*|\([^()]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)\s*\{"#
-            if let open = t.range(of: wrapper, options: .regularExpression), t.hasSuffix("}"),
-               Self.braceClosedAtEnd(t, from: open.upperBound) {
-                t = String(t[open.upperBound..<t.index(before: t.endIndex)])
+            if let open = t.range(of: wrapper, options: .regularExpression), t.hasSuffix("}") {
+                let inner = String(t[open.upperBound..<t.index(before: t.endIndex)])
+                if Self.parses(t, asBody: false) && Self.parses(inner, asBody: true) { t = inner }
             }
             return t.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        /// Whether the brace just before `start` is the one the reply's final brace closes, i.e. the wrapper
-        /// encloses the whole reply. `function helper() {…}` followed by more code ends its brace early. Braces
-        /// inside strings, template literals and comments are skipped.
-        static func braceClosedAtEnd(_ text: String, from start: String.Index) -> Bool {
-            var depth = 1
-            var i = start
-            let end = text.index(before: text.endIndex)   // the final "}"
-            var quote: Character? = nil
-            var lineComment = false, blockComment = false
-            while i < end {
-                let c = text[i]
-                let next = text.index(after: i) < text.endIndex ? text[text.index(after: i)] : nil
-                if lineComment { if c == "\n" { lineComment = false } }
-                else if blockComment { if c == "*" && next == "/" { blockComment = false; i = text.index(after: i) } }
-                else if let q = quote {
-                    if c == "\\" { i = text.index(after: i) }
-                    else if c == q { quote = nil }
-                } else if c == "/" && next == "/" { lineComment = true }
-                else if c == "/" && next == "*" { blockComment = true; i = text.index(after: i) }
-                else if c == "\"" || c == "'" || c == "`" { quote = c }
-                else if c == "{" { depth += 1 }
-                else if c == "}" { depth -= 1; if depth == 0 { return false } }
-                i = text.index(after: i)
-            }
-            return depth == 1
+        /// Whether JavaScriptCore can parse `source` as an async function body (asBody) or as an expression.
+        /// Parsing only, in a throwaway context: nothing runs.
+        static func parses(_ source: String, asBody: Bool) -> Bool {
+            let probe = JSContext(virtualMachine: JSVirtualMachine())!
+            let program = asBody ? "async function __f() {\n\(source)\n}" : "(\(source))"
+            // new Function compiles its argument without running it; a syntax error throws.
+            let check = "(function() { try { new Function(\(Self.jsString(program))); return true; } catch (e) { return false; } })()"
+            return probe.evaluateScript(check)?.toBool() ?? false
+        }
+
+        private static func jsString(_ text: String) -> String {
+            let data = try? JSONSerialization.data(withJSONObject: [text])
+            let array = data.flatMap { String(data: $0, encoding: .utf8) } ?? "[\"\"]"
+            return String(array.dropFirst().dropLast())
         }
 
         /// JSValue → plain Swift (String, Double, Bool, [Any], [String: Any] or nil).
