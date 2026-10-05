@@ -72,8 +72,10 @@ APP="${BUILD_DIR:-build}/Forge.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Forge"
-[ -f Resources/AppIcon.icns ] || swift Resources/make-icon.swift Resources/AppIcon.icns
+# Forge's icon, made with the same pipeline as the apps' icons (see Resources/Icon): the classic .icns,
+# plus the compiled Icon Composer icon that macOS 26 draws in Liquid Glass.
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp Resources/Assets.car "$APP/Contents/Resources/Assets.car"
 cp Resources/THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 install -m 755 Resources/forge-approve.sh "$APP/Contents/Resources/forge-approve.sh"
 cp Resources/forge-tools.ts "$APP/Contents/Resources/"   # pi extension: the agent's look_at_app and plan tools
@@ -92,6 +94,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>dev.forge.host</string>
   <key>CFBundleName</key><string>Forge</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundleIconName</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
   <key>CFBundleVersion</key><string>$APP_BUILD</string>
