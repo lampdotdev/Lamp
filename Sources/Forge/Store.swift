@@ -806,10 +806,12 @@ final class Store: ObservableObject {
     }
 
     /// Whether the agent changed any of the app's files this turn. Forge's own writes don't count: it
-    /// regenerates ForgeSupport.swift, and designs the icon (icon.json) while the agent works.
+    /// regenerates ForgeSupport.swift, designs the icon (icon.json) while the agent works, and saves the
+    /// request's attachments before the agent starts.
     private func agentChangedFiles(_ project: ForgeProject) async -> Bool {
         var output = ""
-        _ = await Shell.run("git status --porcelain -- . ':!Sources/ForgeSupport.swift' ':!icon.json'", cwd: project.dir) {
+        let ignored = "':!Sources/ForgeSupport.swift' ':!icon.json' ':!\(Attachments.folder)'"
+        _ = await Shell.run("git status --porcelain -- . \(ignored)", cwd: project.dir) {
             output += $0
         }
         return !output.trimmed.isEmpty
