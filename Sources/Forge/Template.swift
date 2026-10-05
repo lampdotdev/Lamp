@@ -1241,6 +1241,13 @@ enum Template {
         private let context: JSContext
         private var api: [(name: String, doc: String)] = []
         private var pending: [String: Task<Script, Error>] = [:]
+        /// Runs waiting on a script's promise, by run number. If the engine stops a script after an await, the
+        /// promise never settles (the aborted microtask just stops), so the native side settles the run instead.
+        private var waiting: [Int: CheckedContinuation<Any?, Error>] = [:]
+        private var runCount = 0
+        /// The run whose JavaScript is executing right now (the engine runs one at a time), so a stop can be
+        /// blamed on the right run and siblings suspended at an await are left alone.
+        private var current: Int?
         private let scripts = ForgeStore.collection("forge_scripts", of: Script.self)
         /// A sentence about the app, so the AI knows what the scripts are for: "Draw is a kids' cartoon puzzle
         /// game where written words become doodles that interact." Set it once; it goes into every request.
@@ -1284,14 +1291,24 @@ enum Template {
             let block: @convention(block) () -> JSValue = { [context] in
                 let args = JSContext.currentArguments() as? [JSValue] ?? []
                 // A promise the script awaits; resolved on the main actor when the Swift work finishes.
-                let promise = JSValue(newPromiseIn: context) { resolve, reject in
+                let caller = self.current
+                let promise = JSValue(newPromiseIn: context) { [weak self] resolve, reject in
                     Task { @MainActor in
-                        do {
-                            let result = try await handler(args)
-                            resolve?.call(withArguments: [result ?? NSNull()])
-                        } catch {
-                            reject?.call(withArguments: [error.localizedDescription])
+                        guard let self else { return }
+                        var result: Result<Any?, Error>
+                        do { result = .success(try await handler(args)) } catch { result = .failure(error) }
+                        // Resuming the script runs its next section now, on behalf of the run that called us.
+                        let previous = self.current
+                        self.current = caller
+                        switch result {
+                        case .success(let value): resolve?.call(withArguments: [value ?? NSNull()])
+                        case .failure(let error): reject?.call(withArguments: [error.localizedDescription])
                         }
+                        // If the engine stopped the script in that section, its promise never settles, so the
+                        // run is failed from here. The engine only reports the stop on its next entry: give it one.
+                        self.context.evaluateScript("0")
+                        self.failCurrentIfTerminated()
+                        self.current = previous
                     }
                 }
                 return promise ?? JSValue(undefinedIn: context)
@@ -1350,28 +1367,54 @@ enum Template {
             let function = try compile(script)
             context.exception = nil
             applyTimeLimit()
+            runCount += 1
+            let number = runCount
+            let previous = current
+            current = number
+            defer { current = previous }
             let result = function.call(withArguments: arguments.map { $0 })
             if let exception = context.exception {
-                let text = exception.toString() ?? "unknown"
-                throw Failure(message: text.contains("execution terminated")
-                              ? "The script ran for more than \(timeLimit) seconds and was stopped." : "Script error: \(text)")
+                context.exception = nil
+                throw failure(for: exception.toString() ?? "unknown")
             }
             guard let result else { throw Failure(message: "The script didn't run.") }
-            // An async function returns a promise: wait for it.
+            // An async function returns a promise: wait for it. The run is settled exactly once, by whichever
+            // comes first: the promise's handlers, or the native side noticing the engine stopped the script.
             if result.isObject, result.hasProperty("then") {
                 return try await withCheckedThrowingContinuation { continuation in
-                    let onDone: @convention(block) (JSValue) -> Void = { continuation.resume(returning: Self.swift($0)) }
-                    let onFail: @convention(block) (JSValue) -> Void = { [timeLimit] in
-                        let text = $0.toString() ?? "unknown"
-                        continuation.resume(throwing: Failure(message: text.contains("execution terminated")
-                            ? "The script ran for more than \(timeLimit) seconds and was stopped." : "Script error: \(text)"))
+                    waiting[number] = continuation
+                    let onDone: @convention(block) (JSValue) -> Void = { [weak self] in
+                        self?.settle(number, with: .success(Self.swift($0)))
+                    }
+                    let onFail: @convention(block) (JSValue) -> Void = { [weak self] in
+                        guard let self else { return }
+                        self.settle(number, with: .failure(self.failure(for: $0.toString() ?? "unknown")))
                     }
                     result.invokeMethod("then", withArguments: [
                         JSValue(object: onDone, in: context)!, JSValue(object: onFail, in: context)!,
                     ])
+                    failCurrentIfTerminated()
                 }
             }
             return Self.swift(result)
+        }
+
+        private func settle(_ number: Int, with outcome: Result<Any?, Error>) {
+            guard let continuation = waiting.removeValue(forKey: number) else { return }
+            continuation.resume(with: outcome)
+        }
+
+        /// If the engine has just stopped the script that was executing, fail that run (and only that run:
+        /// siblings suspended at an await still have live promises).
+        private func failCurrentIfTerminated() {
+            guard let exception = context.exception, (exception.toString() ?? "").contains("execution terminated") else { return }
+            context.exception = nil
+            if let current { settle(current, with: .failure(failure(for: "execution terminated"))) }
+        }
+
+        private func failure(for text: String) -> Failure {
+            Failure(message: text.contains("execution terminated")
+                    ? "The script ran for more than \(timeLimit) seconds and was stopped." : "Script error: \(text)")
         }
 
         private var compiled: [String: JSValue] = [:]
@@ -1408,10 +1451,38 @@ enum Template {
             // `(a, b) => { … }`, `async (a) => { … }`) rather than a body: take the body out of it. A body that
             // merely contains an arrow callback is left alone, since the wrapper must enclose the entire reply.
             let wrapper = #"^(?:async\s+)?(?:function\b[^{]*|\([^()]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)\s*\{"#
-            if let open = t.range(of: wrapper, options: .regularExpression), t.hasSuffix("}") {
+            if let open = t.range(of: wrapper, options: .regularExpression), t.hasSuffix("}"),
+               Self.braceClosedAtEnd(t, from: open.upperBound) {
                 t = String(t[open.upperBound..<t.index(before: t.endIndex)])
             }
             return t.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        /// Whether the brace just before `start` is the one the reply's final brace closes, i.e. the wrapper
+        /// encloses the whole reply. `function helper() {…}` followed by more code ends its brace early. Braces
+        /// inside strings, template literals and comments are skipped.
+        static func braceClosedAtEnd(_ text: String, from start: String.Index) -> Bool {
+            var depth = 1
+            var i = start
+            let end = text.index(before: text.endIndex)   // the final "}"
+            var quote: Character? = nil
+            var lineComment = false, blockComment = false
+            while i < end {
+                let c = text[i]
+                let next = text.index(after: i) < text.endIndex ? text[text.index(after: i)] : nil
+                if lineComment { if c == "\n" { lineComment = false } }
+                else if blockComment { if c == "*" && next == "/" { blockComment = false; i = text.index(after: i) } }
+                else if let q = quote {
+                    if c == "\\" { i = text.index(after: i) }
+                    else if c == q { quote = nil }
+                } else if c == "/" && next == "/" { lineComment = true }
+                else if c == "/" && next == "*" { blockComment = true; i = text.index(after: i) }
+                else if c == "\"" || c == "'" || c == "`" { quote = c }
+                else if c == "{" { depth += 1 }
+                else if c == "}" { depth -= 1; if depth == 0 { return false } }
+                i = text.index(after: i)
+            }
+            return depth == 1
         }
 
         /// JSValue → plain Swift (String, Double, Bool, [Any], [String: Any] or nil).
