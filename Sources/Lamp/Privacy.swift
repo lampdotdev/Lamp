@@ -43,6 +43,13 @@ enum Privacy {
         if path == forge || path.hasPrefix(forge + "/") {
             return .deny("That belongs to Lamp or to another of the user's apps, and isn't yours to open.")
         }
+        // Nor the sign-ins and keys of anything else on the Mac.
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+        let secrets = [".ssh", ".gnupg", ".aws", ".netrc", ".codex", ".claude", ".pi", ".config/gh", "Library/Keychains",
+                       "Library/Application Support/Claude", "Library/Application Support/Claude-Personal", "Library/Cookies"]
+        if secrets.contains(where: { path == homeDir + "/" + $0 || path.hasPrefix(homeDir + "/" + $0 + "/") }) {
+            return .deny("That holds sign-ins or keys, and isn't yours to open.")
+        }
         guard asksOutsideFolder else { return .allow }
         if scratchRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) { return .allow }
         if readers.contains(tool), publicRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) { return .allow }

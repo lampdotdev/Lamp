@@ -949,7 +949,11 @@ struct ImportReviewView: View {
     let pending: Store.PendingImport
 
     private var review: ImportReview? { pending.review }
-    private var highRisk: Bool { review?.risk == "high" }
+    /// High by the AI's verdict, or unchecked (no AI) while the fixed checks found real capabilities.
+    private var highRisk: Bool {
+        guard let review else { return false }
+        return review.risk == "high" || (review.risk == "unknown" && !review.detected.isEmpty)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -964,7 +968,7 @@ struct ImportReviewView: View {
                 if !review.detected.isEmpty || !review.capabilities.isEmpty {
                     section("What it can access") {
                         ForEach(review.detected + review.capabilities.filter { !review.detected.contains($0) }, id: \.self) {
-                            Label($0, systemImage: "checkmark.shield").labelStyle(.titleAndIcon)
+                            Label($0, systemImage: "exclamationmark.shield").labelStyle(.titleAndIcon)
                         }
                     }
                 }
@@ -997,13 +1001,17 @@ struct ImportReviewView: View {
 
             HStack {
                 Spacer()
+                // Escape always cancels. Return builds only when the review is in and not worrying; a risky
+                // app takes a deliberate click.
                 Button("Cancel", role: .cancel) { store.cancelImport() }
-                    .keyboardShortcut(highRisk || review == nil ? .defaultAction : .cancelAction)
-                Button(highRisk ? "Open Anyway" : "Build & Open", role: highRisk ? .destructive : nil) {
-                    store.confirmImport()
+                    .keyboardShortcut(.cancelAction)
+                if highRisk || review == nil {
+                    Button(highRisk ? "Open Anyway" : "Build & Open", role: highRisk ? .destructive : nil) { store.confirmImport() }
+                        .disabled(review == nil)
+                } else {
+                    Button("Build & Open") { store.confirmImport() }
+                        .keyboardShortcut(.defaultAction)
                 }
-                .disabled(review == nil)
-                .keyboardShortcut(highRisk || review == nil ? .cancelAction : .defaultAction)
             }
         }
         .padding(24)
