@@ -60,8 +60,10 @@ enum Privacy {
     static let outsideRead = "It's outside this app's folder, and what's read goes to the AI model."
 
     /// Whether a shell command names something the rule above would ask about: a file or folder outside the
-    /// app's folder that isn't a system, developer or temporary one. It only keeps such a command's card from
-    /// calling it low risk, so it errs towards yes; whether the command runs is decided elsewhere.
+    /// app's folder that isn't a system, developer or temporary one. Such a command always goes to the user
+    /// (Store.commandLooksSafe) and is never rated low risk (Store.explain), whatever the models make of it,
+    /// so it errs towards yes. It reads the words of the command and can't see what a script or a variable
+    /// would open: the models still judge those.
     static func reachesOutside(_ command: String, project: LampProject) -> Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return words(in: command).contains { word in
@@ -73,8 +75,9 @@ enum Privacy {
                 guard let top = path.split(separator: "/").first,
                       FileManager.default.fileExists(atPath: "/" + top) else { return false }
             } else if !path.hasPrefix("~"), !path.contains("..") {
-                // A plain relative path stays in the app's folder unless a link leads out, which the rule works out.
-                guard path.contains("/") else { return false }
+                // Any other word is a path only if something by that name is in the app's folder. That includes
+                // a bare name: it can be a link that leads out, which the rule works out below.
+                guard FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(path).path) else { return false }
             }
             return verdict(tool: "read", path: path, project: project) == .ask
         }
