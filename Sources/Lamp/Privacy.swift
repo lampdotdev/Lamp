@@ -86,7 +86,9 @@ enum Privacy {
                 // a bare name: it can be a link that leads out, which the rule works out below.
                 guard FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(path).path) else { return false }
             }
-            return verdict(tool: "read", path: path, project: project) == .ask
+            // Outside the app's folder, whether that means asking (another folder) or never (sign-ins and keys):
+            // either way the command isn't routine and needs the user's say-so.
+            return verdict(tool: "read", path: path, project: project) != .allow
         }
     }
 

@@ -154,6 +154,7 @@ struct ImportReview {
     var capabilities: [String]
     var concerns: [String]
     var risk: String            // "low", "medium", "high", or "unknown" when the AI check couldn't run
+    var checked = false         // the AI check ran and answered
     var detected: [String]      // from the fixed checklist; always shown
     var note: String?           // e.g. why the AI check didn't run
 }
@@ -204,10 +205,7 @@ extension Sharing {
         let about = (try? String(contentsOf: package.folder.appendingPathComponent("APP.md"), encoding: .utf8)) ?? "(none)"
 
         var review = ImportReview(summary: "", capabilities: [], concerns: [], risk: "unknown", detected: detected)
-        if truncated {
-            review.concerns.append("This app is too large for Lamp to check all of its code.")
-            review.risk = "medium"   // whatever the model says of the part it saw, it didn't see all of it
-        }
+        if truncated { review.concerns.append("This app is too large for Lamp to check all of its code.") }
         guard AppAI.canAnswer else {
             review.note = "Set up AI in Lamp → Settings to have it check what this app does."
             return review
@@ -240,6 +238,9 @@ extension Sharing {
             review.capabilities = answer.capabilities
             review.concerns += answer.concerns
             review.risk = ["low", "medium", "high"].contains(answer.risk.lowercased()) ? answer.risk.lowercased() : "unknown"
+            review.checked = review.risk != "unknown"
+            // Whatever the model says of the part it saw, it didn't see all of it.
+            if truncated, review.risk == "low" { review.risk = "medium" }
         } catch let failure as AppAI.Failure {
             review.note = "Lamp's AI check didn't run: \(failure.message)"
         } catch {

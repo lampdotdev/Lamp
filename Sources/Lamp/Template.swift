@@ -604,6 +604,7 @@ enum Template {
             lock.withLock {
                 let depth = transactionDepth
                 let savepoint = "lamp_\(depth)"
+                if depth == 0 { backUpOnce() }   // a backup can't be taken inside a transaction
                 _ = depth == 0 ? run("BEGIN", []) { _ in } : run("SAVEPOINT \(savepoint)", []) { _ in }
                 transactionDepth += 1
                 transactionFailed.append(false)

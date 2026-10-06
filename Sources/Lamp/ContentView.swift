@@ -949,10 +949,10 @@ struct ImportReviewView: View {
     let pending: Store.PendingImport
 
     private var review: ImportReview? { pending.review }
-    /// High by the AI's verdict, or unchecked (no AI) while the fixed checks found real capabilities.
+    /// High by the AI's verdict, or unchecked (no AI answer) while the fixed checks found real capabilities.
     private var highRisk: Bool {
         guard let review else { return false }
-        return review.risk == "high" || (review.risk == "unknown" && !review.detected.isEmpty)
+        return review.risk == "high" || (!review.checked && !review.detected.isEmpty)
     }
 
     var body: some View {
