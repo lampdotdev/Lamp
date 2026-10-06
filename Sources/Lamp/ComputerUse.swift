@@ -499,6 +499,8 @@ final class MCPClient: @unchecked Sendable {
         failAll()
     }
 
+    /// A stalled driver would otherwise leave the app's request, and the gateway connection behind it, waiting
+    /// forever: after two minutes the request fails instead.
     private func request(_ method: String, _ params: [String: Any]) async throws -> [String: Any] {
         try await withCheckedThrowingContinuation { continuation in
             lock.lock()
@@ -507,6 +509,13 @@ final class MCPClient: @unchecked Sendable {
             waiting[id] = continuation
             lock.unlock()
             send(["jsonrpc": "2.0", "id": id, "method": method, "params": params])
+            DispatchQueue.global().asyncAfter(deadline: .now() + 120) { [weak self] in
+                guard let self else { return }
+                lock.lock()
+                let late = waiting.removeValue(forKey: id)
+                lock.unlock()
+                late?.resume(throwing: ComputerUse.Failure(message: "The computer-use driver didn't answer in two minutes."))
+            }
         }
     }
 

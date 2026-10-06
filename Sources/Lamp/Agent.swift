@@ -27,7 +27,7 @@ enum Agent {
     /// Lamp's own tools for pi (Resources/lamp-tools.ts): `look_at_app` has Lamp build and open the app
     /// mid-turn and shows the agent the result; `plan` is the checklist on the build card; `delete_file`
     /// removes a file, which pi's own tools can't; the version tools list, name and restore the app's saved
-    /// versions. Other engines don't have them.
+    /// versions. Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
     static var lampTools: URL? {
         let url = Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.ts")
         return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
@@ -35,7 +35,9 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static let tryRules = """
+    static var tryRules: String { lookRules + planRules }
+
+    private static let lookRules = """
 
     - `look_at_app` builds the app with your changes, opens it, and shows you its windows, what it printed \
     and any build errors or crash, so you can check your work instead of guessing. Once your edits are in, use \
@@ -54,8 +56,9 @@ enum Agent {
     (a label, a colour) or a change you watched work already.
     """
 
-    /// Rules for the tools only pi's extension has.
-    static let toolRules = tryRules + """
+    /// Every engine has these too (pi's extension, Lamp's MCP endpoint). Kept apart from the look rules only
+    /// because the prompt reads better in that order.
+    private static let planRules = """
 
     - When you build a new app, call `plan` once, before writing any code, with its 3 to 5 main parts in the \
     user's own words (what they'll be able to do, never file or type names) and, for each part, the files \
@@ -298,7 +301,7 @@ enum Agent {
             "LAMP_MODEL": Builder.piProvider == Builder.myPiProvider ? myPiModel : Builder.piModel,
             "LAMP_SESSION": session,
             "LAMP_SESSION_DIR": sessionDir,
-            "LAMP_SYSTEM": systemPrompt + toolRules,
+            "LAMP_SYSTEM": systemPrompt + tryRules,
             "LAMP_PROMPT": prompt,
             "LAMP_TOOLS": lampTools?.path ?? "",
             // "My pi setup" uses the user's own pi config (their logins); everything else uses Lamp's.
