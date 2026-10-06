@@ -1021,6 +1021,10 @@ final class Store: ObservableObject {
             log(project, .status, "Ran: \(command)")
             return true
         case .auto where !escalated:
+            if Self.isReadOnly(command) {
+                log(project, .status, "Ran: \(command)")
+                return true
+            }
             if await commandLooksSafe(command, for: project) {
                 log(project, .status, "Ran: \(command)")
                 return true
@@ -1066,8 +1070,7 @@ final class Store: ObservableObject {
                                     "file", "which", "tree", "sort", "uniq", "cut", "tr", "basename", "dirname", "realpath",
                                     "du", "nl", "diff", "cd", "true", "test", "printf", "find", "sed", "git"]
         let gitReads: Set<String> = ["status", "log", "diff", "show", "ls-files", "branch", "rev-parse", "blame", "grep"]
-        let parts = command.split(whereSeparator: { "|;&\n".contains($0) }).map { String($0).trimmed }.filter { !$0.isEmpty }
-        for part in parts {
+        for part in Self.simpleCommands(in: command) {
             let words = part.split(separator: " ").map(String.init).drop { $0.contains("=") && !$0.hasPrefix("-") }
             guard let program = words.first.map({ ($0 as NSString).lastPathComponent }), readers.contains(program) else { return false }
             let args = Array(words.dropFirst())
@@ -1079,6 +1082,31 @@ final class Store: ObservableObject {
             }
         }
         return true
+    }
+
+    /// The simple commands of a shell line, split at the pipes, `;`, `&&` and `||` that sit outside quotes:
+    /// a `|` inside a search pattern (`rg 'a|b'`) is part of the pattern, not a pipe.
+    nonisolated static func simpleCommands(in command: String) -> [String] {
+        var parts: [String] = []
+        var current = ""
+        var quote: Character?
+        var escaped = false
+        for character in command {
+            if escaped { current.append(character); escaped = false; continue }
+            if character == "\\", quote != "'" { current.append(character); escaped = true; continue }
+            if let open = quote {
+                current.append(character)
+                if character == open { quote = nil }
+            } else if character == "'" || character == "\"" {
+                current.append(character); quote = character
+            } else if "|;&\n".contains(character) {
+                parts.append(current); current = ""
+            } else {
+                current.append(character)
+            }
+        }
+        parts.append(current)
+        return parts.map { $0.trimmed }.filter { !$0.isEmpty }
     }
 
     /// Asks the in-app AI model to describe a command for a non-technical person: what it does, and its risk.

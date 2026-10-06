@@ -725,8 +725,9 @@ struct AppInfoView: View {
                 LabeledContent("Agent", value: Builder.engine.title)
                 if Builder.engine == .claude || Builder.engine == .codex {
                     let model = Builder.engineModel(Builder.engine)
+                    let names = Builder.engine == .claude ? Builder.claudeModels : Builder.codexModels
                     LabeledContent("Building with", value: model.isEmpty ? "\(Builder.engine.title)'s default"
-                                   : Builder.claudeModels.first { $0.id == model }?.label ?? model)
+                                   : names.first { $0.id == model }?.label ?? model)
                 }
                 if Builder.engine == .pi {
                     LabeledContent("Provider", value: providerName)
