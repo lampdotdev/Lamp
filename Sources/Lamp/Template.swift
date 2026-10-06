@@ -608,17 +608,21 @@ enum Template {
                 _ = depth == 0 ? run("BEGIN", []) { _ in } : run("SAVEPOINT \(savepoint)", []) { _ in }
                 transactionDepth += 1
                 transactionFailed.append(false)
+                afterCommit.append([])
                 body()
                 let failed = transactionFailed.removeLast()
+                // Work waiting on this level's outcome: dropped with a rollback, otherwise handed up a level
+                // (it still depends on the outer commit) or, at the top, run now.
+                let pending = failed ? [] : afterCommit.removeLast()
+                if failed { afterCommit.removeLast() }
                 transactionDepth -= 1
                 if depth == 0 {
                     _ = run(failed ? "ROLLBACK" : "COMMIT", []) { _ in }
-                    let pending = afterCommit
-                    afterCommit = []
-                    if !failed { pending.forEach { $0() } }
+                    pending.forEach { $0() }
                 } else {
                     if failed { _ = run("ROLLBACK TO \(savepoint)", []) { _ in } }
                     _ = run("RELEASE \(savepoint)", []) { _ in }
+                    afterCommit[afterCommit.count - 1] += pending
                 }
             }
         }
@@ -627,7 +631,7 @@ enum Template {
 
         private static let lock = NSRecursiveLock()
         nonisolated(unsafe) private static var transactionDepth = 0
-        nonisolated(unsafe) private static var afterCommit: [() -> Void] = []   // work that waits for the outer commit
+        nonisolated(unsafe) private static var afterCommit: [[() -> Void]] = []   // per open transaction: work that waits for its commit
         nonisolated(unsafe) private static var transactionFailed: [Bool] = []
         nonisolated(unsafe) private static var unreadable: Set<String> = []
         nonisolated(unsafe) private static var backedUp = false
@@ -742,7 +746,7 @@ enum Template {
                 try? FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
                 try? FileManager.default.moveItem(at: file, to: backups.appendingPathComponent("\(name)-imported.json"))
             }
-            if transactionDepth == 0 { archive() } else { afterCommit.append(archive) }
+            if transactionDepth == 0 { archive() } else { afterCommit[afterCommit.count - 1].append(archive) }
         }
 
         static func problem(_ message: String) {
