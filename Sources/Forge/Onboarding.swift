@@ -27,11 +27,11 @@ private enum Step: Int, CaseIterable {
     case hello, idea, setup
 }
 
-/// Forge's colors while the brand is still settling: the ember of its icon, on a bright, warm ground.
+/// Lamp's colours: near-black ink on a warm white page, where the porcelain lamp behind the welcome sits.
 private enum Palette {
-    static let ground = Color(red: 0.992, green: 0.988, blue: 0.980)
-    static let ember = Color(red: 1.0, green: 0.48, blue: 0.13)
-    static let emberDeep = Color(red: 0.93, green: 0.33, blue: 0.08)
+    static let ground = Color(nsColor: LampStage.page)
+    static let accent = Color(red: 0.2, green: 0.19, blue: 0.18)
+    static let accentDeep = Color(red: 0.08, green: 0.075, blue: 0.07)
     static let ink = Color(red: 0.11, green: 0.10, blue: 0.10)
     static let card = Color.white.opacity(0.72)
 }
@@ -67,13 +67,25 @@ struct OnboardingView: View {
         }
         .frame(minWidth: Onboarding.minimumSize.width, maxWidth: .infinity,
                minHeight: Onboarding.minimumSize.height, maxHeight: .infinity)
-        .background(Palette.ground)
+        .background {
+            ZStack {
+                Palette.ground
+                LampBackdrop(step: step.rawValue)
+                // Behind the later steps' content the lamp fades into the page, so it never competes with it.
+                LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: Palette.ground.opacity(0.85), location: 0.24),
+                                       .init(color: Palette.ground.opacity(0.85), location: 0.76), .init(color: .clear, location: 1)],
+                               startPoint: .leading, endPoint: .trailing)
+                    .opacity(step == .hello ? 0 : 1)
+                    .animation(.easeInOut(duration: 0.8), value: step)
+            }
+            .ignoresSafeArea()
+        }
         .clipped()
         .ignoresSafeArea()
         .toolbarBackground(.hidden, for: .windowToolbar)
         .navigationTitle("")
         .environment(\.colorScheme, .light)
-        .tint(Palette.ember)
+        .tint(Palette.accent)
         .background(WindowReader { window = $0 })
         .onChange(of: window) { if let window { Chrome.hide(window) } }
         // Menus can be rebuilt at any moment, so keep Settings switched off for as long as the welcome is up.
@@ -111,137 +123,40 @@ struct OnboardingView: View {
 
 // MARK: - Steps
 
-/// 1. What Forge is, with a parade of apps people make.
+/// 1. What Lamp is, over the lamp itself.
 private struct HelloStep: View {
     let next: () -> Void
     @State private var shown = false
 
     var body: some View {
-        // One cluster in the middle, with fixed gaps: resizing the window only changes the margins around it.
-        VStack(spacing: 0) {
-            Spacer(minLength: 24)
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable().frame(width: 52, height: 52)
-                .shadow(color: Palette.emberDeep.opacity(0.25), radius: 12, y: 6)
-                .animation(.spring(response: 0.8, dampingFraction: 0.8)) {
-                    $0.scaleEffect(shown ? 1 : 0.8).opacity(shown ? 1 : 0)
-                }
-            Text("What will you make?")
-                .font(.system(size: 54, weight: .bold))
-                .tracking(-1.2)
-                .foregroundStyle(Palette.ink)
-                .padding(.top, 22)
-                .reveal(shown, delay: 0.1)
-            Text("Lamp turns your ideas into your very own native Mac apps.")
-                .font(.system(size: 19))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 12)
-                .reveal(shown, delay: 0.2)
-            // Taller than the rows need, so a hovered icon (bigger, with its shadow) has room; the extra
-            // height comes out of the gaps above and below.
-            Parade()
-                .frame(height: 240)
-                .padding(.top, 30)
-                .reveal(shown, delay: 0.35)
-            BigButton(title: "Get Started", action: next)
-                .keyboardShortcut(.defaultAction)
-                .padding(.top, 30)
-                .reveal(shown, delay: 0.5, rise: 8)
-            Spacer(minLength: 24)
+        // Near the top, with fixed gaps, leaving the lower half of the window to the lamp.
+        GeometryReader { proxy in
+            VStack(spacing: 0) {
+                Text("What do you wish you had?")
+                    .font(.system(size: 54, weight: .bold))
+                    .tracking(-1.2)
+                    .foregroundStyle(Palette.ink)
+                    .reveal(shown, delay: 0.1)
+                Text("Lamp turns your ideas into your very own Mac apps.")
+                    .font(.system(size: 19))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 12)
+                    .reveal(shown, delay: 0.2)
+                BigButton(title: "Get Started", action: next)
+                    .keyboardShortcut(.defaultAction)
+                    .padding(.top, 30)
+                    .reveal(shown, delay: 0.35, rise: 8)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, max(proxy.size.height * 0.15, 60))
         }
         // A moment after appearing, once the window has its size.
         .task {
             try? await Task.sleep(for: .seconds(0.15))
             shown = true
         }
-    }
-}
-
-/// Two rows of app icons drifting past in opposite directions, on the front of a huge invisible drum: biggest
-/// in the middle, smaller and turned away towards the sides, and never round the back.
-private struct Parade: View {
-    private static let rows = [Array(Ideas.pool.prefix(24)), Array(Ideas.pool.dropFirst(24))]
-    /// From one icon to the next, measured along the drum.
-    private static let pitch: CGFloat = 132
-    /// From one row's middle to the other's.
-    private static let rowGap: CGFloat = 112
-    /// Points per second.
-    private static let speed = 14.0
-
-    var body: some View {
-        GeometryReader { proxy in
-            let size = proxy.size
-            // The drum is twice as wide as the window, seen from close enough that the sides shrink a little
-            // and bunch up, but never so much that names run into each other.
-            let radius = max(size.width, Onboarding.minimumSize.width) * 2
-            let camera = radius * 0.25
-            TimelineView(.animation) { context in
-                let time = context.date.timeIntervalSinceReferenceDate
-                ZStack {
-                    ForEach(0..<2, id: \.self) { row in
-                        let ideas = Self.rows[row]
-                        let loop = CGFloat(ideas.count) * Self.pitch
-                        let travel = CGFloat((time * (row == 0 ? -Self.speed : Self.speed)).truncatingRemainder(dividingBy: Double(loop)))
-                        ForEach(ideas.indices, id: \.self) { index in
-                            // Where along the drum, from the front, wrapped so each icon is shown once.
-                            let along = Self.wrap(CGFloat(index) * Self.pitch + travel, loop)
-                            let angle = along / radius
-                            if abs(angle) < .pi / 2 {
-                                let depth = radius * (1 - cos(angle))
-                                let scale = 1.1 * camera / (camera + depth)
-                                ParadeItem(idea: ideas[index])
-                                    .rotation3DEffect(.radians(Double(angle)), axis: (x: 0, y: 1, z: 0), perspective: 0.5)
-                                    .scaleEffect(scale)
-                                    .position(x: size.width / 2 + radius * sin(angle) * camera / (camera + depth),
-                                              y: size.height / 2 + (row == 0 ? -1 : 1) * Self.rowGap / 2 * scale)
-                                    .zIndex(Double(cos(angle)))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.16),
-                                     .init(color: .black, location: 0.84), .init(color: .clear, location: 1)],
-                             startPoint: .leading, endPoint: .trailing))
-    }
-
-    /// Into -loop/2 ..< loop/2.
-    private static func wrap(_ value: CGFloat, _ loop: CGFloat) -> CGFloat {
-        var wrapped = value.truncatingRemainder(dividingBy: loop)
-        if wrapped < -loop / 2 { wrapped += loop }
-        if wrapped >= loop / 2 { wrapped -= loop }
-        return wrapped
-    }
-}
-
-private struct ParadeItem: View {
-    let idea: Idea
-
-    var body: some View {
-        VStack(spacing: 8) {
-            HoverIcon(idea: idea, size: 46)
-            Text(idea.title)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-        .frame(width: 92)
-    }
-}
-
-private struct HoverIcon: View {
-    let idea: Idea
-    let size: CGFloat
-    @State private var hovering = false
-
-    var body: some View {
-        IdeaIcon(symbol: idea.symbol, hue: idea.hue, size: size, lit: hovering)
-            .scaleEffect(hovering ? 1.08 : 1)
-            .onHover { over in withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { hovering = over } }
     }
 }
 
@@ -279,7 +194,7 @@ private struct IdeaStep: View {
                 Button(action: toggleDictation) {
                     Image(systemName: dictation.isListening ? "waveform" : "mic")
                         .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(dictation.isListening ? Palette.ember : .secondary)
+                        .foregroundStyle(dictation.isListening ? Palette.accent : .secondary)
                         .symbolEffect(.variableColor.iterative, isActive: dictation.isListening)
                         .frame(width: 30, height: 30)
                         .background(.black.opacity(dictation.isListening ? 0.06 : 0), in: Circle())
@@ -293,7 +208,7 @@ private struct IdeaStep: View {
             .frame(width: 720)
             .background(.white, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(focused ? Palette.ember.opacity(0.55) : .black.opacity(0.08), lineWidth: focused ? 1.5 : 1))
+                .strokeBorder(focused ? Palette.accent.opacity(0.55) : .black.opacity(0.08), lineWidth: focused ? 1.5 : 1))
             .shadow(color: .black.opacity(0.06), radius: 18, y: 8)
             .padding(.top, 28)
 
@@ -306,7 +221,7 @@ private struct IdeaStep: View {
                         Text("Show me others")
                     }
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Palette.emberDeep)
+                    .foregroundStyle(Palette.accentDeep)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -406,7 +321,7 @@ private struct IdeaTile: View {
             .background(selected ? Color.white : (hovering ? Color.white.opacity(0.9) : Palette.card),
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(selected ? Palette.ember : .black.opacity(0.06), lineWidth: selected ? 1.5 : 1))
+                .strokeBorder(selected ? Palette.accent : .black.opacity(0.06), lineWidth: selected ? 1.5 : 1))
             .shadow(color: .black.opacity(hovering || selected ? 0.08 : 0.03), radius: hovering ? 12 : 6, y: hovering ? 6 : 3)
             .scaleEffect(hovering ? 1.015 : 1)
             .contentShape(Rectangle())
@@ -561,7 +476,7 @@ private struct ToolsCard: View {
                     VStack(alignment: .trailing, spacing: 6) {
                         ProgressView().controlSize(.small)
                         Button("Show Installer", action: SetupCheck.installBuildTools)
-                            .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Palette.emberDeep)
+                            .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Palette.accentDeep)
                     }
                 } else {
                     Button("Install") { store.requestBuildTools() }
@@ -999,7 +914,7 @@ private struct Radio<Content: View>: View {
             Button(action: action) {
                 HStack(spacing: 8) {
                     ZStack {
-                        Circle().strokeBorder(selected ? Palette.ember : .black.opacity(0.25), lineWidth: selected ? 5 : 1)
+                        Circle().strokeBorder(selected ? Palette.accent : .black.opacity(0.25), lineWidth: selected ? 5 : 1)
                             .background(Circle().fill(.white))
                     }
                     .frame(width: 16, height: 16)
@@ -1040,7 +955,7 @@ private struct Option<Logo: View>: View {
             .background(selected || hovering ? Color.white : Color.white.opacity(0.6),
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(selected ? Palette.ember : .black.opacity(0.08), lineWidth: selected ? 1.5 : 1))
+                .strokeBorder(selected ? Palette.accent : .black.opacity(0.08), lineWidth: selected ? 1.5 : 1))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1135,10 +1050,10 @@ private struct BigButton: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 30).frame(height: 46)
                 .background(
-                    Capsule().fill(LinearGradient(colors: [Palette.ember, Palette.emberDeep], startPoint: .top, endPoint: .bottom))
+                    Capsule().fill(LinearGradient(colors: [Palette.accent, Palette.accentDeep], startPoint: .top, endPoint: .bottom))
                 )
                 .overlay(Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 1))
-                .shadow(color: Palette.emberDeep.opacity(enabled ? (hovering ? 0.4 : 0.28) : 0), radius: hovering ? 16 : 10, y: 6)
+                .shadow(color: Palette.accentDeep.opacity(enabled ? (hovering ? 0.4 : 0.28) : 0), radius: hovering ? 16 : 10, y: 6)
                 .scaleEffect(hovering && enabled ? 1.03 : 1)
                 .opacity(enabled ? 1 : 0.35)
                 .contentShape(Capsule())
@@ -1156,7 +1071,7 @@ private struct Dots: View {
         HStack(spacing: 7) {
             ForEach(Step.allCases.dropFirst(), id: \.self) { step in
                 Capsule()
-                    .fill(step == current ? Palette.ember : Color.black.opacity(0.13))
+                    .fill(step == current ? Palette.accent : Color.black.opacity(0.13))
                     .frame(width: step == current ? 20 : 7, height: 7)
             }
         }
