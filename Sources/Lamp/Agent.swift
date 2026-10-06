@@ -451,13 +451,26 @@ enum Shell {
 
     /// Stops a process and everything it started. Terminating only the shell leaves its children (the agent's
     /// build, a clone, an approval request waiting an hour) running and holding the output pipe open, so the
-    /// turn would never end. Each gets a chance to quit cleanly, then whatever is left is killed.
-    static func terminateTree(_ process: Process) {
-        guard process.isRunning else { return }
+    /// turn would never end. Each gets a chance to quit cleanly, then whatever is left is killed. Returns the
+    /// processes signalled, for a caller that has to wait for them to be gone (`alive`).
+    @discardableResult
+    static func terminateTree(_ process: Process) -> [pid_t] {
+        guard process.isRunning else { return [] }
         let pids = [process.processIdentifier] + descendants(of: process.processIdentifier)
         for pid in pids { kill(pid, SIGTERM) }
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
             for pid in pids where kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+        }
+        return pids
+    }
+
+    /// Whether any of these processes is still around (a zombie waiting to be reaped doesn't count).
+    static func alive(_ pids: [pid_t]) -> Bool {
+        pids.contains { pid in
+            var info = proc_bsdinfo()
+            let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+            guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return false }
+            return info.pbi_status != UInt32(SZOMB)
         }
     }
 

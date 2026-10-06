@@ -65,14 +65,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.addButton(withTitle: "Quit")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
-            Store.shared.stopAll()
-            return .terminateNow
+            // Not .terminateNow: the processes get a moment to quit (and are killed after two seconds; see
+            // Shell.terminateTree), and Lamp waits for that rather than leaving them behind.
+            let pids = Store.shared.stopAll()
+            Task { @MainActor in
+                for _ in 0..<40 where Shell.alive(pids) { try? await Task.sleep(for: .milliseconds(100)) }
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+            return .terminateLater
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
-            Store.shared.stopAll()
+            _ = Store.shared.stopAll()   // for a quit that didn't go through the question above
             LocalModels.shared.stopServer()
         }
     }

@@ -143,9 +143,18 @@ final class Store: ObservableObject {
     /// Whether any app has an agent or a build going, for the question asked before quitting.
     var isWorking: Bool { !running.isEmpty || !building.isEmpty }
 
-    /// Stops every agent and build, as when Lamp quits: otherwise they'd carry on without it.
-    func stopAll() {
-        for project in projects where running[project.id] != nil || building[project.id] != nil { stop(project) }
+    /// Stops every agent and build, as when Lamp quits: otherwise they'd carry on without it. Returns the
+    /// processes signalled, so quitting can wait until they're gone.
+    func stopAll() -> [pid_t] {
+        var pids: [pid_t] = []
+        for project in projects {
+            guard running[project.id] != nil || building[project.id] != nil else { continue }
+            stopped.insert(project.id)
+            endApprovals(for: project)
+            if let process = running[project.id] { pids += Shell.terminateTree(process) }
+            if let process = building[project.id] { pids += Shell.terminateTree(process) }
+        }
+        return pids
     }
 
     /// Whether the app still exists: a turn can outlive Delete by a moment, and mustn't write to the Trash.
