@@ -1150,6 +1150,9 @@ final class Store: ObservableObject {
     /// For agents without their own classifier (pi): obviously risky commands always go to the user; the rest
     /// are judged by the decision model against the user's request. No decision model available → ask.
     private func commandLooksSafe(_ command: String, for project: LampProject) async -> Bool {
+        // What's outside the app's folder goes to the AI model once read, so that's the user's call and not a
+        // model's: a command that names such a place is never routine, however the decision model would score it.
+        if Privacy.reachesOutside(command, project: project) { return false }
         let state: [String: Any] = [
             "command": command,
             "user_request": currentRequests[project.id] ?? "",
