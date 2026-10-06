@@ -457,6 +457,7 @@ enum Template {
         /// The saved value, or nil when there's none yet (or it can't be read; see above).
         static func load<T: Decodable>(_ type: T.Type, from name: String = "data") -> T? {
             importJSONFile(name)
+            recoverIfReadable(type, name)
             guard let json = query("SELECT json FROM forge_values WHERE name = ?", name).first?["json"] as? String else {
                 return nil
             }
@@ -468,6 +469,22 @@ enum Template {
                         + "existing data (add new properties as optionals), and it loads again. Error: \(error)")
                 return nil
             }
+        }
+
+        /// What the user did while the saved value couldn't be read (see `save`) becomes the value again once
+        /// the types read it: it's the newer of the two, and it's what they last saw. The copy that couldn't be
+        /// read is kept as a backup row rather than lost.
+        private static func recoverIfReadable<T: Decodable>(_ type: T.Type, _ name: String) {
+            let copy = name + " (while unreadable)"
+            guard let json = query("SELECT json FROM forge_values WHERE name = ?", copy).first?["json"] as? String,
+                  (try? decoder.decode(T.self, from: Data(json.utf8))) != nil else { return }
+            transaction {
+                execute("INSERT OR REPLACE INTO forge_values (name, json, updated) SELECT ?, json, updated FROM forge_values WHERE name = ?",
+                        name + " (before recovery)", name)
+                execute("INSERT OR REPLACE INTO forge_values (name, json, updated) VALUES (?, ?, ?)", name, json, Date().timeIntervalSince1970)
+                execute("DELETE FROM forge_values WHERE name = ?", copy)
+            }
+            lock.withLock { _ = unreadable.remove(name) }
         }
 
         static func save<T: Encodable>(_ value: T, to name: String = "data") {
@@ -645,15 +662,31 @@ enum Template {
         nonisolated(unsafe) private static var backedUp = false
         nonisolated(unsafe) private static var warned = false
 
+        /// Dates are saved with their fractions of a second, so a date reads back equal to what was saved
+        /// (older rows without fractions still read). A number that isn't finite (a division by zero in a
+        /// layout, say) is saved as text instead of failing the whole save silently.
         static let decoder: JSONDecoder = {
             let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
+            decoder.dateDecodingStrategy = .custom { decoder in
+                let text = try decoder.singleValueContainer().decode(String.self)
+                if let date = preciseDate.date(from: text) ?? plainDate.date(from: text) { return date }
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Not a date: \(text)"))
+            }
+            decoder.nonConformingFloatDecodingStrategy = .convertFromString(positiveInfinity: "inf", negativeInfinity: "-inf", nan: "nan")
             return decoder
         }()
+        private static let preciseDate: ISO8601DateFormatter = {
+            let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
+        }()
+        private static let plainDate = ISO8601DateFormatter()
 
         static func encode<T: Encodable>(_ value: T) -> String? {
             let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
+            encoder.dateEncodingStrategy = .custom { date, encoder in
+                var container = encoder.singleValueContainer()
+                try container.encode(preciseDate.string(from: date))
+            }
+            encoder.nonConformingFloatEncodingStrategy = .convertToString(positiveInfinity: "inf", negativeInfinity: "-inf", nan: "nan")
             encoder.outputFormatting = [.sortedKeys]
             do {
                 return String(decoding: try encoder.encode(value), as: UTF8.self)
@@ -2402,21 +2435,17 @@ enum Template {
         /// Lines of text in a picture, top to bottom.
         static func recognize(in image: NSImage) async -> [String] {
             guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return [] }
+            // perform() runs the request's completion before it returns (or throws without running it), so the
+            // answer comes from the request after perform, never from both the completion and the catch.
             return await withCheckedContinuation { continuation in
-                let request = VNRecognizeTextRequest { request, _ in
-                    let lines = (request.results as? [VNRecognizedTextObservation] ?? [])
-                        .compactMap { $0.topCandidates(1).first?.string }
-                    continuation.resume(returning: lines)
-                }
+                let request = VNRecognizeTextRequest()
                 request.recognitionLevel = .accurate
                 request.usesLanguageCorrection = true
                 request.automaticallyDetectsLanguage = true
                 DispatchQueue.global(qos: .userInitiated).async {
-                    do {
-                        try VNImageRequestHandler(cgImage: cgImage).perform([request])
-                    } catch {
-                        continuation.resume(returning: [])
-                    }
+                    try? VNImageRequestHandler(cgImage: cgImage).perform([request])
+                    let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+                    continuation.resume(returning: lines)
                 }
             }
         }
@@ -2479,23 +2508,26 @@ enum Template {
     enum LampDrop {
         /// Resolves dropped items to file URLs (images without a file become temporary PNGs), in drop order.
         static func load(_ providers: [NSItemProvider], completion: @escaping ([URL]) -> Void) {
+            // Each provider answers on its own thread, so the results are written under a lock.
+            let lock = NSLock()
             var results = [URL?](repeating: nil, count: providers.count)
+            func set(_ index: Int, _ url: URL?) { lock.withLock { results[index] = url } }
             let group = DispatchGroup()
             for (index, provider) in providers.enumerated() {
                 group.enter()
                 if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                    _ = provider.loadObject(ofClass: URL.self) { url, _ in results[index] = url; group.leave() }
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in set(index, url); group.leave() }
                 } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
                     provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
                         if let data, let image = NSImage(data: data), let tiff = image.tiffRepresentation,
                            let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
                             let url = FileManager.default.temporaryDirectory.appendingPathComponent("Dropped \(UUID().uuidString.prefix(8)).png")
-                            if (try? png.write(to: url)) != nil { results[index] = url }
+                            if (try? png.write(to: url)) != nil { set(index, url) }
                         }
                         group.leave()
                     }
                 } else if provider.canLoadObject(ofClass: URL.self) {
-                    _ = provider.loadObject(ofClass: URL.self) { url, _ in results[index] = url; group.leave() }
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in set(index, url); group.leave() }
                 } else {
                     group.leave()
                 }
@@ -2766,7 +2798,7 @@ enum Template {
             tell application "Mail"
               repeat with acct in accounts
                 try
-                  set mb to mailbox "INBOX" of acct
+                  set mb to my inboxOf(acct)
                   set n to 0
                   repeat with m in (messages of mb\(filter))
                     if n ≥ \(limit) then exit repeat
@@ -2819,6 +2851,18 @@ enum Template {
         }
 
         private static let rowHandler = """
+        on inboxOf(acct)
+          tell application "Mail"
+            -- Accounts don't all call it INBOX (Exchange and Outlook say "Inbox"); the account knows which it is.
+            try
+              return mailbox "INBOX" of acct
+            end try
+            repeat with mb in mailboxes of acct
+              if (name of mb as text) is "Inbox" then return mb
+            end repeat
+            return inbox
+          end tell
+        end inboxOf
         on row(m, mbname)
           tell application "Mail"
             set d to date received of m
@@ -2830,9 +2874,19 @@ enum Template {
                 set p to content of m
               end try
             end try
-            return (id of m as text) & tab & (subject of m) & tab & (sender of m) & tab & (d as «class isot» as string) & tab & mbname & tab & (read status of m as text) & tab & my oneLine(p) & linefeed
+            -- The date as seconds since 1970: AppleScript's ISO text has no time zone, so it would read as UTC.
+            set epoch to (d - (my epochDate())) as text
+            return (id of m as text) & tab & my oneLine(subject of m) & tab & my oneLine(sender of m) & tab & epoch & tab & my oneLine(mbname) & tab & (read status of m as text) & tab & my oneLine(p) & linefeed
           end tell
         end row
+        on epochDate()
+          set e to current date
+          set year of e to 1970
+          set month of e to 1
+          set day of e to 1
+          set time of e to 0
+          return e + (time to GMT)
+        end epochDate
         on oneLine(t)
           set {tid, AppleScript's text item delimiters} to {AppleScript's text item delimiters, {return, linefeed, tab}}
           set parts to text items of t
@@ -2845,12 +2899,10 @@ enum Template {
 
         private static func messages(script: String) async throws -> [Message] {
             let output = try await run(script + "\n" + rowHandler)
-            let iso = ISO8601DateFormatter()
-            iso.formatOptions = [.withInternetDateTime]
             return output.split(separator: "\n").compactMap { line in
                 let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
                 guard f.count >= 7 else { return nil }
-                let date = iso.date(from: f[3]) ?? ISO8601DateFormatter().date(from: f[3] + "Z") ?? Date()
+                let date = Double(f[3].replacingOccurrences(of: ",", with: ".")).map { Date(timeIntervalSince1970: $0) } ?? Date()
                 return Message(id: f[0], subject: f[1], sender: f[2], date: date, preview: f[6], mailbox: f[4], isRead: f[5] == "true")
             }
         }
@@ -3551,9 +3603,16 @@ enum Template {
       <key>LSMinimumSystemVersion</key><string>14.0</string>
       <key>NSPrincipalClass</key><string>NSApplication</string>
       <key>NSHighResolutionCapable</key><true/>
+      <key>NSMicrophoneUsageDescription</key><string>{{NAME}} listens to your microphone.</string>
+      <key>NSSpeechRecognitionUsageDescription</key><string>{{NAME}} turns your speech into text.</string>
+      <key>NSCameraUsageDescription</key><string>{{NAME}} uses your camera.</string>
+      <key>NSCalendarsFullAccessUsageDescription</key><string>{{NAME}} reads and adds calendar events.</string>
+      <key>NSRemindersFullAccessUsageDescription</key><string>{{NAME}} reads and adds reminders.</string>
+      <key>NSContactsUsageDescription</key><string>{{NAME}} looks up people in your contacts.</string>
+      <key>NSAppleEventsUsageDescription</key><string>{{NAME}} reads your email and drafts replies through Mail.</string>
     </dict></plist>
     PLIST
-    codesign --force -s - "$APP" >/dev/null 2>&1
+    codesign --force -s - "$APP"
     echo "Built $APP"
 
     """
