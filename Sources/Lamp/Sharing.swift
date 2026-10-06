@@ -162,30 +162,17 @@ enum Sharing {
         }
     }
 
-    /// What a tool prints; throws when it fails.
+    /// What a tool prints; throws when it fails or takes over two minutes.
     private static func output(_ tool: String, _ arguments: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: tool)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { throw ImportError("Couldn't read the Lamp app file.") }
-        return String(decoding: data, as: UTF8.self)
+        let result = Subprocess.runBlocking(tool, arguments, mergeErrors: false, timeout: 120)
+        guard result.ok else { throw ImportError("Couldn't read the Lamp app file.") }
+        return result.output
     }
 
     private static func run(_ tool: String, _ arguments: [String]) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: tool)
-        process.arguments = arguments
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { throw ImportError("Couldn't read or write the Lamp app file.") }
+        guard Subprocess.runBlocking(tool, arguments, timeout: 120).ok else {
+            throw ImportError("Couldn't read or write the Lamp app file.")
+        }
     }
 }
 

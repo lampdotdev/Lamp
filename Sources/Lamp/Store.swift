@@ -162,8 +162,8 @@ final class Store: ObservableObject {
             stopped = true
             allowAll = false
             var pids: [pid_t] = []
-            if let agent { pids += Shell.terminateTree(agent) }
-            if let build { pids += Shell.terminateTree(build) }
+            if let agent { pids += Subprocess.terminateTree(agent) }
+            if let build { pids += Subprocess.terminateTree(build) }
             return pids
         }
     }
@@ -197,7 +197,7 @@ final class Store: ObservableObject {
             endApprovals(for: project)
             pids += turn.cancel()
         }
-        return pids + Shell.stopping
+        return pids + Subprocess.stopping
     }
 
     /// Whether the app still exists: a turn can outlive Delete by a moment, and mustn't write to the Trash.
@@ -1183,7 +1183,7 @@ final class Store: ObservableObject {
                         failure = repeats >= 6
                             ? "The model got stuck repeating the same step, so Lamp stopped it."
                             : "The model made over 150 changes in one go, so Lamp stopped it."
-                        if let process = turn.agent { Shell.terminateTree(process) }
+                        if let process = turn.agent { Subprocess.terminateTree(process) }
                     }
                 case .cost(let amount): cost += amount
                 case .failed(let text): failure = text
