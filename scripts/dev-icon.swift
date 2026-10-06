@@ -26,7 +26,7 @@ let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { r
         .font: NSFont.systemFont(ofSize: size * 0.105, weight: .heavy), .foregroundColor: NSColor.white, .paragraphStyle: style,
         .kern: size * 0.008])
     let height = text.size().height
-    text.draw(in: CGRect(x: band.minX, y: size * 0.865 - height / 2, width: band.width, height: height))
+    text.draw(in: CGRect(x: band.minX, y: size * 0.84 - height / 2, width: band.width, height: height))
     context.restoreGState()
     return true
 }

@@ -33,8 +33,7 @@ begin() {
     echo "A fresh start is already in progress ($backup). Run 'restore' first." >&2
     exit 1
   fi
-  osascript -e 'quit app "Lamp"' >/dev/null 2>&1 || true
-  osascript -e 'quit app "Lamp"' >/dev/null 2>&1 || true   # a copy from before the rename
+  osascript -e "quit app \"$name\"" >/dev/null 2>&1 || true
   sleep 1
   mkdir -p "$backup"
   chmod 700 "$backup"
@@ -57,19 +56,21 @@ begin() {
   defaults export "$domain" "$backup/defaults.plist" 2>/dev/null || true
   defaults delete "$domain" >/dev/null 2>&1 || true
   # Settings from before the rename would be migrated back in on the next launch: set them aside too.
-  defaults export dev.forge.host "$backup/defaults-forge.plist" 2>/dev/null || true
-  defaults delete dev.forge.host >/dev/null 2>&1 || true
+  if [ "$name" = Lamp ]; then   # release only: the Forge-era settings never applied to a dev build
+    defaults export dev.forge.host "$backup/defaults-forge.plist" 2>/dev/null || true
+    defaults delete dev.forge.host >/dev/null 2>&1 || true
+  fi
   keychain_accounts | while read -r account; do
     security delete-generic-password -s "$domain" -a "$account" >/dev/null 2>&1 || true
   done
   echo "Your Lamp setup is in $backup. Opening Lamp as a first-time user."
   echo "When you're done: scripts/fresh-start.sh restore"
-  open -a Lamp 2>/dev/null || open "$(dirname "$0")/../build/Lamp.app"
+  open -a "$name" 2>/dev/null || open "$(dirname "$0")/../build/$name.app"
 }
 
 restore() {
   # A backup made before the rename holds the folder under its old name.
-  if [ ! -d "$backup" ] && [ -d "$support/Forge-fresh-start" ]; then
+  if [ "$name" = Lamp ] && [ ! -d "$backup" ] && [ -d "$support/Forge-fresh-start" ]; then   # release only: Forge was never dev
     mv "$support/Forge-fresh-start" "$backup"
     [ -e "$backup/Forge" ] && mv "$backup/Forge" "$backup/Lamp"
   fi
@@ -77,8 +78,7 @@ restore() {
     echo "Nothing to restore: no $backup." >&2
     exit 1
   fi
-  osascript -e 'quit app "Lamp"' >/dev/null 2>&1 || true
-  osascript -e 'quit app "Lamp"' >/dev/null 2>&1 || true   # a copy from before the rename
+  osascript -e "quit app \"$name\"" >/dev/null 2>&1 || true
   sleep 1
   # The steps that can fail come first, while the backup is untouched, so a failed restore can simply be
   # run again. Whatever the fresh run saved in the Keychain goes, then the original items come back.
@@ -91,7 +91,7 @@ restore() {
   done < "$backup/keychain.txt"
   defaults delete "$domain" >/dev/null 2>&1 || true
   if [ -s "$backup/defaults.plist" ]; then defaults import "$domain" "$backup/defaults.plist"; fi
-  if [ -s "$backup/defaults-forge.plist" ]; then defaults import dev.forge.host "$backup/defaults-forge.plist"; fi
+  if [ "$name" = Lamp ] && [ -s "$backup/defaults-forge.plist" ]; then defaults import dev.forge.host "$backup/defaults-forge.plist"; fi
   # Whatever the fresh run made is thrown away; your apps come back. Only when the backup still holds
   # them (or says there were none), so running this twice can't remove a folder that was already restored.
   if [ -e "$backup/Lamp" ]; then
