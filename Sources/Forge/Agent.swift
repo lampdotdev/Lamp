@@ -32,17 +32,30 @@ enum Agent {
         return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
     }
 
-    static let toolRules = """
+    /// Rules for the tools every engine but opencode has: pi through Resources/forge-tools.ts, Claude Code and
+    /// Codex through Forge's MCP endpoint (Store.mcp). Keep the two in step.
+    static let tryRules = """
 
     - `look_at_app` builds the app with your changes, opens it, and shows you its windows, what it printed \
     and any build errors or crash, so you can check your work instead of guessing. Once your edits are in, use \
     it after changing the interface or after a fix you can't verify from the code, and fix what you see before \
     finishing. Skip it for small changes you're sure of.
     - `use_app` then uses the open app like a person: clicks at points in its latest picture, types, presses keys, \
-    scrolls and picks from menus, and shows you the result. When the change is about behaviour (sorting, a button's effect, a form, \
-    a flow between screens), try it with `use_app` before saying it works. It tells you what each click landed \
+    scrolls and picks from menus, and shows you the result. It tells you what each click landed \
     on and whether the window changed: when nothing changed, the click probably missed, so aim again before \
     deciding the app is broken. It uses the app as last built, so call `look_at_app` again after editing code.
+    - Try the app before you say it works. After building a new app, or changing what it does (a button's \
+    effect, sorting, a form, a flow between screens, saving and loading), walk through the main things the \
+    user asked for with `use_app` as they would: add an item and see it appear, fill the form and submit it, \
+    quit and reopen to see what was kept. Fix what you find and try again. Then tell the user, in one plain \
+    sentence, what you tried and what happened ("I added three tasks, ticked one off and reopened the app: \
+    they were all still there"), and say honestly if something couldn't be tried. Don't try trivial changes \
+    (a label, a colour) or a change you watched work already.
+    """
+
+    /// Rules for the tools only pi's extension has.
+    static let toolRules = tryRules + """
+
     - When you build a new app, call `plan` once, before writing any code, with its 3 to 5 main parts in the \
     user's own words (what they'll be able to do, never file or type names) and, for each part, the files \
     you'll write for it. Forge ticks a part off when its files are written, so the user watches the list \
@@ -216,7 +229,7 @@ enum Agent {
     one (a logo, a data file, a sound), load it with `ForgeAssets.url("name")`, `ForgeAssets.image("name")` or \
     `ForgeAssets.text("name")` from ForgeSupport.swift, writing the full file name (e.g. "logo.png") in the code: \
     shared copies of the app include only attachments the code names. Screenshots and mockups are usually just references for you.
-    - You can't watch the app run, but Forge saves what it prints (print, NSLog, SwiftUI runtime warnings, \
+    - Beyond `look_at_app` and `use_app`, you can't watch the app run, but Forge saves what it prints (print, NSLog, SwiftUI runtime warnings, \
     fatal errors, failed ForgeAI calls) in .forge/runtime/log.txt for the latest launch and \
     .forge/runtime/previous-log.txt for the one before. When the user says something doesn't work, read the log \
     before guessing. If the code doesn't show the cause, add `print` statements around it: the output will be \
@@ -258,7 +271,7 @@ enum Agent {
             "FORGE_MODEL": Builder.piProvider == Builder.myPiProvider ? myPiModel : Builder.piModel,
             "FORGE_SESSION": session,
             "FORGE_SESSION_DIR": sessionDir,
-            "FORGE_SYSTEM": systemPrompt + (forgeTools == nil ? "" : toolRules),
+            "FORGE_SYSTEM": systemPrompt + toolRules,
             "FORGE_PROMPT": prompt,
             "FORGE_TOOLS": forgeTools?.path ?? "",
             // "My pi setup" uses the user's own pi config (their logins); everything else uses Forge's.

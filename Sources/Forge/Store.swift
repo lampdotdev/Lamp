@@ -1231,6 +1231,96 @@ final class Store: ObservableObject {
         return (200, ["text": text, "screenshots": Privacy.sharesPictures ? Runtime.pictures(of: project).map(\.path) : []])
     }
 
+    /// `look_at_app` and `use_app` for agents that take tools over MCP (Claude Code and Codex): one streamable-HTTP
+    /// endpoint speaking JSON-RPC, with no sessions or streams, that answers each request on the spot. Pictures go
+    /// back as image content, so the model sees the windows just as pi's version shows them.
+    private func mcp(_ body: Data, for project: ForgeProject) async -> (Int, [String: Any]) {
+        guard let message = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+              let method = message["method"] as? String else {
+            return (400, ["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "Not a JSON-RPC request."]])
+        }
+        let id = message["id"] ?? NSNull()
+        func reply(_ result: [String: Any]) -> (Int, [String: Any]) { (200, ["jsonrpc": "2.0", "id": id, "result": result]) }
+        switch method {
+        case "initialize":
+            return reply(["protocolVersion": "2025-03-26", "capabilities": ["tools": [:]],
+                          "serverInfo": ["name": "forge", "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"]])
+        case "ping":
+            return reply([:])
+        case "tools/list":
+            return reply(["tools": Self.mcpTools])
+        case "tools/call":
+            let params = message["params"] as? [String: Any] ?? [:]
+            let name = params["name"] as? String ?? ""
+            let arguments = params["arguments"] as? [String: Any] ?? [:]
+            let (status, answer): (Int, [String: Any])
+            switch name {
+            case "look_at_app": (status, answer) = await look(at: project)
+            case "use_app":
+                let actions = (try? JSONSerialization.data(withJSONObject: arguments)) ?? Data("{}".utf8)
+                (status, answer) = await use(project, request: actions)
+            default:
+                return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
+            }
+            if status != 200 {
+                return reply(["content": [["type": "text", "text": answer["error"] as? String ?? "Forge couldn't do that."]], "isError": true])
+            }
+            var content: [[String: Any]] = [["type": "text", "text": answer["text"] as? String ?? ""]]
+            for path in answer["screenshots"] as? [String] ?? [] {
+                if let data = try? Data(contentsOf: URL(fileURLWithPath: path)) {
+                    content.append(["type": "image", "data": data.base64EncodedString(), "mimeType": "image/png"])
+                }
+            }
+            return reply(["content": content])
+        default:
+            // Notifications (initialized, cancelled) are acknowledged without a body; unknown requests get an error.
+            if message["id"] == nil { return (202, [:]) }
+            return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Method not found: \(method)"]])
+        }
+    }
+
+    /// The tools' descriptions match Forge's pi extension (Resources/forge-tools.ts).
+    private static let mcpTools: [[String: Any]] = [
+        ["name": "look_at_app",
+         "description": "Builds the app with your changes, opens it, and shows you the result: a picture of its windows, " +
+            "what it printed, and any build errors or crash. Takes up to a minute. Use it after a change to the " +
+            "interface, or to check a fix you can't verify by reading the code. Each look that has to rebuild takes " +
+            "a while, so make your edits first and don't use it for small changes you're sure of.",
+         "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false]],
+        ["name": "use_app",
+         "description": "Uses the open app the way a person would: clicks, types, presses keys, scrolls and picks from menus in its " +
+            "front window, then shows you what each action landed on, whether anything changed, a fresh picture, and " +
+            "what the app printed meanwhile. x and y are pixels in the latest picture of the front window from " +
+            "look_at_app or use_app: aim at the middle of what you want. Use it to check that something works, not " +
+            "just how it looks: click a column header and see whether the list re-sorts, fill in a form and submit it. " +
+            "Clicking a row of a list, table or sidebar selects it; double-clicking opens it. Keys and typing go to " +
+            "whatever has keyboard focus. " +
+            "Menus are read out to you, never opened: click a pop-up or pull-down button, or right_click something, and " +
+            "you get its items; repeat the same action with `item` set to pick one (\"Sub > Deep\" for a submenu). " +
+            "`menu` does the same for the menu bar: without `item` it lists every command, with `item` like " +
+            "\"File > Export…\" it picks one. " +
+            "`bar_icon` is for an app that lives in the menu bar: it opens the panel behind the app's icon there, which " +
+            "becomes the first picture and takes clicks and keys like a window (escape closes it); if the icon shows a " +
+            "menu instead, it lists it, and `item` picks from it. " +
+            "When a dialog or sheet opens it becomes the first picture and takes the clicks and keys: click one of its " +
+            "buttons, or press escape to cancel. The system's save panel can only be answered with return (save where " +
+            "it says) or escape. It can't drag. It uses the app as last built: after editing code, call look_at_app " +
+            "first so your changes are built and open. If it says nothing changed, the click most likely missed: look " +
+            "at the picture and aim again before changing any code.",
+         "inputSchema": ["type": "object", "required": ["actions"], "additionalProperties": false, "properties": [
+            "actions": ["type": "array", "minItems": 1, "maxItems": 30, "items": [
+                "type": "object", "required": ["action"], "additionalProperties": false, "properties": [
+                    "action": ["type": "string", "enum": ["click", "double_click", "right_click", "menu", "bar_icon",
+                                                           "type", "key", "scroll", "wait"]],
+                    "x": ["type": "number", "description": "click, double_click, right_click, scroll: pixels from the picture's left"],
+                    "y": ["type": "number", "description": "click, double_click, right_click, scroll: pixels from the picture's top"],
+                    "item": ["type": "string", "description": "click, right_click, menu, bar_icon: the menu item to pick by name, e.g. \"Export…\" or \"View > Zoom In\". Leave out to list the items."],
+                    "text": ["type": "string", "description": "type: the text, typed into whatever has focus (click a field first)"],
+                    "key": ["type": "string", "description": "key: return, escape, tab, delete, space, up, down, left, right, or a letter, with modifiers like cmd+a"],
+                    "amount": ["type": "number", "description": "scroll: points, positive scrolls down; wait: seconds"],
+                ]]]]]],
+    ]
+
     /// Whether the installed app's binary contains a string, which says which Forge features it was built with.
     private static func binary(of project: ForgeProject, contains marker: String) -> Bool {
         let binary = project.installedURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
@@ -1685,7 +1775,9 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/image", "/ai/decide", "/ai/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/mcp"]
+        // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
+        if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
             return (404, ["error": "Not found"])
         }
@@ -1695,6 +1787,7 @@ final class Store: ObservableObject {
             return (401, ["error": "This app isn't registered with Forge."])
         }
         guard setup.ready else { return (503, ["error": "Forge isn't set up yet. Open Forge to finish setup."]) }
+        if route == "/mcp" { return await mcp(request.body, for: project) }
         if request.path == "/agent/look" { return await look(at: project) }
         if request.path == "/agent/use" { return await use(project, request: request.body) }
         if request.path.hasPrefix("/agent/versions") { return await versions(request, of: project) }
