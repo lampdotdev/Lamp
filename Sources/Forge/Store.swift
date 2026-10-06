@@ -1086,31 +1086,59 @@ final class Store: ObservableObject {
 
     /// Commands that build the app or tidy its own folder, which every build needs and nobody wants to be
     /// asked about: making folders and files, Swift's build and test, the app's build script, and git's
-    /// local bookkeeping. Every argument that could be a path is resolved against `folder` and must land
-    /// inside it; anything the shell would expand (variables, globs, substitutions) fails the check, so the
-    /// command gets the normal approval instead.
+    /// local bookkeeping. Only a few known flags are accepted; every other argument is taken as a path,
+    /// resolved against `folder` with symbolic links followed, and must land inside it. Anything the shell
+    /// would expand (variables, globs, substitutions) fails the check, so the command gets the normal approval.
     nonisolated static func isRoutineBuild(_ raw: String, in folder: URL) -> Bool {
         var command = raw.trimmed
         if let match = command.firstMatch(of: #/^/bin/(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*)\1$/#) { command = String(match.2) }
         if command.isEmpty || command.contains(">") || command.contains("<") { return false }
+        let flags: [String: Set<String>] = [
+            "mkdir": ["-p"], "touch": [], "cd": [], "true": [], "./build.sh": [],
+            "swift": ["-c", "--configuration", "-v", "--verbose", "-q", "--quiet", "--parallel"],
+            "git": ["-A", "--all", "-a", "-m", "-q", "--quiet", "-s", "--short", "--stat", "--oneline", "-n", "-p",
+                    "--cached", "--staged", "--no-pager", "-b", "-u", "--", "-am"],
+        ]
         let gitLocal: Set<String> = ["init", "add", "commit", "status", "log", "diff", "show", "stash", "checkout", "restore", "tag"]
-        let root = folder.standardizedFileURL.path + "/"
+        let root = Self.realPath(folder.path)
         for part in simpleCommands(in: command) {
             guard let words = shellWords(part), let program = words.first else { return false }
-            let args = Array(words.dropFirst())
-            for arg in args where !arg.hasPrefix("-") {
-                let path = (arg.hasPrefix("/") ? URL(fileURLWithPath: arg) : folder.appendingPathComponent(arg)).standardizedFileURL.path
-                guard path == folder.standardizedFileURL.path || path.hasPrefix(root) else { return false }
+            guard let allowed = flags[program] else {
+                if isReadOnly(part) { continue }   // `./build.sh | tail -5`
+                return false
             }
+            let args = Array(words.dropFirst())
             switch program {
-            case "mkdir", "touch", "cd", "true": break
             case "swift": guard ["build", "test", "package"].contains(args.first ?? "") else { return false }
-            case "./build.sh": break
             case "git": guard gitLocal.contains(args.first(where: { !$0.hasPrefix("-") }) ?? "") else { return false }
-            default: if !isReadOnly(part) { return false }
+            default: break
+            }
+            for arg in args {
+                if arg.hasPrefix("-") {
+                    guard allowed.contains(arg) else { return false }
+                    continue
+                }
+                if program == "swift" || program == "git", args.first == arg { continue }   // the subcommand
+                let path = Self.realPath(arg.hasPrefix("/") ? arg : folder.appendingPathComponent(arg).path)
+                guard path == root || path.hasPrefix(root + "/") else { return false }
             }
         }
         return true
+    }
+
+    /// A path with `..` folded and symbolic links followed, so a link inside the app's folder that points
+    /// elsewhere is seen for where it leads. Parts that don't exist yet (a folder about to be made) are
+    /// appended to their nearest existing ancestor, resolved.
+    nonisolated static func realPath(_ path: String) -> String {
+        let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+        var existing = standardized
+        var rest: [String] = []
+        while !FileManager.default.fileExists(atPath: existing), existing != "/" {
+            rest.insert((existing as NSString).lastPathComponent, at: 0)
+            existing = (existing as NSString).deletingLastPathComponent
+        }
+        let resolved = URL(fileURLWithPath: existing).resolvingSymlinksInPath().path
+        return rest.reduce(resolved) { ($0 as NSString).appendingPathComponent($1) }
     }
 
     /// A simple command's words, with quotes removed, or nil when the shell would do something this can't
