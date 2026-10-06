@@ -56,12 +56,12 @@ struct Pose {
     let lamp: SCNNode
     let camera = SCNNode()
 
-    init() {
+    init(material: SCNMaterial = Lamp.clay()) {
         scene.background.contents = Self.page
         scene.lightingEnvironment.contents = Self.studio()
         scene.lightingEnvironment.intensity = 0.8
 
-        lamp = Lamp.node(material: Lamp.clay())
+        lamp = Lamp.node(material: material)
         lamp.eulerAngles.y = -0.35
         lamp.enumerateHierarchy { n, _ in n.castsShadow = true }
         scene.rootNode.addChildNode(lamp)

@@ -166,7 +166,7 @@ Local models are slower and much less capable than the best cloud models for who
 | `Resources/forge-tools.ts` | The agent's `look_at_app`, `use_app`, `plan` and `delete_file` tools (a pi extension) |
 | `Sources/Forge/Updater.swift` | Updates for release builds (Sparkle); the feed is served by `updates/` (see RELEASING.md) |
 | `updates/` | The Vercel app that serves the update feed and downloads from the private GitHub releases |
-| `Resources/Icon/` | How Lamp's own icon was made: its `icon.json`, the chosen artwork and the Icon Composer document. It comes from the same pipeline as the apps' icons; the results are `Resources/AppIcon.icns`, `Resources/Assets.car` (Liquid Glass on macOS 26) and `Resources/AppIcon.png` |
+| `Resources/Icon/` | Lamp's own icon as an Icon Composer document: the porcelain lamp from the welcome and its golden smoke, as separate layers. `design/lamp/LampLab` renders it (`LampLab icon out Resources`), along with `Resources/AppIcon.icns`, `Resources/Assets.car` (Liquid Glass on macOS 26) and `Resources/AppIcon.png` |
 | `Resources/THIRD_PARTY_NOTICES.md` | Licences for the bundled pi agent and llama.cpp (both MIT) |
 
 Generated apps live in `~/Library/Application Support/Forge/Apps/<app>/`, each with its own git history.

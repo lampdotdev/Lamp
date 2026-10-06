@@ -36,6 +36,19 @@ enum Lamp {
         return m
     }
 
+    /// Charcoal porcelain, for the icon in dark mode: a deep warm grey with only a faint glaze.
+    static func charcoal() -> SCNMaterial {
+        let m = SCNMaterial()
+        m.lightingModel = .physicallyBased
+        m.diffuse.contents = NSColor(srgbRed: 0.2, green: 0.195, blue: 0.19, alpha: 1)
+        m.metalness.contents = 0.0
+        m.roughness.contents = 0.6
+        m.clearCoat.contents = 0.15
+        m.clearCoatRoughness.contents = 0.35
+        m.isDoubleSided = true
+        return m
+    }
+
     static func bump(_ t: Float, _ at: Float, _ width: Float) -> Float { exp(-pow((t - at) / width, 2)) }
 
     static func bezier(_ c: [SIMD3<Float>], _ t: Float) -> SIMD3<Float> {

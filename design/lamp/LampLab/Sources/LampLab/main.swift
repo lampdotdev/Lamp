@@ -91,6 +91,21 @@ func writePNG(_ cg: CGImage, _ url: URL) {
         writePNG(supersampled(r, pixels: CGSize(width: 1080, height: 760)), out.appendingPathComponent("aa-ssao.png"))
         clay.camera.camera!.screenSpaceAmbientOcclusionIntensity = 0
         writePNG(supersampled(r, pixels: CGSize(width: 1080, height: 760)), out.appendingPathComponent("aa-plain.png"))
+    case "icon":
+        let doc = try! AppIcon.write(to: out)
+        let ictool = "/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool"
+        for (look, size) in [("Light", 1024), ("Dark", 1024), ("Light", 128), ("Light", 32)] {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: ictool)
+            p.arguments = [doc.path, "--export-preview", "macOS", look, "\(size)", "\(size)", "1",
+                           out.appendingPathComponent("icon-\(look)-\(size).png").path]
+            try! p.run()
+            p.waitUntilExit()
+        }
+        // `icon <out> <Resources folder>` also replaces the app's icon files.
+        if args.count > 3 {
+            try! AppIcon.export(doc, to: URL(fileURLWithPath: args[3]), scratch: out)
+        }
     case "poses":
         let clay = ClayScene()
         let r = SCNRenderer(device: MTLCreateSystemDefaultDevice(), options: nil)
