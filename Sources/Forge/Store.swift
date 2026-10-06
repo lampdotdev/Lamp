@@ -1568,18 +1568,23 @@ final class Store: ObservableObject {
         let versions = await Versions.list(project).reversed()
         let linked = Set(chat.compactMap(\.version))
         var index = chat.startIndex
-        var changed = false
+        var links: [UUID: String] = [:]
         for version in versions where !linked.contains(version.id) {
             let message = plain(version.message)
             guard let match = chat[index...].firstIndex(where: {
                 $0.kind == .user && $0.version == nil && plain(Self.label(for: $0)) == message
             }) else { continue }
             chat[match].version = version.id
+            links[chat[match].id] = version.id
             index = chat.index(after: match)
-            changed = true
         }
-        guard changed, logs[project.id]?.count == chat.count else { return }
-        logs[project.id] = chat
+        // The chat may have moved on while the versions were read: lines added, and a reply being written
+        // grows in place. So the links go into the chat as it is now, line by line, never the copy back over it.
+        guard !links.isEmpty, var current = logs[project.id] else { return }
+        for index in current.indices where current[index].version == nil {
+            if let version = links[current[index].id] { current[index].version = version }
+        }
+        logs[project.id] = current
         saveChat(project)
     }
 
