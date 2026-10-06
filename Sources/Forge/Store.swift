@@ -1655,6 +1655,9 @@ final class Store: ObservableObject {
                                 env: ["FORGE_APP": project.builtURL.path]) { _ in }
         }
 
+        // What the copy being replaced was signed as, to notice when this build is signed differently.
+        let replaced = await AppSigning.requirement(of: project.installedURL)
+
         try fm.createDirectory(at: Self.installDir, withIntermediateDirectories: true)
         let staging = Self.installDir.appendingPathComponent(".\(project.exe)-\(UUID().uuidString).app")
         try fm.copyItem(at: project.builtURL, to: staging)
@@ -1668,6 +1671,16 @@ final class Store: ObservableObject {
         _ = await Shell.run(
             Self.lsregister + " -f \"$FORGE_APP\"",
             cwd: project.dir, env: ["FORGE_APP": project.installedURL.path]) { _ in }
+        // macOS keeps a permission with the signature it was given to. Signed differently, the app has lost
+        // what it had, but System Settings still shows the old entries switched on, and they do nothing.
+        if let replaced, let requirement = await AppSigning.requirement(of: project.installedURL), replaced != requirement,
+           await AppSigning.forgetPermissions(of: project.bundleID) {
+            print("\(project.name) is signed differently from the copy it replaced, so its macOS permissions were cleared:\n"
+                  + "  was: \(replaced)\n  now: \(requirement)")
+            log(project, .status, signed
+                ? "If you gave \(project.name) a permission in System Settings (such as Full Disk Access or Screen Recording), macOS needs it once more: Forge signs apps with a new certificate. After that it stays on."
+                : "Forge couldn't sign \(project.name) properly, so macOS will ask for its permissions again after every change.")
+        }
     }
 
     // MARK: - Icons

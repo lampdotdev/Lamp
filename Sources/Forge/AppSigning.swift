@@ -53,4 +53,30 @@ enum AppSigning {
         if identity != "-" { cached = identity }
         return identity
     }
+
+    /// What macOS checks an app against before honouring a permission it was given: its bundle ID and the
+    /// certificate it's signed with ("designated => identifier … and certificate leaf = H"…""), or for an
+    /// ad-hoc signature the hash of that one build. Nil when there's no signed app there.
+    static func requirement(of app: URL) async -> String? {
+        guard FileManager.default.fileExists(atPath: app.path) else { return nil }
+        var lines: [String] = []
+        _ = await Shell.run("codesign -d -r- \"$FORGE_APP\" 2>&1", cwd: FileManager.default.temporaryDirectory,
+                            env: ["FORGE_APP": app.path]) { lines.append($0) }
+        return lines.first { $0.hasPrefix("designated => ") }
+    }
+
+    /// Clears what macOS remembers of an app's permissions (System Settings ▸ Privacy & Security).
+    ///
+    /// A permission is kept with the signature it was given to. When an app's signature changes (Forge moved
+    /// from ad-hoc signing to "Forge Local Signing", then to "Forge App Signing"; or its keychain was lost and
+    /// made again), the old entries stay in System Settings, switched on, but no longer apply to the app:
+    /// it has no access, and switching them off and on doesn't help. With them cleared the app is simply an
+    /// app that hasn't been given anything yet, and asking again works. macOS has to know the app (lsregister).
+    static func forgetPermissions(of bundleID: String) async -> Bool {
+        var lines: [String] = []
+        let status = await Shell.run("tccutil reset All \"$FORGE_BUNDLE\" 2>&1", cwd: FileManager.default.temporaryDirectory,
+                                     env: ["FORGE_BUNDLE": bundleID]) { lines.append($0) }
+        if status != 0 { print("AppSigning: couldn't clear the permissions of \(bundleID):\n" + lines.joined(separator: "\n")) }
+        return status == 0
+    }
 }

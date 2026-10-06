@@ -346,7 +346,10 @@ enum Template {
         @MainActor
         private static func shown(_ window: NSWindow) -> CGImage? {
             typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+            // While the screen is locked or the display sleeps, the window server hands back a blank picture.
+            let session = CGSessionCopyCurrentDictionary() as? [String: Any]
             guard window.windowNumber > 0, NSApp.isHidden == false,
+                  session?["CGSSessionScreenIsLocked"] == nil, CGDisplayIsAsleep(CGMainDisplayID()) == 0,
                   let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
             // Only this window (1 << 3); its bounds without the shadow (1 << 0), at full resolution (1 << 3).
             let image = unsafeBitCast(symbol, to: Capture.self)(.null, 1 << 3, UInt32(window.windowNumber), 1 | 1 << 3)?
@@ -2814,6 +2817,346 @@ enum Template {
                 if sound { content.sound = .default }
                 center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
             }
+        }
+    }
+
+    /// A permission the person turns on themselves, in System Settings ▸ Privacy & Security. macOS never asks
+    /// for Full Disk Access and asks only once for the others, so an app that needs one has to lead the way.
+    enum ForgePermission: String, CaseIterable, Identifiable {
+        /// Reading files macOS protects: other apps' data, Mail, Messages, Safari, notification history, and
+        /// every folder on the disk (a disk cleaner, a search or backup tool).
+        case fullDiskAccess
+        /// Seeing the screen: screenshots, recordings, other apps' windows and their titles.
+        case screenRecording
+        /// Controlling the Mac: reading and pressing other apps' controls, sending keys and clicks.
+        case accessibility
+
+        var id: String { rawValue }
+
+        /// What System Settings calls it.
+        var name: String {
+            switch self {
+            case .fullDiskAccess: return "Full Disk Access"
+            case .screenRecording:
+                if #available(macOS 15, *) { return "Screen & System Audio Recording" }
+                return "Screen Recording"
+            case .accessibility: return "Accessibility"
+            }
+        }
+
+        fileprivate var settingsURL: URL {
+            let pane: String
+            switch self {
+            case .fullDiskAccess: pane = "Privacy_AllFiles"
+            case .screenRecording: pane = "Privacy_ScreenCapture"
+            case .accessibility: pane = "Privacy_Accessibility"
+            }
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security?" + pane)!
+        }
+
+        /// macOS gives Full Disk Access to an app when it starts: one that was already open when the switch
+        /// went on still has none until it's opened again.
+        fileprivate var startsOnReopen: Bool { self == .fullDiskAccess }
+    }
+
+    /// Full Disk Access, Screen Recording and Accessibility: whether the app has one, and the way to get it.
+    /// Strongly recommended over a check, steps or Settings link of your own; write your own only with a
+    /// reason this can't meet. Wrap what needs the permission in a gate,
+    /// which shows the app's own contents once the permission is on and the way to turn it on until then:
+    ///
+    ///     ForgePermissionGate(.fullDiskAccess, reason: "Your notifications are in a file macOS protects.") {
+    ///         SummaryView()
+    ///     }
+    ///
+    /// When only one feature needs it, check at the moment it's used and show the same screen in a sheet:
+    ///
+    ///     guard ForgePermissions.has(.screenRecording) else { askForRecording = true; return }
+    ///     .sheet(isPresented: $askForRecording) {
+    ///         ForgePermissionView(.screenRecording, reason: "Capture records your screen.") { askForRecording = false }
+    ///     }
+    ///
+    /// The screen opens the right page of System Settings and has the app's icon to drag into the list there
+    /// (macOS doesn't always list an app by itself, and its + button starts in the wrong folder). Full Disk
+    /// Access only reaches an app when it starts, so for that one the screen ends in Quit & Reopen; for the
+    /// others it notices by itself when the switch goes on, and offers Quit & Reopen if macOS wants a fresh start.
+    /// Forge signs every build of an app the same way, so a permission stays on when the app is changed.
+    /// Forge's builder can't turn a permission on: only the person can, so it sees this screen when it looks.
+    enum ForgePermissions {
+        /// Whether the permission is on right now. Never shows a prompt, so it can be called anywhere, any time.
+        static func has(_ permission: ForgePermission) -> Bool {
+            if let pretend { return pretend == "granted" }
+            switch permission {
+            case .fullDiskAccess: return canReadProtectedFiles
+            case .screenRecording: return CGPreflightScreenCaptureAccess()
+            case .accessibility: return AXIsProcessTrusted()
+            }
+        }
+
+        /// The switch is on in System Settings, but this run of the app started without it and macOS won't
+        /// let it see the screen until it's opened again.
+        static func needsReopening(_ permission: ForgePermission) -> Bool {
+            if let pretend { return pretend == "reopen" }
+            return permission == .screenRecording && !CGPreflightScreenCaptureAccess() && seesWindowTitles
+        }
+
+        /// Takes the person to the switch: puts the app in the list where macOS allows it (showing macOS's own
+        /// prompt the first time, for the permissions that have one) and opens that page of System Settings.
+        @MainActor static func request(_ permission: ForgePermission) {
+            switch permission {
+            case .fullDiskAccess: _ = canReadProtectedFiles   // being refused is what lists the app
+            case .screenRecording: CGRequestScreenCaptureAccess()
+            case .accessibility:
+                _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+            }
+            print("ForgePermissions: asked for \(permission.name); only the person can turn it on, in System Settings")
+            NSWorkspace.shared.open(permission.settingsURL)
+        }
+
+        /// Quits the app and opens it again, for a permission macOS only applies to a fresh start.
+        @MainActor static func reopen() {
+            let wait = "n=0; while kill -0 \"$1\" 2>/dev/null && [ $n -lt 100 ]; do sleep 0.1; n=$((n+1)); done; "
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/sh")
+            // -ForgeInFront: an app that lives in the menu bar shows its panel again (ForgeMenuBar).
+            task.arguments = ["-c", wait + "/usr/bin/open \"$2\" --args -ForgeInFront YES", "sh",
+                              String(ProcessInfo.processInfo.processIdentifier), Bundle.main.bundlePath]
+            do {
+                try task.run()
+                NSApp.terminate(nil)
+            } catch {
+                print("ForgePermissions: couldn't reopen the app: \(error.localizedDescription)")
+            }
+        }
+
+        /// For trying the screens from Terminal on a Mac where nobody can flip the switch:
+        /// FORGE_PERMISSIONS=granted, denied, asked (denied, after Open System Settings was pressed) or reopen.
+        fileprivate static var pretend: String? { ProcessInfo.processInfo.environment["FORGE_PERMISSIONS"] }
+
+        /// Files only Full Disk Access opens. Opening one never prompts; without access it's refused.
+        private static var canReadProtectedFiles: Bool {
+            let home = NSHomeDirectory()
+            for path in [home + "/Library/Application Support/com.apple.TCC/TCC.db",
+                         "/Library/Application Support/com.apple.TCC/TCC.db",
+                         home + "/Library/Safari/CloudTabs.db"] {
+                let file = open(path, O_RDONLY)
+                if file >= 0 {
+                    close(file)
+                    return true
+                }
+                if errno == EPERM || errno == EACCES { return false }
+            }
+            return false
+        }
+
+        /// macOS only gives the titles of other apps' windows to an app that may record the screen, and unlike
+        /// CGPreflightScreenCaptureAccess this answer isn't fixed when the app starts.
+        private static var seesWindowTitles: Bool {
+            let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]] ?? []
+            let me = ProcessInfo.processInfo.processIdentifier
+            return windows.contains { window in
+                (window[kCGWindowLayer as String] as? Int) == 0
+                    && (window[kCGWindowOwnerPID as String] as? Int32) != me
+                    && !((window[kCGWindowName as String] as? String) ?? "").isEmpty
+            }
+        }
+    }
+
+    /// Whether a permission is on, kept up to date for a view of your own (the gate and the screen below
+    /// already do this):
+    ///
+    ///     @StateObject private var recording = ForgePermissionState(.screenRecording)
+    ///     Toggle("Record clicks", isOn: $clicks).disabled(!recording.isOn)
+    final class ForgePermissionState: ObservableObject {
+        let permission: ForgePermission
+        @Published private(set) var isOn: Bool
+        /// On in System Settings, but the app has to be opened again to use it (`ForgePermissions.reopen()`).
+        @Published private(set) var needsReopening: Bool
+        private var timer: Timer?
+        private var observer: NSObjectProtocol?
+
+        init(_ permission: ForgePermission) {
+            self.permission = permission
+            isOn = ForgePermissions.has(permission)
+            needsReopening = ForgePermissions.needsReopening(permission)
+            print("ForgePermissions: \(permission.name) is \(isOn ? "on" : "off")")
+            // The person flips the switch in System Settings and comes back.
+            observer = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                                              object: nil, queue: .main) { [weak self] _ in
+                self?.check()
+            }
+        }
+
+        deinit {
+            timer?.invalidate()
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+        }
+
+        func check() {
+            let on = ForgePermissions.has(permission), reopen = !on && ForgePermissions.needsReopening(permission)
+            if on != isOn {
+                isOn = on
+                print("ForgePermissions: \(permission.name) is now \(on ? "on" : "off")")
+            }
+            if reopen != needsReopening { needsReopening = reopen }
+            if on { watch(false) }
+        }
+
+        /// While the screen that asks is showing, so it gives way the moment the switch goes on.
+        fileprivate func watch(_ watching: Bool) {
+            timer?.invalidate()
+            timer = nil
+            guard watching, !isOn else { return }
+            timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.check() }
+        }
+    }
+
+    /// Shows its contents once the permission is on, and until then the screen that leads the person to
+    /// turn it on. See ForgePermissions.
+    struct ForgePermissionGate<Content: View>: View {
+        @StateObject private var state: ForgePermissionState
+        private let reason: String
+        private let content: () -> Content
+
+        /// `reason` is one plain sentence on why the app needs it, e.g. "Your notifications are in a file macOS protects."
+        init(_ permission: ForgePermission, reason: String, @ViewBuilder content: @escaping () -> Content) {
+            _state = StateObject(wrappedValue: ForgePermissionState(permission))
+            self.reason = reason
+            self.content = content
+        }
+
+        var body: some View {
+            if state.isOn {
+                content()
+            } else {
+                ForgePermissionScreen(state: state, reason: reason)
+            }
+        }
+    }
+
+    /// The screen that leads the person to turn a permission on, for a sheet or a pane of your own.
+    /// `granted` runs when the permission comes on (close the sheet, start the recording).
+    struct ForgePermissionView: View {
+        @StateObject private var state: ForgePermissionState
+        private let reason: String
+        private let granted: () -> Void
+
+        init(_ permission: ForgePermission, reason: String, granted: @escaping () -> Void = {}) {
+            _state = StateObject(wrappedValue: ForgePermissionState(permission))
+            self.reason = reason
+            self.granted = granted
+        }
+
+        var body: some View {
+            ForgePermissionScreen(state: state, reason: reason)
+                .onChange(of: state.isOn) { _, on in if on { granted() } }
+        }
+    }
+
+    private struct ForgePermissionScreen: View {
+        @ObservedObject var state: ForgePermissionState
+        let reason: String
+        @State private var asked = ForgePermissions.pretend == "asked"
+
+        private var appName: String {
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
+        }
+
+        var body: some View {
+            VStack(spacing: 14) {
+                Image(systemName: state.needsReopening ? "checkmark.shield" : "lock.shield")
+                    .font(.system(size: 34))
+                    .foregroundStyle(state.needsReopening ? Color.green : Color.accentColor)
+                Text(state.needsReopening ? "\(state.permission.name) Is On" : "Turn On \(state.permission.name)")
+                    .font(.title3.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                if state.needsReopening {
+                    Text("macOS applies it the next time \(appName) opens.")
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("Quit & Reopen") { ForgePermissions.reopen() }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Text(reason)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    VStack(alignment: .leading, spacing: 8) {
+                        step(1, "Open System Settings.")
+                        step(2, "Switch on **\(appName)** in the list.")
+                        step(3, "Not in the list? Drag this into it:")
+                        appToDrag.padding(.leading, 26)
+                        if state.permission.startsOnReopen { step(4, "Come back here and press **Quit & Reopen**.") }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack {
+                        if state.permission.startsOnReopen {
+                            // Whichever comes next is the one Return presses.
+                            if asked {
+                                settingsButton
+                                reopenButton.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                            } else {
+                                settingsButton.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                                reopenButton
+                            }
+                        } else {
+                            settingsButton.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                            if asked { reopenButton }
+                        }
+                    }
+                    if state.permission.startsOnReopen {
+                        Text("macOS gives \(appName) \(state.permission.name) the next time it opens, not while it's running.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    } else if asked {
+                        Text("This screen goes away when the switch is on. If it's on and this is still here, press Quit & Reopen.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(24)
+            .frame(maxWidth: 400)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear { state.watch(true) }
+            .onDisappear { state.watch(false) }
+        }
+
+        private var settingsButton: some View {
+            Button("Open System Settings") {
+                asked = true
+                ForgePermissions.request(state.permission)
+            }
+        }
+
+        private var reopenButton: some View {
+            Button("Quit & Reopen") { ForgePermissions.reopen() }
+        }
+
+        private func step(_ number: Int, _ text: LocalizedStringKey) -> some View {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("\(number).").monospacedDigit().foregroundStyle(.secondary).frame(width: 18, alignment: .trailing)
+                Text(text)
+            }
+        }
+
+        /// The app itself, to drag into the list in System Settings (or onto its + button's file panel).
+        private var appToDrag: some View {
+            HStack(spacing: 8) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath))
+                    .resizable()
+                    .frame(width: 28, height: 28)
+                Text(appName).lineLimit(1)
+            }
+            .padding(.vertical, 5)
+            .padding(.horizontal, 10)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            .onDrag { NSItemProvider(object: Bundle.main.bundleURL as NSURL) }
+            .help("Drag into the list in System Settings")
+            .accessibilityLabel("\(appName), to drag into System Settings")
         }
     }
 
