@@ -55,17 +55,21 @@ enum Migration {
     private static func keys() {
         let done = "keychainMovedFromForge"
         guard !UserDefaults.standard.bool(forKey: done) else { return }
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "dev.forge.host",
-                                    kSecMatchLimit as String: kSecMatchLimitAll, kSecReturnAttributes as String: true,
-                                    kSecReturnData as String: true]
+        // Data can't be returned for many items at once (errSecParam), so: the accounts first, then each one.
+        let list: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "dev.forge.host",
+                                   kSecMatchLimit as String: kSecMatchLimitAll, kSecReturnAttributes as String: true]
         var found: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &found)
+        let status = SecItemCopyMatching(list as CFDictionary, &found)
         if status == errSecItemNotFound { UserDefaults.standard.set(true, forKey: done); return }
         guard status == errSecSuccess, let items = found as? [[String: Any]] else { return }   // declined: again next time
         for item in items {
-            guard let account = item[kSecAttrAccount as String] as? String, let data = item[kSecValueData as String] as? Data else { continue }
+            guard let account = item[kSecAttrAccount as String] as? String else { continue }
+            let one: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "dev.forge.host",
+                                      kSecAttrAccount as String: account, kSecReturnData as String: true]
+            var data: CFTypeRef?
+            guard SecItemCopyMatching(one as CFDictionary, &data) == errSecSuccess, let secret = data as? Data else { return }
             let add: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "dev.lamp.host",
-                                      kSecAttrAccount as String: account, kSecValueData as String: data]
+                                      kSecAttrAccount as String: account, kSecValueData as String: secret]
             SecItemAdd(add as CFDictionary, nil)   // a duplicate just fails: the key is already over
         }
         UserDefaults.standard.set(true, forKey: done)
