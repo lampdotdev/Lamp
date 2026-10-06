@@ -149,6 +149,8 @@ enum Template {
     import AppKit
     import SQLite3
     import JavaScriptCore
+    import EventKit
+    import Contacts
     import Carbon.HIToolbox
     import CryptoKit
     import CoreServices
@@ -2428,6 +2430,360 @@ enum Template {
         static func copy(_ text: String) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
+        }
+    }
+
+    /// The person's calendar, reminders and contacts, through the accounts already set up on the Mac (iCloud,
+    /// Google, Exchange: whatever System Settings → Internet Accounts has). No sign-in or API key: macOS asks the
+    /// person once, the first time an app uses each one. All on the Mac, instant and free.
+    ///
+    ///     let today = try await ForgeCalendar.events(from: .now, to: .now.addingTimeInterval(86400))
+    ///     try await ForgeCalendar.add("Call with Sam", start: date, end: date.addingTimeInterval(1800), notes: "…")
+    ///     let open = try await ForgeReminders.open()
+    ///     let sam = try await ForgeContacts.search("Sam")             // name, emails, phones, organisation
+    ///
+    /// Each call asks for permission if it hasn't been granted and throws a plain message if it was refused
+    /// ("…was refused. Allow it in System Settings → Privacy & Security → Calendars."). Show that message.
+    enum ForgeCalendar {
+        struct Event: Identifiable {
+            let id: String
+            let title: String
+            let start: Date
+            let end: Date
+            let isAllDay: Bool
+            let location: String?
+            let notes: String?
+            let calendar: String
+            let attendees: [String]
+        }
+
+        nonisolated(unsafe) private static let store = EKEventStore()
+
+        private static func authorize() async throws {
+            if EKEventStore.authorizationStatus(for: .event) == .fullAccess { return }
+            let granted = (try? await store.requestFullAccessToEvents()) ?? false
+            if !granted {
+                throw ForgeAI.Failure(message: "Access to your calendar was refused. Allow it in System Settings → Privacy & Security → Calendars.")
+            }
+        }
+
+        /// Events in a date range, soonest first, across every calendar (or just the named ones).
+        static func events(from: Date, to: Date, calendars: [String]? = nil) async throws -> [Event] {
+            try await authorize()
+            let all = store.calendars(for: .event)
+            let cals = calendars.map { names in all.filter { names.contains($0.title) } }
+            if let cals, cals.isEmpty { return [] }   // a filter that matches no calendar means no events, not every event
+            let predicate = store.predicateForEvents(withStart: from, end: to, calendars: cals)
+            return store.events(matching: predicate).sorted { $0.startDate < $1.startDate }.map { e in
+                Event(id: e.eventIdentifier, title: e.title ?? "", start: e.startDate, end: e.endDate, isAllDay: e.isAllDay,
+                      location: e.location, notes: e.notes, calendar: e.calendar.title,
+                      attendees: (e.attendees ?? []).compactMap { $0.name })
+            }
+        }
+
+        /// Names of the person's calendars.
+        static func calendars() async throws -> [String] {
+            try await authorize()
+            return store.calendars(for: .event).map(\.title)
+        }
+
+        /// Adds an event to a calendar (the default one unless named). Returns its id.
+        @discardableResult
+        static func add(_ title: String, start: Date, end: Date, calendar: String? = nil, location: String? = nil,
+                        notes: String? = nil, allDay: Bool = false) async throws -> String {
+            try await authorize()
+            let event = EKEvent(eventStore: store)
+            event.title = title
+            event.startDate = start
+            event.endDate = end
+            event.isAllDay = allDay
+            event.location = location
+            event.notes = notes
+            event.calendar = calendar.flatMap { name in store.calendars(for: .event).first { $0.title == name } }
+                ?? store.defaultCalendarForNewEvents
+            try store.save(event, span: .thisEvent, commit: true)
+            return event.eventIdentifier
+        }
+
+        static func remove(_ id: String) async throws {
+            try await authorize()
+            guard let event = store.event(withIdentifier: id) else { return }
+            try store.remove(event, span: .thisEvent, commit: true)
+        }
+    }
+
+    enum ForgeReminders {
+        struct Reminder: Identifiable {
+            let id: String
+            let title: String
+            let notes: String?
+            let due: Date?
+            let isCompleted: Bool
+            let list: String
+            let priority: Int   // 0 none, 1 high … 9 low (Reminders' own scale)
+        }
+
+        nonisolated(unsafe) private static let store = EKEventStore()
+
+        private static func authorize() async throws {
+            if EKEventStore.authorizationStatus(for: .reminder) == .fullAccess { return }
+            let granted = (try? await store.requestFullAccessToReminders()) ?? false
+            if !granted {
+                throw ForgeAI.Failure(message: "Access to your reminders was refused. Allow it in System Settings → Privacy & Security → Reminders.")
+            }
+        }
+
+        /// Reminders that aren't done yet, across every list (or just the named ones), due-soonest first.
+        static func open(lists: [String]? = nil) async throws -> [Reminder] {
+            try await authorize()
+            let all = store.calendars(for: .reminder)
+            let cals = lists.map { names in all.filter { names.contains($0.title) } }
+            if let cals, cals.isEmpty { return [] }
+            let predicate = store.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: cals)
+            let found: [EKReminder] = await withCheckedContinuation { c in store.fetchReminders(matching: predicate) { c.resume(returning: $0 ?? []) } }
+            return found.map { r in
+                Reminder(id: r.calendarItemIdentifier, title: r.title ?? "", notes: r.notes, due: r.dueDateComponents?.date,
+                         isCompleted: r.isCompleted, list: r.calendar.title, priority: r.priority)
+            }.sorted { ($0.due ?? .distantFuture) < ($1.due ?? .distantFuture) }
+        }
+
+        /// Adds a reminder (to the default list unless named). Returns its id.
+        @discardableResult
+        static func add(_ title: String, due: Date? = nil, notes: String? = nil, list: String? = nil) async throws -> String {
+            try await authorize()
+            let reminder = EKReminder(eventStore: store)
+            reminder.title = title
+            reminder.notes = notes
+            if let due { reminder.dueDateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: due) }
+            reminder.calendar = list.flatMap { name in store.calendars(for: .reminder).first { $0.title == name } }
+                ?? store.defaultCalendarForNewReminders()
+            try store.save(reminder, commit: true)
+            return reminder.calendarItemIdentifier
+        }
+
+        static func complete(_ id: String) async throws {
+            try await authorize()
+            guard let reminder = store.calendarItem(withIdentifier: id) as? EKReminder else { return }
+            reminder.isCompleted = true
+            try store.save(reminder, commit: true)
+        }
+    }
+
+    enum ForgeContacts {
+        struct Contact: Identifiable {
+            let id: String
+            let name: String
+            let organisation: String?
+            let jobTitle: String?
+            let emails: [String]
+            let phones: [String]
+            let note: String?
+        }
+
+        private static let store = CNContactStore()
+        // The formatter reads more than the name parts (name prefixes, contact type…): ask for everything it
+        // needs, or formatting a fetched contact raises an exception the app can't catch.
+        private static let keys: [CNKeyDescriptor] = [CNContactFormatter.descriptorForRequiredKeys(for: .fullName),
+                                                       CNContactOrganizationNameKey as CNKeyDescriptor, CNContactJobTitleKey as CNKeyDescriptor,
+                                                       CNContactEmailAddressesKey as CNKeyDescriptor, CNContactPhoneNumbersKey as CNKeyDescriptor]
+
+        private static func authorize() async throws {
+            if CNContactStore.authorizationStatus(for: .contacts) == .authorized { return }
+            let granted = (try? await store.requestAccess(for: .contacts)) ?? false
+            if !granted {
+                throw ForgeAI.Failure(message: "Access to your contacts was refused. Allow it in System Settings → Privacy & Security → Contacts.")
+            }
+        }
+
+        /// Contacts whose name matches (any part of it), or everyone with an empty query. Up to `limit`.
+        static func search(_ query: String, limit: Int = 50) async throws -> [Contact] {
+            try await authorize()
+            var found: [CNContact] = []
+            if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                let request = CNContactFetchRequest(keysToFetch: keys)
+                try store.enumerateContacts(with: request) { c, stop in found.append(c); if found.count >= limit { stop.pointee = true } }
+            } else {
+                found = try store.unifiedContacts(matching: CNContact.predicateForContacts(matchingName: query), keysToFetch: keys)
+            }
+            return found.prefix(limit).map(convert)
+        }
+
+        /// The contact with an email address, if any.
+        static func find(email: String) async throws -> Contact? {
+            try await authorize()
+            return try store.unifiedContacts(matching: CNContact.predicateForContacts(matchingEmailAddress: email), keysToFetch: keys).first.map(convert)
+        }
+
+        private static func convert(_ c: CNContact) -> Contact {
+            Contact(id: c.identifier, name: CNContactFormatter.string(from: c, style: .fullName) ?? "",
+                    organisation: c.organizationName.isEmpty ? nil : c.organizationName,
+                    jobTitle: c.jobTitle.isEmpty ? nil : c.jobTitle,
+                    emails: c.emailAddresses.map { $0.value as String }, phones: c.phoneNumbers.map { $0.value.stringValue },
+                    note: nil)
+        }
+    }
+
+    /// The person's email, through the Mail app and whatever accounts it has. Reading and drafting only: a
+    /// draft opens in Mail for the person to send, so nothing goes out without them. macOS asks once to let
+    /// the app control Mail. Mail must be set up on this Mac.
+    ///
+    ///     let recent = try await ForgeMail.inbox(limit: 20)
+    ///     let about = try await ForgeMail.search("invoice", limit: 10)
+    ///     try await ForgeMail.draft(to: ["sam@example.com"], subject: "Recap", body: "…")
+    enum ForgeMail {
+        struct Message: Identifiable {
+            let id: String
+            let subject: String
+            let sender: String
+            let date: Date
+            let preview: String   // the first ~300 characters of the body
+            let mailbox: String
+            let isRead: Bool
+        }
+
+        /// Newest messages across every account's inbox, newest first.
+        static func inbox(limit: Int = 20) async throws -> [Message] {
+            try await messages(limit: limit, filter: "")
+        }
+
+        /// Messages whose subject or sender contains the text, newest first.
+        static func search(_ query: String, limit: Int = 20) async throws -> [Message] {
+            let q = literal(query)
+            return try await messages(limit: limit, filter: " whose subject contains \(q) or sender contains \(q)")
+        }
+
+        /// Takes up to `limit` newest from each account's inbox (Mail lists them newest first), then merges
+        /// and sorts by date before applying the limit, so one busy account can't crowd out the others.
+        private static func messages(limit: Int, filter: String) async throws -> [Message] {
+            let found = try await messages(script: """
+            set out to ""
+            tell application "Mail"
+              repeat with acct in accounts
+                try
+                  set mb to mailbox "INBOX" of acct
+                  set n to 0
+                  repeat with m in (messages of mb\(filter))
+                    if n ≥ \(limit) then exit repeat
+                    set out to out & my row(m, name of mb)
+                    set n to n + 1
+                  end repeat
+                end try
+              end repeat
+            end tell
+            return out
+            """)
+            return Array(found.sorted { $0.date > $1.date }.prefix(limit))
+        }
+
+        /// Text as an AppleScript string literal: backslashes first, then quotes.
+        private static func literal(_ text: String) -> String {
+            "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+        }
+
+        /// The full text of one message.
+        static func body(of id: String) async throws -> String {
+            try await run("""
+            tell application "Mail"
+              repeat with acct in accounts
+                repeat with mb in mailboxes of acct
+                  try
+                    set m to first message of mb whose id is \(Int(id) ?? 0)
+                    return content of m
+                  end try
+                end repeat
+              end repeat
+            end tell
+            return ""
+            """)
+        }
+
+        /// Opens a new draft in Mail, filled in, for the person to look over and send.
+        static func draft(to: [String], subject: String, body: String, cc: [String] = []) async throws {
+            let recipients = to.map { "make new to recipient at end of to recipients with properties {address:\(literal($0))}" }
+            let ccs = cc.map { "make new cc recipient at end of cc recipients with properties {address:\(literal($0))}" }
+            _ = try await run("""
+            tell application "Mail"
+              set msg to make new outgoing message with properties {subject:\(literal(subject)), content:\(literal(body)), visible:true}
+              tell msg
+                \((recipients + ccs).joined(separator: "\n    "))
+              end tell
+              activate
+            end tell
+            """)
+        }
+
+        private static let rowHandler = """
+        on row(m, mbname)
+          tell application "Mail"
+            set d to date received of m
+            set p to ""
+            try
+              set p to text 1 thru 300 of (content of m)
+            on error
+              try
+                set p to content of m
+              end try
+            end try
+            return (id of m as text) & tab & (subject of m) & tab & (sender of m) & tab & (d as «class isot» as string) & tab & mbname & tab & (read status of m as text) & tab & my oneLine(p) & linefeed
+          end tell
+        end row
+        on oneLine(t)
+          set {tid, AppleScript's text item delimiters} to {AppleScript's text item delimiters, {return, linefeed, tab}}
+          set parts to text items of t
+          set AppleScript's text item delimiters to " "
+          set r to parts as text
+          set AppleScript's text item delimiters to tid
+          return r
+        end oneLine
+        """
+
+        private static func messages(script: String) async throws -> [Message] {
+            let output = try await run(script + "\n" + rowHandler)
+            let iso = ISO8601DateFormatter()
+            iso.formatOptions = [.withInternetDateTime]
+            return output.split(separator: "\n").compactMap { line in
+                let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+                guard f.count >= 7 else { return nil }
+                let date = iso.date(from: f[3]) ?? ISO8601DateFormatter().date(from: f[3] + "Z") ?? Date()
+                return Message(id: f[0], subject: f[1], sender: f[2], date: date, preview: f[6], mailbox: f[4], isRead: f[5] == "true")
+            }
+        }
+
+        /// Runs AppleScript against Mail. A refused Automation permission comes back as a plain message.
+        /// Output is read while the script runs: a long message body would otherwise fill the pipe and the
+        /// script could never finish.
+        private static func run(_ script: String) async throws -> String {
+            try await withCheckedThrowingContinuation { continuation in
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                process.arguments = ["-e", script]
+                let out = Pipe(), err = Pipe()
+                process.standardOutput = out
+                process.standardError = err
+                let group = DispatchGroup()
+                var outData = Data(), errData = Data()
+                for (pipe, sink) in [(out, 0), (err, 1)] {
+                    group.enter()
+                    DispatchQueue.global().async {
+                        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                        if sink == 0 { outData = data } else { errData = data }
+                        group.leave()
+                    }
+                }
+                process.terminationHandler = { process in
+                    group.wait()
+                    let text = String(decoding: outData, as: UTF8.self)
+                    let error = String(decoding: errData, as: UTF8.self)
+                    if process.terminationStatus == 0 { continuation.resume(returning: text); return }
+                    let message = error.contains("-1743") || error.lowercased().contains("not allowed")
+                        ? "This app isn't allowed to control Mail. Allow it in System Settings → Privacy & Security → Automation."
+                        : error.contains("-600") || error.lowercased().contains("isn't running")
+                            ? "Mail isn't set up on this Mac."
+                            : "Mail couldn't do that: " + error.trimmingCharacters(in: .whitespacesAndNewlines)
+                    continuation.resume(throwing: ForgeAI.Failure(message: message))
+                }
+                do { try process.run() } catch { continuation.resume(throwing: error) }
+            }
         }
     }
 
