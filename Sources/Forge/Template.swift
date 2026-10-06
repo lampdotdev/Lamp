@@ -2860,7 +2860,8 @@ enum Template {
     }
 
     /// Full Disk Access, Screen Recording and Accessibility: whether the app has one, and the way to get it.
-    /// Never write your own check, steps or Settings link for these. Wrap what needs the permission in a gate,
+    /// Strongly recommended over a check, steps or Settings link of your own, which is where apps went wrong
+    /// before; write your own only with a reason this can't meet. Wrap what needs the permission in a gate,
     /// which shows the app's own contents once the permission is on and the way to turn it on until then:
     ///
     ///     ForgePermissionGate(.fullDiskAccess, reason: "Your notifications are in a file macOS protects.") {

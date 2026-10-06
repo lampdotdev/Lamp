@@ -131,8 +131,11 @@ enum Agent {
     never with a modifier on the scene, which crashes the panel. Pass `dockIcon: true` only when the app also has a main window.
     - When the app itself needs Full Disk Access (other apps' data such as notification history, Mail, Messages \
     or Safari; or scanning the whole disk), Screen Recording (screenshots, recordings, other apps' windows) or \
-    Accessibility (reading or controlling other apps), use `ForgePermissions` from ForgeSupport.swift. Never \
-    write your own check, list of steps, System Settings link, Finder reveal or relaunch for these. Wrap what \
+    Accessibility (reading or controlling other apps), `ForgePermissions` from ForgeSupport.swift is strongly \
+    recommended over a check, list of steps, System Settings link, Finder reveal or relaunch of your own: it \
+    already handles what hand-written ones got wrong (an app that isn't in the list, Full Disk Access that only \
+    arrives when the app starts). Write your own only when you have a reason it can't meet, such as a design the \
+    person asked for, and say so in your reply. With the helper, wrap what \
     needs it: `ForgePermissionGate(.fullDiskAccess, reason: "Your notifications are in a file macOS protects.") \
     { SummaryView() }` shows the contents once the permission is on, and until then a screen that takes the \
     person to the switch in System Settings, gets the app into the list there, and ends in Quit & Reopen for \
