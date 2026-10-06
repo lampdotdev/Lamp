@@ -499,12 +499,32 @@ enum AppAI {
     /// nothing, and Forge asks for a key the first time an app wants a picture.
     enum ImageRoute { case openRouter, codex, apple }
 
+    /// The route as far as can be told without asking anything: for Settings' text. `imageRoute()` is the
+    /// one to act on.
     static var imageRoute: ImageRoute? {
         if Provider.hasKey { return .openRouter }
-        if ToolLocator.path(for: .codex) != nil { return .codex }
+        if ToolLocator.path(for: .codex) != nil, codexSignedIn != false { return .codex }
         if #available(macOS 15.4, *), ImagePlaygroundViewController.isAvailable, !appleRefused { return .apple }
         return nil
     }
+
+    /// The route to use now. Codex counts only when it's signed in (the copy inside the ChatGPT app is there
+    /// whether or not anyone ever logged in); that's checked at most every few minutes.
+    static func imageRoute() async -> ImageRoute? {
+        if Provider.hasKey { return .openRouter }
+        if ToolLocator.path(for: .codex) != nil {
+            if codexSignedIn == nil || Date().timeIntervalSince(codexChecked) > 300 {
+                codexSignedIn = await EngineSignIn.isSignedIn(.codex) ?? true
+                codexChecked = Date()
+            }
+            if codexSignedIn == true { return .codex }
+        }
+        if #available(macOS 15.4, *), ImagePlaygroundViewController.isAvailable, !appleRefused { return .apple }
+        return nil
+    }
+
+    private static var codexSignedIn: Bool?
+    private static var codexChecked = Date.distantPast
 
     /// Image Playground said it can't make pictures here (Apple Intelligence off, or not on this Mac), even
     /// though it reported itself available: from then on the route is as good as absent.
@@ -527,10 +547,13 @@ enum AppAI {
     /// the cost in USD (0 through Codex and Apple).
     static func image(prompt: String, references: [Image], aspectRatio: String?,
                       model appChoice: String? = nil) async throws -> (Data, Double) {
-        switch imageRoute {
+        switch await imageRoute() {
         case .openRouter: break
         case .codex: return (try await viaCodexImage(prompt: prompt, references: references, aspectRatio: aspectRatio), 0)
-        case .apple: return (try await viaApple(prompt: prompt), 0)
+        case .apple:
+            // Image Playground makes pictures from words; it can't edit the ones an app hands over.
+            guard references.isEmpty else { throw Failure(message: noImageRoute) }
+            return (try await viaApple(prompt: prompt), 0)
         case nil: throw Failure(message: noImageRoute)
         }
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/images")!)

@@ -1705,13 +1705,13 @@ final class Store: ObservableObject {
     private func upgradeIconArt(_ project: ForgeProject) {
         guard let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
               Icons.cachedArt(project, spec: spec) == nil else { return }
-        guard AppAI.imageRoute != nil else {
-            askForKey(project, because: "Forge can draw a proper icon for \(project.name), and pictures inside your apps, with an OpenRouter key.")
-            return
-        }
         guard artInProgress.insert(project.id).inserted else { return }
         Task {
             defer { artInProgress.remove(project.id) }
+            guard await AppAI.imageRoute() != nil else {
+                askForKey(project, because: "Forge can draw a proper icon for \(project.name), and pictures inside your apps, with an OpenRouter key.")
+                return
+            }
             do {
                 let art = try await Icons.generateBestArt(spec, appName: project.name) { [weak self] in
                     self?.log(project, .detail, $0)
@@ -1726,6 +1726,9 @@ final class Store: ObservableObject {
                 await renderIcon(project, spec: spec)
                 try await deploy(project)
                 log(project, .status, "New icon artwork is in. It shows in the Dock after the app restarts.")
+            } catch let failure as AppAI.Failure where failure.message == AppAI.noImageRoute {
+                // Image Playground said yes until asked: the key card is still the right answer.
+                askForKey(project, because: "Forge can draw a proper icon for \(project.name), and pictures inside your apps, with an OpenRouter key.")
             } catch {
                 log(project, .detail, "Icon artwork failed: \(error.localizedDescription)")
             }
