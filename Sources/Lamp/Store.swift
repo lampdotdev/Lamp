@@ -368,13 +368,18 @@ final class Store: ObservableObject {
         var attachments: [URL] = []
         /// The request in the chat this takes the place of when it's sent (see `sendAgain`).
         var replacing: UUID?
+        /// What was in the message box before that request was taken back into it, put back if it isn't
+        /// sent again after all.
+        var setAsideText = ""
+        var setAsideAttachments: [URL] = []
     }
 
     private var drafts: [String: Draft] = [:]
 
     /// Each app keeps its own draft, so it's still there after switching apps. The text also survives a
-    /// restart (.lamp/draft.txt), and so does the request it replaces; attached files are only remembered
-    /// while Lamp runs, so after a restart a replaced request has the files it was sent with.
+    /// restart (.lamp/draft.txt), and so do the request it replaces and the text that was set aside for it;
+    /// attached files are only remembered while Lamp runs, so after a restart a replaced request has the
+    /// files it was sent with.
     func draft(for project: LampProject) -> Draft {
         if let draft = drafts[project.id] { return draft }
         let lamp = project.dir.appendingPathComponent(".lamp")
@@ -383,7 +388,9 @@ final class Store: ObservableObject {
         guard let line = (logs[project.id] ?? []).first(where: { $0.id == id && $0.canSendAgain }) else {
             return Draft(text: text ?? "")
         }
-        return Draft(text: text ?? "", attachments: Attachments.urls(line.attachments ?? [], in: project), replacing: line.id)
+        let setAside = try? String(contentsOf: lamp.appendingPathComponent("draft-set-aside.txt"), encoding: .utf8)
+        return Draft(text: text ?? "", attachments: Attachments.urls(line.attachments ?? [], in: project), replacing: line.id,
+                     setAsideText: setAside ?? "")
     }
 
     func saveDraft(_ draft: Draft, for project: LampProject) {
@@ -421,6 +428,12 @@ final class Store: ObservableObject {
             try? id.uuidString.write(to: replaces, atomically: true, encoding: .utf8)
         } else {
             try? FileManager.default.removeItem(at: replaces)
+        }
+        let setAside = project.dir.appendingPathComponent(".lamp/draft-set-aside.txt")
+        if draft.replacing != nil, !draft.setAsideText.isEmpty {
+            try? draft.setAsideText.write(to: setAside, atomically: true, encoding: .utf8)
+        } else {
+            try? FileManager.default.removeItem(at: setAside)
         }
     }
 
