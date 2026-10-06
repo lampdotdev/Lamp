@@ -41,9 +41,7 @@ enum Sharing {
         // to send and within what another Lamp accepts (`open`). The rest were only for the chat, such as
         // screenshots or reference documents, and stay private.
         var attachedBytes = 0
-        let attached = usedAttachments(of: project)
-        guard attached.count + 50 <= maxFiles else { throw ImportError("This app has too many attached files to share (over \(maxFiles - 50)).") }
-        for file in attached {
+        for file in usedAttachments(of: project) {
             attachedBytes += (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             guard attachedBytes <= maxAttachedBytes else {
                 throw ImportError("This app's attached files are over \(maxAttachedBytes / 1_000_000) MB, too big to share.")
@@ -64,6 +62,9 @@ enum Sharing {
         try encoder.encode(Manifest(format: formatVersion, name: project.name, exportedAt: Date()))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
+        // Everything staged, counted the way the importer's listing counts it (files and folders).
+        let entries = fm.enumerator(at: stage, includingPropertiesForKeys: nil)?.allObjects.count ?? 0
+        guard entries <= maxFiles else { throw ImportError("This app has too many files to share (over \(maxFiles)).") }
         let output = work.appendingPathComponent("\(project.name).lampapp")
         try run("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage.path, output.path])
         // Media is already compressed, so the archive can be as big as what went in: make sure it's one Lamp opens.
