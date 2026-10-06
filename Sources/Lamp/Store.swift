@@ -1576,8 +1576,10 @@ final class Store: ObservableObject {
         let relative = target.path.hasPrefix(root.path + "/") || target.path.hasPrefix(project.dir.path + "/")
             ? String(target.path.dropFirst((target.path.hasPrefix(root.path + "/") ? root.path : project.dir.path).count + 1)) : ""
         guard !relative.isEmpty else { return (400, ["error": "Only files inside the app's folder can be deleted."]) }
+        // Compared without regard to case: the Mac's usual file system treats "package.swift" as the same file.
         let protected = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift"]
-        if protected.contains(where: { relative == $0 || relative.hasPrefix($0 + "/") }) {
+        let lowered = relative.lowercased()
+        if protected.contains(where: { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + "/") }) {
             return (400, ["error": "\(relative) belongs to Lamp and can't be deleted."])
         }
         let fm = FileManager.default
