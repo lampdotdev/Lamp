@@ -1,0 +1,116 @@
+---
+title: Choose your AI
+icon: sparkles
+description: "Pick what builds your apps: your Claude or ChatGPT subscription, or Lamp's own agent with the AI you choose."
+---
+
+Lamp doesn't come with an AI of its own. It uses one you already have, or one
+you sign up for. The welcome asks you to choose, and you can change your mind
+at any time.
+
+## The three choices
+
+| Choice | What it uses | Good if |
+|---|---|---|
+| **Claude Code** | Your Claude subscription | You already pay for Claude |
+| **ChatGPT** | Your ChatGPT subscription | You already pay for ChatGPT |
+| **Lamp Agent** | An AI you choose: OpenRouter, another provider, or a model on this Mac | You have neither, or you want to pick the AI yourself |
+
+If you already pay for Claude or ChatGPT, start there. It's the quickest way
+to get going, and there's nothing new to pay for.
+
+## Claude Code
+
+Uses your Claude subscription.
+
+1. Choose **Claude Code** in the welcome.
+2. If Lamp says Claude isn't on this Mac yet, click **Get Claude**, install
+   the Claude app, open it once, then come back to Lamp.
+3. Click **Use Claude Code**. If you aren't signed in, your browser opens so
+   you can sign in with your Claude account. Then come back to Lamp.
+
+## ChatGPT
+
+Uses your ChatGPT subscription.
+
+1. Choose **ChatGPT** in the welcome.
+2. If Lamp says ChatGPT isn't on this Mac yet, click **Get ChatGPT**, install
+   the ChatGPT app, open it once, then come back to Lamp.
+3. Click **Use ChatGPT**. If you aren't signed in, your browser opens so you
+   can sign in with your ChatGPT account. Then come back to Lamp.
+
+<Note>
+  Outside the welcome, Lamp calls this choice **Codex**. That's the name of
+  the part of ChatGPT that writes software. You'll see it in Settings.
+</Note>
+
+## Lamp Agent
+
+Lamp's own agent works with the AI you pick. There are three ways to give it
+one.
+
+### OpenRouter
+
+OpenRouter is a service that gives you hundreds of AI models through one
+account. You add some credit and pay only for what you use. You get a **key**
+from it, which is a long password that lets Lamp use your account.
+
+1. Go to [openrouter.ai/keys](https://openrouter.ai/keys), create an account
+   and add some credit.
+2. Create a key and copy it.
+3. In Lamp, choose **Lamp Agent**, then **OpenRouter**, and paste the key.
+
+Lamp checks the key before saving it. If the key was mistyped, or the account
+has no credit, Lamp tells you straight away.
+
+### Another provider
+
+If you already have a key from Anthropic, OpenAI, Google or one of about
+twenty other AI companies, choose **Another provider**, pick the company and
+paste your key.
+
+### A model on this Mac
+
+Lamp can download an AI model and run it on your Mac. It's free and private,
+because nothing you type leaves your Mac. Lamp recommends a model that fits
+your Mac's memory. The download is several gigabytes.
+
+<Warning>
+  Models that run on your Mac are slower and less capable than Claude or
+  ChatGPT. They make simpler apps, and they sometimes get stuck. For your first
+  apps, one of the other choices will give you a much better idea of what Lamp
+  can do.
+</Warning>
+
+## What it costs
+
+Lamp doesn't charge you for building apps. What you pay depends on your choice:
+
+- **Claude Code and ChatGPT** count against the subscription you already have.
+  A lot of building in one day can reach your plan's limit, the same as heavy
+  use of Claude or ChatGPT themselves.
+- **OpenRouter and other providers** charge your account for what you use.
+  Check your balance on the provider's website.
+- **A model on this Mac** is free.
+
+## Change it later
+
+Open **Lamp → Settings** (⌘,).
+
+- **Building** chooses what builds your apps, and which model it uses.
+- **Providers** is where you add, replace and remove keys, and download models
+  for this Mac.
+- **Apps** chooses the AI your apps use while they run.
+
+## AI inside your apps
+
+Many apps you build use AI themselves, for example to read a receipt or
+summarise a document. They reach it through Lamp, so you never put a key into
+an app.
+
+Without an OpenRouter key, the text AI in your apps goes through whatever
+builds your apps. Apps that make pictures use ChatGPT if you're signed in to
+it; otherwise an app that wants a picture asks you for a key.
+
+Apps open Lamp in the background when they need it. You don't have to keep
+Lamp's window open.

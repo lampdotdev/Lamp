@@ -1,0 +1,20 @@
+/*
+ * Lamp styling for the public Mintlify docs site.
+ *
+ * Mintlify automatically loads CSS files placed at the root of the docs
+ * workspace, so this file is picked up without a docs.json reference.
+ */
+
+/* Rounder surfaces, like the app's own windows and cards. */
+pre,
+img,
+.rounded-lg,
+.rounded-xl {
+  border-radius: 0.75rem;
+}
+
+/* The logo and favicon carry the app icon's own shape. */
+img[src*='/logo/'],
+img[src*='/favicon'] {
+  border-radius: 0;
+}

@@ -1,0 +1,11 @@
+# Mintlify build artifacts
+.mintlify/
+node_modules/
+
+# Repo-facing guidance, not published docs pages
+AGENTS.md
+README.md
+package.json
+
+# OS / editor noise
+.DS_Store

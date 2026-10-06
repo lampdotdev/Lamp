@@ -1,0 +1,11 @@
+{
+  "name": "lamp-docs",
+  "private": true,
+  "description": "Lamp's public documentation site (Mintlify), meant for docs.lamp.dev.",
+  "scripts": {
+    "dev": "npx --yes mint@4.2.650 dev",
+    "validate": "npx --yes mint@4.2.650 validate",
+    "check-links": "npx --yes mint@4.2.650 broken-links",
+    "check": "npm run validate && npm run check-links"
+  }
+}

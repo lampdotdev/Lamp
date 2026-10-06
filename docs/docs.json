@@ -1,0 +1,32 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Lamp Docs",
+  "description": "How to install Lamp, choose your AI, and build, change and share your own Mac apps.",
+  "colors": {
+    "primary": "#C2570C",
+    "light": "#FDBA4D",
+    "dark": "#C2570C"
+  },
+  "favicon": "/favicon.png",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg",
+    "href": "/"
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting started",
+        "pages": ["index", "install", "choose-your-ai", "first-app"]
+      },
+      {
+        "group": "Help",
+        "pages": ["sharing-privacy-troubleshooting"]
+      }
+    ]
+  }
+}
