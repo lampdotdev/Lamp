@@ -14,7 +14,7 @@ Some things people build with it:
 
 Each one is a real `.app` in `~/Applications/Lamp Apps`, with **Edit with Lamp (⇧⌘E)** in its menu for when you want it to work differently. Its data is kept safe through every change, and you can send it to a coworker, who gets their own copy to adapt.
 
-[Download the latest release](https://github.com/RooCodeInc/Lamp/releases/latest) and open it. The welcome asks for your first idea, then has you sign in with Claude or ChatGPT (or add a key for Lamp's own agent), and starts building.
+[Download the latest release](https://github.com/RooCodeInc/Forge/releases/latest) and open it. The welcome asks for your first idea, then has you sign in with Claude or ChatGPT (or add a key for Lamp's own agent), and starts building.
 
 ## Requirements
 
@@ -30,7 +30,7 @@ Nothing else needs installing. The coding agent ([pi](https://github.com/badlogi
 
 ## Download
 
-Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/Lamp/releases): open the DMG and drag Lamp to Applications. To cut a release, see [RELEASING.md](RELEASING.md).
+Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/Forge/releases): open the DMG and drag Lamp to Applications. To cut a release, see [RELEASING.md](RELEASING.md).
 
 ## Setup
 
@@ -45,8 +45,8 @@ Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/
 2. **Clone and build:**
 
    ```bash
-   git clone https://github.com/RooCodeInc/Lamp.git ~/Code/roo/Lamp
-   cd ~/Code/roo/Lamp
+   git clone https://github.com/RooCodeInc/Forge.git ~/Code/roo/Forge
+   cd ~/Code/roo/Forge
    ./build.sh
    open build/Lamp.app
    ```
@@ -166,7 +166,7 @@ Local models are slower and much less capable than the best cloud models for who
 | `Resources/lamp-tools.ts` | The agent's `look_at_app`, `use_app`, `plan` and `delete_file` tools (a pi extension) |
 | `Sources/Lamp/Updater.swift` | Updates for release builds (Sparkle); the feed is served by `updates/` (see RELEASING.md) |
 | `updates/` | The Vercel app that serves the update feed and downloads from the private GitHub releases |
-| `Resources/Icon/` | Lamp's own icon as an Icon Composer document: the porcelain lamp from the welcome and its golden smoke, as separate layers. `design/lamp/LampLab` renders it (`LampLab icon out Resources`), along with `Resources/AppIcon.icns`, `Resources/Assets.car` (Liquid Glass on macOS 26) and `Resources/AppIcon.png` |
+| `Resources/Icon/` | Lamp's own icon as an Icon Composer document: a lamp in silhouette against a setting sun over desert dunes, as one full-bleed picture. It's compiled into `Resources/Assets.car` (Liquid Glass on macOS 26) and drawn into `Resources/AppIcon.icns` and `Resources/AppIcon.png` on Apple's grid, the same way `design/lamp/LampLab`'s `Icon.export` does |
 | `Resources/THIRD_PARTY_NOTICES.md` | Licences for the bundled pi agent and llama.cpp (both MIT) |
 
 Generated apps live in `~/Library/Application Support/Lamp/Apps/<app>/`, each with its own git history.

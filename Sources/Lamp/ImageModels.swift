@@ -59,9 +59,10 @@ final class ImageModels: ObservableObject {
     /// writes the marker.
     nonisolated static func isInstalled(_ spec: ImageModelSpec) -> Bool {
         let repoDir = LocalModels.hubDir.appendingPathComponent("models--" + spec.repo.replacingOccurrences(of: "/", with: "--"))
-        guard let ref = (try? String(contentsOf: repoDir.appendingPathComponent("refs/main"), encoding: .utf8))?.trimmed,
-              let marked = (try? String(contentsOf: repoDir.appendingPathComponent("lamp-complete"), encoding: .utf8))?.trimmed,
-              !ref.isEmpty, marked == ref else { return false }
+        guard let ref = (try? String(contentsOf: repoDir.appendingPathComponent("refs/main"), encoding: .utf8))?.trimmed, !ref.isEmpty,
+              ["lamp-complete", "forge-complete"].contains(where: {   // the second from downloads before the rename
+                  (try? String(contentsOf: repoDir.appendingPathComponent($0), encoding: .utf8))?.trimmed == ref
+              }) else { return false }
         return FileManager.default.fileExists(atPath: repoDir.appendingPathComponent("snapshots/\(ref)").path)
     }
 

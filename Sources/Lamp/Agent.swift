@@ -2,6 +2,7 @@ import Foundation
 
 enum AgentEvent {
     case text(String)
+    case textPiece(String) // a piece of the message the model is writing, as it streams in; `.text` follows with the whole
     /// A tool call as shown in the chat ("grep cache.json"), and the whole call with its arguments,
     /// which is what tells a repeated call from a similar one.
     case tool(String, call: String)
@@ -69,7 +70,7 @@ enum Agent {
     never to undo your own attempt, and find the version with `list_versions` first.
     """
 
-    /// pi ships inside Forge.app (see build.sh).
+    /// pi ships inside Lamp.app (see build.sh).
     static var executable: URL? {
         let url = Bundle.main.resourceURL?.appendingPathComponent("pi/pi")
         return url.flatMap { FileManager.default.isExecutableFile(atPath: $0.path) ? $0 : nil }
@@ -260,8 +261,12 @@ enum Agent {
     - The person you're talking to isn't a programmer and never sees the code: to them, Lamp makes apps, \
     and you're the one making theirs. Everything you say to them is about their app and what it does, in \
     everyday words. Never name files, folders, types, functions, frameworks or tools, and never show code, \
-    commands or compiler errors, unless they ask for them. Don't narrate your steps as you go ("Now I'll \
-    update the view"): do the work, then say what's different.
+    commands or compiler errors, unless they ask for them.
+    - Begin every reply with one short sentence, written before you read or change anything, that says in \
+    everyday words what you're about to do ("I'll make the ball a little faster."), so the person sees \
+    straight away that you've understood. A question you can answer without looking anything up needs no \
+    such sentence: just answer it. After that, don't narrate your steps as you go ("Now I'll update the \
+    view"): do the work, then say what's different.
     - Finish with one or two plain sentences describing what changed. Users often don't know what a Mac can \
     do on its own, and assume things like reading text from a photo, cutting a person out of a picture, \
     transcribing speech or reading aloud need extra software. When one of the on-device abilities above would \
@@ -350,6 +355,7 @@ enum Agent {
             case "toolcall_start": return [.step(update["toolName"] as? String ?? "")]
             case "toolcall_delta": return [.stepArgs(update["delta"] as? String ?? "")]
             case "text_start", "thinking_start": return [.step("")]
+            case "text_delta": return (update["delta"] as? String).map { [.textPiece($0)] } ?? []
             default: return []
             }
         case "tool_execution_start":

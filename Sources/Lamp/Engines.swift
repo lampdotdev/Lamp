@@ -469,10 +469,10 @@ extension Agent {
     private static func plainName(_ tool: String) -> String { tool.replacingOccurrences(of: "mcp__lamp__", with: "") }
 
     static func parseClaude(_ line: String) -> [AgentEvent] {
-        // Most streamed lines are pieces of text or thinking, which Lamp gets whole from the finished message.
-        // Skip them before parsing: there can be thousands per turn, all handled on the main thread.
+        // Many streamed lines are pieces of thinking, which Lamp has no use for. Skip them before parsing:
+        // there can be thousands per turn, all handled on the main thread.
         if line.hasPrefix(#"{"type":"stream_event""#), line.contains(#""type":"content_block_delta""#),
-           !line.contains("input_json_delta") { return [] }
+           !line.contains("input_json_delta"), !line.contains(#""type":"text_delta""#) { return [] }
         guard let obj = json(line), let type = obj["type"] as? String else { return line.trimmed.isEmpty ? [] : [.raw(line)] }
         switch type {
         case "system":
@@ -500,6 +500,10 @@ extension Agent {
                 let delta = event["delta"] as? [String: Any] ?? [:]
                 if delta["type"] as? String == "input_json_delta", let piece = delta["partial_json"] as? String {
                     return [.stepArgs(piece)]
+                }
+                // What the model is saying, as it says it; the finished message follows as an "assistant" line.
+                if delta["type"] as? String == "text_delta", let piece = delta["text"] as? String {
+                    return [.textPiece(piece)]
                 }
             default: break
             }

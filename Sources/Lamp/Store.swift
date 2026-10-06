@@ -35,7 +35,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey }
     var id = UUID()
     let kind: Kind
-    let text: String
+    var text: String
     var attachments: [String]? = nil   // names in the app's Attachments/ folder
     var version: String? = nil         // for a request: the version it made
 
@@ -111,7 +111,9 @@ final class Store: ObservableObject {
     struct PendingApproval: Identifiable {
         let id = UUID()
         let command: String
-        var title = "The agent wants to run a command"
+        /// A file request sets its own title; a command keeps this one.
+        static let commandTitle = "Can the agent do this?"
+        var title = commandTitle
         let answer: CheckedContinuation<Bool, Never>
         var explanation: CommandExplanation?
     }
@@ -271,6 +273,42 @@ final class Store: ObservableObject {
         if let data = try? JSONEncoder().encode(logs[project.id]) {
             try? data.write(to: project.dir.appendingPathComponent(".lamp/chat.json"))
         }
+    }
+
+    /// The message each app's agent is writing right now: its chat line, and text that has arrived but isn't
+    /// in the chat yet.
+    private var writing: [String: (line: UUID, unshown: String)] = [:]
+    private var showingWritten: Set<String> = []
+
+    /// Adds a piece of the message the agent is writing, so it shows in the chat as it arrives. Pieces come
+    /// twenty a second, and after a tool call the first few seconds' worth arrive all at once, so they go into
+    /// the chat a few times a second rather than one by one: redrawing the chat for every piece keeps the
+    /// main thread busy for seconds, and nothing shows until it has caught up. The message isn't saved
+    /// until it's whole, since saving rewrites the chat's file.
+    private func write(_ piece: String, for project: LampProject) {
+        guard writing[project.id] != nil else {
+            guard !piece.trimmed.isEmpty else { return }
+            let line = LogLine(kind: .agent, text: String(piece.drop(while: \.isWhitespace)))
+            logs[project.id, default: []].append(line)
+            writing[project.id] = (line.id, "")
+            note("Replying", for: project)
+            return
+        }
+        writing[project.id]?.unshown += piece
+        guard showingWritten.insert(project.id).inserted else { return }
+        Task {
+            try? await Task.sleep(for: .milliseconds(80))
+            showingWritten.remove(project.id)
+            showWritten(for: project)
+        }
+    }
+
+    /// Puts what has arrived of the message being written into its chat line.
+    private func showWritten(for project: LampProject) {
+        guard let (line, unshown) = writing[project.id], !unshown.isEmpty,
+              let index = logs[project.id]?.lastIndex(where: { $0.id == line }) else { return }
+        logs[project.id]?[index].text += unshown
+        writing[project.id]?.unshown = ""
     }
 
     /// Updates what the app's turn is doing right now, for the build card and the activity line.
@@ -962,8 +1000,17 @@ final class Store: ObservableObject {
             guard let self else { return }
             for event in Agent.parseLine(line) {
                 switch event {
+                case .textPiece(let piece):
+                    write(piece, for: project)
                 case .text(let text):
-                    log(project, .agent, text)
+                    // The whole message. It takes the place of what was shown of it while it was written.
+                    if let line = writing.removeValue(forKey: project.id)?.line,
+                       let index = logs[project.id]?.lastIndex(where: { $0.id == line }) {
+                        logs[project.id]?[index].text = text
+                        saveChat(project)
+                    } else {
+                        log(project, .agent, text)
+                    }
                 case .step(let tool):
                     streamingTool = tool
                     streamingArguments = ""
@@ -1001,6 +1048,9 @@ final class Store: ObservableObject {
         }
         running[project.id] = nil
         endApprovals(for: project)
+        // A message cut short (the run was stopped, or failed) keeps what was written of it.
+        showWritten(for: project)
+        writing[project.id] = nil
         log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost))
         recordAgent(project, cost: cost)
         if stopped.remove(project.id) != nil {
@@ -1226,7 +1276,7 @@ final class Store: ObservableObject {
         guard let pending = approvals.removeValue(forKey: project.id) else { return }
         if allowAll { allowAllThisTurn.insert(project.id) }
         log(project, .detail, (allow ? "Allowed: " : "Denied: ") + pending.command)
-        note(allow && pending.title.contains("command") ? "Running a command" : "Thinking", for: project)
+        note(allow && pending.title == PendingApproval.commandTitle ? "Running a command" : "Thinking", for: project)
         pending.answer.resume(returning: allow)
     }
 
@@ -1521,18 +1571,23 @@ final class Store: ObservableObject {
         let versions = await Versions.list(project).reversed()
         let linked = Set(chat.compactMap(\.version))
         var index = chat.startIndex
-        var changed = false
+        var links: [UUID: String] = [:]
         for version in versions where !linked.contains(version.id) {
             let message = plain(version.message)
             guard let match = chat[index...].firstIndex(where: {
                 $0.kind == .user && $0.version == nil && plain(Self.label(for: $0)) == message
             }) else { continue }
             chat[match].version = version.id
+            links[chat[match].id] = version.id
             index = chat.index(after: match)
-            changed = true
         }
-        guard changed, logs[project.id]?.count == chat.count else { return }
-        logs[project.id] = chat
+        // The chat may have moved on while the versions were read: lines added, and a reply being written
+        // grows in place. So the links go into the chat as it is now, line by line, never the copy back over it.
+        guard !links.isEmpty, var current = logs[project.id] else { return }
+        for index in current.indices where current[index].version == nil {
+            if let version = links[current[index].id] { current[index].version = version }
+        }
+        logs[project.id] = current
         saveChat(project)
     }
 

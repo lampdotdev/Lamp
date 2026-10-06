@@ -89,8 +89,11 @@ enum Versions {
     /// they're what people gave Lamp, and the chat still shows them.
     static func restoreFiles(_ project: LampProject, to version: AppVersion) async -> Bool {
         let keep = "':!\(Attachments.folder)'"
-        return await Shell.run("git restore --source=\"$LAMP_VERSION\" --staged --worktree -- . \(keep) && git clean -fdq -- . \(keep)",
-                               cwd: project.dir, env: ["LAMP_VERSION": version.id]) { _ in } == 0
+        let ok = await Shell.run("git restore --source=\"$LAMP_VERSION\" --staged --worktree -- . \(keep) && git clean -fdq -- . \(keep)",
+                                 cwd: project.dir, env: ["LAMP_VERSION": version.id]) { _ in } == 0
+        // A version from before the rename calls the support library by its old names.
+        if ok { Migration.normalize(project.dir, commit: false) }
+        return ok
     }
 
     /// Files changed since the last version, by a turn that was stopped or didn't finish.

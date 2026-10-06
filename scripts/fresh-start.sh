@@ -55,6 +55,9 @@ begin() {
   if [ -e "$state" ]; then mv "$state" "$backup/Lamp"; else touch "$backup/no-folder"; fi
   defaults export "$domain" "$backup/defaults.plist" 2>/dev/null || true
   defaults delete "$domain" >/dev/null 2>&1 || true
+  # Settings from before the rename would be migrated back in on the next launch: set them aside too.
+  defaults export dev.forge.host "$backup/defaults-forge.plist" 2>/dev/null || true
+  defaults delete dev.forge.host >/dev/null 2>&1 || true
   keychain_accounts | while read -r account; do
     security delete-generic-password -s "$domain" -a "$account" >/dev/null 2>&1 || true
   done
@@ -64,6 +67,11 @@ begin() {
 }
 
 restore() {
+  # A backup made before the rename holds the folder under its old name.
+  if [ ! -d "$backup" ] && [ -d "$support/Forge-fresh-start" ]; then
+    mv "$support/Forge-fresh-start" "$backup"
+    [ -e "$backup/Forge" ] && mv "$backup/Forge" "$backup/Lamp"
+  fi
   if [ ! -d "$backup" ]; then
     echo "Nothing to restore: no $backup." >&2
     exit 1
@@ -82,6 +90,7 @@ restore() {
   done < "$backup/keychain.txt"
   defaults delete "$domain" >/dev/null 2>&1 || true
   if [ -s "$backup/defaults.plist" ]; then defaults import "$domain" "$backup/defaults.plist"; fi
+  if [ -s "$backup/defaults-forge.plist" ]; then defaults import dev.forge.host "$backup/defaults-forge.plist"; fi
   # Whatever the fresh run made is thrown away; your apps come back. Only when the backup still holds
   # them (or says there were none), so running this twice can't remove a folder that was already restored.
   if [ -e "$backup/Lamp" ]; then

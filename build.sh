@@ -129,7 +129,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSAppleEventsUsageDescription</key><string>Lamp lists and switches your browser tabs when one of your apps reads a web page you have open.</string>
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLName</key><string>dev.lamp.host</string>
-    <key>CFBundleURLSchemes</key><array><string>forge</string></array>
+    <key>CFBundleURLSchemes</key><array><string>lamp</string></array>
   </dict></array>
 </dict></plist>
 PLIST
