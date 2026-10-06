@@ -1067,7 +1067,7 @@ final class Store: ObservableObject {
         // Claude Code's auto permission mode isn't offered on every account or model: fall back to asking
         // before every command, remember that, and run the turn again.
         let lower = failure.lowercased()
-        if engine == .claude, CommandApproval.current == .auto, !CommandApproval.claudeAutoUnavailable,
+        if engine == .claude, CommandApproval.current.isAutomatic, !CommandApproval.claudeAutoUnavailable,
            lower.contains("auto"), lower.contains("mode") || lower.contains("permission") {
             CommandApproval.claudeAutoUnavailable = true
             log(project, .status, "Claude Code's auto mode isn't available, so Lamp will ask before every command.")
@@ -1135,7 +1135,7 @@ final class Store: ObservableObject {
         case .never:
             log(project, .status, "Ran: \(command)")
             return true
-        case .auto where !escalated:
+        case .risky where !escalated, .unusual where !escalated:
             if Self.isReadOnly(command) {
                 log(project, .status, "Ran: \(command)")
                 return true
@@ -1262,10 +1262,9 @@ final class Store: ObservableObject {
         }
         while approvals[project.id] != nil { try? await Task.sleep(for: .milliseconds(200)) }
         guard busy.contains(project.id) else { return false }   // the turn ended while queued
-        // A shell command the in-app model rates low risk runs without the card, unless the person wants
-        // every command shown (Always) or asked to see the low-risk ones too.
+        // "Only when risky": a shell command the in-app model rates low risk runs without the card.
         var given = given
-        if title == nil, CommandApproval.current != .always, !CommandApproval.asksForLowRisk, !Self.looksRisky(command) {
+        if title == nil, CommandApproval.current == .risky, !Self.looksRisky(command) {
             note("Checking a command", for: project)
             if given == nil { given = await explain(command, for: project) }
             guard busy.contains(project.id) else { return false }
