@@ -62,9 +62,12 @@ enum Sharing {
         try encoder.encode(Manifest(format: formatVersion, name: project.name, exportedAt: Date()))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
-        // Everything staged, counted the way the importer's listing counts it (files and folders).
-        let entries = fm.enumerator(at: stage, includingPropertiesForKeys: nil)?.allObjects.count ?? 0
-        guard entries <= maxFiles else { throw ImportError("This app has too many files to share (over \(maxFiles)).") }
+        // Everything staged, counted and measured the way the importer's listing does (files and folders,
+        // bytes before compression), so Lamp never makes a file another Lamp refuses.
+        let staged = fm.enumerator(at: stage, includingPropertiesForKeys: [.fileSizeKey])?.compactMap { $0 as? URL } ?? []
+        guard staged.count <= maxFiles else { throw ImportError("This app has too many files to share (over \(maxFiles)).") }
+        let unpacked = staged.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) }
+        guard unpacked <= maxUnpackedBytes else { throw ImportError("This app is over \(maxUnpackedBytes / 1_000_000) MB, too big to share.") }
         let output = work.appendingPathComponent("\(project.name).lampapp")
         try run("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage.path, output.path])
         // Media is already compressed, so the archive can be as big as what went in: make sure it's one Lamp opens.
