@@ -606,7 +606,10 @@ final class Store: ObservableObject {
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
     /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
     func send(_ prompt: String, attachments: [URL] = [], to project: ForgeProject) {
-        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: attachments))
+        // Waiting for setup can outlast this run, and the files may be temporary (a pasted screenshot):
+        // keep copies, so the request still has them after a relaunch.
+        let files = setup.ready ? attachments : keepForLater(attachments)
+        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files))
         startQueued(project)
         saveWaiting()
     }
@@ -615,8 +618,23 @@ final class Store: ObservableObject {
     /// quitting meanwhile doesn't lose them: they come back on the next launch and start once setup is done.
     private static let waitingKey = "waitingRequests"
 
+    /// Where waiting requests' files are kept until their build starts.
+    private var waitingFiles: URL { root.deletingLastPathComponent().appendingPathComponent("Waiting") }
+
+    private func keepForLater(_ files: [URL]) -> [URL] {
+        guard !files.isEmpty else { return [] }
+        let folder = waitingFiles.appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return files.map { file in
+            let copy = folder.appendingPathComponent(file.lastPathComponent)
+            return (try? FileManager.default.copyItem(at: file, to: copy)) != nil ? copy : file
+        }
+    }
+
     private func saveWaiting() {
-        let waiting = setup.ready ? [:] : queued.filter { !$0.value.isEmpty }.mapValues { $0.map(\.text) }
+        let waiting = setup.ready ? [:] : queued.filter { !$0.value.isEmpty }.mapValues { messages in
+            messages.map { ["text": $0.text, "attachments": $0.attachments.map(\.path)] as [String: Any] }
+        }
         if waiting.isEmpty {
             UserDefaults.standard.removeObject(forKey: Self.waitingKey)
         } else {
@@ -624,11 +642,21 @@ final class Store: ObservableObject {
         }
     }
 
+    /// Brings back requests that were waiting for setup when Forge last quit. Kept files no waiting request
+    /// needs any more (its build has started, or it was taken back) are cleared out.
     private func restoreWaiting() {
-        guard let waiting = UserDefaults.standard.dictionary(forKey: Self.waitingKey) as? [String: [String]] else { return }
-        for (id, texts) in waiting where projects.contains(where: { $0.id == id }) {
-            queued[id] = texts.map { QueuedMessage(text: $0) }
+        var kept = Set<String>()
+        if let waiting = UserDefaults.standard.dictionary(forKey: Self.waitingKey) as? [String: [[String: Any]]] {
+            for (id, messages) in waiting where projects.contains(where: { $0.id == id }) {
+                queued[id] = messages.map { message in
+                    let files = (message["attachments"] as? [String] ?? []).filter { FileManager.default.fileExists(atPath: $0) }
+                    kept.formUnion(files.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path })
+                    return QueuedMessage(text: message["text"] as? String ?? "", attachments: files.map(URL.init(fileURLWithPath:)))
+                }
+            }
         }
+        let folders = (try? FileManager.default.contentsOfDirectory(at: waitingFiles, includingPropertiesForKeys: nil)) ?? []
+        for folder in folders where !kept.contains(folder.path) { try? FileManager.default.removeItem(at: folder) }
     }
 
     /// The version label for a request without words: what was sent.
