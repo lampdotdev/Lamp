@@ -38,12 +38,15 @@ enum Sharing {
             try fm.copyItem(at: file, to: target)
         }
         // Attached files the app itself uses (through LampAssets), capped so shared apps stay small enough
-        // to send. The rest were only for the chat, such as screenshots or reference documents, and stay private.
+        // to send and within what another Lamp accepts (`open`). The rest were only for the chat, such as
+        // screenshots or reference documents, and stay private.
         var attachedBytes = 0
-        for file in usedAttachments(of: project) {
+        let attached = usedAttachments(of: project)
+        guard attached.count + 50 <= maxFiles else { throw ImportError("This app has too many attached files to share (over \(maxFiles - 50)).") }
+        for file in attached {
             attachedBytes += (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            guard attachedBytes <= 100_000_000 else {
-                throw ImportError("This app's attached files are over 100 MB, too big to share.")
+            guard attachedBytes <= maxAttachedBytes else {
+                throw ImportError("This app's attached files are over \(maxAttachedBytes / 1_000_000) MB, too big to share.")
             }
             let target = stage.appendingPathComponent(Attachments.folder).appendingPathComponent(file.lastPathComponent)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -63,8 +66,14 @@ enum Sharing {
 
         let output = work.appendingPathComponent("\(project.name).lampapp")
         try run("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage.path, output.path])
+        // Media is already compressed, so the archive can be as big as what went in: make sure it's one Lamp opens.
+        let size = (try? output.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        guard size <= maxArchiveBytes else { throw ImportError("This app is over \(maxArchiveBytes / 1_000_000) MB packed, too big to share.") }
         return output
     }
+
+    /// Attached files up to this much go into a shared app: under the archive limit, with room for the code.
+    static let maxAttachedBytes = maxArchiveBytes - 8 * 1024 * 1024
 
     /// Attached files the app's code uses: those it names, or all of them if it lists them with `LampAssets.names`.
     static func usedAttachments(of project: LampProject) -> [URL] {

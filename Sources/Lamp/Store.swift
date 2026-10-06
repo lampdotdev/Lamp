@@ -605,16 +605,22 @@ final class Store: ObservableObject {
             alert.runModal()
             return
         }
+        // The newest request wins: a file opened while an earlier one is still unpacking, or a Cancel
+        // meanwhile, makes the earlier result unwanted when it arrives.
+        let request = UUID()
+        importRequest = request
+        if let previous = pendingImport { try? FileManager.default.removeItem(at: previous.package.folder) }
+        pendingImport = nil
         Task {
             // Unpacking is a process and some file reads: off the main actor, so Lamp stays responsive.
             let package: Sharing.Package
             do {
                 package = try await Task.detached { try Sharing.open(file) }.value
             } catch {
-                NSAlert(error: error).runModal()
+                if importRequest == request { NSAlert(error: error).runModal() }
                 return
             }
-            if let previous = pendingImport { try? FileManager.default.removeItem(at: previous.package.folder) }
+            guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
             let pending = PendingImport(package: package)
             pendingImport = pending
             let review = await Sharing.review(package)
@@ -622,13 +628,17 @@ final class Store: ObservableObject {
         }
     }
 
+    private var importRequest: UUID?
+
     func cancelImport() {
+        importRequest = nil
         if let pending = pendingImport { try? FileManager.default.removeItem(at: pending.package.folder) }
         pendingImport = nil
     }
 
     func confirmImport() {
         guard let pending = pendingImport else { return }
+        importRequest = nil
         pendingImport = nil
         finishImport(pending.package)
     }

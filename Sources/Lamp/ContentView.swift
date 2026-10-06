@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import AVFoundation
 import QuickLook
 
 struct ContentView: View {
@@ -563,6 +564,9 @@ struct ProjectView: View {
         .onChange(of: draft) { store.saveDraft(Store.Draft(text: draft, attachments: attachments), for: project) }
         .onChange(of: attachments) { store.saveDraft(Store.Draft(text: draft, attachments: attachments), for: project) }
         .onAppear { hasMicrophone = Dictation.hasMicrophone }
+        // A microphone plugged in (or taken away) while the chat is open shows or hides the button.
+        .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasConnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
+        .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasDisconnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
         .onDisappear { dictation.cancel() }
         .alert(dictation.problem?.title ?? "Dictation",
                isPresented: Binding(get: { dictation.problem != nil }, set: { if !$0 { dictation.problem = nil } }),
