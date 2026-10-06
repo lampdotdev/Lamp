@@ -32,7 +32,7 @@ struct AppUsage: Codable {
 }
 
 struct LogLine: Identifiable, Codable, Equatable {
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary }
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey }
     var id = UUID()
     let kind: Kind
     let text: String
@@ -1693,13 +1693,23 @@ final class Store: ObservableObject {
         }
     }
 
-    /// With an OpenRouter key, generates artwork for the icon's object in the background (best of a few
-    /// candidates) and swaps it in when ready.
+    /// Asks for an OpenRouter key in the app's chat, once per app: the moment an app first wants a picture is
+    /// when a key is worth explaining, not the welcome screen.
+    private func askForKey(_ project: ForgeProject, because reason: String) {
+        guard !(logs[project.id] ?? []).contains(where: { $0.kind == .needsKey }) else { return }
+        log(project, .needsKey, reason)
+    }
+
+    /// Generates artwork for the icon's object in the background (best of a few candidates) and swaps it in
+    /// when ready, with whatever can make pictures. With nothing, the first app asks for a key instead.
     private func upgradeIconArt(_ project: ForgeProject) {
-        guard Provider.hasKey,
-              let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
-              Icons.cachedArt(project, spec: spec) == nil,
-              artInProgress.insert(project.id).inserted else { return }
+        guard let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
+              Icons.cachedArt(project, spec: spec) == nil else { return }
+        guard AppAI.imageRoute != nil else {
+            askForKey(project, because: "Forge can draw a proper icon for \(project.name), and pictures inside your apps, with an OpenRouter key.")
+            return
+        }
+        guard artInProgress.insert(project.id).inserted else { return }
         Task {
             defer { artInProgress.remove(project.id) }
             do {
@@ -1733,7 +1743,7 @@ final class Store: ObservableObject {
         if FileManager.default.fileExists(atPath: project.builtURL.path) {
             try? await deploy(project)
         }
-        log(project, .status, Provider.hasKey ? "New icon applied. Artwork is on its way." : "New icon applied.")
+        log(project, .status, AppAI.imageRoute != nil ? "New icon applied. Artwork is on its way." : "New icon applied.")
         Task { upgradeIconArt(project) }
     }
 
@@ -1892,11 +1902,16 @@ final class Store: ObservableObject {
                 return AppAI.Image(mediaType: type, data: data)
             }
             if request.path == "/ai/image" {
-                let (png, cost) = try await AppAI.image(prompt: prompt, references: images,
-                                                        aspectRatio: body["aspect_ratio"] as? String,
-                                                        model: AppModels.load(project).image)
-                record(project, cost: cost)
-                return (200, ["image": png.base64EncodedString(), "media_type": "image/png"])
+                do {
+                    let (png, cost) = try await AppAI.image(prompt: prompt, references: images,
+                                                            aspectRatio: body["aspect_ratio"] as? String,
+                                                            model: AppModels.load(project).image)
+                    record(project, cost: cost)
+                    return (200, ["image": png.base64EncodedString(), "media_type": "image/png"])
+                } catch let failure as AppAI.Failure where failure.message == AppAI.noImageRoute {
+                    askForKey(project, because: "\(project.name) wants to make a picture, and nothing here can yet.")
+                    throw failure
+                }
             }
             let (text, cost) = try await AppAI.complete(prompt: prompt, images: images,
                                                          system: body["system"] as? String ?? "",

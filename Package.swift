@@ -13,7 +13,8 @@ let package = Package(
             name: "Forge",
             dependencies: [.product(name: "Sparkle", package: "Sparkle")],
             path: "Sources/Forge",
-            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
+                                            "-Xlinker", "-weak_framework", "-Xlinker", "ImagePlayground"])]
         ),
     ]
 )

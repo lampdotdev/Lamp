@@ -446,7 +446,7 @@ struct AppsSettings: View {
                 }
                 let _ = revision   // re-read KeyStore after the TypeSafe key changes
                 Text(KeyStore.openRouterKey == nil
-                     ? "Without an OpenRouter key, your apps' text AI goes through \(Builder.engine == .pi ? "the builder's provider" : Builder.engine.title) with your sign-in, and apps can't make images. Add a key in Providers for images and the models above."
+                     ? "Without an OpenRouter key, your apps' text AI goes through \(Builder.engine == .pi ? "the builder's provider" : Builder.engine.title) with your sign-in, and pictures come from \(AppAI.imageRouteName ?? "nowhere: an app that wants one will ask for a key"). Add a key in Providers for the models above."
                      : "Image generation and the in-app models above use your OpenRouter key.")
                     .font(.caption).foregroundStyle(.secondary)
 
