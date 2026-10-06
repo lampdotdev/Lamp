@@ -42,10 +42,6 @@ struct ForgeHelpView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    Divider()
-                    Link("Read the full guide online ↗",
-                         destination: URL(string: "https://github.com/RooCodeInc/Forge#readme")!)
-                        .font(.callout)
                 }
                 .textSelection(.enabled)
                 .frame(maxWidth: 620, alignment: .leading)
@@ -113,7 +109,7 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
             ]
         case .versions:
             [
-                HelpSection(title: "Undo a change", text: "Use Undo in the toolbar to go back to the version before the last change. If a change was stopped or failed to build, Undo discards that unfinished change first. The agent starts a fresh conversation when you go back to an earlier version."),
+                HelpSection(title: "Undo a change", text: "Use Undo in the toolbar to go back to the version before the last change. If a change was stopped or failed to build, Undo discards that unfinished change first. The agent keeps the conversation and is told to reread the restored app before making another change."),
                 HelpSection(title: "Keep a version you like", text: "Choose File → Name This Version… (⌘S) to give the current version a name you can recognise later."),
                 HelpSection(title: "Return to an earlier version", text: "Open Versions in the toolbar to see earlier versions, name them and go back to one. Going back changes the app's code; your app's saved data is kept.")
             ]
@@ -126,7 +122,7 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
         case .ai:
             [
                 HelpSection(title: "Choose what builds your apps", text: "Open Forge → Settings (⌘,) → Building to choose the agent, provider and model. Settings → Providers manages API keys and models on this Mac. An OpenRouter key is the easiest way to get started; other providers and installed coding agents can use their own keys or sign-in."),
-                HelpSection(title: "AI inside your apps", text: "Apps' text AI can use the provider or coding-agent sign-in you build with. Some features, including image generation, need an OpenRouter key. Forge must be running for apps to reach its AI service."),
+                HelpSection(title: "AI inside your apps", text: "Apps' text AI can use the provider or coding-agent sign-in you build with. Image generation uses an OpenRouter key when you have one; otherwise, it can use an installed Codex with your ChatGPT sign-in. Settings → Apps shows which option is available. Forge must be running for apps to reach its AI service."),
                 HelpSection(title: "Commands and files", text: "Settings → Building controls when Forge asks before running commands and whether the built-in agent asks before accessing files outside the app's folder. When an approval card appears, review the request and choose Allow or Deny. Other coding agents follow their own file-access rules."),
                 HelpSection(title: "Pictures and app output", text: "Settings → Building also controls whether the agent sees pictures of your apps and what they print while running. Both go to the AI model you chose. Turn them off for apps that show or print information you want to keep private.")
             ]
