@@ -746,6 +746,9 @@ enum Template {
         private static func importJSONFile(_ name: String) {
             let file = folder.appendingPathComponent(name + ".json")
             guard let data = try? Data(contentsOf: file), let json = String(data: data, encoding: .utf8) else { return }
+            // Under the (recursive) lock from the insert to the end, so the transaction the insert went into
+            // is the one whose commit the archive waits for.
+            lock.withLock {
             execute("INSERT OR IGNORE INTO forge_values (name, json, updated) VALUES (?, ?, ?)",
                     name, json, Date().timeIntervalSince1970)
             // Inside a transaction the insert may yet be rolled back, so the file waits for the commit:
@@ -755,6 +758,7 @@ enum Template {
                 try? FileManager.default.moveItem(at: file, to: backups.appendingPathComponent("\(name)-imported.json"))
             }
             if transactionDepth == 0 { archive() } else { afterCommit[afterCommit.count - 1].append(archive) }
+            }
         }
 
         static func problem(_ message: String) {

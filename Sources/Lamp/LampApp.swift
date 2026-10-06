@@ -54,7 +54,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    /// Quitting mid-turn would leave the agent and its build running on their own, and the gateway the
+    /// agent is talking to gone: ask first, and stop them if the user quits anyway.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated {
+            // A Stop a moment ago may still have processes on their two seconds' notice; they go now.
+            Shell.killStopping()
+            guard Store.shared.isWorking else { return .terminateNow }
+            let alert = NSAlert()
+            alert.messageText = "An app is still being worked on. Quit anyway?"
+            alert.informativeText = "Quitting stops the work. Any changes made so far are kept; you can undo them later."
+            alert.addButton(withTitle: "Quit")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+            // Not .terminateNow: the processes get a moment to quit (and are killed after two seconds; see
+            // Shell.terminateTree), and Lamp waits for that rather than leaving them behind.
+            let pids = Store.shared.stopAll()
+            Task { @MainActor in
+                for _ in 0..<40 where Shell.alive(pids) { try? await Task.sleep(for: .milliseconds(100)) }
+                Shell.killStopping()
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+            return .terminateLater
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
-        MainActor.assumeIsolated { LocalModels.shared.stopServer() }
+        MainActor.assumeIsolated {
+            _ = Store.shared.stopAll()   // for a quit that didn't go through the question above
+            Shell.killStopping()
+            LocalModels.shared.stopServer()
+        }
     }
 }

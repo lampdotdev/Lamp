@@ -137,7 +137,28 @@ final class Store: ObservableObject {
     /// Bumped when a version is named, so open version lists reload.
     @Published var versionsRevision = 0
     private var running: [String: Process] = [:]    // project id → agent process, for Stop
+    private var building: [String: Process] = [:]   // project id → the app's build, for Stop
     private var stopped: Set<String> = []
+
+    /// Whether any app has an agent or a build going, for the question asked before quitting.
+    var isWorking: Bool { !running.isEmpty || !building.isEmpty }
+
+    /// Stops every agent and build, as when Lamp quits: otherwise they'd carry on without it. Returns the
+    /// processes signalled, so quitting can wait until they're gone.
+    func stopAll() -> [pid_t] {
+        var pids: [pid_t] = []
+        for project in projects {
+            guard running[project.id] != nil || building[project.id] != nil else { continue }
+            stopped.insert(project.id)
+            endApprovals(for: project)
+            if let process = running[project.id] { pids += Shell.terminateTree(process) }
+            if let process = building[project.id] { pids += Shell.terminateTree(process) }
+        }
+        return pids + Shell.stopping
+    }
+
+    /// Whether the app still exists: a turn can outlive Delete by a moment, and mustn't write to the Trash.
+    private func exists(_ project: LampProject) -> Bool { projects.contains { $0.id == project.id } }
     private var looks: [String: Look] = [:]         // project id → the agent's looks at the app this turn
     /// A name the agent gave the version its current request will make, applied once that's committed.
     private var pendingNames: [String: String] = [:]
@@ -274,6 +295,7 @@ final class Store: ObservableObject {
     }
 
     private func saveChat(_ project: LampProject) {
+        guard exists(project) else { return }
         if let data = try? JSONEncoder().encode(logs[project.id]) {
             try? data.write(to: project.dir.appendingPathComponent(".lamp/chat.json"))
         }
@@ -984,11 +1006,14 @@ final class Store: ObservableObject {
     private func buildFixingErrors(_ project: LampProject) async -> Bool {
         var errors = await build(project)
         for _ in 0..<3 where errors != nil {
+            // A build the user stopped (or whose app they deleted) isn't a problem for the agent to fix.
+            guard !stopped.contains(project.id), exists(project) else { return false }
             log(project, .status, "Fixing a problem…")
             guard await runAgent("The app failed to build. Fix these compiler errors:\n\n\(errors!)",
                                  on: project) else { return false }
             errors = await build(project)
         }
+        guard !stopped.contains(project.id), exists(project) else { return false }
         if errors != nil {
             log(project, .error, "Sorry, I couldn't get that change working. Try describing it differently, or press Undo.")
         }
@@ -1068,7 +1093,7 @@ final class Store: ObservableObject {
                         failure = repeats >= 6
                             ? "The model got stuck repeating the same step, so Lamp stopped it."
                             : "The model made over 150 changes in one go, so Lamp stopped it."
-                        running[project.id]?.terminate()
+                        if let process = running[project.id] { Shell.terminateTree(process) }
                     }
                 case .cost(let amount): cost += amount
                 case .failed(let text): failure = text
@@ -1309,12 +1334,13 @@ final class Store: ObservableObject {
         allowAllThisTurn.remove(project.id)
     }
 
-    /// Stops the agent working on an app.
+    /// Stops the agent working on an app, and the build if one is going.
     func stop(_ project: LampProject) {
-        guard let process = running[project.id] else { return }
+        guard running[project.id] != nil || building[project.id] != nil else { return }
         stopped.insert(project.id)
         endApprovals(for: project)   // a command waiting for approval counts as denied
-        process.terminate()
+        if let process = running[project.id] { Shell.terminateTree(process) }
+        if let process = building[project.id] { Shell.terminateTree(process) }
     }
 
     /// Opens the installed app, or brings it to the front if it's running. Only builds when there's
@@ -1733,11 +1759,15 @@ final class Store: ObservableObject {
 
     /// Returns nil on success, or the tail of the compiler output on failure.
     private func build(_ project: LampProject) async -> String? {
+        guard exists(project) else { return "The app was deleted." }
         log(project, .status, "Building…")
         try? Template.writeSupport(for: project)
         Template.upgradeBuildScript(for: project)
         var output: [String] = []
-        let status = await Shell.run(Shell.compatibleSDK + "./build.sh", cwd: project.dir) { output.append($0) }
+        let status = await Shell.run(Shell.compatibleSDK + "./build.sh", cwd: project.dir,
+                                     started: { [weak self] in self?.building[project.id] = $0 }) { output.append($0) }
+        building[project.id] = nil
+        guard exists(project) else { return "The app was deleted." }
         guard status != 0 else {
             Runtime.markBuilt(project)
             BuildStamp.write(to: project.builtURL)   // deploy signs the app afterwards
@@ -1751,8 +1781,10 @@ final class Store: ObservableObject {
     /// Installs and opens the app. Returns what's known about the failure if it died straight away.
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
     private func install(_ project: LampProject, inFront: Bool = true) async -> String? {
+        guard exists(project) else { return nil }
         await prepareIcon(project)
         await quit(project)
+        guard exists(project) else { return nil }   // deleted while its old copy was quitting
         do {
             try await deploy(project)
         } catch {
