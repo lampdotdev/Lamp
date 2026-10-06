@@ -987,6 +987,9 @@ struct ImportReviewView: View {
             }
 
             if let review {
+              // The review scrolls when it's long (an app that does many things); the buttons stay put.
+              ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
                 if !review.summary.isEmpty {
                     section("What it does") { Text(review.summary).fixedSize(horizontal: false, vertical: true) }
                 }
@@ -1010,6 +1013,11 @@ struct ImportReviewView: View {
                 }
                 Text("Lamp's check is a guide, not a guarantee. Only open apps from people you trust.")
                     .font(.caption).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+              }
+              .frame(maxHeight: 520)
+              .fixedSize(horizontal: false, vertical: true)   // no taller than its content, up to the limit
             } else {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
@@ -1046,7 +1054,9 @@ struct ImportReviewView: View {
         return VStack(alignment: .leading, spacing: 8) {
             VStack(spacing: 0) {
                 if found.isEmpty {
-                    row(icon: "checkmark", tint: .green, text: "Nothing beyond an ordinary app: it draws windows and keeps its own data.")
+                    // Says what the fixed checks found, not what the app can't do: the AI's line below, or
+                    // a check that didn't run, may know more.
+                    row(icon: "magnifyingglass", tint: .secondary, text: "Nothing found by Lamp's own checks.")
                 }
                 ForEach(found) { capability in
                     row(icon: capability.icon, tint: tint(for: capability.level), text: capability.label, badge: badge(for: capability.level))
