@@ -1094,7 +1094,7 @@ final class Store: ObservableObject {
         if let match = command.firstMatch(of: #/^/bin/(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*)\1$/#) { command = String(match.2) }
         if command.isEmpty || command.contains(">") || command.contains("<") { return false }
         let flags: [String: Set<String>] = [
-            "mkdir": ["-p"], "touch": [], "cd": [], "true": [], "./build.sh": [],
+            "mkdir": ["-p"], "touch": [], "true": [], "./build.sh": [],
             "swift": ["-c", "--configuration", "-v", "--verbose", "-q", "--quiet", "--parallel"],
             "git": ["-A", "--all", "-a", "-m", "-q", "--quiet", "-s", "--short", "--stat", "--oneline", "-n", "-p",
                     "--cached", "--staged", "--no-pager", "-b", "-u", "--", "-am"],
@@ -1103,12 +1103,18 @@ final class Store: ObservableObject {
         guard let root = Self.realPath(folder.path) else { return false }
         for part in simpleCommands(in: command) {
             guard let words = shellWords(part), let program = words.first else { return false }
-            guard let allowed = flags[program] else {
+            let args = Array(words.dropFirst())
+            guard let allowed = flags[program] ?? (program == "cd" ? [] : nil) else {
                 if isReadOnly(part) { continue }   // `./build.sh | tail -5`
                 return false
             }
-            let args = Array(words.dropFirst())
             switch program {
+            case "cd":
+                // Paths are checked against the app's folder, so the shell has to stay there: the only
+                // directory change allowed is into that very folder (the engines' usual `cd "<app>" &&`).
+                guard args.count == 1, Self.realPath(args[0].hasPrefix("/") ? args[0] : folder.appendingPathComponent(args[0]).path) == root
+                else { return false }
+                continue
             case "swift": guard ["build", "test", "package"].contains(args.first ?? "") else { return false }
             case "git": guard gitLocal.contains(args.first(where: { !$0.hasPrefix("-") }) ?? "") else { return false }
             default: break
