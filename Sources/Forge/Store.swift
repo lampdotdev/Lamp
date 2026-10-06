@@ -1785,6 +1785,7 @@ final class Store: ObservableObject {
             record(project, cost: cost)
             return (200, ["text": text])
         } catch let failure as AppAI.Failure {
+            if failure.cost > 0 { record(project, cost: failure.cost) }   // billed even though it failed
             return (502, ["error": failure.message])
         } catch {
             return (502, ["error": "Couldn't reach the AI: \(error.localizedDescription)"])
