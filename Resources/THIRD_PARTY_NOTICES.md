@@ -1,6 +1,6 @@
 # Third-party notices
 
-Forge bundles the following software.
+Lamp bundles the following software.
 
 ## pi coding agent
 

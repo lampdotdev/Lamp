@@ -284,7 +284,7 @@ final class Store: ObservableObject {
     /// the chat a few times a second rather than one by one: redrawing the chat for every piece keeps the
     /// main thread busy for seconds, and nothing shows until it has caught up. The message isn't saved
     /// until it's whole, since saving rewrites the chat's file.
-    private func write(_ piece: String, for project: ForgeProject) {
+    private func write(_ piece: String, for project: LampProject) {
         guard writing[project.id] != nil else {
             guard !piece.trimmed.isEmpty else { return }
             let line = LogLine(kind: .agent, text: String(piece.drop(while: \.isWhitespace)))
@@ -303,7 +303,7 @@ final class Store: ObservableObject {
     }
 
     /// Puts what has arrived of the message being written into its chat line.
-    private func showWritten(for project: ForgeProject) {
+    private func showWritten(for project: LampProject) {
         guard let (line, unshown) = writing[project.id], !unshown.isEmpty,
               let index = logs[project.id]?.lastIndex(where: { $0.id == line }) else { return }
         logs[project.id]?[index].text += unshown

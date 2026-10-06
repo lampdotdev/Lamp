@@ -342,7 +342,7 @@ extension Agent {
             if approval == .auto && CommandApproval.claudeAutoUnavailable { approval = .always }
             let hook = #"{"type":"command","timeout":3600,"command":"curl -sf --max-time 3600 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$LAMP_APPROVE_URL\""}"#
             var permissionMode = "acceptEdits"
-            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__forge__look_at_app,mcp__forge__use_app"
+            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app"
             // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
             // it the only server.
             // A look can build the app, and a use_app batch can wait a minute or more: well past the engines'
@@ -455,7 +455,7 @@ extension Agent {
     }
 
     private static func tool(_ name: String, _ input: [String: Any]) -> String {
-        let name = name.replacingOccurrences(of: "mcp__forge__", with: "")
+        let name = name.replacingOccurrences(of: "mcp__lamp__", with: "")
         if let path = input["file_path"] as? String ?? input["filePath"] as? String ?? input["path"] as? String {
             return "\(name) \((path as NSString).lastPathComponent)"
         }
@@ -465,8 +465,8 @@ extension Agent {
         return name
     }
 
-    /// Claude Code calls Lamp's MCP tools `mcp__forge__look_at_app`; Lamp knows them by their plain names.
-    private static func plainName(_ tool: String) -> String { tool.replacingOccurrences(of: "mcp__forge__", with: "") }
+    /// Claude Code calls Lamp's MCP tools `mcp__lamp__look_at_app`; Lamp knows them by their plain names.
+    private static func plainName(_ tool: String) -> String { tool.replacingOccurrences(of: "mcp__lamp__", with: "") }
 
     static func parseClaude(_ line: String) -> [AgentEvent] {
         // Many streamed lines are pieces of thinking, which Lamp has no use for. Skip them before parsing:
