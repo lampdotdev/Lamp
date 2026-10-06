@@ -15,9 +15,14 @@ A capability given to one engine must be given to all of them that can take it, 
 - **Tools the agent calls** (`look_at_app`, `use_app`, …): pi gets them from `Resources/lamp-tools.ts`;
   Claude Code and Codex get them from Lamp's MCP endpoint, `Store.mcp` (`/mcp` on the gateway). Both
   define the same tools with the same descriptions and schemas, so a change to one is a change to the other.
+  Codex has no file tools of its own, so the endpoint also gives it `read`, `ls`, `find` and `grep`
+  (`FileTools`, listed when the URL carries `files=1`): they mirror pi's built-in ones, and each call is
+  checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
+  like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`, `Agent.toolRules`): `tryRules`
   are for the tools every engine has; `toolRules` adds pi-only ones. When you add a tool to
-  the MCP endpoint, its rule belongs in `tryRules`, not `toolRules`.
+  the MCP endpoint, its rule belongs in `tryRules`, not `toolRules`. The file tools only Codex is given
+  have theirs in `Agent.codexNote`.
 - **Approvals and privacy**: shell commands go through `/agent/approve` for every engine (pi's extension,
   Claude Code's hooks, Codex's hooks); file access outside the app's folder is checked the same way.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every

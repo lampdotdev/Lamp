@@ -49,6 +49,13 @@ enum Privacy {
         return .ask
     }
 
+    /// Whether a search that started somewhere the agent may look should still pass over `path` further down:
+    /// the places the rule above never opens.
+    static func hides(_ path: String, project: LampProject) -> Bool {
+        if case .deny = verdict(tool: "read", path: path, project: project) { return true }
+        return false
+    }
+
     /// What the approval card says for a file request.
     static func explanation(tool: String, path raw: String, project: LampProject) -> (command: String, explanation: Store.CommandExplanation) {
         let shown = (resolved(raw, in: project.dir) as NSString).abbreviatingWithTildeInPath
