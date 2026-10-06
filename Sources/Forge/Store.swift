@@ -272,6 +272,42 @@ final class Store: ObservableObject {
         }
     }
 
+    /// The message each app's agent is writing right now: its chat line, and text that has arrived but isn't
+    /// in the chat yet.
+    private var writing: [String: (line: UUID, unshown: String)] = [:]
+    private var showingWritten: Set<String> = []
+
+    /// Adds a piece of the message the agent is writing, so it shows in the chat as it arrives. Pieces come
+    /// twenty a second, and after a tool call the first few seconds' worth arrive all at once, so they go into
+    /// the chat a few times a second rather than one by one: redrawing the chat for every piece keeps the
+    /// main thread busy for seconds, and nothing shows until it has caught up. The message isn't saved
+    /// until it's whole, since saving rewrites the chat's file.
+    private func write(_ piece: String, for project: ForgeProject) {
+        guard writing[project.id] != nil else {
+            guard !piece.trimmed.isEmpty else { return }
+            let line = LogLine(kind: .agent, text: String(piece.drop(while: \.isWhitespace)))
+            logs[project.id, default: []].append(line)
+            writing[project.id] = (line.id, "")
+            note("Replying", for: project)
+            return
+        }
+        writing[project.id]?.unshown += piece
+        guard showingWritten.insert(project.id).inserted else { return }
+        Task {
+            try? await Task.sleep(for: .milliseconds(80))
+            showingWritten.remove(project.id)
+            showWritten(for: project)
+        }
+    }
+
+    /// Puts what has arrived of the message being written into its chat line.
+    private func showWritten(for project: ForgeProject) {
+        guard let (line, unshown) = writing[project.id], !unshown.isEmpty,
+              let index = logs[project.id]?.lastIndex(where: { $0.id == line }) else { return }
+        logs[project.id]?[index].text += unshown
+        writing[project.id]?.unshown = ""
+    }
+
     /// Updates what the app's turn is doing right now, for the build card and the activity line.
     /// `file` is the file being written or edited, when that's the step.
     private func note(_ activity: String, file: String? = nil, for project: ForgeProject) {
@@ -952,8 +988,6 @@ final class Store: ObservableObject {
         // The tool call the model is writing at the moment, for the activity shown to the user.
         var streamingTool = ""
         var streamingArguments = ""
-        // The chat line of the message the model is writing at the moment, which grows as its text arrives.
-        var writing: UUID?
         stopped.remove(project.id)
         let sessionFile = Self.sessionFile(for: project, engine: engine)
         let run = Agent.run(prompt: prompt, files: files, project: project,
@@ -964,24 +998,16 @@ final class Store: ObservableObject {
             for event in Agent.parseLine(line) {
                 switch event {
                 case .textPiece(let piece):
-                    if let index = logs[project.id]?.lastIndex(where: { $0.id == writing }) {
-                        logs[project.id]?[index].text += piece
-                    } else if !piece.trimmed.isEmpty {
-                        // Not saved until it's whole: saving rewrites the chat's file, and pieces come many a second.
-                        let line = LogLine(kind: .agent, text: String(piece.drop(while: \.isWhitespace)))
-                        logs[project.id, default: []].append(line)
-                        writing = line.id
-                        note("Replying", for: project)
-                    }
+                    write(piece, for: project)
                 case .text(let text):
                     // The whole message. It takes the place of what was shown of it while it was written.
-                    if let index = logs[project.id]?.lastIndex(where: { $0.id == writing }) {
+                    if let line = writing.removeValue(forKey: project.id)?.line,
+                       let index = logs[project.id]?.lastIndex(where: { $0.id == line }) {
                         logs[project.id]?[index].text = text
                         saveChat(project)
                     } else {
                         log(project, .agent, text)
                     }
-                    writing = nil
                 case .step(let tool):
                     streamingTool = tool
                     streamingArguments = ""
@@ -1019,6 +1045,9 @@ final class Store: ObservableObject {
         }
         running[project.id] = nil
         endApprovals(for: project)
+        // A message cut short (the run was stopped, or failed) keeps what was written of it.
+        showWritten(for: project)
+        writing[project.id] = nil
         log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost))
         recordAgent(project, cost: cost)
         if stopped.remove(project.id) != nil {
