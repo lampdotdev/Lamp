@@ -367,6 +367,28 @@ final class Store: ObservableObject {
 
     func saveDraft(_ draft: Draft, for project: LampProject) {
         drafts[project.id] = draft
+        // Written to disk a moment after typing stops, not on every keystroke.
+        draftWrites[project.id]?.cancel()
+        draftWrites[project.id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            self?.writeDraft(for: project)
+        }
+    }
+
+    /// Writes every draft that's waiting for its pause, for when Lamp quits.
+    func flushDrafts() {
+        for project in projects where draftWrites[project.id] != nil {
+            draftWrites[project.id]?.cancel()
+            writeDraft(for: project)
+        }
+    }
+
+    private var draftWrites: [String: Task<Void, Never>] = [:]
+
+    private func writeDraft(for project: LampProject) {
+        draftWrites[project.id] = nil
+        guard exists(project), let draft = drafts[project.id] else { return }
         let file = project.dir.appendingPathComponent(".lamp/draft.txt")
         if draft.text.isEmpty {
             try? FileManager.default.removeItem(at: file)
@@ -583,17 +605,18 @@ final class Store: ObservableObject {
             alert.runModal()
             return
         }
-        let package: Sharing.Package
-        do {
-            package = try Sharing.open(file)
-        } catch {
-            NSAlert(error: error).runModal()
-            return
-        }
-        if let previous = pendingImport { try? FileManager.default.removeItem(at: previous.package.folder) }
-        let pending = PendingImport(package: package)
-        pendingImport = pending
         Task {
+            // Unpacking is a process and some file reads: off the main actor, so Lamp stays responsive.
+            let package: Sharing.Package
+            do {
+                package = try await Task.detached { try Sharing.open(file) }.value
+            } catch {
+                NSAlert(error: error).runModal()
+                return
+            }
+            if let previous = pendingImport { try? FileManager.default.removeItem(at: previous.package.folder) }
+            let pending = PendingImport(package: package)
+            pendingImport = pending
             let review = await Sharing.review(package)
             if pendingImport?.id == pending.id { pendingImport?.review = review }
         }

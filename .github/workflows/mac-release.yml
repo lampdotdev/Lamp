@@ -76,10 +76,19 @@ jobs:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: swift scripts/sparkle-sign.swift "dist/Lamp-$VERSION.dmg" "$VERSION" > dist/sparkle.json
 
+      - name: Release notes
+        # The hand-written section for this version in RELEASE_NOTES.md; people see it in the update window,
+        # so never the generated list of pull requests.
+        run: |
+          awk -v v="$VERSION" '$0 == "## " v { on = 1; next } /^## / { on = 0 } on' RELEASE_NOTES.md \
+            | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' > dist/notes.md
+          if [ ! -s dist/notes.md ]; then echo "Lamp $VERSION." > dist/notes.md; fi
+          cat dist/notes.md
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "v$VERSION" "dist/Lamp-$VERSION.dmg" dist/sparkle.json \
-            --title "Lamp $VERSION" --generate-notes || \
+            --title "Lamp $VERSION" --notes-file dist/notes.md || \
           gh release upload "v$VERSION" "dist/Lamp-$VERSION.dmg" dist/sparkle.json --clobber

@@ -23,6 +23,12 @@ struct LampApp: App {
                 Button("Import Shared App…") { store.chooseImport() }
                     .keyboardShortcut("o")
             }
+            CommandGroup(after: .pasteboard) {
+                // The same as Share ▸ Copy App File in the toolbar; here so the shortcut the Help lists exists.
+                Button("Copy App File") { if let project = store.selected { store.copyAppFile(project) } }
+                    .keyboardShortcut("c", modifiers: [.command, .shift])
+                    .disabled(store.selected == nil)
+            }
             CommandGroup(replacing: .saveItem) {
                 Button("Name This Version…") {
                     if let project = store.selected { Task { await store.nameCurrentVersion(of: project) } }
@@ -83,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             _ = Store.shared.stopAll()   // for a quit that didn't go through the question above
             Shell.killStopping()
+            Store.shared.flushDrafts()
             LocalModels.shared.stopServer()
         }
     }

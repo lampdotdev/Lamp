@@ -47,12 +47,22 @@ xcrun notarytool store-credentials forge-notary --apple-id <your-apple-id> --tea
 If you already have a profile from another app (such as Local's `local-assistant-notary`), reuse it with
 `NOTARY_PROFILE=local-assistant-notary`.
 
+### 3. Sparkle signing key
+
+Updates are signed with an Ed25519 key (see **Updates** below). The release workflow needs it as the
+`SPARKLE_PRIVATE_KEY` secret in the repository's `release` environment; generate a new pair only when
+starting from nothing, because a new public key has to ship in a release people install by hand.
+
 ## Release from your Mac
 
 ```bash
 ./release.sh 0.2.0
-gh release create v0.2.0 dist/Lamp-0.2.0.dmg --title "Lamp 0.2.0" --generate-notes
+gh release create v0.2.0 dist/Lamp-0.2.0.dmg --title "Lamp 0.2.0" --notes-file notes.md
 ```
+
+The notes are what people read in the update window: write the version's section in `RELEASE_NOTES.md`
+before tagging (the workflow takes it from there), or pass your own file here. Never GitHub's generated
+list of pull requests.
 
 `release.sh` builds and signs, then notarizes twice with Apple (each usually 2 to 10 minutes). First it
 notarizes the app and staples its ticket, so Lamp.app opens without a network check even after it's

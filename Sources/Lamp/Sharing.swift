@@ -86,10 +86,25 @@ enum Sharing {
         let fileCount: Int
     }
 
+    /// An app file is a few source files and some attachments: anything much bigger isn't one, and a file
+    /// that inflates to gigabytes mustn't fill the disk before anyone has seen a review.
+    static let maxArchiveBytes = 64 * 1024 * 1024
+    static let maxUnpackedBytes = 256 * 1024 * 1024
+    static let maxFiles = 2000
+
     static func open(_ file: URL) throws -> Package {
         let fm = FileManager.default
+        let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        guard size <= maxArchiveBytes else { throw ImportError("This file is too large to be a Lamp app (over 64 MB).") }
         let folder = fm.temporaryDirectory.appendingPathComponent("forge-import-\(UUID().uuidString)")
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        // The archive's own listing says what it would unpack to, before anything is written.
+        let listing = try output("/usr/bin/zipinfo", ["-t", file.path])   // "N files, X bytes uncompressed, …"
+        let numbers = listing.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        guard numbers.count >= 2, numbers[0] <= maxFiles, numbers[1] <= maxUnpackedBytes else {
+            try? fm.removeItem(at: folder)
+            throw ImportError("This file holds more than a Lamp app would (over \(maxFiles) files or 256 MB unpacked).")
+        }
         try run("/usr/bin/ditto", ["-x", "-k", file.path, folder.path])
 
         let decoder = JSONDecoder()
@@ -132,6 +147,21 @@ enum Sharing {
             let values = try? url.resourceValues(forKeys: keys)
             return values?.isRegularFile == true && values?.isSymbolicLink != true
         }
+    }
+
+    /// What a tool prints; throws when it fails.
+    private static func output(_ tool: String, _ arguments: [String]) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: tool)
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { throw ImportError("Couldn't read the Lamp app file.") }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private static func run(_ tool: String, _ arguments: [String]) throws {

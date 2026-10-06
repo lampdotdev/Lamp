@@ -993,7 +993,7 @@ private struct LocalAISheet: View {
                     if adding { ProgressView().controlSize(.small) }
                     if let addError { Text(addError).font(.caption).foregroundStyle(.red) }
                 } header: { Text("Download") } footer: {
-                    Text("This Mac has \(LocalModels.ramGB) GB of memory. Any GGUF repo works: Lamp picks the Q4_K_M version, plus image support if there is one.")
+                    Text("This Mac has \(LocalModels.ramGB) GB of memory. Any model repo in GGUF form works: Lamp picks the version that fits a Mac best, with image support when the model has it.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
@@ -1027,7 +1027,7 @@ private struct LocalAISheet: View {
                         }
                     }
                 } header: { Text("Servers") } footer: {
-                    Text("GGUF models run on Lamp's llama.cpp; MLX models run on mlx-lm, which Lamp installs when one needs it.")
+                    Text("Models in GGUF form run on Lamp's own server; MLX models run on mlx-lm, which Lamp installs when one needs it.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
