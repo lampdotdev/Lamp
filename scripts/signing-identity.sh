@@ -1,16 +1,16 @@
 #!/bin/zsh
 # Prints the name of a code-signing identity for local Lamp builds, creating it the first time.
 #
-# It lives in Lamp's own keychain (~/Library/Application Support/Forge/Signing), not the login keychain:
+# It lives in Lamp's own keychain (~/Library/Application Support/Lamp/Signing), not the login keychain:
 # the login keychain asks the person every time codesign uses a private key, and "Always Allow" doesn't
 # reliably stick. Lamp's keychain has a password Lamp generated and keeps beside it, so Lamp can unlock
 # it and let codesign use the key without asking anyone. The certificate is self-signed, never leaves this
 # Mac and isn't trusted for anything else: it only gives builds a stable signature, so macOS keeps an app's
 # permissions across rebuilds. Sign with `codesign --keychain "$KEYCHAIN" -s "<printed name>"`.
 set -euo pipefail
-NAME="Forge App Signing"
-FOLDER="$HOME/Library/Application Support/Forge/Signing"
-KEYCHAIN="$FOLDER/forge-signing.keychain-db"
+NAME="Lamp App Signing"
+FOLDER="$HOME/Library/Application Support/Lamp/Signing"
+KEYCHAIN="$FOLDER/lamp-signing.keychain-db"
 PASSFILE="$FOLDER/keychain-password"
 
 mkdir -p "$FOLDER"

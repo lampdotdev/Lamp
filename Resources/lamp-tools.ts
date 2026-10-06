@@ -5,7 +5,7 @@
  *   the app with the agent's changes, open it, and report back: a picture of each window, what the app
  *   printed, and any build errors or crash.
  * - `use_app`: clicks, types and presses keys in the open app's front window, at points in its latest picture.
- *   Lamp passes the actions to the app, which performs them on itself (ForgeDriver in ForgeSupport), so no
+ *   Lamp passes the actions to the app, which performs them on itself (LampDriver in LampSupport), so no
  *   Accessibility permission is needed. The reply is what happened and a fresh picture.
  * - `delete_file`: pi's own tools can write and edit files but not remove one. This deletes a single file
  *   inside the app's folder, leaving alone the files Lamp owns. The app's git history can bring it back
@@ -188,7 +188,7 @@ const webFetch = defineTool({
 });
 
 /** Asks Lamp to approve a shell command; resolves to an error message when it isn't approved. */
-async function askForge(command: string, signal?: AbortSignal): Promise<string | undefined> {
+async function askLamp(command: string, signal?: AbortSignal): Promise<string | undefined> {
 	const url = process.env.LAMP_APPROVE_URL;
 	if (!url) return "Shell commands need approval in Lamp, and Lamp isn't available.";
 	try {
@@ -235,7 +235,7 @@ async function resolved(given: string): Promise<string> {
 async function checkFile(tool: string, given: string, signal?: AbortSignal): Promise<string | undefined> {
 	const [target, home] = await Promise.all([resolved(given), resolved(".")]);
 	const inside = target === home || target.startsWith(home + path.sep);
-	if (inside && !target.startsWith(path.join(home, ".forge", "runtime") + path.sep)) return undefined;
+	if (inside && !target.startsWith(path.join(home, ".lamp", "runtime") + path.sep)) return undefined;
 	const url = process.env.LAMP_APPROVE_URL;
 	if (!url) return inside ? undefined : "Files outside the app's folder need approval in Lamp, and Lamp isn't available.";
 	try {
@@ -253,7 +253,7 @@ async function checkFile(tool: string, given: string, signal?: AbortSignal): Pro
 }
 
 /** Files and folders Lamp generates or depends on: never the agent's to delete. */
-const protectedPaths = [".forge", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/ForgeSupport.swift"];
+const protectedPaths = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift"];
 
 const deleteFile = defineTool({
 	name: "delete_file",
@@ -359,7 +359,7 @@ export default function (pi: ExtensionAPI) {
 			return reason ? { block: true, reason } : undefined;
 		}
 		if (event.toolName !== "bash") return undefined;
-		const reason = await askForge(String((event.input as { command?: unknown }).command ?? ""), ctx.signal);
+		const reason = await askLamp(String((event.input as { command?: unknown }).command ?? ""), ctx.signal);
 		return reason ? { block: true, reason } : undefined;
 	});
 	pi.registerTool(webFetch);

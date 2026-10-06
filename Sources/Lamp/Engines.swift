@@ -320,7 +320,7 @@ extension Agent {
             env["LAMP_TOKEN"] = Template.token(for: project)
             return AgentRun(command: command(fileCount: files.count),
                             env: env.merging(environment(prompt: prompt, files: files, session: session ?? "",
-                                                         sessionDir: project.dir.appendingPathComponent(".forge/pi-sessions").path)) { $1 })
+                                                         sessionDir: project.dir.appendingPathComponent(".lamp/pi-sessions").path)) { $1 })
         case .claude:
             // Lamp builds the app itself. Attachments are listed in the prompt; Claude reads them.
             // Isolated from the user's own Claude Code setup: --restricted ignores their settings files (hooks,
@@ -342,13 +342,13 @@ extension Agent {
             if approval == .auto && CommandApproval.claudeAutoUnavailable { approval = .always }
             let hook = #"{"type":"command","timeout":3600,"command":"curl -sf --max-time 3600 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$LAMP_APPROVE_URL\""}"#
             var permissionMode = "acceptEdits"
-            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__forge__look_at_app,mcp__forge__use_app"
+            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app"
             // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
             // it the only server.
             // A look can build the app, and a use_app batch can wait a minute or more: well past the engines'
             // default tool timeouts (pi's extension allows ten minutes).
             env["MCP_TOOL_TIMEOUT"] = "600000"
-            env["LAMP_CLAUDE_MCP"] = #"{"mcpServers":{"forge":{"type":"http","url":"http://127.0.0.1:"# + "\(Gateway.port)" +
+            env["LAMP_CLAUDE_MCP"] = #"{"mcpServers":{"lamp":{"type":"http","url":"http://127.0.0.1:"# + "\(Gateway.port)" +
                 #"/mcp","headers":{"Authorization":"Bearer "# + Template.token(for: project) + #""}}}}"#
             switch approval {
             case .auto:
@@ -401,8 +401,8 @@ extension Agent {
             --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check \\
               -c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true \\
               -c web_search="live" -c "$LAMP_CODEX_INSTRUCTIONS" -c "$LAMP_CODEX_HOOKS" \\
-              -c mcp_servers.forge.url="http://127.0.0.1:\(Gateway.port)/mcp" -c mcp_servers.forge.bearer_token_env_var="LAMP_TOKEN" \\
-              -c mcp_servers.forge.tool_timeout_sec=600 -c mcp_servers.forge.default_tools_approval_mode="approve"
+              -c mcp_servers.lamp.url="http://127.0.0.1:\(Gateway.port)/mcp" -c mcp_servers.lamp.bearer_token_env_var="LAMP_TOKEN" \\
+              -c mcp_servers.lamp.tool_timeout_sec=600 -c mcp_servers.lamp.default_tools_approval_mode="approve"
             """
             if session != nil {
                 // `exec resume` keeps the conversation; it takes no -C/-i (Lamp already runs in the app's folder).
@@ -455,7 +455,7 @@ extension Agent {
     }
 
     private static func tool(_ name: String, _ input: [String: Any]) -> String {
-        let name = name.replacingOccurrences(of: "mcp__forge__", with: "")
+        let name = name.replacingOccurrences(of: "mcp__lamp__", with: "")
         if let path = input["file_path"] as? String ?? input["filePath"] as? String ?? input["path"] as? String {
             return "\(name) \((path as NSString).lastPathComponent)"
         }
@@ -465,8 +465,8 @@ extension Agent {
         return name
     }
 
-    /// Claude Code calls Lamp's MCP tools `mcp__forge__look_at_app`; Lamp knows them by their plain names.
-    private static func plainName(_ tool: String) -> String { tool.replacingOccurrences(of: "mcp__forge__", with: "") }
+    /// Claude Code calls Lamp's MCP tools `mcp__lamp__look_at_app`; Lamp knows them by their plain names.
+    private static func plainName(_ tool: String) -> String { tool.replacingOccurrences(of: "mcp__lamp__", with: "") }
 
     static func parseClaude(_ line: String) -> [AgentEvent] {
         // Most streamed lines are pieces of text or thinking, which Lamp gets whole from the finished message.

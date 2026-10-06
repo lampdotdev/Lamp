@@ -51,7 +51,7 @@ struct IconSpec: Codable, Equatable {
 /// artwork (best of several candidates, cut out of its background). With Xcode 26 installed the
 /// layers become a real Icon Composer document compiled with actool, so macOS 26 renders it in
 /// Liquid Glass with dark and tinted variants; without Xcode, Lamp draws the layers itself.
-/// Generated artwork is cached under .forge/art/, so undoing an icon change is instant and free.
+/// Generated artwork is cached under .lamp/art/, so undoing an icon change is instant and free.
 enum Icons {
     static let artModels: [(id: String, label: String)] = [
         ("google/gemini-3.1-flash-image", "Nano Banana 2 (Gemini 3.1 Flash Image)"),
@@ -123,10 +123,10 @@ enum Icons {
     // MARK: Spec
 
     static func specURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent("icon.json") }
-    static func icnsURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".forge/AppIcon.icns") }
-    static func carURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".forge/Assets.car") }
-    static func documentURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".forge/AppIcon.icon") }
-    static func previewURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".forge/icon.png") }
+    static func icnsURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/AppIcon.icns") }
+    static func carURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/Assets.car") }
+    static func documentURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/AppIcon.icon") }
+    static func previewURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/icon.png") }
 
     /// The icon at its largest size (1024px) as a PNG for Quick Look, named after the app so the panel's title reads well.
     /// Falls back to the small sidebar preview when there's no .icns yet.
@@ -159,7 +159,7 @@ enum Icons {
     static func artURL(_ project: LampProject, spec: IconSpec) -> URL {
         let key = "v2|\(spec.subject.trimmed)|\(background(named: spec.background).name)|\(spec.tint.trimmed.lowercased())"
         let hash = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16)
-        return project.dir.appendingPathComponent(".forge/art/\(hash).png")
+        return project.dir.appendingPathComponent(".lamp/art/\(hash).png")
     }
 
     static func cachedArt(_ project: LampProject, spec: IconSpec) -> NSImage? {
@@ -294,12 +294,12 @@ enum Icons {
         }
     }
 
-    /// Writes .forge/AppIcon.icns and .forge/icon.png and, with Xcode 26, .forge/AppIcon.icon and
-    /// .forge/Assets.car (what macOS 26 uses for Liquid Glass). Returns the preview image.
+    /// Writes .lamp/AppIcon.icns and .lamp/icon.png and, with Xcode 26, .lamp/AppIcon.icon and
+    /// .lamp/Assets.car (what macOS 26 uses for Liquid Glass). Returns the preview image.
     @discardableResult
     static func write(_ spec: IconSpec, art: NSImage?, for project: LampProject) async throws -> NSImage {
         let fm = FileManager.default
-        try fm.createDirectory(at: project.dir.appendingPathComponent(".forge"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
         let foreground = foregroundLayer(spec, art: art)
 
         try? fm.removeItem(at: carURL(project))

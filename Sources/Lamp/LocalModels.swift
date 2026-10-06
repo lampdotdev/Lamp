@@ -48,10 +48,10 @@ final class LocalModels: ObservableObject {
         .appendingPathComponent("Library/Application Support/LocalAssistant/Models")
     /// Older Lamp builds downloaded here; still read.
     nonisolated static let legacyDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Forge/Models")
+        .appendingPathComponent("Library/Application Support/Lamp/Models")
     /// Symlinks for llama-server's router: one folder per GGUF model.
     nonisolated static let routerDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Forge/Router")
+        .appendingPathComponent("Library/Application Support/Lamp/Router")
 
     static let catalog: [LocalModelSpec] = [
         LocalModelSpec(id: "qwen3.6-35b-a3b", name: "Qwen3.6 35B-A3B", repo: "unsloth/Qwen3.6-35B-A3B-GGUF",
@@ -394,7 +394,7 @@ final class LocalModels: ObservableObject {
     }
 
     private func logFile(_ name: String) -> FileHandle? {
-        let logs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Forge")
+        let logs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Lamp")
         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
         let log = logs.appendingPathComponent(name)
         FileManager.default.createFile(atPath: log.path, contents: nil)
@@ -418,7 +418,7 @@ final class LocalModels: ObservableObject {
             if await Self.healthy("\(Self.baseURL)/health") { serverRunning = true; return }
             try await Task.sleep(for: .milliseconds(250))
         }
-        throw LocalError("The local model server didn't start. See ~/Library/Logs/Forge/llama-server.log.")
+        throw LocalError("The local model server didn't start. See ~/Library/Logs/Lamp/llama-server.log.")
     }
 
     /// mlx_lm.server serves one model; switching models restarts it.
@@ -446,7 +446,7 @@ final class LocalModels: ObservableObject {
             try await Task.sleep(for: .milliseconds(500))
         }
         stopMLX()
-        throw LocalError("The MLX server didn't start. See ~/Library/Logs/Forge/mlx-server.log.")
+        throw LocalError("The MLX server didn't start. See ~/Library/Logs/Lamp/mlx-server.log.")
     }
 
     private func stopMLX() {

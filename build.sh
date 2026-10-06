@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds build/Lamp.app (registers the forge:// URL scheme).
+# Builds build/Lamp.app (registers the lamp:// URL scheme).
 #
 # Local builds are signed with a self-signed "Forge Local Signing" identity (see scripts/signing-identity.sh).
 # Releases set SIGN_IDENTITY to a Developer ID certificate (see release.sh): everything is then signed with
@@ -95,7 +95,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleExecutable</key><string>Lamp</string>
-  <key>CFBundleIdentifier</key><string>dev.forge.host</string>
+  <key>CFBundleIdentifier</key><string>dev.lamp.host</string>
   <key>CFBundleName</key><string>Lamp</string>
   <key>CFBundleDisplayName</key><string>Lamp</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -110,25 +110,25 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>UTExportedTypeDeclarations</key><array><dict>
-    <key>UTTypeIdentifier</key><string>dev.forge.forgeapp</string>
+    <key>UTTypeIdentifier</key><string>dev.lamp.lampapp</string>
     <key>UTTypeDescription</key><string>Lamp App</string>
     <key>UTTypeConformsTo</key><array><string>public.data</string></array>
     <key>UTTypeIconFile</key><string>AppIcon</string>
     <key>UTTypeTagSpecification</key><dict>
-      <key>public.filename-extension</key><array><string>forgeapp</string></array>
+      <key>public.filename-extension</key><array><string>lampapp</string></array>
     </dict>
   </dict></array>
   <key>CFBundleDocumentTypes</key><array><dict>
     <key>CFBundleTypeName</key><string>Lamp App</string>
     <key>CFBundleTypeRole</key><string>Viewer</string>
     <key>LSHandlerRank</key><string>Owner</string>
-    <key>LSItemContentTypes</key><array><string>dev.forge.forgeapp</string></array>
+    <key>LSItemContentTypes</key><array><string>dev.lamp.lampapp</string></array>
   </dict></array>
   <key>NSMicrophoneUsageDescription</key><string>Lamp listens to your microphone when you dictate a change.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Lamp turns your dictation into text for the prompt box.</string>
   <key>NSAppleEventsUsageDescription</key><string>Lamp lists and switches your browser tabs when one of your apps reads a web page you have open.</string>
   <key>CFBundleURLTypes</key><array><dict>
-    <key>CFBundleURLName</key><string>dev.forge.host</string>
+    <key>CFBundleURLName</key><string>dev.lamp.host</string>
     <key>CFBundleURLSchemes</key><array><string>forge</string></array>
   </dict></array>
 </dict></plist>
@@ -144,7 +144,7 @@ if [[ "$SIGN_ID" == "Developer ID Application:"* ]]; then
   QUIET=/dev/stdout
 elif [[ "$SIGN_ID" != "-" ]]; then
   # Local: Lamp's own keychain, which signing-identity.sh unlocks, so codesign never asks.
-  SIGN=(codesign --force --keychain "$HOME/Library/Application Support/Forge/Signing/forge-signing.keychain-db" -s "$SIGN_ID")
+  SIGN=(codesign --force --keychain "$HOME/Library/Application Support/Lamp/Signing/lamp-signing.keychain-db" -s "$SIGN_ID")
   PI_ENTITLEMENTS=()
   APP_ENTITLEMENTS=()
   QUIET=/dev/null

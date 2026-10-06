@@ -1,11 +1,11 @@
 import AppKit
 
 /// What Lamp can see of a generated app while it runs. The app saves what it prints to
-/// `.forge/runtime/log.txt` and pictures of its windows next to it (see `ForgeRuntime` in
-/// Template.forgeSupportSwift), and macOS writes a report when it crashes. All of it goes to the
+/// `.lamp/runtime/log.txt` and pictures of its windows next to it (see `LampRuntime` in
+/// Template.lampSupportSwift), and macOS writes a report when it crashes. All of it goes to the
 /// agent, which otherwise only sees the code.
 enum Runtime {
-    static func folder(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".forge/runtime") }
+    static func folder(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/runtime") }
     static func logURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("log.txt") }
     private static func builtURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("built") }
 
@@ -47,7 +47,7 @@ enum Runtime {
 
 
         Note from Lamp: the app has crashed since it was last built. Fix the cause as part of this request.\
-        \(Privacy.sharesLog ? "\nWhat it printed is in .forge/runtime/log.txt (the latest launch) and .forge/runtime/previous-log.txt (the launch before)." : "")
+        \(Privacy.sharesLog ? "\nWhat it printed is in .lamp/runtime/log.txt (the latest launch) and .lamp/runtime/previous-log.txt (the launch before)." : "")
 
         \(crash)
         """
@@ -69,9 +69,9 @@ enum Runtime {
         return """
 
 
-        Note from Lamp: .forge/runtime/screenshot.png is a picture of the app's front window, taken at \
+        Note from Lamp: .lamp/runtime/screenshot.png is a picture of the app's front window, taken at \
         \(taken.formatted(date: .omitted, time: .shortened)), just after it opened or when the user last switched away from it\
-        \(more.isEmpty ? "" : " (other open windows: " + more.map { ".forge/runtime/" + $0 }.joined(separator: ", ") + ")"). \
+        \(more.isEmpty ? "" : " (other open windows: " + more.map { ".lamp/runtime/" + $0 }.joined(separator: ", ") + ")"). \
         If you can view images, look at it when this request is about how the app looks or behaves.
         """
     }
@@ -86,10 +86,10 @@ enum Runtime {
         return url
     }
 
-    /// Asks the running app to save fresh pictures of its windows now (see `ForgeRuntime` in the app).
+    /// Asks the running app to save fresh pictures of its windows now (see `LampRuntime` in the app).
     static func requestScreenshots(of project: LampProject) {
         DistributedNotificationCenter.default().postNotificationName(
-            Notification.Name("dev.forge.snapshot.\(project.id)"), object: nil, userInfo: nil, deliverImmediately: true)
+            Notification.Name("dev.lamp.snapshot.\(project.id)"), object: nil, userInfo: nil, deliverImmediately: true)
     }
 
     /// Pictures the app has saved since `date`, frontmost window first. Waits up to `seconds` for the
@@ -105,7 +105,7 @@ enum Runtime {
         return fresh()
     }
 
-    /// What the app says happened when it carried out a `use_app` request (see `ForgeDriver` in the app). It
+    /// What the app says happened when it carried out a `use_app` request (see `LampDriver` in the app). It
     /// writes this after its fresh pictures, so once it's here they're ready too. nil if it never answers,
     /// or `running` turns false: the app is gone.
     @MainActor

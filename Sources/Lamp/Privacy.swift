@@ -31,7 +31,7 @@ enum Privacy {
         let home = resolved(project.dir.path, in: project.dir)
         if path == home || path.hasPrefix(home + "/") {
             let inside = String(path.dropFirst(home.count))
-            if inside.hasPrefix("/.forge/runtime/") {
+            if inside.hasPrefix("/.lamp/runtime/") {
                 let name = (inside as NSString).lastPathComponent
                 if name.hasSuffix(".png"), !sharesPictures { return .deny(picturesOff) }
                 if name.hasSuffix("log.txt"), !sharesLog { return .deny(logOff) }

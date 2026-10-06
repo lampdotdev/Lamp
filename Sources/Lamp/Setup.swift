@@ -474,7 +474,7 @@ struct AppsSettings: View {
     }
 }
 
-/// Turns apps' use of the other apps on the Mac (ForgeComputer) on or off. Turning it on installs CuaDriver if
+/// Turns apps' use of the other apps on the Mac (LampComputer) on or off. Turning it on installs CuaDriver if
 /// needed and asks for its permissions; turning it off stops apps using it (CuaDriver stays installed).
 struct ComputerUseSettings: View {
     @AppStorage("computerUse") private var enabled = false

@@ -4,10 +4,10 @@
 #   scripts/fresh-start.sh begin     quit Lamp, put its state aside, open it as a first-time user would
 #   scripts/fresh-start.sh restore   quit Lamp, put your state back
 #
-# Lamp keeps everything in three places: ~/Library/Application Support/Forge (apps, keys.json, pi's config,
-# the signing keychain, downloaded models), the defaults domain dev.forge.host (engine, provider, models,
+# Lamp keeps everything in three places: ~/Library/Application Support/Lamp (apps, keys.json, pi's config,
+# the signing keychain, downloaded models), the defaults domain dev.lamp.host (engine, provider, models,
 # privacy switches, Sparkle's update state) and, for notarized builds, Keychain items with service
-# dev.forge.host (provider keys). `begin` moves the folder, exports the defaults and copies the Keychain
+# dev.lamp.host (provider keys). `begin` moves the folder, exports the defaults and copies the Keychain
 # items into one backup folder, and `restore` puts them all back. Nothing is deleted until you restore.
 #
 # This covers the welcome screen, the key check, picking an engine, and making the first app. It can't
@@ -18,7 +18,7 @@ set -euo pipefail
 support="$HOME/Library/Application Support"
 state="$support/Lamp"
 backup="$support/Lamp-fresh-start"
-domain="dev.forge.host"
+domain="dev.lamp.host"
 
 # The accounts of every Keychain item with Lamp's service name, one per line.
 keychain_accounts() {

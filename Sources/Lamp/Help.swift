@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Replace macOS's help-book command: Lamp's guide is part of the app and works offline.
-struct ForgeHelpCommands: Commands {
+struct LampHelpCommands: Commands {
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
@@ -13,16 +13,16 @@ struct ForgeHelpCommands: Commands {
     }
 }
 
-struct ForgeHelpScene: Scene {
+struct LampHelpScene: Scene {
     var body: some Scene {
         Window("Lamp Help", id: "help") {
-            ForgeHelpView()
+            LampHelpView()
         }
         .defaultSize(width: 780, height: 640)
     }
 }
 
-struct ForgeHelpView: View {
+struct LampHelpView: View {
     @State private var selection: HelpTopic? = .gettingStarted
 
     var body: some View {
@@ -98,7 +98,7 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
                 HelpSection(title: "Make the app you need", text: "Describe a task and Lamp builds a real Mac app for it. Start with one small job, then keep improving the app in its chat."),
                 HelpSection(title: "Finish setup", text: "The first time you open Lamp, it welcomes you and asks what your first app should do. Then it gets two things ready. If Apple's app-building tools are missing, it opens Apple's installer: click Install, then Agree. It usually takes 5–10 minutes, and you can carry on meanwhile. Then choose what makes your apps: your Claude or ChatGPT account, or Lamp's own, with an OpenRouter key, a model on this Mac or another provider. Your first app starts building as soon as everything is ready. You can change this later in Lamp → Settings (⌘,)."),
                 HelpSection(title: "Build your first app", text: "Click New App at the bottom of the app list, or press ⌘N. Describe what the app should do: what you give it and what you want back. Or pick one of the starter ideas and change its request to suit you. Press Return to send. If the request is unclear, Lamp asks up to three short questions first. Then it names the app, designs its icon, builds it and opens it."),
-                HelpSection(title: "Find your apps", text: "Your apps are listed in Lamp's sidebar and installed in Applications → Forge Apps in your home folder. Double-click one in the sidebar to open it. In an app you built, choose Edit with Lamp… (⇧⌘E) from the app's own menu to return to its chat in Lamp.")
+                HelpSection(title: "Find your apps", text: "Your apps are listed in Lamp's sidebar and installed in Applications → Lamp Apps in your home folder. Double-click one in the sidebar to open it. In an app you built, choose Edit with Lamp… (⇧⌘E) from the app's own menu to return to its chat in Lamp.")
             ]
         case .changingApps:
             [
@@ -117,7 +117,7 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
             [
                 HelpSection(title: "Send an app", text: "Click Share App in the toolbar, or right-click the app in the sidebar. Share… sends it with AirDrop, Messages or Mail. Copy App File (⇧⌘C) puts it on the clipboard, ready to paste into a message. Export… saves it as a file. The recipient needs Lamp to open it."),
                 HelpSection(title: "What is included", text: "A shared app carries its code, its description, its icon and the attached files the app itself uses. Your chat, your keys, the data you saved in the app and its version history stay on your Mac. The recipient gets their own copy to use and change."),
-                HelpSection(title: "Open a shared app", text: "Double-click a shared app file (its name ends in .forgeapp), or choose File → Import Shared App… (⌘O). Before building anything, Lamp lists what the app can access and, when AI is set up, says what the app does, raises any concerns and rates the risk. Read it, then click Build & Open or Cancel. Lamp's check is a guide, not a guarantee: only open apps from people you trust.")
+                HelpSection(title: "Open a shared app", text: "Double-click a shared app file (its name ends in .lampapp), or choose File → Import Shared App… (⌘O). Before building anything, Lamp lists what the app can access and, when AI is set up, says what the app does, raises any concerns and rates the risk. Read it, then click Build & Open or Cancel. Lamp's check is a guide, not a guarantee: only open apps from people you trust.")
             ]
         case .ai:
             [

@@ -12,7 +12,7 @@ import Foundation
 /// task and a short list of the driver's tools, and works until it can answer.
 ///
 /// Reading is always allowed. Clicking, typing and pressing keys only happen when the app asked to act
-/// (`ForgeComputer.perform`), and each one waits for the person's OK in a Lamp dialog.
+/// (`LampComputer.perform`), and each one waits for the person's OK in a Lamp dialog.
 enum ComputerUse {
     static let version = "0.32.0"
     private static let teamID = "YCK386LBJ7"   // Cua AI, Inc.
@@ -455,7 +455,7 @@ final class MCPClient: @unchecked Sendable {
     func initialize() async throws -> String {
         let result = try await request("initialize", [
             "protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any],
-            "clientInfo": ["name": "Lamp", "version": BuildStamp.current.forge ?? "0"],
+            "clientInfo": ["name": "Lamp", "version": BuildStamp.current.lamp ?? "0"],
         ])
         notify("notifications/initialized")
         return result["instructions"] as? String ?? ""

@@ -3,7 +3,7 @@ import AppKit
 import Network
 
 /// A tiny HTTP server on 127.0.0.1 that lets generated apps use Lamp's AI
-/// without ever seeing the key. Apps call it through `ForgeAI` (see Template.forgeSupportSwift).
+/// without ever seeing the key. Apps call it through `LampAI` (see Template.lampSupportSwift).
 final class Gateway: @unchecked Sendable {
     static let port: UInt16 = 47811
 
@@ -15,7 +15,7 @@ final class Gateway: @unchecked Sendable {
     }
 
     private var listener: NWListener?
-    private let queue = DispatchQueue(label: "dev.forge.gateway")
+    private let queue = DispatchQueue(label: "dev.lamp.gateway")
     private let handler: @Sendable (Request) async -> (Int, [String: Any])
 
     init(handler: @escaping @Sendable (Request) async -> (Int, [String: Any])) {
@@ -203,7 +203,7 @@ enum AppAI {
     /// provider pi supports, including "My pi setup" subscriptions.
     private static func viaPi(prompt: String, images: [Image], system: String) async throws -> (String, Double) {
         guard Agent.executable != nil else { throw Failure(message: "Lamp's AI builder is missing. Download Lamp again.") }
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("forge-ai-\(UUID().uuidString)")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-ai-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         var files: [String] = []
@@ -243,7 +243,7 @@ enum AppAI {
     /// Isolated from their setup like a build turn, with no tools except reading the images it's given.
     private static func viaEngine(_ engine: Engine, prompt: String, images: [Image],
                                   system: String, model: String) async throws -> (String, Double) {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("forge-ai-\(UUID().uuidString)")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-ai-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         var files: [String] = []
@@ -603,7 +603,7 @@ enum AppAI {
     /// Codex makes the picture with its built-in image tool and saves it in a scratch folder; reference
     /// images are attached and named in the prompt. Takes about a minute.
     private static func viaCodexImage(prompt: String, references: [Image], aspectRatio: String?) async throws -> Data {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("forge-image-\(UUID().uuidString)")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-image-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         var files: [String] = []

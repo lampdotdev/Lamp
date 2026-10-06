@@ -383,7 +383,7 @@ enum Attachments {
 
         Attached files (saved in \(folder)/ and bundled inside the app). Images and small text files are \
         included above; read the others with your tools if needed. If the app should use a file, load it with \
-        `ForgeAssets.url("name")`, `ForgeAssets.image("name")` or `ForgeAssets.text("name")`:
+        `LampAssets.url("name")`, `LampAssets.image("name")` or `LampAssets.text("name")`:
         \(list)
         """
     }

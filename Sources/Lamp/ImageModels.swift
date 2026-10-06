@@ -60,7 +60,7 @@ final class ImageModels: ObservableObject {
     nonisolated static func isInstalled(_ spec: ImageModelSpec) -> Bool {
         let repoDir = LocalModels.hubDir.appendingPathComponent("models--" + spec.repo.replacingOccurrences(of: "/", with: "--"))
         guard let ref = (try? String(contentsOf: repoDir.appendingPathComponent("refs/main"), encoding: .utf8))?.trimmed,
-              let marked = (try? String(contentsOf: repoDir.appendingPathComponent("forge-complete"), encoding: .utf8))?.trimmed,
+              let marked = (try? String(contentsOf: repoDir.appendingPathComponent("lamp-complete"), encoding: .utf8))?.trimmed,
               !ref.isEmpty, marked == ref else { return false }
         return FileManager.default.fileExists(atPath: repoDir.appendingPathComponent("snapshots/\(ref)").path)
     }
@@ -82,7 +82,7 @@ final class ImageModels: ObservableObject {
             // Lamp's own record that the whole repo arrived, for the revision it fetched.
             let repoDir = LocalModels.hubDir.appendingPathComponent("models--" + spec.repo.replacingOccurrences(of: "/", with: "--"))
             if let ref = try? String(contentsOf: repoDir.appendingPathComponent("refs/main"), encoding: .utf8) {
-                try? ref.write(to: repoDir.appendingPathComponent("forge-complete"), atomically: true, encoding: .utf8)
+                try? ref.write(to: repoDir.appendingPathComponent("lamp-complete"), atomically: true, encoding: .utf8)
             }
             self?.objectWillChange.send()
         }
@@ -113,7 +113,7 @@ final class ImageModels: ObservableObject {
     static func generate(prompt: String, width: Int, height: Int) async throws -> Data {
         guard let spec = chosen, let tool = toolPath(spec) else { throw AppAI.Failure(message: AppAI.noImageRoute) }
         return try await queue.run {
-            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("forge-flux-\(UUID().uuidString)")
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-flux-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: folder) }
             let env = ["PATH": ToolLocator.userPath, "HF_HUB_OFFLINE": "1", "LAMP_TOOL": tool, "LAMP_PROMPT": prompt,

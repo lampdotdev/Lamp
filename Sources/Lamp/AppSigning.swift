@@ -5,7 +5,7 @@ import Foundation
 /// macOS remembers permissions (Files and Folders, Screen Recording, Accessibility, Keychain access) against
 /// an app's signature. An ad-hoc signature is just a hash of that one build, so every rebuild looked like a new
 /// app and asked again. Signing with a certificate that stays the same lets permissions survive rebuilds.
-/// The certificate is the same self-signed "Forge App Signing" one Lamp's own builds use. It's made the
+/// The certificate is the same self-signed "Lamp App Signing" one Lamp's own builds use. It's made the
 /// first time (scripts/signing-identity.sh) in Lamp's own keychain, which Lamp can unlock itself, so
 /// signing never asks for keychain access the way the login keychain does. It never leaves this Mac and
 /// isn't trusted for anything else.
@@ -14,7 +14,7 @@ enum AppSigning {
 
     /// Lamp's own keychain, which holds the identity (see signing-identity.sh).
     static let keychain = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Forge/Signing/forge-signing.keychain-db").path
+        .appendingPathComponent("Library/Application Support/Lamp/Signing/lamp-signing.keychain-db").path
 
     /// Whether an app is signed with a certificate (as opposed to ad hoc), judged by its designated requirement.
     static func isCertificateSigned(_ app: URL) -> Bool {
@@ -68,7 +68,7 @@ enum AppSigning {
     /// Clears what macOS remembers of an app's permissions (System Settings ▸ Privacy & Security).
     ///
     /// A permission is kept with the signature it was given to. When an app's signature changes (Lamp moved
-    /// from ad-hoc signing to "Forge Local Signing", then to "Forge App Signing"; or its keychain was lost and
+    /// from ad-hoc signing to "Forge Local Signing", then to "Lamp App Signing"; or its keychain was lost and
     /// made again), the old entries stay in System Settings, switched on, but no longer apply to the app:
     /// it has no access, and switching them off and on doesn't help. With them cleared the app is simply an
     /// app that hasn't been given anything yet, and asking again works. macOS has to know the app (lsregister).

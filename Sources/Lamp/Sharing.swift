@@ -5,14 +5,14 @@ import UniformTypeIdentifiers
 extension UTType {
     /// A shared Lamp app: a zip with the app's Swift sources, APP.md, icon.json and icon artwork.
     /// Declared in Lamp's Info.plist (see build.sh) so double-clicking one opens Lamp.
-    static let lampApp = UTType(exportedAs: "dev.forge.forgeapp", conformingTo: .data)
+    static let lampApp = UTType(exportedAs: "dev.lamp.lampapp", conformingTo: .data)
 }
 
-/// Exporting and importing `.forgeapp` files.
+/// Exporting and importing `.lampapp` files.
 ///
 /// A shared app carries only what's needed to rebuild it: Swift sources, APP.md, icon.json, the
 /// icon artwork, and the attached files the code uses. Never the sender's chat, tokens, agent sessions or git history. On import, Lamp
-/// writes its own Package.swift, build.sh and ForgeSupport.swift, so nothing in the file runs at
+/// writes its own Package.swift, build.sh and LampSupport.swift, so nothing in the file runs at
 /// build time; the code only runs when the app is opened, after the recipient agrees.
 enum Sharing {
     static let formatVersion = 1
@@ -23,7 +23,7 @@ enum Sharing {
         var exportedAt: Date
     }
 
-    /// Writes `<Name>.forgeapp` to a temporary folder and returns its URL.
+    /// Writes `<Name>.lampapp` to a temporary folder and returns its URL.
     static func export(_ project: LampProject) throws -> URL {
         let fm = FileManager.default
         let work = fm.temporaryDirectory.appendingPathComponent("forge-share-\(UUID().uuidString)")
@@ -31,13 +31,13 @@ enum Sharing {
         try fm.createDirectory(at: stage, withIntermediateDirectories: true)
 
         for file in swiftSources(in: project.dir.appendingPathComponent("Sources"))
-        where file.lastPathComponent != "ForgeSupport.swift" {
+        where file.lastPathComponent != "LampSupport.swift" {
             let relative = file.path.replacingOccurrences(of: project.dir.path + "/", with: "")
             let target = stage.appendingPathComponent(relative)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
         }
-        // Attached files the app itself uses (through ForgeAssets), capped so shared apps stay small enough
+        // Attached files the app itself uses (through LampAssets), capped so shared apps stay small enough
         // to send. The rest were only for the chat, such as screenshots or reference documents, and stay private.
         var attachedBytes = 0
         for file in usedAttachments(of: project) {
@@ -59,25 +59,25 @@ enum Sharing {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(Manifest(format: formatVersion, name: project.name, exportedAt: Date()))
-            .write(to: stage.appendingPathComponent("forge-app.json"))
+            .write(to: stage.appendingPathComponent("lamp-app.json"))
 
-        let output = work.appendingPathComponent("\(project.name).forgeapp")
+        let output = work.appendingPathComponent("\(project.name).lampapp")
         try run("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage.path, output.path])
         return output
     }
 
-    /// Attached files the app's code uses: those it names, or all of them if it lists them with `ForgeAssets.names`.
+    /// Attached files the app's code uses: those it names, or all of them if it lists them with `LampAssets.names`.
     static func usedAttachments(of project: LampProject) -> [URL] {
         let code = swiftSources(in: project.dir.appendingPathComponent("Sources"))
-            .filter { $0.lastPathComponent != "ForgeSupport.swift" }
+            .filter { $0.lastPathComponent != "LampSupport.swift" }
             .compactMap { try? String(contentsOf: $0, encoding: .utf8) }
             .joined(separator: "\n")
         let files = regularFiles(in: project.dir.appendingPathComponent(Attachments.folder))
-        if code.contains("ForgeAssets.names") { return files }
+        if code.contains("LampAssets.names") { return files }
         return files.filter { code.contains($0.lastPathComponent) }
     }
 
-    /// The contents of a `.forgeapp`, unpacked and checked, ready to become a project.
+    /// The contents of a `.lampapp`, unpacked and checked, ready to become a project.
     struct Package {
         let name: String
         let folder: URL          // unpacked, temporary
@@ -94,7 +94,7 @@ enum Sharing {
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let data = try? Data(contentsOf: folder.appendingPathComponent("forge-app.json")),
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("lamp-app.json")),
               let manifest = try? decoder.decode(Manifest.self, from: data) else {
             throw ImportError("This isn't a Lamp app file.")
         }
@@ -174,9 +174,9 @@ extension Sharing {
         ("Starts itself automatically or installs background items", ["SMAppService", "LaunchAgents", "LaunchDaemons", "SMLoginItem"]),
         ("Loads code at runtime (can hide what it does)", ["dlopen", "NSClassFromString", "perform(#selector", "NSSelectorFromString"]),
         ("Contains encoded data (can hide what it does)", ["Data(base64Encoded"]),
-        ("Uses AI (your OpenRouter credit)", ["ForgeAI."]),
-        ("Reads or uses your other apps (Slack, Mail, your browser…)", ["ForgeComputer."]),
-        ("Runs code the AI writes while the app runs (in a sealed context)", ["ForgeScript"]),
+        ("Uses AI (your OpenRouter credit)", ["LampAI."]),
+        ("Reads or uses your other apps (Slack, Mail, your browser…)", ["LampComputer."]),
+        ("Runs code the AI writes while the app runs (in a sealed context)", ["LampScript"]),
     ]
 
     static func review(_ package: Package) async -> ImportReview {
@@ -243,6 +243,6 @@ struct SharedApp: Transferable {
         FileRepresentation(exportedContentType: .lampApp) { shared in
             SentTransferredFile(try Sharing.export(shared.project))
         }
-        .suggestedFileName { "\($0.project.name).forgeapp" }
+        .suggestedFileName { "\($0.project.name).lampapp" }
     }
 }

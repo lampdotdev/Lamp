@@ -13,7 +13,7 @@ struct LampApp: App {
         }
         .commands {
             CheckForUpdatesCommand()
-            ForgeHelpCommands()
+            LampHelpCommands()
             CommandGroup(replacing: .newItem) {
                 Button("New App") { store.create() }
                     .keyboardShortcut("n")
@@ -33,7 +33,7 @@ struct LampApp: App {
         Settings {
             SettingsView().environmentObject(store)
         }
-        ForgeHelpScene()
+        LampHelpScene()
     }
 }
 
@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated { Notifier.shared.start() }
     }
 
-    /// Generated apps call back with forge://edit?app=<slug> (⇧⌘E inside the app).
+    /// Generated apps call back with lamp://edit?app=<slug> (⇧⌘E inside the app).
     func application(_ application: NSApplication, open urls: [URL]) {
         MainActor.assumeIsolated {
             urls.forEach(Store.shared.handle(url:))

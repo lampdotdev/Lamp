@@ -18,7 +18,7 @@ struct AppVersion: Identifiable, Hashable {
     var label: String { name ?? title ?? message }
 
     /// Lamp wrote the message itself (Undo, Rename…), so it's already short and needs no title.
-    var isForgeNote: Bool {
+    var isLampNote: Bool {
         ["Undid “", "Restored to “", "Rename to "].contains { message.hasPrefix($0) }
             || ["Scaffold", "Imported from a shared file", "Fix a crash on launch"].contains(message)
     }
@@ -33,7 +33,7 @@ struct VersionNaming: Equatable {
 
 /// The app's git history, presented as versions. Git never shows in the interface.
 enum Versions {
-    static let commit = "git -c user.name=Forge -c user.email=forge@localhost commit"
+    static let commit = "git -c user.name=Lamp -c user.email=lamp@localhost commit"
 
     /// Newest first.
     static func list(_ project: LampProject) async -> [AppVersion] {
@@ -45,7 +45,7 @@ enum Versions {
         }
         let titles = VersionTitles.saved(in: project)
         var versions: [AppVersion] = []
-        _ = await Shell.run("git log --first-parent --format='%H%x1f%P%x1f%ct%x1f%(trailers:key=Forge-Undid,valueonly,separator=%x2C)%x1f%s'",
+        _ = await Shell.run("git log --first-parent --format='%H%x1f%P%x1f%ct%x1f%(trailers:key=Lamp-Undid,valueonly,separator=%x2C)%x1f%s'",
                             cwd: project.dir) { line in
             let parts = line.split(separator: "\u{1f}", maxSplits: 4, omittingEmptySubsequences: false).map(String.init)
             guard parts.count == 5, let seconds = TimeInterval(parts[2]) else { return }
@@ -81,7 +81,7 @@ enum Versions {
         let name = name.trimmed
         let command = name.isEmpty
             ? "git tag -d \"forge/$LAMP_VERSION\""
-            : "git -c user.name=Forge -c user.email=forge@localhost tag -f -a \"forge/$LAMP_VERSION\" -m \"$LAMP_NAME\" \"$LAMP_VERSION\""
+            : "git -c user.name=Lamp -c user.email=lamp@localhost tag -f -a \"forge/$LAMP_VERSION\" -m \"$LAMP_NAME\" \"$LAMP_VERSION\""
         _ = await Shell.run(command, cwd: project.dir, env: ["LAMP_VERSION": version, "LAMP_NAME": name]) { _ in }
     }
 
@@ -118,7 +118,7 @@ enum Versions {
 
     /// A small picture of the app's window as it looked in a version.
     static func pictureURL(in project: LampProject, for version: String) -> URL {
-        project.dir.appendingPathComponent(".forge/versions/\(version).jpg")
+        project.dir.appendingPathComponent(".lamp/versions/\(version).jpg")
     }
 
     /// Saves a reduced copy of a screenshot as a version's picture.
@@ -146,7 +146,7 @@ enum Versions {
     // MARK: - Telling the agent
 
     private static func noteURL(_ project: LampProject) -> URL {
-        project.dir.appendingPathComponent(".forge/restored-note")
+        project.dir.appendingPathComponent(".lamp/restored-note")
     }
 
     /// Remembers a restore so the agent hears about it on the next request. Its conversation still
@@ -184,10 +184,10 @@ enum Versions {
 }
 
 /// Short titles for versions, written by a small model from what actually changed, so the list reads
-/// "Added account shortcuts" instead of the whole request. Kept in .forge/version-titles.json.
+/// "Added account shortcuts" instead of the whole request. Kept in .lamp/version-titles.json.
 enum VersionTitles {
     private static func url(_ project: LampProject) -> URL {
-        project.dir.appendingPathComponent(".forge/version-titles.json")
+        project.dir.appendingPathComponent(".lamp/version-titles.json")
     }
 
     static func saved(in project: LampProject) -> [String: String] {
@@ -218,9 +218,9 @@ enum VersionTitles {
         _ = await Shell.run("git show --format= --name-only \"$LAMP_VERSION\"", cwd: project.dir,
                             env: ["LAMP_VERSION": version.id]) { if !$0.trimmed.isEmpty { files.append($0.trimmed) } }
         // Lamp refreshing the support code it puts in every app isn't a change the user made.
-        if !files.isEmpty, files.allSatisfy({ $0 == "Sources/ForgeSupport.swift" }) { return "Lamp update" }
+        if !files.isEmpty, files.allSatisfy({ $0 == "Sources/LampSupport.swift" }) { return "Lamp update" }
         var diff = ""
-        _ = await Shell.run("git show --format= --unified=1 \"$LAMP_VERSION\" -- . ':!Sources/ForgeSupport.swift' ':!\(Attachments.folder)'",
+        _ = await Shell.run("git show --format= --unified=1 \"$LAMP_VERSION\" -- . ':!Sources/LampSupport.swift' ':!\(Attachments.folder)'",
                             cwd: project.dir, env: ["LAMP_VERSION": version.id]) { line in
             if diff.count < 8000 { diff += line + "\n" }
         }

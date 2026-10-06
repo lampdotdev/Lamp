@@ -2,14 +2,14 @@ import SwiftUI
 import AppKit
 
 struct LampProject: Identifiable, Hashable {
-    let id: String      // folder name; also used in forge:// links
+    let id: String      // folder name; also used in lamp:// links
     let name: String    // display name
     let exe: String     // Swift target / executable name
     let dir: URL
     /// Made with New App and not named yet. The first message names it.
     var untitled = false
 
-    var bundleID: String { "dev.forge.app.\(id)" }
+    var bundleID: String { "dev.lamp.app.\(id)" }
     var builtURL: URL { dir.appendingPathComponent("build/\(exe).app") }
     /// Every successful build is copied here so it shows up in Spotlight and Launchpad.
     var installedURL: URL { Store.installDir.appendingPathComponent("\(name).app") }
@@ -153,12 +153,13 @@ final class Store: ObservableObject {
     private var gateway: Gateway?
 
     nonisolated static let installDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Applications/Forge Apps")
+        .appendingPathComponent("Applications/Lamp Apps")
 
     let root = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Forge/Apps")
+        .appendingPathComponent("Library/Application Support/Lamp/Apps")
 
     private init() {
+        Migration.fromForge()
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         reload()
         restoreWaiting()
@@ -233,7 +234,7 @@ final class Store: ObservableObject {
     func reload() {
         let dirs = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
         projects = dirs.compactMap { dir in
-            guard let data = try? Data(contentsOf: dir.appendingPathComponent(".forge/meta.json")),
+            guard let data = try? Data(contentsOf: dir.appendingPathComponent(".lamp/meta.json")),
                   let meta = try? JSONDecoder().decode(ProjectMeta.self, from: data) else { return nil }
             return LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
                                 untitled: meta.untitled ?? false)
@@ -248,12 +249,12 @@ final class Store: ObservableObject {
         }
         for project in projects { stamps[project.id] = BuildStamp.read(project.installedURL) }
         for project in projects where logs[project.id] == nil {
-            let forge = project.dir.appendingPathComponent(".forge")
-            if let data = try? Data(contentsOf: forge.appendingPathComponent("chat.json")),
+            let lamp = project.dir.appendingPathComponent(".lamp")
+            if let data = try? Data(contentsOf: lamp.appendingPathComponent("chat.json")),
                let saved = try? JSONDecoder().decode([LogLine].self, from: data) {
                 logs[project.id] = saved.map(\.upgraded)
             }
-            if let data = try? Data(contentsOf: forge.appendingPathComponent("usage.json")),
+            if let data = try? Data(contentsOf: lamp.appendingPathComponent("usage.json")),
                let saved = try? JSONDecoder().decode(AppUsage.self, from: data) {
                 usage[project.id] = saved
             }
@@ -268,7 +269,7 @@ final class Store: ObservableObject {
 
     private func saveChat(_ project: LampProject) {
         if let data = try? JSONEncoder().encode(logs[project.id]) {
-            try? data.write(to: project.dir.appendingPathComponent(".forge/chat.json"))
+            try? data.write(to: project.dir.appendingPathComponent(".lamp/chat.json"))
         }
     }
 
@@ -293,16 +294,16 @@ final class Store: ObservableObject {
     private var drafts: [String: Draft] = [:]
 
     /// Each app keeps its own draft, so it's still there after switching apps. The text also survives a
-    /// restart (.forge/draft.txt); attached files are only remembered while Lamp runs.
+    /// restart (.lamp/draft.txt); attached files are only remembered while Lamp runs.
     func draft(for project: LampProject) -> Draft {
         if let draft = drafts[project.id] { return draft }
-        let text = try? String(contentsOf: project.dir.appendingPathComponent(".forge/draft.txt"), encoding: .utf8)
+        let text = try? String(contentsOf: project.dir.appendingPathComponent(".lamp/draft.txt"), encoding: .utf8)
         return Draft(text: text ?? "")
     }
 
     func saveDraft(_ draft: Draft, for project: LampProject) {
         drafts[project.id] = draft
-        let file = project.dir.appendingPathComponent(".forge/draft.txt")
+        let file = project.dir.appendingPathComponent(".lamp/draft.txt")
         if draft.text.isEmpty {
             try? FileManager.default.removeItem(at: file)
         } else {
@@ -311,11 +312,11 @@ final class Store: ObservableObject {
     }
 
     func handle(url: URL) {
-        if url.isFileURL && url.pathExtension == "forgeapp" {
+        if url.isFileURL && url.pathExtension == "lampapp" {
             importApp(from: url)
             return
         }
-        guard url.scheme == "forge",
+        guard url.scheme == "lamp",
               let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "app" })?.value else { return }
         showChat(slug)
@@ -389,7 +390,7 @@ final class Store: ObservableObject {
         let fm = FileManager.default
         let renamed = LampProject(id: current.id, name: unique, exe: current.exe, dir: current.dir)
         try? JSONEncoder().encode(ProjectMeta(name: unique, exe: current.exe))
-            .write(to: current.dir.appendingPathComponent(".forge/meta.json"))
+            .write(to: current.dir.appendingPathComponent(".lamp/meta.json"))
         if fm.fileExists(atPath: current.installedURL.path) {
             try? fm.moveItem(at: current.installedURL, to: renamed.installedURL)
             _ = await Shell.run(Self.lsregister + " -f \"$LAMP_APP\"", cwd: current.dir,
@@ -398,7 +399,7 @@ final class Store: ObservableObject {
         // The old name in window titles and APP.md. Anything subtler is left for the agent.
         let sources = current.dir.appendingPathComponent("Sources")
         let files = (fm.enumerator(at: sources, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
-            .filter { $0.pathExtension == "swift" && $0.lastPathComponent != "ForgeSupport.swift" }
+            .filter { $0.pathExtension == "swift" && $0.lastPathComponent != "LampSupport.swift" }
         for file in files {
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             let updated = text.replacingOccurrences(of: "\"\(current.name)\"", with: "\"\(unique)\"")
@@ -425,7 +426,7 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return old
         }
-        for path in [".forge/chat.json", ".forge/usage.json", Attachments.folder] {
+        for path in [".lamp/chat.json", ".lamp/usage.json", Attachments.folder] {
             let from = old.dir.appendingPathComponent(path)
             if fm.fileExists(atPath: from.path) {
                 try? fm.copyItem(at: from, to: project.dir.appendingPathComponent(path))
@@ -447,7 +448,7 @@ final class Store: ObservableObject {
         return project
     }
 
-    /// Display names must be unique: each app installs as "<name>.app" in ~/Applications/Forge Apps.
+    /// Display names must be unique: each app installs as "<name>.app" in ~/Applications/Lamp Apps.
     private func uniqueName(_ name: String, ignoring id: String? = nil) -> String {
         let taken = Set(projects.filter { $0.id != id }.map { $0.name.lowercased() })
         let base = name.trimmed
@@ -470,7 +471,7 @@ final class Store: ObservableObject {
         importApp(from: url)
     }
 
-    /// Puts the app's .forgeapp file on the clipboard, ready to paste into Slack, Messages, Mail or Finder.
+    /// Puts the app's .lampapp file on the clipboard, ready to paste into Slack, Messages, Mail or Finder.
     func copyAppFile(_ project: LampProject) {
         do {
             let exported = try Sharing.export(project)
@@ -491,7 +492,7 @@ final class Store: ObservableObject {
     func chooseExport(_ project: LampProject) {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.lampApp]
-        panel.nameFieldStringValue = "\(project.name).forgeapp"
+        panel.nameFieldStringValue = "\(project.name).lampapp"
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         do {
             let file = try Sharing.export(project)
@@ -508,7 +509,7 @@ final class Store: ObservableObject {
         var review: ImportReview?
     }
 
-    /// Opens a shared `.forgeapp`: unpacks it, then shows a review (fixed checklist + AI check) before building.
+    /// Opens a shared `.lampapp`: unpacks it, then shows a review (fixed checklist + AI check) before building.
     func importApp(from file: URL) {
         NSApp.activate()
         guard setup.ready else {
@@ -551,14 +552,14 @@ final class Store: ObservableObject {
         let project: LampProject
         do {
             project = try Template.scaffold(name: uniqueName(package.name), in: root)
-            // Swap the scaffold's code for the shared code; keep Lamp's own ForgeSupport.swift.
+            // Swap the scaffold's code for the shared code; keep Lamp's own LampSupport.swift.
             let sources = project.dir.appendingPathComponent("Sources")
             for item in try fm.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)
-            where item.lastPathComponent != "ForgeSupport.swift" {
+            where item.lastPathComponent != "LampSupport.swift" {
                 try fm.removeItem(at: item)
             }
             let sharedSources = package.folder.appendingPathComponent("Sources").standardizedFileURL.path + "/"
-            for file in package.sources where file.lastPathComponent != "ForgeSupport.swift" {
+            for file in package.sources where file.lastPathComponent != "LampSupport.swift" {
                 let relative = file.standardizedFileURL.path.replacingOccurrences(of: sharedSources, with: "")
                 guard !relative.contains("..") else { continue }
                 let target = sources.appendingPathComponent(relative)
@@ -856,9 +857,9 @@ final class Store: ObservableObject {
             if crash == nil {
                 if let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first {
                     // The look opened it behind the user's windows. Now it's theirs: it shows itself, as when it's
-                    // opened again. An app that lives in the menu bar opens its panel (see ForgeWindows).
+                    // opened again. An app that lives in the menu bar opens its panel (see LampWindows).
                     DistributedNotificationCenter.default().postNotificationName(
-                        Notification.Name("dev.forge.showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
+                        Notification.Name("dev.lamp.showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
                     app.activate()
                     log(project, .status, "\(project.name) is ready")
                 } else {
@@ -899,11 +900,11 @@ final class Store: ObservableObject {
     }
 
     /// Whether the agent changed any of the app's files this turn. Lamp's own writes don't count: it
-    /// regenerates ForgeSupport.swift, designs the icon (icon.json) while the agent works, and saves the
+    /// regenerates LampSupport.swift, designs the icon (icon.json) while the agent works, and saves the
     /// request's attachments before the agent starts.
     private func agentChangedFiles(_ project: LampProject) async -> Bool {
         var output = ""
-        let ignored = "':!Sources/ForgeSupport.swift' ':!icon.json' ':!\(Attachments.folder)'"
+        let ignored = "':!Sources/LampSupport.swift' ':!icon.json' ':!\(Attachments.folder)'"
         _ = await Shell.run("git status --porcelain -- . \(ignored)", cwd: project.dir) {
             output += $0
         }
@@ -1028,16 +1029,16 @@ final class Store: ObservableObject {
 
     /// One pi conversation per app, so the agent remembers earlier requests, including ones that were undone.
     private static func piSession(for project: LampProject) -> String {
-        let url = project.dir.appendingPathComponent(".forge/pi-session")
+        let url = project.dir.appendingPathComponent(".lamp/pi-session")
         if let id = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !id.isEmpty { return id }
-        let id = "forge-" + UUID().uuidString.lowercased()
+        let id = "lamp-" + UUID().uuidString.lowercased()
         try? id.write(to: url, atomically: true, encoding: .utf8)
         return id
     }
 
     /// External engines report their own conversation ids; Lamp keeps one per engine per app.
     private static func sessionFile(for project: LampProject, engine: Engine) -> URL {
-        project.dir.appendingPathComponent(".forge/session-\(engine.rawValue)")
+        project.dir.appendingPathComponent(".lamp/session-\(engine.rawValue)")
     }
 
     private static func savedSession(_ url: URL) -> String? {
@@ -1253,9 +1254,9 @@ final class Store: ObservableObject {
             if await updateForThisForge(project) { return }
         }
         if let running = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first {
-            // Ask the app to show a window (opening a new one if all were closed); see ForgeWindows.
+            // Ask the app to show a window (opening a new one if all were closed); see LampWindows.
             DistributedNotificationCenter.default().postNotificationName(
-                Notification.Name("dev.forge.showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
+                Notification.Name("dev.lamp.showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
             running.activate()
             // Apps built before this listener existed ignore the message: if one has no window on screen, relaunch it.
             guard !Self.listensForShowWindow(project) else { return }
@@ -1271,7 +1272,7 @@ final class Store: ObservableObject {
         }
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
-        config.arguments = ["-ForgeInFront", "YES"]   // see install
+        config.arguments = ["-LampInFront", "YES"]   // see install
         do {
             _ = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
         } catch {
@@ -1281,7 +1282,7 @@ final class Store: ObservableObject {
     }
 
     /// The agent's `use_app` tool: hands its clicks, typing and keys to the open app, which performs them on its
-    /// own front window (ForgeDriver in ForgeSupport), then reports what happened with a fresh picture.
+    /// own front window (LampDriver in LampSupport), then reports what happened with a fresh picture.
     private func use(_ project: LampProject, request body: Data) async -> (Int, [String: Any]) {
         guard running[project.id] != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         guard let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
@@ -1292,13 +1293,13 @@ final class Store: ObservableObject {
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
-        guard Self.binary(of: project, contains: "dev.forge.useApp.") else {
+        guard Self.binary(of: project, contains: "dev.lamp.useApp.") else {
             return (200, ["text": "The open app was built before use_app could do this. Call look_at_app to rebuild it, then try again."])
         }
         let id = UUID().uuidString
         let printed = Runtime.logSize(project)
         DistributedNotificationCenter.default().postNotificationName(
-            Notification.Name("dev.forge.useApp.\(project.id)"), object: nil,
+            Notification.Name("dev.lamp.useApp.\(project.id)"), object: nil,
             userInfo: ["actions": json, "id": id, "token": Template.token(for: project)], deliverImmediately: true)
         let waits = actions.reduce(0.0) { $0 + (($1["action"] as? String) == "wait" ? min($1["amount"] as? Double ?? 1, 10) : 0) }
         let wait = Double(actions.count) * 0.4 + waits + 5
@@ -1419,11 +1420,11 @@ final class Store: ObservableObject {
         return data.range(of: Data(marker.utf8)) != nil
     }
 
-    /// Whether the installed app was built with ForgeWindows (its binary contains the message name).
+    /// Whether the installed app was built with LampWindows (its binary contains the message name).
     private static func listensForShowWindow(_ project: LampProject) -> Bool {
         let binary = project.installedURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
         guard let data = try? Data(contentsOf: binary, options: .alwaysMapped) else { return false }
-        return data.range(of: Data("dev.forge.showWindow".utf8)) != nil
+        return data.range(of: Data("dev.lamp.showWindow".utf8)) != nil
     }
 
     /// Whether a process has a normal window on screen (window list metadata needs no permission).
@@ -1470,7 +1471,7 @@ final class Store: ObservableObject {
         }
         guard let (undoing, target) = Versions.undoTarget(in: versions),
               await Versions.restore(project, to: target, message: "Undid “\(undoing.label)”",
-                                     trailer: "Forge-Undid: \(undoing.id)") else {
+                                     trailer: "Lamp-Undid: \(undoing.id)") else {
             log(project, .status, "Nothing to undo")
             return
         }
@@ -1541,7 +1542,7 @@ final class Store: ObservableObject {
         guard titling.insert(project.id).inserted else { return }
         Task {
             defer { titling.remove(project.id) }
-            for version in await Versions.list(project).prefix(limit) where version.title == nil && !version.isForgeNote {
+            for version in await Versions.list(project).prefix(limit) where version.title == nil && !version.isLampNote {
                 guard let title = await VersionTitles.make(for: version, in: project) else { return }
                 VersionTitles.save(title, for: version.id, in: project)
                 versionsRevision += 1
@@ -1621,8 +1622,8 @@ final class Store: ObservableObject {
         }
         let config = NSWorkspace.OpenConfiguration()
         config.activates = inFront
-        // An app that lives in the menu bar opens its panel, so there's something to see (ForgeMenuBar).
-        if inFront { config.arguments = ["-ForgeInFront", "YES"] }
+        // An app that lives in the menu bar opens its panel, so there's something to see (LampMenuBar).
+        if inFront { config.arguments = ["-LampInFront", "YES"] }
         note("Opening \(project.name)…", for: project)
         var crash: String?
         do {
@@ -1650,7 +1651,7 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Puts the icon into the freshly built bundle, re-signs it, and swaps it into ~/Applications/Forge Apps.
+    /// Puts the icon into the freshly built bundle, re-signs it, and swaps it into ~/Applications/Lamp Apps.
     /// The swap is atomic, so it's safe even while the app is running.
     private func deploy(_ project: LampProject) async throws {
         let fm = FileManager.default
@@ -1684,7 +1685,7 @@ final class Store: ObservableObject {
                 plutil -replace CFBundleIconFile -string AppIcon "$LAMP_APP/Contents/Info.plist" && \(iconName)
                 """, cwd: project.dir, env: ["LAMP_APP": project.builtURL.path]) { _ in }
         }
-        // Files attached in Lamp's chat ship inside the app, where ForgeAssets finds them.
+        // Files attached in Lamp's chat ship inside the app, where LampAssets finds them.
         let attachments = project.dir.appendingPathComponent(Attachments.folder)
         try? fm.removeItem(at: resources.appendingPathComponent(Attachments.folder))
         if fm.fileExists(atPath: attachments.path) {
@@ -1854,7 +1855,7 @@ final class Store: ObservableObject {
     }
 
     private func refreshOpenApps() {
-        let prefix = "dev.forge.app."
+        let prefix = "dev.lamp.app."
         let ids = NSWorkspace.shared.runningApplications
             .compactMap { $0.isTerminated ? nil : $0.bundleIdentifier }
             .filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
@@ -2007,7 +2008,7 @@ final class Store: ObservableObject {
         }
     }
 
-    /// `ForgeComputer.ask` / `.perform` from an app: a task done with the other apps on the Mac (see ComputerUse).
+    /// `LampComputer.ask` / `.perform` from an app: a task done with the other apps on the Mac (see ComputerUse).
     private func useComputer(for project: LampProject, request body: Data) async -> (Int, [String: Any]) {
         guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let task = (json["task"] as? String)?.trimmed, !task.isEmpty else { return (400, ["error": "Missing task."]) }
@@ -2166,7 +2167,7 @@ final class Store: ObservableObject {
 
     private func saveUsage(_ project: LampProject) {
         if let data = try? JSONEncoder().encode(usage[project.id]) {
-            try? data.write(to: project.dir.appendingPathComponent(".forge/usage.json"))
+            try? data.write(to: project.dir.appendingPathComponent(".lamp/usage.json"))
         }
     }
 
@@ -2179,14 +2180,14 @@ extension String {
     var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
 }
 
-/// One app's own choice of models for its AI features, in .forge/models.json. nil uses Lamp's default
+/// One app's own choice of models for its AI features, in .lamp/models.json. nil uses Lamp's default
 /// from Settings → Apps.
 struct AppModels: Codable, Equatable {
     var text: String?       // an id from AppAI.models
     var image: String?      // an id from Icons.artModels
     var decision: String?   // an id from AppAI.decisionModels
 
-    private static func url(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".forge/models.json") }
+    private static func url(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/models.json") }
 
     static func load(_ project: LampProject) -> AppModels {
         (try? Data(contentsOf: url(project))).flatMap { try? JSONDecoder().decode(AppModels.self, from: $0) } ?? AppModels()

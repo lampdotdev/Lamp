@@ -21,7 +21,7 @@ A capability given to one engine must be given to all of them that can take it, 
 - **Approvals and privacy**: shell commands go through `/agent/approve` for every engine (pi's extension,
   Claude Code's hooks, Codex's hooks); file access outside the app's folder is checked the same way.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every
-  engine's spelling. Claude Code calls MCP tools `mcp__forge__<name>`; `Engines.plainName` strips that.
+  engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items.
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
 
@@ -30,8 +30,8 @@ and say in the PR description which engines you tried.
 
 ## Generated apps
 
-`Sources/Lamp/Template.swift` holds `ForgeSupport.swift`, the support code copied into every generated
-app (`ForgeAI`, `ForgeStore`, `ForgeScript`, the connectors, `ForgeDriver` for `use_app`). It is a Swift
+`Sources/Lamp/Template.swift` holds `LampSupport.swift`, the support code copied into every generated
+app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_app`). It is a Swift
 string: after editing it, extract and type-check it (`swiftc -typecheck`), and bump anything that detects
 an outdated app (`Store.open` rebuilds apps built by an older Lamp).
 
@@ -39,9 +39,9 @@ an outdated app (`Store.open` rebuilds apps built by an older Lamp).
 
 The app is called **Lamp**: that's the name in everything the user reads (the interface, Help, the agent's
 words to the user, the "Edit with Lamp" command in generated apps, the bundle and the DMG). **Lamp** is its
-code name and stays in code, comments, type names (`ForgeSupport`, `ForgeAI`, …) and in everything existing
-installs depend on: the bundle ID `dev.forge.host`, `~/Library/Application Support/Forge`,
-`~/Applications/Forge Apps`, the `forge://` scheme, the `.forgeapp` extension and the signing certificates.
+code name and stays in code, comments, type names (`LampSupport`, `LampAI`, …) and in everything existing
+installs depend on: the bundle ID `dev.lamp.host`, `~/Library/Application Support/Lamp`,
+`~/Applications/Lamp Apps`, the `lamp://` scheme, the `.lampapp` extension and the signing certificates.
 Renaming any of those needs a migration, not a find-and-replace.
 
 ## Conventions

@@ -344,7 +344,7 @@ private struct SetupStep: View {
     @State private var signedIn: [Engine: Bool] = [:]
     @State private var signingIn: Engine?
     /// Whether the Lamp Agent option on screen (that provider, that model) is the one set up to build.
-    @State private var forgeReady = false
+    @State private var lampReady = false
 
     var body: some View {
         // Centered like the other steps. The Lamp Agent options can make it taller than a small window,
@@ -356,7 +356,7 @@ private struct SetupStep: View {
                     Heading(title: "Get Lamp ready", detail: "We need to configure two things.")
                     VStack(spacing: 12) {
                         ToolsCard()
-                        BuilderCard(choice: $choice, signedIn: $signedIn, signingIn: $signingIn, forgeReady: $forgeReady)
+                        BuilderCard(choice: $choice, signedIn: $signedIn, signingIn: $signingIn, lampReady: $lampReady)
                     }
                     .frame(width: 720)
                     .padding(.top, 26)
@@ -393,7 +393,7 @@ private struct SetupStep: View {
         switch choice {
         case .claude: return signedIn[.claude] == true
         case .chatGPT: return signedIn[.codex] == true
-        default: return forgeReady
+        default: return lampReady
         }
     }
 
@@ -499,7 +499,7 @@ private struct BuilderCard: View {
     @Binding var choice: Builder.Choice?
     @Binding var signedIn: [Engine: Bool]
     @Binding var signingIn: Engine?
-    @Binding var forgeReady: Bool
+    @Binding var lampReady: Bool
     @AppStorage("engine") private var engine = Engine.pi.rawValue
     @State private var problem: String?
 
@@ -527,11 +527,11 @@ private struct BuilderCard: View {
                         switch choice {
                         case .claude: account(.claude, app: "Claude", download: "https://claude.ai/download")
                         case .chatGPT: account(.codex, app: "ChatGPT", download: "https://openai.com/chatgpt/download/")
-                        default: ForgeAgentOptions(choice: Binding(get: { choice }, set: { pick($0) }), ready: $forgeReady)
+                        default: LampAgentOptions(choice: Binding(get: { choice }, set: { pick($0) }), ready: $lampReady)
                         }
                     }
                     .transition(.opacity.combined(with: .offset(y: -6)))
-                    .id(choice.isForge ? "forge" : "\(choice)")
+                    .id(choice.isForge ? "lamp" : "\(choice)")
                 }
             }
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: choice)
@@ -594,7 +594,7 @@ private struct BuilderCard: View {
 }
 
 /// Lamp's own agent: OpenRouter, another provider, or a model on this Mac, each set up right here.
-private struct ForgeAgentOptions: View {
+private struct LampAgentOptions: View {
     @EnvironmentObject private var store: Store
     @ObservedObject private var local = LocalModels.shared
     @Binding var choice: Builder.Choice
