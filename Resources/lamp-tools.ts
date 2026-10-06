@@ -23,21 +23,31 @@
  *   so the tool itself has nothing to do.
  */
 
+import { readFileSync } from "node:fs";
 import { lstat, readFile, realpath, rm } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const lookAtApp = defineTool({
-	name: "look_at_app",
-	label: "Look at the app",
-	description:
-		"Builds the app with your changes, opens it, and shows you the result: a picture of its windows, " +
-		"what it printed, and any build errors or crash. Takes up to a minute. Use it after a change to the " +
-		"interface, or to check a fix you can't verify by reading the code. Each look that has to rebuild takes " +
-		"a while, so make your edits first and don't use it for small changes you're sure of.",
-	parameters: Type.Object({}),
+/**
+ * The tools' names, descriptions and schemas come from lamp-tools.json, next to this file in Lamp's bundle
+ * (Lamp says where with LAMP_TOOLS_JSON). Lamp's MCP endpoint serves the same file to Claude Code and Codex,
+ * so there is one definition of each tool. Only the `execute` bodies live here.
+ */
+const registryPath = process.env.LAMP_TOOLS_JSON ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "lamp-tools.json");
+const registry = JSON.parse(readFileSync(registryPath, "utf8")) as {
+	name: string; label: string; description: string; inputSchema: Record<string, unknown>;
+}[];
+function spec(name: string) {
+	const tool = registry.find((t) => t.name === name);
+	if (!tool) throw new Error(`lamp-tools.json has no tool named ${name}`);
+	// biome-ignore lint/suspicious/noExplicitAny: the schema is JSON, typed where each tool uses its params
+	return { name: tool.name, label: tool.label, description: tool.description, parameters: Type.Unsafe<any>(tool.inputSchema) };
+}
 
+const lookAtApp = defineTool({
+	...spec("look_at_app"),
 	async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
 		const url = process.env.LAMP_LOOK_URL;
 		if (!url) throw new Error("Lamp isn't available to look at the app.");
@@ -71,47 +81,7 @@ async function pictureReply(response: Response, model: { input: string[] } | und
 }
 
 const useApp = defineTool({
-	name: "use_app",
-	label: "Use the app",
-	description:
-		"Uses the open app the way a person would: clicks, types, presses keys, scrolls and picks from menus in its " +
-		"front window, then shows you what each action landed on, whether anything changed, a fresh picture, and " +
-		"what the app printed meanwhile. x and y are pixels in the latest picture of the front window from " +
-		"look_at_app or use_app: aim at the middle of what you want. Use it to check that something works, not " +
-		"just how it looks: click a column header and see whether the list re-sorts, fill in a form and submit it. " +
-		"Clicking a row of a list, table or sidebar selects it; double-clicking opens it. Keys and typing go to " +
-		"whatever has keyboard focus. " +
-		"Menus are read out to you, never opened: click a pop-up or pull-down button, or right_click something, and " +
-		"you get its items; repeat the same action with `item` set to pick one (\"Sub > Deep\" for a submenu). " +
-		"`menu` does the same for the menu bar: without `item` it lists every command, with `item` like " +
-		"\"File > Export…\" it picks one. " +
-		"`bar_icon` is for an app that lives in the menu bar: it opens the panel behind the app's icon there, which " +
-		"becomes the first picture and takes clicks and keys like a window (escape closes it); if the icon shows a " +
-		"menu instead, it lists it, and `item` picks from it. " +
-		"When a dialog or sheet opens it becomes the first picture and takes the clicks and keys: click one of its " +
-		"buttons, or press escape to cancel. The system's save panel can only be answered with return (save where " +
-		"it says) or escape. It can't drag. It uses the app as last built: after editing code, call look_at_app " +
-		"first so your changes are built and open. If it says nothing changed, the click most likely missed: look " +
-		"at the picture and aim again before changing any code.",
-	parameters: Type.Object({
-		actions: Type.Array(
-			Type.Object({
-				action: Type.Union([
-					Type.Literal("click"), Type.Literal("double_click"), Type.Literal("right_click"), Type.Literal("menu"),
-					Type.Literal("bar_icon"),
-					Type.Literal("type"), Type.Literal("key"), Type.Literal("scroll"), Type.Literal("wait"),
-				]),
-				x: Type.Optional(Type.Number({ description: "click, double_click, right_click, scroll: pixels from the picture's left" })),
-				y: Type.Optional(Type.Number({ description: "click, double_click, right_click, scroll: pixels from the picture's top" })),
-				item: Type.Optional(Type.String({ description: "click, right_click, menu, bar_icon: the menu item to pick by name, e.g. \"Export…\" or \"View > Zoom In\". Leave out to list the items." })),
-				text: Type.Optional(Type.String({ description: "type: the text, typed into whatever has focus (click a field first)" })),
-				key: Type.Optional(Type.String({ description: "key: return, escape, tab, delete, space, up, down, left, right, or a letter, with modifiers like cmd+a" })),
-				amount: Type.Optional(Type.Number({ description: "scroll: points, positive scrolls down; wait: seconds" })),
-			}),
-			{ minItems: 1, maxItems: 30 },
-		),
-	}),
-
+	...spec("use_app"),
 	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 		const url = process.env.LAMP_USE_URL;
 		if (!url) throw new Error("Lamp isn't available to use the app.");
@@ -126,26 +96,7 @@ const useApp = defineTool({
 });
 
 const plan = defineTool({
-	name: "plan",
-	label: "Plan",
-	description:
-		"Shows the user what you're building, as a short checklist in Lamp while they wait. For a new app, " +
-		"call it once before writing any code with the 3 to 5 main parts, each in plain words the user would " +
-		"use (what they'll be able to do, not file or type names), and the files you'll write for each part. " +
-		"Lamp ticks a part off when all of its files are written, so there's no need to call it again. " +
-		"Call it again only if the plan changes; every call replaces the whole list.",
-	parameters: Type.Object({
-		parts: Type.Array(
-			Type.Object({
-				title: Type.String({ description: "One part of the app, under ten words, in the user's words" }),
-				files: Type.Array(Type.String(), {
-					description: "File names you'll write for this part, e.g. Scanner.swift. Each file belongs to one part.",
-				}),
-				done: Type.Optional(Type.Boolean({ description: "True to tick this part yourself" })),
-			}),
-		),
-	}),
-
+	...spec("plan"),
 	async execute() {
 		return { content: [{ type: "text", text: "The user can see the plan." }], details: undefined };
 	},
@@ -256,16 +207,7 @@ async function checkFile(tool: string, given: string, signal?: AbortSignal): Pro
 const protectedPaths = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift"];
 
 const deleteFile = defineTool({
-	name: "delete_file",
-	label: "Delete file",
-	description:
-		"Deletes one file in the app's folder that is no longer needed, such as a source file whose code " +
-		"moved elsewhere or a view that was removed. Use it instead of leaving an emptied file behind. " +
-		"It can't delete folders, files outside the app's folder, or the files Lamp generates.",
-	parameters: Type.Object({
-		path: Type.String({ description: "Path of the file, relative to the app's folder, e.g. Sources/CardsView.swift" }),
-	}),
-
+	...spec("delete_file"),
 	async execute(_toolCallId, params) {
 		const root = await realpath(process.cwd());
 		const target = path.resolve(root, params.path);
@@ -307,46 +249,21 @@ async function versions(endpoint: string, body: object, signal?: AbortSignal) {
 }
 
 const listVersions = defineTool({
-	name: "list_versions",
-	label: "List versions",
-	description:
-		"Lists the app's saved versions, newest first: an id, when it was made, its name if it has one, and " +
-		"the request that made it. Lamp saves one after every request.",
-	parameters: Type.Object({}),
-
+	...spec("list_versions"),
 	async execute(_toolCallId, _params, signal) {
 		return versions("", {}, signal);
 	},
 });
 
 const nameVersion = defineTool({
-	name: "name_version",
-	label: "Name version",
-	description:
-		"Gives a version a short name the user will recognise, e.g. “Before the redesign” or “First working " +
-		"sync”. Without `version`, it names the version this request makes, once Lamp saves it. With a " +
-		"version id from list_versions, it names that one: use the current one before a big or risky change.",
-	parameters: Type.Object({
-		name: Type.String({ description: "A few words, in the user's terms" }),
-		version: Type.Optional(Type.String({ description: "A version id from list_versions" })),
-	}),
-
+	...spec("name_version"),
 	async execute(_toolCallId, params, signal) {
 		return versions("/name", params, signal);
 	},
 });
 
 const restoreVersion = defineTool({
-	name: "restore_version",
-	label: "Restore version",
-	description:
-		"Puts the app's files back as they were in an earlier version. Only use it when the user asks to go " +
-		"back to an earlier version, never to undo your own attempt. Find the id with list_versions first. " +
-		"Nothing is lost: the versions after it stay, so the user can go forward again.",
-	parameters: Type.Object({
-		version: Type.String({ description: "A version id from list_versions" }),
-	}),
-
+	...spec("restore_version"),
 	async execute(_toolCallId, params, signal) {
 		return versions("/restore", params, signal);
 	},
