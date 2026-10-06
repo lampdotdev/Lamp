@@ -116,8 +116,9 @@ private struct HelloStep: View {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable().frame(width: 52, height: 52)
                 .shadow(color: Palette.emberDeep.opacity(0.25), radius: 12, y: 6)
-                .scaleEffect(shown ? 1 : 0.8)
-                .opacity(shown ? 1 : 0)
+                .animation(.spring(response: 0.8, dampingFraction: 0.8)) {
+                    $0.scaleEffect(shown ? 1 : 0.8).opacity(shown ? 1 : 0)
+                }
             Text("What will you make?")
                 .font(.system(size: 54, weight: .bold))
                 .tracking(-1.2)
@@ -141,10 +142,14 @@ private struct HelloStep: View {
             BigButton(title: "Get Started", action: next)
                 .keyboardShortcut(.defaultAction)
                 .padding(.top, 30)
-                .reveal(shown, delay: 0.5)
+                .reveal(shown, delay: 0.5, rise: 8)
             Spacer(minLength: 24)
         }
-        .onAppear { withAnimation(.spring(response: 0.8, dampingFraction: 0.8)) { shown = true } }
+        // A moment after appearing, once the window has its size.
+        .task {
+            try? await Task.sleep(for: .seconds(0.15))
+            shown = true
+        }
     }
 }
 
@@ -250,9 +255,10 @@ private struct IdeaStep: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Heading(title: "What should your first app do?",
-                    detail: "Say it in your own words, or start from an idea and make it yours.")
-                .padding(.top, 52)
+            // Centered in the window, like the first step; the buttons sit along the bottom, and the space kept
+            // below stops the content running into them when the window is small.
+            Spacer(minLength: 40)
+            Heading(title: "What should your first app do?")
 
             HStack(alignment: .top, spacing: 10) {
                 TextField("", text: $prompt,
@@ -311,8 +317,10 @@ private struct IdeaStep: View {
             }
             .frame(width: 720)
             .padding(.top, 10)
-
-            Spacer()
+            Spacer(minLength: 110)
+        }
+        .frame(maxWidth: .infinity)
+        .overlay(alignment: .bottom) {
             Footer(back: back) {
                 BigButton(title: "Continue", action: next).disabled(prompt.trimmed.isEmpty)
             } aside: {
@@ -790,8 +798,9 @@ private struct ReadyStep: View {
                 Image(nsImage: NSApp.applicationIconImage)
                     .resizable().frame(width: 120, height: 120)
                     .shadow(color: Palette.emberDeep.opacity(0.3), radius: 30, y: 14)
-                    .scaleEffect(shown ? 1 : 0.7)
-                    .rotationEffect(.degrees(shown ? 0 : -12))
+                    .animation(.spring(response: 0.8, dampingFraction: 0.75)) {
+                        $0.scaleEffect(shown ? 1 : 0.7).rotationEffect(.degrees(shown ? 0 : -12))
+                    }
             }
             .frame(height: 260)
             Text("Let's get building.")
@@ -827,7 +836,7 @@ private struct ReadyStep: View {
                 EmptyView()
             }
         }
-        .onAppear { withAnimation(.spring(response: 0.8, dampingFraction: 0.75)) { shown = true } }
+        .onAppear { shown = true }
     }
 
     private var detail: String {
@@ -843,7 +852,7 @@ private struct ReadyStep: View {
 
 private struct Heading: View {
     let title: String
-    let detail: String
+    var detail: String?
 
     var body: some View {
         VStack(spacing: 10) {
@@ -851,9 +860,11 @@ private struct Heading: View {
                 .font(.system(size: 38, weight: .bold))
                 .tracking(-0.8)
                 .foregroundStyle(Palette.ink)
-            Text(detail)
-                .font(.system(size: 17))
-                .foregroundStyle(.secondary)
+            if let detail {
+                Text(detail)
+                    .font(.system(size: 17))
+                    .foregroundStyle(.secondary)
+            }
         }
         .multilineTextAlignment(.center)
     }
@@ -881,7 +892,7 @@ private struct Done: View {
     }
 }
 
-/// Back on the left, the way forward on the right.
+/// Back on the left, the way forward on the right, anything else in the middle.
 private struct Footer<Primary: View, Aside: View>: View {
     let back: () -> Void
     @ViewBuilder let primary: () -> Primary
@@ -901,9 +912,10 @@ private struct Footer<Primary: View, Aside: View>: View {
             .buttonStyle(.plain)
             .keyboardShortcut(.cancelAction)
             Spacer()
-            aside()
             primary()
         }
+        // Anything secondary, like "Skip for now", sits in the middle.
+        .overlay { aside() }
         .padding(.horizontal, 44)
         .padding(.bottom, 44)
     }
@@ -972,12 +984,14 @@ private struct StageModifier: ViewModifier {
 }
 
 private extension View {
-    /// Rises into place, a beat after `delay`.
-    func reveal(_ shown: Bool, delay: Double) -> some View {
-        self.opacity(shown ? 1 : 0)
-            .offset(y: shown ? 0 : 14)
-            .blur(radius: shown ? 0 : 6)
-            .animation(.spring(response: 0.7, dampingFraction: 0.85).delay(delay), value: shown)
+    /// Fades in a beat after `delay`, rising `rise` points into place. Only the fade and the rise animate:
+    /// layout changes at the same moment (the window settling its size) happen at once, not as a drift.
+    func reveal(_ shown: Bool, delay: Double, rise: CGFloat = 14) -> some View {
+        animation(.spring(response: 0.7, dampingFraction: 0.85).delay(delay)) {
+            $0.opacity(shown ? 1 : 0)
+                .offset(y: shown ? 0 : rise)
+                .blur(radius: shown ? 0 : 6)
+        }
     }
 }
 
