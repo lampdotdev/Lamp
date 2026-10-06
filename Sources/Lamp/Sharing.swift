@@ -185,35 +185,63 @@ struct ImportReview {
     var concerns: [String]
     var risk: String            // "low", "medium", "high", or "unknown" when the AI check couldn't run
     var checked = false         // the AI check ran and answered
-    var detected: [String]      // from the fixed checklist; always shown
+    var detected: [Sharing.Capability]   // from the fixed checklist; always shown
+    /// The most worrying thing the code was seen to do; nil when nothing beyond an ordinary app.
+    var worst: Sharing.Capability.Level? { detected.map(\.level).max() }
     var note: String?           // e.g. why the AI check didn't run
 }
 
 extension Sharing {
     /// Fixed checks: things in the code worth knowing about, found by plain text search.
     /// They can't be argued with by comments in the code, unlike the AI review.
-    static let checklist: [(label: String, patterns: [String])] = [
-        ("Runs other programs or shell commands", ["Process(", "NSTask", "/bin/sh", "/bin/zsh", "/bin/bash", "posix_spawn", "system(\""]),
-        ("Connects to the internet", ["URLSession", "NWConnection", "http://", "https://", "WebSocket"]),
-        ("Controls other apps with AppleScript", ["NSAppleScript", "osascript", "OSAScript"]),
-        ("Accesses the Keychain", ["SecItem", "kSecClass"]),
-        ("Touches sensitive files (SSH keys, browser data, keychains)", [".ssh", "id_rsa", "id_ed25519", "Cookies", "Library/Keychains", "Google/Chrome", "Library/Safari", "Library/Mail", "Library/Messages"]),
-        ("Deletes files", ["removeItem", "trashItem", "unlink("]),
-        ("Simulates the keyboard or mouse, or reads other apps' windows", ["CGEvent", "AXUIElement", "CGEventTap"]),
-        ("Uses the camera or microphone", ["AVCaptureDevice", "AVCaptureSession", "AVAudioRecorder", "AVAudioEngine", "SFSpeechRecognizer", "SpeechAnalyzer"]),
-        ("Captures the screen", ["CGWindowListCreateImage", "ScreenCaptureKit", "SCScreenshotManager"]),
-        ("Starts itself automatically or installs background items", ["SMAppService", "LaunchAgents", "LaunchDaemons", "SMLoginItem"]),
-        ("Loads code at runtime (can hide what it does)", ["dlopen", "NSClassFromString", "perform(#selector", "NSSelectorFromString"]),
-        ("Contains encoded data (can hide what it does)", ["Data(base64Encoded"]),
-        ("Uses AI (your OpenRouter credit)", ["LampAI."]),
-        ("Reads or uses your other apps (Slack, Mail, your browser…)", ["LampComputer."]),
-        ("Runs code the AI writes while the app runs (in a sealed context)", ["LampScript"]),
-        // The support library's own wrappers: the frameworks above live in LampSupport.swift, which isn't scanned.
-        ("Reads your mail, contacts, calendar or reminders", ["LampMail.", "LampContacts.", "LampCalendar.", "LampReminders."]),
-        ("Starts at login", ["LampLoginItem"]),
-        ("Watches what you copy", ["LampClipboardWatcher"]),
-        ("Listens for keyboard shortcuts in every app", ["LampHotKey"]),
-        ("Asks for Full Disk Access, Screen Recording or Accessibility", ["LampPermission"]),
+    /// What a shared app can do on the Mac, found by reading its code: one line per kind of access, the way
+    /// System Settings lists an app's permissions. `level` says how much a line should worry the reader, and
+    /// the worst detected level decides whether opening takes a deliberate click.
+    struct Capability: Identifiable, Equatable {
+        enum Level: Int, Comparable {
+            case ordinary, powerful, sensitive
+            static func < (a: Level, b: Level) -> Bool { a.rawValue < b.rawValue }
+        }
+        let label: String
+        let icon: String
+        let level: Level
+        let patterns: [String]
+        var id: String { label }
+    }
+
+    static let checklist: [Capability] = [
+        Capability(label: "Uses AI (your OpenRouter credit)", icon: "sparkles", level: .ordinary, patterns: ["LampAI."]),
+        Capability(label: "Connects to the internet", icon: "network", level: .ordinary,
+                   patterns: ["URLSession", "NWConnection", "http://", "https://", "WebSocket"]),
+        Capability(label: "Runs other programs or shell commands", icon: "terminal", level: .powerful,
+                   patterns: ["Process(", "NSTask", "/bin/sh", "/bin/zsh", "/bin/bash", "posix_spawn", "system(\""]),
+        Capability(label: "Runs code the AI writes while the app runs (in a sealed context)", icon: "curlybraces", level: .powerful, patterns: ["LampScript"]),
+        Capability(label: "Deletes files", icon: "trash", level: .powerful, patterns: ["removeItem", "trashItem", "unlink("]),
+        Capability(label: "Reads your mail, contacts, calendar or reminders", icon: "envelope", level: .powerful,
+                   patterns: ["LampMail.", "LampContacts.", "LampCalendar.", "LampReminders."]),
+        Capability(label: "Reads or uses your other apps (Slack, Mail, your browser…)", icon: "macwindow.on.rectangle", level: .powerful,
+                   patterns: ["LampComputer."]),
+        Capability(label: "Controls other apps with AppleScript", icon: "applescript", level: .powerful,
+                   patterns: ["NSAppleScript", "osascript", "OSAScript"]),
+        Capability(label: "Uses the camera or microphone", icon: "mic", level: .powerful,
+                   patterns: ["AVCaptureDevice", "AVCaptureSession", "AVAudioRecorder", "AVAudioEngine", "SFSpeechRecognizer", "SpeechAnalyzer"]),
+        Capability(label: "Captures the screen", icon: "rectangle.dashed.badge.record", level: .powerful,
+                   patterns: ["CGWindowListCreateImage", "ScreenCaptureKit", "SCScreenshotManager"]),
+        Capability(label: "Starts at login", icon: "power", level: .powerful, patterns: ["LampLoginItem"]),
+        Capability(label: "Starts itself automatically or installs background items", icon: "gearshape.arrow.triangle.2.circlepath", level: .sensitive,
+                   patterns: ["SMAppService", "LaunchAgents", "LaunchDaemons", "SMLoginItem"]),
+        Capability(label: "Watches what you copy", icon: "doc.on.clipboard", level: .powerful, patterns: ["LampClipboardWatcher"]),
+        Capability(label: "Listens for keyboard shortcuts in every app", icon: "keyboard", level: .powerful, patterns: ["LampHotKey"]),
+        Capability(label: "Asks for Full Disk Access, Screen Recording or Accessibility", icon: "lock.open", level: .sensitive,
+                   patterns: ["LampPermission"]),
+        Capability(label: "Accesses the Keychain", icon: "key", level: .sensitive, patterns: ["SecItem", "kSecClass"]),
+        Capability(label: "Touches sensitive files (SSH keys, browser data, keychains)", icon: "folder.badge.questionmark", level: .sensitive,
+                   patterns: [".ssh", "id_rsa", "id_ed25519", "Cookies", "Library/Keychains", "Google/Chrome", "Library/Safari", "Library/Mail", "Library/Messages"]),
+        Capability(label: "Simulates the keyboard or mouse, or reads other apps' windows", icon: "cursorarrow.click", level: .sensitive,
+                   patterns: ["CGEvent", "AXUIElement", "CGEventTap"]),
+        Capability(label: "Loads code at runtime (can hide what it does)", icon: "eye.slash", level: .sensitive,
+                   patterns: ["dlopen", "NSClassFromString", "perform(#selector", "NSSelectorFromString"]),
+        Capability(label: "Contains encoded data (can hide what it does)", icon: "eye.slash", level: .sensitive, patterns: ["Data(base64Encoded"]),
     ]
 
     static func review(_ package: Package) async -> ImportReview {
@@ -231,7 +259,7 @@ extension Sharing {
             code += "=== Sources/\(name) ===\n\(text)\n\n"
         }
         if let about = try? String(contentsOf: package.folder.appendingPathComponent("APP.md"), encoding: .utf8) { everything += about }
-        let detected = checklist.filter { item in item.patterns.contains { everything.contains($0) } }.map(\.label)
+        let detected = checklist.filter { item in item.patterns.contains { everything.contains($0) } }
         let about = (try? String(contentsOf: package.folder.appendingPathComponent("APP.md"), encoding: .utf8)) ?? "(none)"
 
         var review = ImportReview(summary: "", capabilities: [], concerns: [], risk: "unknown", detected: detected)

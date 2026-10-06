@@ -967,29 +967,30 @@ struct ImportReviewView: View {
     let pending: Store.PendingImport
 
     private var review: ImportReview? { pending.review }
-    /// High by the AI's verdict, or unchecked (no AI answer) while the fixed checks found real capabilities.
-    private var highRisk: Bool {
+    /// Opening takes a deliberate click (no Return) when the AI rates the app high, when the code was seen to
+    /// do something sensitive, or when nothing checked it and the fixed checks found real capabilities.
+    private var deliberate: Bool {
         guard let review else { return false }
-        return review.risk == "high" || (!review.checked && !review.detected.isEmpty)
+        return review.risk == "high" || review.worst == .sensitive || (!review.checked && !review.detected.isEmpty)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Open “\(pending.package.name)”?").font(.title2.bold())
-            Text("Someone shared this app with you. Lamp will build it and open it on your Mac, where it can do anything an app you run can do.")
-                .foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Image(nsImage: NSWorkspace.shared.icon(for: .applicationBundle)).resizable().frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Open “\(pending.package.name)”?").font(.title2.bold())
+                    Text("Someone shared this app with you. Lamp builds it and opens it here, where it can do anything an app you run can do.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
             if let review {
                 if !review.summary.isEmpty {
-                    section("What it does") { Text(review.summary) }
+                    section("What it does") { Text(review.summary).fixedSize(horizontal: false, vertical: true) }
                 }
-                if !review.detected.isEmpty || !review.capabilities.isEmpty {
-                    section("What it can access") {
-                        ForEach(review.detected + review.capabilities.filter { !review.detected.contains($0) }, id: \.self) {
-                            Label($0, systemImage: "exclamationmark.shield").labelStyle(.titleAndIcon)
-                        }
-                    }
-                }
+                section("What it can do on your Mac") { capabilities(review) }
                 if !pending.package.attachments.isEmpty {
                     section("Included files") {
                         Text(pending.package.attachments.map(\.lastPathComponent).joined(separator: ", "))
@@ -1003,9 +1004,9 @@ struct ImportReviewView: View {
                         }
                     }
                 }
-                riskBadge(review.risk)
+                verdict(review)
                 if let note = review.note {
-                    Text(note).font(.callout).foregroundStyle(.secondary)
+                    Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Text("Lamp's check is a guide, not a guarantee. Only open apps from people you trust.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -1019,12 +1020,12 @@ struct ImportReviewView: View {
 
             HStack {
                 Spacer()
-                // Escape always cancels. Return builds only when the review is in and not worrying; a risky
-                // app takes a deliberate click.
+                // Escape always cancels. Return builds only when the review is in and not worrying; an app
+                // that does something sensitive takes a deliberate click.
                 Button("Cancel", role: .cancel) { store.cancelImport() }
                     .keyboardShortcut(.cancelAction)
-                if highRisk || review == nil {
-                    Button(highRisk ? "Open Anyway" : "Build & Open", role: highRisk ? .destructive : nil) { store.confirmImport() }
+                if deliberate || review == nil {
+                    Button(deliberate ? "Open Anyway" : "Build & Open", role: deliberate ? .destructive : nil) { store.confirmImport() }
                         .disabled(review == nil)
                 } else {
                     Button("Build & Open") { store.confirmImport() }
@@ -1033,7 +1034,65 @@ struct ImportReviewView: View {
             }
         }
         .padding(24)
-        .frame(width: 480)
+        .frame(width: 500)
+    }
+
+    /// One row per kind of access the code was seen to use, worst first, like the permissions list in System
+    /// Settings: an icon in a tinted square, the plain-words line, and a word on the right for anything beyond
+    /// ordinary. What the AI noticed follows as a line of text: it mostly restates the rows in its own words,
+    /// and now and then adds something the fixed checks have no pattern for.
+    private func capabilities(_ review: ImportReview) -> some View {
+        let found = review.detected.sorted { $0.level > $1.level }
+        return VStack(alignment: .leading, spacing: 8) {
+            VStack(spacing: 0) {
+                if found.isEmpty {
+                    row(icon: "checkmark", tint: .green, text: "Nothing beyond an ordinary app: it draws windows and keeps its own data.")
+                }
+                ForEach(found) { capability in
+                    row(icon: capability.icon, tint: tint(for: capability.level), text: capability.label, badge: badge(for: capability.level))
+                    if capability != found.last { Divider().padding(.leading, 44) }
+                }
+            }
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+            if !review.capabilities.isEmpty {
+                Text("The AI also noticed: " + review.capabilities.joined(separator: "; ") + ".")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func row(icon: String, tint: Color, text: String, badge: String? = nil) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 26)
+                .background(tint, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            Text(text).font(.callout).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            if let badge {
+                Text(badge).font(.caption.weight(.medium)).foregroundStyle(tint == .secondary ? Color.secondary : tint)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func tint(for level: Sharing.Capability.Level) -> Color {
+        switch level {
+        case .ordinary: .blue
+        case .powerful: .orange
+        case .sensitive: .red
+        }
+    }
+
+    private func badge(for level: Sharing.Capability.Level) -> String? {
+        switch level {
+        case .ordinary: nil
+        case .powerful: "Powerful"
+        case .sensitive: "Sensitive"
+        }
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -1043,11 +1102,13 @@ struct ImportReviewView: View {
         }
     }
 
-    private func riskBadge(_ risk: String) -> some View {
-        let (text, color, icon): (String, Color, String) = switch risk {
-        case "low": ("Looks safe", .green, "checkmark.seal.fill")
-        case "medium": ("Powerful, check it's what you expect", .yellow, "exclamationmark.circle.fill")
-        case "high": ("Looks risky. Don't open unless you trust the sender", .red, "xmark.octagon.fill")
+    /// The one-line verdict: the AI's rating, lifted by what the code was seen to do.
+    private func verdict(_ review: ImportReview) -> some View {
+        let (text, color, icon): (String, Color, String) = switch (review.risk, review.worst) {
+        case ("high", _): ("Looks risky. Don't open unless you trust the sender", .red, "xmark.octagon.fill")
+        case (_, .sensitive): ("Does sensitive things. Open only if you expected that", .red, "exclamationmark.octagon.fill")
+        case ("medium", _), (_, .powerful): ("Powerful, check it's what you expect", .yellow, "exclamationmark.circle.fill")
+        case ("low", _): ("Looks safe", .green, "checkmark.seal.fill")
         default: ("Not checked by AI", .secondary, "questionmark.circle")
         }
         return Label(text, systemImage: icon)
