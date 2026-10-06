@@ -1,4 +1,5 @@
 import SwiftUI
+import CryptoKit
 import AppKit
 
 struct LampProject: Identifiable, Hashable {
@@ -1369,14 +1370,18 @@ final class Store: ObservableObject {
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
-        guard Self.binary(of: project, contains: "dev.lamp.useApp.") else {
+        guard Self.binary(of: project, contains: "lampUseAppSignature") else {
             return (200, ["text": "The open app was built before use_app could do this. Call look_at_app to rebuild it, then try again."])
         }
         let id = UUID().uuidString
         let printed = Runtime.logSize(project)
+        // Signed with the app's token rather than carrying it: distributed notifications reach every process.
+        let key = SymmetricKey(data: Data(Template.token(for: project).utf8))
+        let signature = HMAC<SHA256>.authenticationCode(for: Data("\(id)\n\(json)".utf8), using: key)
+            .map { String(format: "%02x", $0) }.joined()
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name("dev.lamp.useApp.\(project.id)"), object: nil,
-            userInfo: ["actions": json, "id": id, "token": Template.token(for: project)], deliverImmediately: true)
+            userInfo: ["actions": json, "id": id, "lampUseAppSignature": signature], deliverImmediately: true)
         let waits = actions.reduce(0.0) { $0 + (($1["action"] as? String) == "wait" ? min($1["amount"] as? Double ?? 1, 10) : 0) }
         let wait = Double(actions.count) * 0.4 + waits + 5
         guard let report = await Runtime.useReport(of: project, id: id, waiting: wait, while: { !app.isTerminated }) else {
@@ -2059,6 +2064,15 @@ final class Store: ObservableObject {
             // pi's extension sends {"command"}; Claude Code's hook sends {"tool_input": {"command"}}.
             let input = body["tool_input"] as? [String: Any] ?? [:]
             let tool = body["tool_name"] as? String ?? "Bash"
+            if request.path.contains("format=claude-file") {
+                // One of Claude Code's file tools, before it runs: the same check pi's and Codex's get.
+                let names = ["Read": "read", "Edit": "edit", "Write": "write", "Glob": "find", "Grep": "grep"]
+                let path = input["file_path"] as? String ?? input["path"] as? String ?? project.dir.path
+                let (allowed, reason) = await fileAccess(tool: names[tool] ?? "read", path: path, for: project)
+                var output: [String: Any] = ["hookEventName": "PreToolUse", "permissionDecision": allowed ? "allow" : "deny"]
+                if let reason { output["permissionDecisionReason"] = reason }
+                return (200, ["hookSpecificOutput": output])
+            }
             var command = body["command"] as? String ?? input["command"] as? String ?? ""
             let shell = !command.isEmpty
             if command.isEmpty {   // a non-shell tool Claude Code wants permission for (e.g. a write outside the app)

@@ -313,8 +313,8 @@ enum Template {
             DistributedNotificationCenter.default().addObserver(
                 forName: Notification.Name("dev.lamp.useApp.{{SLUG}}"), object: nil, queue: .main) { note in
                 let actions = note.userInfo?["actions"] as? String, id = note.userInfo?["id"] as? String
-                let token = note.userInfo?["token"] as? String
-                MainActor.assumeIsolated { LampDriver.perform(actions, id: id, token: token) }
+                let signature = note.userInfo?["lampUseAppSignature"] as? String
+                MainActor.assumeIsolated { LampDriver.perform(actions, id: id, signature: signature) }
             }
             let log = folder.appendingPathComponent("log.txt")
             let previous = folder.appendingPathComponent("previous-log.txt")
@@ -768,9 +768,15 @@ enum Template {
             var amount: Double?         // scroll: points, positive is down; wait: seconds
         }
 
-        static func perform(_ json: String?, id: String?, token: String?) {
-            guard token == "{{TOKEN}}", let id, let data = json?.data(using: .utf8),
+        /// Only Lamp knows this app's token, so only Lamp can sign a request (the "lampUseAppSignature" key marks
+        /// builds that check it; notifications reach every process, so the token itself never travels).
+        static func perform(_ json: String?, id: String?, signature: String?) {
+            guard let id, let json, let signature, let data = json.data(using: .utf8),
                   let actions = try? JSONDecoder().decode([Action].self, from: data) else { return }
+            let key = SymmetricKey(data: Data("{{TOKEN}}".utf8))
+            let expected = HMAC<SHA256>.authenticationCode(for: Data("\(id)\n\(json)".utf8), using: key)
+                .map { String(format: "%02x", $0) }.joined()
+            guard signature == expected else { return }
             barPanelUsed = Date()
             keepBarPanel()
             let front = LampRuntime.windowsOnScreen.first
