@@ -99,6 +99,9 @@ final class Store: ObservableObject {
     @Published var stamps: [String: BuildStamp] = [:]
     @Published var chatFocusRequest = 0
     @Published var setup = SetupCheck()
+    /// The welcome finished this run. Normally the saved setting says so too, but `-onboarded NO` on the
+    /// command line (for checking the welcome) keeps that setting from changing until Forge quits.
+    @Published var welcomeFinished = false
     @Published var usage: [String: AppUsage] = [:]
     @Published var icons: [String: NSImage] = [:]
     @Published var pendingImport: PendingImport?
@@ -158,7 +161,9 @@ final class Store: ObservableObject {
     private init() {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         reload()
+        restoreWaiting()
         for project in projects { discardIfUnused(project.id) }
+        Onboarding.settle(hasApps: !projects.isEmpty)
         selection = projects.first?.id
         startGateway()
         watchOpenApps()
@@ -181,14 +186,23 @@ final class Store: ObservableObject {
     func recheckSetup() async {
         let wasReady = setup.checked && setup.ready
         setup = await SetupCheck.run(keeping: setup)
-        if !setup.hasBuildTools && !setup.installRequested { requestBuildTools() }
+        // During the welcome, Apple's installer waits for the step that explains it.
+        if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone { requestBuildTools() }
         if !setup.hasBuildTools { pollSetup() }
-        if setup.ready && !wasReady { await backfillIcons() }
+        if setup.ready && !wasReady { await becameReady() }
     }
 
     func requestBuildTools() {
         SetupCheck.installBuildTools()
         setup.installRequested = true
+        pollSetup()
+    }
+
+    /// Requests sent before setup finished (the welcome's first app) start now.
+    private func becameReady() async {
+        for project in projects where !(queued[project.id] ?? []).isEmpty { startQueued(project) }
+        saveWaiting()
+        await backfillIcons()
     }
 
     private func pollSetup() {
@@ -200,7 +214,7 @@ final class Store: ObservableObject {
                 try? await Task.sleep(for: .seconds(5))
                 setup = await SetupCheck.run(keeping: setup)
             }
-            if setup.ready { await backfillIcons() }
+            if setup.ready { await becameReady() }
         }
     }
 
@@ -592,8 +606,57 @@ final class Store: ObservableObject {
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
     /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
     func send(_ prompt: String, attachments: [URL] = [], to project: ForgeProject) {
-        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: attachments))
+        // Waiting for setup can outlast this run, and the files may be temporary (a pasted screenshot):
+        // keep copies, so the request still has them after a relaunch.
+        let files = setup.ready ? attachments : keepForLater(attachments)
+        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files))
         startQueued(project)
+        saveWaiting()
+    }
+
+    /// Requests waiting for setup (the welcome's first app, while Apple's tools install), kept on disk so
+    /// quitting meanwhile doesn't lose them: they come back on the next launch and start once setup is done.
+    private static let waitingKey = "waitingRequests"
+
+    /// Where waiting requests' files are kept until their build starts.
+    private var waitingFiles: URL { root.deletingLastPathComponent().appendingPathComponent("Waiting") }
+
+    /// Each file gets a folder of its own, so two with the same name (two "Dropped image.png") both keep a copy.
+    private func keepForLater(_ files: [URL]) -> [URL] {
+        files.map { file in
+            let folder = waitingFiles.appendingPathComponent(UUID().uuidString)
+            let copy = folder.appendingPathComponent(file.lastPathComponent)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            return (try? FileManager.default.copyItem(at: file, to: copy)) != nil ? copy : file
+        }
+    }
+
+    private func saveWaiting() {
+        let waiting = setup.ready ? [:] : queued.filter { !$0.value.isEmpty }.mapValues { messages in
+            messages.map { ["text": $0.text, "attachments": $0.attachments.map(\.path)] as [String: Any] }
+        }
+        if waiting.isEmpty {
+            UserDefaults.standard.removeObject(forKey: Self.waitingKey)
+        } else {
+            UserDefaults.standard.set(waiting, forKey: Self.waitingKey)
+        }
+    }
+
+    /// Brings back requests that were waiting for setup when Forge last quit. Kept files no waiting request
+    /// needs any more (its build has started, or it was taken back) are cleared out.
+    private func restoreWaiting() {
+        var kept = Set<String>()
+        if let waiting = UserDefaults.standard.dictionary(forKey: Self.waitingKey) as? [String: [[String: Any]]] {
+            for (id, messages) in waiting where projects.contains(where: { $0.id == id }) {
+                queued[id] = messages.map { message in
+                    let files = (message["attachments"] as? [String] ?? []).filter { FileManager.default.fileExists(atPath: $0) }
+                    kept.formUnion(files.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path })
+                    return QueuedMessage(text: message["text"] as? String ?? "", attachments: files.map(URL.init(fileURLWithPath:)))
+                }
+            }
+        }
+        let folders = (try? FileManager.default.contentsOfDirectory(at: waitingFiles, includingPropertiesForKeys: nil)) ?? []
+        for folder in folders where !kept.contains(folder.path) { try? FileManager.default.removeItem(at: folder) }
     }
 
     /// The version label for a request without words: what was sent.
@@ -628,10 +691,11 @@ final class Store: ObservableObject {
 
     func unqueue(_ message: QueuedMessage, from project: ForgeProject) {
         queued[project.id]?.removeAll { $0.id == message.id }
+        saveWaiting()
     }
 
     private func startQueued(_ project: ForgeProject) {
-        guard let messages = queued[project.id], !messages.isEmpty,
+        guard setup.ready, let messages = queued[project.id], !messages.isEmpty,
               busy.insert(project.id).inserted else { return }
         queued[project.id] = nil
         let first = !(logs[project.id] ?? []).contains { $0.kind == .user }

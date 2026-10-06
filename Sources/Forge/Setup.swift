@@ -331,7 +331,8 @@ struct BuildingSettings: View {
                         }
                         Section("Local") {
                             Text("Native Mac AI").tag(Builder.localProvider)
-                            ForEach(local.external.keys.sorted(), id: \.self) { Text(LocalModels.externalName($0)).tag($0) }
+                            ForEach(local.external.keys.sorted { LocalModels.externalName($0) < LocalModels.externalName($1) },
+                                    id: \.self) { Text(LocalModels.externalName($0)).tag($0) }
                         }
                         Divider()
                         Text("Configure providers…").tag(Self.configure)

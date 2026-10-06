@@ -6,13 +6,23 @@ struct ContentView: View {
     @EnvironmentObject private var store: Store
     @State private var newName = ""
     @State private var versionName = ""
+    @AppStorage(Onboarding.key) private var onboarded = false
 
     var body: some View {
         Group {
-            if store.setup.checked && !store.setup.ready {
-                SetupView()
+            if !onboarded && !store.welcomeFinished {
+                OnboardingView().ignoresSafeArea()
             } else {
-                main
+                Group {
+                    // Only Apple's tools missing (say, still installing after the welcome): Forge stays usable,
+                    // and anything asked for waits in its chat until they're in.
+                    if store.setup.checked && !store.setup.ready && !(store.setup.hasBuilder && store.setup.hasAgent) {
+                        SetupView()
+                    } else {
+                        main
+                    }
+                }
+                .frame(minWidth: 760, minHeight: 480)
             }
         }
         .sheet(item: $store.pendingImport) { pending in
@@ -25,18 +35,23 @@ struct ContentView: View {
             AppSidebar()
                 .navigationSplitViewColumnWidth(min: 200, ideal: 230)
         } detail: {
-            if let project = store.selected {
-                ProjectView(project: project).id(project.id)
-            } else if store.projects.isEmpty {
-                ContentUnavailableView {
-                    Label("No apps yet", systemImage: "hammer")
-                } description: {
-                    Text("Describe an app and Forge builds it for you.")
-                } actions: {
-                    Button("New App") { store.create() }
+            Group {
+                if let project = store.selected {
+                    ProjectView(project: project).id(project.id)
+                } else if store.projects.isEmpty {
+                    ContentUnavailableView {
+                        Label("No apps yet", systemImage: "hammer")
+                    } description: {
+                        Text("Describe an app and Forge builds it for you.")
+                    } actions: {
+                        Button("New App") { store.create() }
+                    }
+                } else {
+                    ContentUnavailableView("Select an app", systemImage: "sidebar.left")
                 }
-            } else {
-                ContentUnavailableView("Select an app", systemImage: "sidebar.left")
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if store.setup.checked && !store.setup.hasBuildTools { BuildToolsBanner() }
             }
         }
         .alert("Rename “\(store.renaming?.name ?? "")”", isPresented: Binding(
@@ -800,10 +815,35 @@ struct AppInfoView: View {
     }
 }
 
+/// While Apple's tools install, above everything: what's happening, and that requests wait for it.
+private struct BuildToolsBanner: View {
+    @EnvironmentObject private var store: Store
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView().controlSize(.small)
+            Text("Installing Apple's app-building tools. Anything you ask for starts as soon as they're in.")
+                .font(.callout)
+            Spacer()
+            Button(store.setup.installRequested ? "Show Installer" : "Install…") {
+                if store.setup.installRequested { SetupCheck.installBuildTools() } else { store.requestBuildTools() }
+            }
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+    }
+}
+
 /// A message waiting for the current change to finish. It can still be taken back.
 struct QueuedRow: View {
+    @EnvironmentObject private var store: Store
     let message: QueuedMessage
     let onRemove: () -> Void
+
+    /// The first request, sent from the welcome while Apple's tools were still installing.
+    private var waitingForSetup: Bool { !store.setup.ready }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
@@ -824,7 +864,8 @@ struct QueuedRow: View {
             }
             // The width limit goes around the button too, so it stays next to the bubble.
             .frame(maxWidth: 480 + 22, alignment: .trailing)
-            Label("Queued", systemImage: "clock").font(.caption).foregroundStyle(.secondary)
+            Label(waitingForSetup ? "Starts when Apple's app-building tools finish installing" : "Queued",
+                  systemImage: "clock").font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
@@ -1067,23 +1108,10 @@ struct ApprovalCard: View {
 /// user can make it theirs first.
 struct StarterIdeas: View {
     let choose: (String) -> Void
+    @State private var hovered: String?
 
-    /// Starting points, each showing something different a Mac app can do. Choosing one fills in the first
-    /// request for the user to edit and send.
-    static let examples: [(title: String, symbol: String, blurb: String, prompt: String)] = [
-        ("Downloads Tidy", "folder.badge.gearshape", "Watches Downloads and sorts what lands there, from the menu bar.",
-         "Downloads Tidy: a menu bar app that watches my Downloads folder and groups new files by what they are (receipts, installers, screenshots, documents), suggesting a clear name for each. Nothing moves or gets renamed until I approve it."),
-        ("Screenshot Notes", "camera.viewfinder", "Reads the text in screenshots and makes it searchable.",
-         "Screenshot Notes: I drop screenshots on it and it pulls out the text and the key details (who, what, dates, amounts) into a searchable list, with the picture alongside."),
-        ("Clipboard Shelf", "list.clipboard", "Remembers what you copy, one shortcut away.",
-         "Clipboard Shelf: keeps the last 200 things I copy (text and images). A shortcut (⌃⌥V) opens a small searchable panel from any app; Return copies the item back so I can paste it. Let me pin items so they stay at the top."),
-        ("Reading Queue", "list.star", "Ranks PDFs and links by what matters to your work.",
-         "Reading Queue: I drop in PDFs, documents and links, and it ranks them by how much they matter for what I'm working on, which I describe in a box at the top. Each item gets a one-line summary and why it's ranked there."),
-        ("Focus Timer", "timer", "A menu bar timer with breaks, notifications and daily totals.",
-         "Focus Timer: a menu bar timer for 25-minute focus sessions with 5-minute breaks. It shows the time left in the menu bar, notifies me when a session or break ends, keeps a daily total, and has an Open at Login option in Settings."),
-        ("Photo Studio", "photo.on.rectangle.angled", "Cleans up product photos and makes new versions with AI.",
-         "Photo Studio: I drop in product photos and it puts each one on a clean white background, then lets me ask for variations in plain words (\"on a wooden table\", \"warmer light\"). Show before and after side by side, and export the ones I like."),
-    ]
+    /// The first of Forge's ideas. Choosing one fills in the first request for the user to edit and send.
+    static let examples = Ideas.pool.prefix(6)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1092,7 +1120,7 @@ struct StarterIdeas: View {
                 ForEach(Self.examples, id: \.title) { example in
                     Button { choose(example.prompt) } label: {
                         HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: example.symbol).frame(width: 20).foregroundStyle(.tint)
+                            IdeaIcon(symbol: example.symbol, hue: example.hue, size: 22, lit: hovered == example.title)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(example.title).font(.subheadline.weight(.semibold))
                                 Text(example.blurb).font(.caption).foregroundStyle(.secondary)
@@ -1106,6 +1134,7 @@ struct StarterIdeas: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .onHover { hovered = $0 ? example.title : (hovered == example.title ? nil : hovered) }
                     .help("Fills in the request so you can change it before sending")
                 }
             }

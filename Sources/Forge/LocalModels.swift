@@ -95,7 +95,7 @@ final class LocalModels: ObservableObject {
     }
 
     /// Model servers Forge looks for: Ollama and LM Studio.
-    nonisolated static let externalIDs = ["ext-ollama", "ext-lmstudio"]
+    nonisolated static let externalIDs = ["ext-lmstudio", "ext-ollama"]   // alphabetical by name
 
     nonisolated static func externalName(_ id: String) -> String {
         id == "ext-ollama" ? "Ollama" : id == "ext-lmstudio" ? "LM Studio" : id
