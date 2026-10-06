@@ -125,6 +125,7 @@ final class Store: ObservableObject {
         let why: String
     }
     @Published var approvals: [String: PendingApproval] = [:]   // project id → the command waiting
+    private var approving: Set<String> = []                       // project ids between the queue check and the card
     private var allowAllThisTurn: Set<String> = []
     /// The app whose Rename… alert is showing.
     @Published var renaming: LampProject?
@@ -1130,7 +1131,7 @@ final class Store: ObservableObject {
     private var currentRequests: [String: String] = [:]
 
     /// Applies Settings → Building → "Ask before running commands" to one command.
-    private func approveCommand(_ command: String, for project: LampProject, escalated: Bool) async -> Bool {
+    private func approveCommand(_ command: String, for project: LampProject, escalated: Bool, shell: Bool = true) async -> Bool {
         switch CommandApproval.current {
         case .never:
             log(project, .status, "Ran: \(command)")
@@ -1144,22 +1145,15 @@ final class Store: ObservableObject {
                 log(project, .status, "Ran: \(command)")
                 return true
             }
-            return await requestApproval(for: project, command: command)
+            return await requestApproval(for: project, command: command, shell: shell)
         default:
-            return await requestApproval(for: project, command: command)
+            return await requestApproval(for: project, command: command, shell: shell)
         }
     }
 
     /// For agents without their own classifier (pi): obviously risky commands always go to the user; the rest
     /// are judged by the decision model against the user's request. No decision model available → ask.
-    /// Obviously risky commands always go to the user, whatever any model says of them.
-    nonisolated static func looksRisky(_ command: String) -> Bool {
-        let risky = #"\bsudo\b|\|\s*(ba|z)?sh\b|\brm\s+-[a-zA-Z]*[rf][a-zA-Z]*\s+[~/]|\bgit\s+push\b|\bchmod\s+-R\b|\bkillall\b|\blaunchctl\b|\bdefaults\s+write\b|\bcurl\b[^|]*\|"#
-        return command.range(of: risky, options: .regularExpression) != nil
-    }
-
     private func commandLooksSafe(_ command: String, for project: LampProject) async -> Bool {
-        if Self.looksRisky(command) { return false }
         let state: [String: Any] = [
             "command": command,
             "user_request": currentRequests[project.id] ?? "",
@@ -1254,17 +1248,21 @@ final class Store: ObservableObject {
     /// Waits for the user to allow or deny a shell command. One request per app at a time; others queue.
     /// There's no timeout: commands wait until the user answers, stops the turn, or the turn ends.
     func requestApproval(for project: LampProject, command: String, title: String? = nil,
-                         explanation given: CommandExplanation? = nil) async -> Bool {
+                         explanation given: CommandExplanation? = nil, shell: Bool = true) async -> Bool {
         guard !command.trimmed.isEmpty else { return false }
         if allowAllThisTurn.contains(project.id) {
             log(project, .detail, "Ran (allowed for this turn): \(command)")
             return true
         }
-        while approvals[project.id] != nil { try? await Task.sleep(for: .milliseconds(200)) }
+        // One request per app at a time, from here on: a second one waits, including through the
+        // explanation below, so two can't both put up a card for the same slot.
+        while approvals[project.id] != nil || approving.contains(project.id) { try? await Task.sleep(for: .milliseconds(200)) }
         guard busy.contains(project.id) else { return false }   // the turn ended while queued
+        approving.insert(project.id)
+        defer { approving.remove(project.id) }
         // "Only when risky": a shell command the in-app model rates low risk runs without the card.
         var given = given
-        if title == nil, CommandApproval.current == .risky, !Self.looksRisky(command) {
+        if shell, title == nil, CommandApproval.current == .risky {
             note("Checking a command", for: project)
             if given == nil { given = await explain(command, for: project) }
             guard busy.contains(project.id) else { return false }
@@ -2001,6 +1999,7 @@ final class Store: ObservableObject {
             let input = body["tool_input"] as? [String: Any] ?? [:]
             let tool = body["tool_name"] as? String ?? "Bash"
             var command = body["command"] as? String ?? input["command"] as? String ?? ""
+            let shell = !command.isEmpty
             if command.isEmpty {   // a non-shell tool Claude Code wants permission for (e.g. a write outside the app)
                 let target = input["file_path"] as? String ?? input["url"] as? String ?? input["path"] as? String ?? ""
                 command = target.isEmpty ? tool : "\(tool): \(target)"
@@ -2015,7 +2014,7 @@ final class Store: ObservableObject {
                                                                      "permissionDecision": "deny",
                                                                      "permissionDecisionReason": "The user denied this command in Lamp."]])
             }
-            let allowed = await approveCommand(command, for: project, escalated: escalated)
+            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell)
             let reason = allowed ? "Approved in Lamp." : "The user denied this command in Lamp."
             if escalated {
                 let decision: [String: Any] = allowed ? ["behavior": "allow"] : ["behavior": "deny", "message": reason]

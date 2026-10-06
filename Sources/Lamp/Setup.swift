@@ -281,6 +281,9 @@ struct BuildingSettings: View {
     @AppStorage("settingsTab") private var tab = "building"
     @AppStorage("notify") private var notify = true
     @AppStorage("commandApproval") private var approval = CommandApproval.risky.rawValue
+    private var approvalChoice: Binding<String> {   // a saved "auto" from before shows as Only when risky
+        Binding(get: { CommandApproval(rawValue: approval)?.rawValue ?? CommandApproval.risky.rawValue }, set: { approval = $0 })
+    }
     @AppStorage("askOutsideFolder") private var askOutsideFolder = true
     @AppStorage("shareAppLog") private var shareLog = true
     @AppStorage("shareAppPictures") private var sharePictures = true
@@ -376,7 +379,7 @@ struct BuildingSettings: View {
                 }
             }
             Section {
-                Picker("Ask before running commands", selection: $approval) {
+                Picker("Ask before running commands", selection: approvalChoice) {
                     ForEach(CommandApproval.allCases) { Text($0.title).tag($0.rawValue) }
                 }
                 Text((CommandApproval(rawValue: approval) ?? .risky).detail)

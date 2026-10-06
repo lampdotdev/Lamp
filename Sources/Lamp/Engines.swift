@@ -35,7 +35,10 @@ enum CommandApproval: String, CaseIterable, Identifiable {
     static var current: CommandApproval {
         get {
             let saved = UserDefaults.standard.string(forKey: "commandApproval") ?? ""
-            return CommandApproval(rawValue: saved) ?? .risky   // "auto", from before "risky" existed, lands here too
+            if let mode = CommandApproval(rawValue: saved) { return mode }
+            // "auto", from before "risky" existed: written back, so the picker shows the choice it stands for.
+            if !saved.isEmpty { UserDefaults.standard.set(CommandApproval.risky.rawValue, forKey: "commandApproval") }
+            return .risky
         }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "commandApproval") }
     }
