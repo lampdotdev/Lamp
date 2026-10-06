@@ -97,6 +97,17 @@ Re-run a release (e.g. to rebuild the DMG) against its tag:
 gh workflow run mac-release.yml --ref v0.2.0 -f version=0.2.0
 ```
 
+## Trying the first run
+
+`scripts/fresh-start.sh begin` quits Forge, puts your whole setup aside (the Forge folder in Application
+Support, the `dev.forge.host` defaults and any Keychain items) and opens Forge as a first-time user would
+see it: the welcome screen, the key check, picking an engine, making the first app. `scripts/fresh-start.sh
+restore` throws away what the fresh run made and puts your setup back. Nothing is deleted until you restore.
+
+It can't show a Mac without the Command Line Tools, Gatekeeper on a fresh download, or permission prompts
+you've already answered. A second macOS user account shows the prompts; a clean VM with the release DMG
+shows everything, and is worth doing once for a release that changes setup.
+
 ## Updates (Sparkle)
 
 Release builds of Forge update themselves with [Sparkle](https://sparkle-project.org) 2. Once a day, and from **Forge → Check for Updates…**, Forge reads the update feed at `https://forge-updates.vercel.app/appcast.xml`. When there's a newer release, Sparkle shows its standard window with the release notes and an **Install** button. Builds from source, which have no Apple Team ID, don't check for updates.
