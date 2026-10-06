@@ -99,6 +99,9 @@ final class Store: ObservableObject {
     @Published var stamps: [String: BuildStamp] = [:]
     @Published var chatFocusRequest = 0
     @Published var setup = SetupCheck()
+    /// The welcome finished this run. Normally the saved setting says so too, but `-onboarded NO` on the
+    /// command line (for checking the welcome) keeps that setting from changing until Forge quits.
+    @Published var welcomeFinished = false
     @Published var usage: [String: AppUsage] = [:]
     @Published var icons: [String: NSImage] = [:]
     @Published var pendingImport: PendingImport?

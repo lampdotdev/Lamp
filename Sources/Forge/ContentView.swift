@@ -10,7 +10,7 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if !onboarded {
+            if !onboarded && !store.welcomeFinished {
                 OnboardingView().ignoresSafeArea()
             } else {
                 Group {

@@ -24,7 +24,7 @@ enum Onboarding {
 }
 
 private enum Step: Int, CaseIterable {
-    case hello, idea, setup, ready
+    case hello, idea, setup
 }
 
 /// Forge's colors while the brand is still settling: the ember of its icon, on a bright, warm ground.
@@ -52,8 +52,7 @@ struct OnboardingView: View {
                 switch step {
                 case .hello: HelloStep { go(to: .idea) }
                 case .idea: IdeaStep(prompt: $prompt, back: { go(to: .hello) }) { go(to: .setup) }
-                case .setup: SetupStep(back: { go(to: .idea) }) { go(to: .ready) }
-                case .ready: ReadyStep(prompt: prompt, back: { go(to: .setup) }, start: finish)
+                case .setup: SetupStep(back: { go(to: .idea) }, start: finish)
                 }
             }
             .id(step)
@@ -95,7 +94,10 @@ struct OnboardingView: View {
             try? await Task.sleep(for: .seconds(0.3))
             let idea = prompt.trimmed
             let window = window
-            withAnimation(.easeOut(duration: 0.4)) { onboarded = true }
+            withAnimation(.easeOut(duration: 0.4)) {
+                onboarded = true
+                store.welcomeFinished = true
+            }
             SettingsMenu.enable(true)
             // Once Forge's own view is in, so the welcome's fixed size doesn't hold the window back.
             try? await Task.sleep(for: .seconds(0.05))
@@ -419,7 +421,8 @@ private struct IdeaTile: View {
 private struct SetupStep: View {
     @EnvironmentObject private var store: Store
     let back: () -> Void
-    let next: () -> Void
+    /// Leaves the welcome and starts the first app.
+    let start: () -> Void
     @AppStorage("engine") private var engine = Engine.pi.rawValue
     @AppStorage("piProvider") private var piProvider = "openrouter"
     @State private var choice: Builder.Choice?
@@ -448,7 +451,7 @@ private struct SetupStep: View {
         }
         .overlay(alignment: .bottom) {
             Footer(back: back) {
-                BigButton(title: "Continue", action: next).disabled(!ready)
+                BigButton(title: "Start building", action: start).disabled(!ready)
             } aside: {
                 EmptyView()
             }
@@ -1014,79 +1017,6 @@ private struct Option<Logo: View>: View {
         .buttonStyle(.plain)
         .focusEffectDisabled()
         .onHover { over in withAnimation(.easeOut(duration: 0.15)) { hovering = over } }
-    }
-}
-
-/// 4. The send-off.
-private struct ReadyStep: View {
-    @EnvironmentObject private var store: Store
-    let prompt: String
-    let back: () -> Void
-    let start: () -> Void
-    @State private var shown = false
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 40)
-            ZStack {
-                ForEach(0..<3, id: \.self) { ring in
-                    Circle()
-                        .strokeBorder(Palette.ember.opacity(0.18 - Double(ring) * 0.05), lineWidth: 1)
-                        .frame(width: 150 + CGFloat(ring) * 56, height: 150 + CGFloat(ring) * 56)
-                        .scaleEffect(shown ? 1 : 0.6)
-                        .opacity(shown ? 1 : 0)
-                        .animation(.spring(response: 0.9, dampingFraction: 0.7).delay(0.1 + Double(ring) * 0.08), value: shown)
-                }
-                Image(nsImage: NSApp.applicationIconImage)
-                    .resizable().frame(width: 120, height: 120)
-                    .shadow(color: Palette.emberDeep.opacity(0.3), radius: 30, y: 14)
-                    .animation(.spring(response: 0.8, dampingFraction: 0.75)) {
-                        $0.scaleEffect(shown ? 1 : 0.7).rotationEffect(.degrees(shown ? 0 : -12))
-                    }
-            }
-            .frame(height: 260)
-            Text("Let's get building.")
-                .font(.system(size: 54, weight: .bold))
-                .tracking(-1.2)
-                .foregroundStyle(Palette.ink)
-                .reveal(shown, delay: 0.15)
-            Text(detail)
-                .font(.system(size: 18))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 560)
-                .padding(.top, 12)
-                .reveal(shown, delay: 0.25)
-            if !prompt.trimmed.isEmpty {
-                Text(prompt.trimmed)
-                    .font(.system(size: 14))
-                    .foregroundStyle(Palette.ink.opacity(0.75))
-                    .lineLimit(3)
-                    .multilineTextAlignment(.leading)
-                    .padding(.horizontal, 18).padding(.vertical, 14)
-                    .frame(width: 560, alignment: .leading)
-                    .background(Palette.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.black.opacity(0.06)))
-                    .padding(.top, 22)
-                    .reveal(shown, delay: 0.35)
-            }
-            Spacer(minLength: 28)
-            Footer(back: back) {
-                BigButton(title: prompt.trimmed.isEmpty ? "Open Forge" : "Start Building", action: start)
-                    .keyboardShortcut(.defaultAction)
-            } aside: {
-                EmptyView()
-            }
-        }
-        .onAppear { shown = true }
-    }
-
-    private var detail: String {
-        if prompt.trimmed.isEmpty { return "Describe an app whenever you're ready, and Forge makes it." }
-        if !store.setup.hasBuildTools {
-            return "Your app starts as soon as Apple's tools finish installing. Forge names it, designs its icon and opens it for you."
-        }
-        return "Forge names your app, designs its icon and opens it for you when it's ready. It usually takes a few minutes."
     }
 }
 
