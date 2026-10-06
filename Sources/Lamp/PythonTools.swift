@@ -67,11 +67,18 @@ final class PythonTools: ObservableObject {
               let data = try? Data(contentsOf: archive),
               SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == expected else { throw failure }
 
+        // Unpacked beside its final place and moved in only when whole: an unpacking cut short (a full disk,
+        // say) would otherwise leave half a uv there, and every later try would run that instead of fetching it again.
         let folder = ownUV.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let status = await Shell.run(#"/usr/bin/tar -xzf "$LAMP_ARCHIVE" -C "$LAMP_FOLDER" --strip-components 1"#, cwd: folder,
-                                     env: ["LAMP_ARCHIVE": archive.path, "LAMP_FOLDER": folder.path]) { _ in }
-        guard status == 0, FileManager.default.isExecutableFile(atPath: ownUV.path) else { throw failure }
+        let scratch = folder.appendingPathComponent("unpacking-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        guard (try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)) != nil else { throw failure }
+        let status = await Shell.run(#"/usr/bin/tar -xzf "$LAMP_ARCHIVE" -C "$LAMP_FOLDER" --strip-components 1"#, cwd: scratch,
+                                     env: ["LAMP_ARCHIVE": archive.path, "LAMP_FOLDER": scratch.path]) { _ in }
+        let unpacked = scratch.appendingPathComponent("uv")
+        guard status == 0, FileManager.default.isExecutableFile(atPath: unpacked.path) else { throw failure }
+        try? FileManager.default.removeItem(at: ownUV)
+        guard (try? FileManager.default.moveItem(at: unpacked, to: ownUV)) != nil else { throw failure }
         return ownUV.path
     }
 
