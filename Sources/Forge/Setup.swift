@@ -55,7 +55,24 @@ struct SetupView: View {
     @State private var key = ""
     @State private var checkingKey = false
     @State private var keyProblem: String?
-    @State private var showAlternatives = false
+    @State private var choice = "openrouter"
+
+    /// The ways to build, in the order shown. Claude Code and Codex appear when they're installed.
+    private static var choices: [(id: String, title: String, detail: String)] {
+        var all: [(id: String, title: String, detail: String)] = [
+            ("openrouter", "OpenRouter",
+             "Any of hundreds of models, paying OpenRouter only for what you use."),
+        ]
+        for engine in [Engine.claude, .codex] where ToolLocator.path(for: engine) != nil {
+            all.append((engine.rawValue, engine.title,
+                        "Uses your \(engine.title) sign-in, for building and for the AI inside your apps."))
+        }
+        all.append(("local", "A model on this Mac",
+                    "Free and private: a model Forge downloads and runs here. Smaller models build simpler apps."))
+        all.append(("other", "Another provider",
+                    "Anthropic, OpenAI, Google, Groq, Mistral and about twenty more, with your own key."))
+        return all
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -87,43 +104,46 @@ struct SetupView: View {
             }
 
             step(done: store.setup.hasBuilder,
-                 title: "Add an OpenRouter key",
-                 detail: "One key covers everything: building your apps, and the AI, images and decisions inside them. You pay OpenRouter only for what you use.") {
+                 title: "Choose what builds your apps",
+                 detail: store.setup.hasBuilder ? Builder.summary
+                    : "Any of these works. You can change it later in Settings.") {
                 EmptyView()
             }
             if !store.setup.hasBuilder {
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        SecureField("OpenRouter key (sk-or-…)", text: $key)
-                            .textFieldStyle(.roundedBorder)
-                            .onSubmit(saveKey)
-                            .onChange(of: key) { keyProblem = nil }
-                        if checkingKey {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Button("Save", action: saveKey).disabled(key.trimmed.isEmpty)
-                        }
-                        Link("Get a key", destination: URL(string: "https://openrouter.ai/keys")!)
+                    Picker("", selection: $choice) {
+                        ForEach(Self.choices, id: \.id) { Text($0.title).tag($0.id) }
                     }
-                    if let keyProblem {
-                        Label(keyProblem, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
-                    }
-                    DisclosureGroup("Use something you already have instead", isExpanded: $showAlternatives) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                ForEach(Engine.allCases.filter { $0 != .pi && ToolLocator.path(for: $0) != nil }) { engine in
-                                    Button(engine.title) { use(engine) }
-                                }
-                                Button("A model on this Mac…") { openSettings(tab: "providers", sheet: Builder.localProvider) }
-                                Button("Other providers…") { openSettings(tab: "building") }
+                    .pickerStyle(.radioGroup)
+                    .labelsHidden()
+                    Text(Self.choices.first { $0.id == choice }?.detail ?? "")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    switch choice {
+                    case "openrouter":
+                        HStack {
+                            SecureField("OpenRouter key (sk-or-…)", text: $key)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit(saveKey)
+                                .onChange(of: key) { keyProblem = nil }
+                            if checkingKey {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Button("Save", action: saveKey).disabled(key.trimmed.isEmpty)
                             }
-                            .controlSize(.small)
-                            Text("Apps' text AI then uses the same sign-in. Images and decisions inside apps still need an OpenRouter key, which you can add later in Settings.")
-                                .font(.caption).foregroundStyle(.secondary)
+                            Link("Get a key", destination: URL(string: "https://openrouter.ai/keys")!)
                         }
-                        .padding(.top, 6)
+                        if let keyProblem {
+                            Label(keyProblem, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
+                        }
+                    case "claude", "codex":
+                        let engine: Engine = choice == "claude" ? .claude : .codex
+                        Button("Use \(engine.title)") { use(engine) }
+                    case "local":
+                        Button("Choose a Model…") { openSettings(tab: "providers", sheet: Builder.localProvider) }
+                    default:
+                        Button("Choose a Provider…") { openSettings(tab: "building") }
                     }
-                    .font(.callout)
                 }
                 .padding(.leading, 36)
             }
