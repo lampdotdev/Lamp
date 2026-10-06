@@ -1152,9 +1152,14 @@ final class Store: ObservableObject {
 
     /// For agents without their own classifier (pi): obviously risky commands always go to the user; the rest
     /// are judged by the decision model against the user's request. No decision model available → ask.
-    private func commandLooksSafe(_ command: String, for project: LampProject) async -> Bool {
+    /// Obviously risky commands always go to the user, whatever any model says of them.
+    nonisolated static func looksRisky(_ command: String) -> Bool {
         let risky = #"\bsudo\b|\|\s*(ba|z)?sh\b|\brm\s+-[a-zA-Z]*[rf][a-zA-Z]*\s+[~/]|\bgit\s+push\b|\bchmod\s+-R\b|\bkillall\b|\blaunchctl\b|\bdefaults\s+write\b|\bcurl\b[^|]*\|"#
-        if command.range(of: risky, options: .regularExpression) != nil { return false }
+        return command.range(of: risky, options: .regularExpression) != nil
+    }
+
+    private func commandLooksSafe(_ command: String, for project: LampProject) async -> Bool {
+        if Self.looksRisky(command) { return false }
         let state: [String: Any] = [
             "command": command,
             "user_request": currentRequests[project.id] ?? "",
@@ -1257,6 +1262,19 @@ final class Store: ObservableObject {
         }
         while approvals[project.id] != nil { try? await Task.sleep(for: .milliseconds(200)) }
         guard busy.contains(project.id) else { return false }   // the turn ended while queued
+        // A shell command the in-app model rates low risk runs without the card, unless the person wants
+        // every command shown (Always) or asked to see the low-risk ones too.
+        var given = given
+        if title == nil, CommandApproval.current != .always, !CommandApproval.asksForLowRisk, !Self.looksRisky(command) {
+            note("Checking a command", for: project)
+            if given == nil { given = await explain(command, for: project) }
+            guard busy.contains(project.id) else { return false }
+            if let explanation = given, explanation.risk == "low" {
+                log(project, .status, "Ran: \(command)")
+                log(project, .detail, "Ran without asking (low risk): \(explanation.summary)")
+                return true
+            }
+        }
         NSApp.requestUserAttention(.informationalRequest)
         note(title == nil ? "Waiting for your OK to run a command" : "Waiting for your OK", for: project)
         return await withCheckedContinuation { continuation in

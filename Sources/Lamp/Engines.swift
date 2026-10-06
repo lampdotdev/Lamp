@@ -35,6 +35,13 @@ enum CommandApproval: String, CaseIterable, Identifiable {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "commandApproval") }
     }
 
+    /// Whether a command the in-app model rates low risk still waits for the user. Off by default: the
+    /// card is for things worth a look, and a green one every few seconds is what makes people stop reading.
+    static var asksForLowRisk: Bool {
+        get { UserDefaults.standard.bool(forKey: "askLowRisk") }
+        set { UserDefaults.standard.set(newValue, forKey: "askLowRisk") }
+    }
+
     /// Claude Code's auto mode turned out to be unavailable for this account; use "always" instead.
     static var claudeAutoUnavailable: Bool {
         get { UserDefaults.standard.bool(forKey: "claudeAutoUnavailable") }
@@ -51,7 +58,7 @@ enum CommandApproval: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .auto: "Routine commands run on their own; Lamp asks about anything risky or unexpected. Claude Code uses its safety classifier; other agents use the decision model."
+        case .auto: "Routine commands run on their own; Lamp asks about anything risky or unexpected. Claude Code uses its safety classifier; other agents use the decision model. A command that still gets rated low risk runs too, unless you ask to see those."
         case .always: "Lamp asks before every command."
         case .never: "Commands run without asking. They still show in the chat."
         }

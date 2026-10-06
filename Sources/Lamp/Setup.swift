@@ -281,6 +281,7 @@ struct BuildingSettings: View {
     @AppStorage("settingsTab") private var tab = "building"
     @AppStorage("notify") private var notify = true
     @AppStorage("commandApproval") private var approval = CommandApproval.auto.rawValue
+    @AppStorage("askLowRisk") private var askLowRisk = false
     @AppStorage("askOutsideFolder") private var askOutsideFolder = true
     @AppStorage("shareAppLog") private var shareLog = true
     @AppStorage("shareAppPictures") private var sharePictures = true
@@ -381,6 +382,11 @@ struct BuildingSettings: View {
                 }
                 Text((CommandApproval(rawValue: approval) ?? .auto).detail)
                     .font(.caption).foregroundStyle(.secondary)
+                if approval == CommandApproval.auto.rawValue {
+                    Toggle("Ask about low-risk commands too", isOn: $askLowRisk)
+                    Text("Every command is rated by the in-app model. Off, the green ones run on their own and show in the chat; on, they wait for you like the rest.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if approval == CommandApproval.auto.rawValue && CommandApproval.claudeAutoUnavailable && selectedEngine == .claude {
                     Text("Claude Code's auto mode isn't available for your account, so Lamp asks before every command.")
                         .font(.caption).foregroundStyle(.orange)
