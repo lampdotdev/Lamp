@@ -367,7 +367,7 @@ extension Agent {
                         "command": "curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
             }
             var permissionMode = "acceptEdits"
-            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app"
+            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version"
             // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
             // it the only server. The config is a file that reads the token from the environment, so the
             // token isn't on the command line for every process on the Mac to see.
@@ -382,18 +382,29 @@ extension Agent {
             // The file tools go through Lamp's privacy check like pi's and Codex's do, whatever the approval
             // mode: a read outside the app's folder asks, and sign-ins and keys are never opened.
             env["LAMP_FILE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-file"
-            var hooks: [String: Any] = ["PreToolUse": [["matcher": "Read|Edit|Write|Glob|Grep", "hooks": [hook("LAMP_FILE_URL", event: "PreToolUse")]]]]
+            var preToolUse: [[String: Any]] = [["matcher": "Read|Edit|Write|Glob|Grep", "hooks": [hook("LAMP_FILE_URL", event: "PreToolUse")]]]
+            var hooks: [String: Any] = [:]
+            // Every shell command goes to Lamp before it runs, in every mode but Never, so the setting means
+            // the same with Claude Code as with pi and Codex: Lamp's decision model and risk rating decide what
+            // is routine, and the user sees the rest. "Only when risky" and "Anything unusual" differ in how
+            // much that is; Claude's own classifier never gets to wave a command through on its own.
+            if approval != .never {
+                env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude"
+                preToolUse.append(["matcher": "Bash", "hooks": [hook("LAMP_APPROVE_URL", event: "PreToolUse")]])
+            }
             switch approval {
             case .risky, .unusual:
+                // For the tools that aren't shell commands (a fetch, a web search), Claude's automatic mode asks
+                // Lamp only about what its classifier escalates.
                 permissionMode = "auto"
-                env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-permission"
-                hooks["PermissionRequest"] = [["matcher": "*", "hooks": [hook("LAMP_APPROVE_URL", event: "PermissionRequest")]]]
+                env["LAMP_PERMISSION_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-permission"
+                hooks["PermissionRequest"] = [["matcher": "*", "hooks": [hook("LAMP_PERMISSION_URL", event: "PermissionRequest")]]]
             case .always:
-                env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude"
-                hooks["PreToolUse"] = (hooks["PreToolUse"] as! [[String: Any]]) + [["matcher": "Bash", "hooks": [hook("LAMP_APPROVE_URL", event: "PreToolUse")]]]
+                break
             case .never:
                 allowed += ",Bash"
             }
+            hooks["PreToolUse"] = preToolUse
             env["LAMP_CLAUDE_SETTINGS"] = String(decoding: (try? JSONSerialization.data(withJSONObject: ["hooks": hooks])) ?? Data("{}".utf8), as: UTF8.self)
             env["LAMP_CLAUDE_MODE"] = permissionMode
             env["LAMP_CLAUDE_ALLOWED"] = allowed

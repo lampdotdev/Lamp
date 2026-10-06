@@ -200,8 +200,12 @@ final class Store: ObservableObject {
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
-        // Finding Claude Code / Codex means asking the login shell for PATH; do it off the main thread.
-        Task.detached(priority: .utility) { _ = ToolLocator.userPath }
+        // Finding Claude Code / Codex means asking the login shell for PATH, then running each copy found with
+        // --version to pick the newest; done off the main thread now, so the first turn doesn't wait for it.
+        Task.detached(priority: .utility) {
+            _ = ToolLocator.userPath
+            for engine in Engine.allCases { _ = ToolLocator.path(for: engine) }
+        }
         Task {
             LocalModels.shared.refresh()
             await LocalModels.shared.detectExternal()
@@ -1498,6 +1502,22 @@ final class Store: ObservableObject {
             case "use_app":
                 let actions = (try? JSONSerialization.data(withJSONObject: arguments)) ?? Data("{}".utf8)
                 (status, answer) = await use(project, request: actions)
+            case "plan":
+                // pi's plan reaches the build card through its event stream (Agent.parseLine); here it's set directly.
+                let parts = (arguments["parts"] as? [[String: Any]] ?? []).enumerated().compactMap { index, part in
+                    (part["title"] as? String).map {
+                        PlanPart(id: index, title: $0, done: part["done"] as? Bool ?? false,
+                                 files: (part["files"] as? [String] ?? []).map { ($0 as NSString).lastPathComponent })
+                    }
+                }
+                progress[project.id]?.plan = parts
+                progress[project.id]?.tickWrittenParts()
+                (status, answer) = (200, ["text": "The user can see the plan."])
+            case "delete_file":
+                (status, answer) = deleteFile(arguments["path"] as? String ?? "", in: project)
+            case "list_versions": (status, answer) = await versions("", [:], of: project)
+            case "name_version": (status, answer) = await versions("/name", arguments, of: project)
+            case "restore_version": (status, answer) = await versions("/restore", arguments, of: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -1548,6 +1568,34 @@ final class Store: ObservableObject {
         }
     }
 
+    /// The agent's `delete_file`: one file inside the app's folder, never Lamp's own files, never through a
+    /// link that leads out. The same rules as pi's version in lamp-tools.ts.
+    private func deleteFile(_ path: String, in project: LampProject) -> (Int, [String: Any]) {
+        let root = project.dir.resolvingSymlinksInPath().standardizedFileURL
+        let target = URL(fileURLWithPath: path, relativeTo: project.dir).standardizedFileURL
+        let relative = target.path.hasPrefix(root.path + "/") || target.path.hasPrefix(project.dir.path + "/")
+            ? String(target.path.dropFirst((target.path.hasPrefix(root.path + "/") ? root.path : project.dir.path).count + 1)) : ""
+        guard !relative.isEmpty else { return (400, ["error": "Only files inside the app's folder can be deleted."]) }
+        // Compared without regard to case: the Mac's usual file system treats "package.swift" as the same file.
+        let protected = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift"]
+        let lowered = relative.lowercased()
+        if protected.contains(where: { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + "/") }) {
+            return (400, ["error": "\(relative) belongs to Lamp and can't be deleted."])
+        }
+        let fm = FileManager.default
+        guard let attributes = try? fm.attributesOfItem(atPath: target.path) else { return (404, ["error": "There's no file at \(relative)."]) }
+        guard attributes[.type] as? FileAttributeType == .typeRegular else {
+            return (400, ["error": "\(relative) isn't a file. Only single files can be deleted."])
+        }
+        // A folder on the way that is really a link could lead outside the app's folder.
+        let folder = target.deletingLastPathComponent().resolvingSymlinksInPath().path
+        guard folder == root.path || folder.hasPrefix(root.path + "/") else {
+            return (400, ["error": "Only files inside the app's folder can be deleted."])
+        }
+        do { try fm.removeItem(at: target) } catch { return (500, ["error": "Couldn't delete \(relative): \(error.localizedDescription)"]) }
+        return (200, ["text": "Deleted \(relative)."])
+    }
+
     /// The tools' descriptions match Lamp's pi extension (Resources/lamp-tools.ts).
     private static let mcpTools: [[String: Any]] = [
         ["name": "look_at_app",
@@ -1588,6 +1636,42 @@ final class Store: ObservableObject {
                     "key": ["type": "string", "description": "key: return, escape, tab, delete, space, up, down, left, right, or a letter, with modifiers like cmd+a"],
                     "amount": ["type": "number", "description": "scroll: points, positive scrolls down; wait: seconds"],
                 ]]]]]],
+        ["name": "plan",
+         "description": "Shows the user what you're building, as a short checklist in Lamp while they wait. For a new app, " +
+            "call it once before writing any code with the 3 to 5 main parts, each in plain words the user would " +
+            "use (what they'll be able to do, not file or type names), and the files you'll write for each part. " +
+            "Lamp ticks a part off when all of its files are written, so there's no need to call it again. " +
+            "Call it again only if the plan changes; every call replaces the whole list.",
+         "inputSchema": ["type": "object", "required": ["parts"], "additionalProperties": false, "properties": [
+            "parts": ["type": "array", "items": ["type": "object", "required": ["title", "files"], "additionalProperties": false, "properties": [
+                "title": ["type": "string", "description": "One part of the app, under ten words, in the user's words"],
+                "files": ["type": "array", "items": ["type": "string"],
+                          "description": "File names you'll write for this part, e.g. Scanner.swift. Each file belongs to one part."],
+                "done": ["type": "boolean", "description": "True to tick this part yourself"],
+            ]]]]]],
+        ["name": "delete_file",
+         "description": "Deletes one file in the app's folder that is no longer needed, such as a source file whose code " +
+            "moved elsewhere or a view that was removed. Use it instead of leaving an emptied file behind. " +
+            "It can't delete folders, files outside the app's folder, or the files Lamp generates.",
+         "inputSchema": ["type": "object", "required": ["path"], "additionalProperties": false, "properties": [
+            "path": ["type": "string", "description": "Path of the file, relative to the app's folder, e.g. Sources/CardsView.swift"]]]],
+        ["name": "list_versions",
+         "description": "Lists the app's saved versions, newest first: an id, when it was made, its name if it has one, and " +
+            "the request that made it. Lamp saves one after every request.",
+         "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false]],
+        ["name": "name_version",
+         "description": "Gives a version a short name the user will recognise, e.g. “Before the redesign” or “First working " +
+            "sync”. Without `version`, it names the version this request makes, once Lamp saves it. With a " +
+            "version id from list_versions, it names that one: use the current one before a big or risky change.",
+         "inputSchema": ["type": "object", "required": ["name"], "additionalProperties": false, "properties": [
+            "name": ["type": "string", "description": "A few words, in the user's terms"],
+            "version": ["type": "string", "description": "A version id from list_versions"]]]],
+        ["name": "restore_version",
+         "description": "Puts the app's files back as they were in an earlier version. Only use it when the user asks to go " +
+            "back to an earlier version, never to undo your own attempt. Find the id with list_versions first. " +
+            "Nothing is lost: the versions after it stay, so the user can go forward again.",
+         "inputSchema": ["type": "object", "required": ["version"], "additionalProperties": false, "properties": [
+            "version": ["type": "string", "description": "A version id from list_versions"]]]],
     ]
 
     /// Whether the installed app's binary contains a string, which says which Lamp features it was built with.
@@ -2136,7 +2220,10 @@ final class Store: ObservableObject {
         if route == "/mcp" { return await mcp(request.body, for: project, fileTools: request.path.contains("files=1")) }
         if request.path == "/agent/look" { return await look(at: project) }
         if request.path == "/agent/use" { return await use(project, request: request.body) }
-        if request.path.hasPrefix("/agent/versions") { return await versions(request, of: project) }
+        if request.path.hasPrefix("/agent/versions") {
+            let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+            return await versions(String(request.path.dropFirst("/agent/versions".count)), body, of: project)
+        }
         if route == "/agent/approve" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             // One of the agent's file tools, about to touch something outside the app's folder or in its runtime folder.
@@ -2310,20 +2397,20 @@ final class Store: ObservableObject {
         return await alert.beginSheetModal(for: window)
     }
 
-    /// The agent's version tools: `list_versions`, `name_version` and `restore_version`.
-    private func versions(_ request: Gateway.Request, of project: LampProject) async -> (Int, [String: Any]) {
+    /// The agent's version tools: `list_versions`, `name_version` and `restore_version`. `action` is "" to
+    /// list, "/name" or "/restore", for pi's endpoint and the MCP tools alike.
+    private func versions(_ action: String, _ body: [String: Any], of project: LampProject) async -> (Int, [String: Any]) {
         // Only for the agent Lamp is running right now: the app knows the same token, and must not be
         // able to change its own history.
         guard running[project.id] != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
-        let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
         let versions = await Versions.list(project)
         let id = (body["version"] as? String)?.trimmed.nilIfEmpty
         let version = id.flatMap { Versions.find($0, in: versions) }
         if id != nil && version == nil {
             return (404, ["error": "There's no version \(id!). Call list_versions for the ids."])
         }
-        switch request.path {
-        case "/agent/versions/name":
+        switch action {
+        case "/name":
             guard let name = (body["name"] as? String)?.trimmed.nilIfEmpty else { return (400, ["error": "A name is needed."]) }
             guard let version else {
                 pendingNames[project.id] = name
@@ -2332,7 +2419,7 @@ final class Store: ObservableObject {
             await Versions.name(project, version.id, name)
             versionsRevision += 1
             return (200, ["text": "Named \(version.shortID) “\(name)”."])
-        case "/agent/versions/restore":
+        case "/restore":
             guard let version else { return (400, ["error": "Say which version to restore."]) }
             guard await Versions.restoreFiles(project, to: version) else {
                 return (500, ["error": "Lamp couldn't restore that version."])

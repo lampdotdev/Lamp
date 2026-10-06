@@ -375,15 +375,23 @@ enum Attachments {
     }
 
     /// Text added to the user's message so the agent knows what's attached and how the app can use it.
-    static func note(for names: [String]) -> String {
+    /// pi gets the files with the prompt (`@file`), so they're "above"; Claude Code reads them itself, images
+    /// included; Codex reads them with Lamp's `read` tool, which shows images too (and `-i` only works on a
+    /// first turn, not a resumed one).
+    static func note(for names: [String], engine: Engine = Builder.engine) -> String {
         guard !names.isEmpty else { return "" }
         let list = names.map { "- \(folder)/\($0)" }.joined(separator: "\n")
+        let how: String
+        switch engine {
+        case .pi: how = "Images and small text files are included above; read the others with your tools if needed."
+        case .claude: how = "Read each of them with your Read tool before you start; it shows pictures too."
+        case .codex: how = "Read each of them with Lamp's `read` tool before you start; it shows pictures too."
+        }
         return """
 
 
-        Attached files (saved in \(folder)/ and bundled inside the app). Images and small text files are \
-        included above; read the others with your tools if needed. If the app should use a file, load it with \
-        `LampAssets.url("name")`, `LampAssets.image("name")` or `LampAssets.text("name")`:
+        Attached files (saved in \(folder)/ and bundled inside the app). \(how) If the app should use a file, \
+        load it with `LampAssets.url("name")`, `LampAssets.image("name")` or `LampAssets.text("name")`:
         \(list)
         """
     }

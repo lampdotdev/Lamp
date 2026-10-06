@@ -273,7 +273,9 @@ const deleteFile = defineTool({
 		if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
 			throw new Error("Only files inside the app's folder can be deleted.");
 		}
-		if (protectedPaths.some((item) => relative === item || relative.startsWith(item + path.sep))) {
+		// Compared without regard to case: the Mac's usual file system treats "package.swift" as the same file.
+		const lowered = relative.toLowerCase();
+		if (protectedPaths.some((item) => lowered === item.toLowerCase() || lowered.startsWith(item.toLowerCase() + path.sep))) {
 			throw new Error(`${relative} belongs to Lamp and can't be deleted.`);
 		}
 		const info = await lstat(target).catch(() => undefined);
