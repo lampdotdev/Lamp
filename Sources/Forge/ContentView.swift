@@ -1024,7 +1024,7 @@ struct ImportReviewView: View {
 
 /// A shell command the agent wants to run, explained in plain words. Nothing runs until the user allows it.
 struct ApprovalCard: View {
-    var title = "The agent wants to run a command"
+    var title = Store.PendingApproval.commandTitle
     let command: String
     let explanation: Store.CommandExplanation?
     let onAllow: () -> Void
@@ -1034,20 +1034,19 @@ struct ApprovalCard: View {
 
     private var highRisk: Bool { explanation?.risk == "high" }
 
-    private var footnote: String {
-        switch explanation?.risk {
-        case "low": ""
-        case "high": "Only allow this if you're sure it's what you asked for."
-        default: "Check it's something you expected."
-        }
-    }
-
+    /// The same green, yellow and red as app icons' backgrounds. The icon yellow is too pale to read on a
+    /// light background, so light mode gets a darker shade of it.
     private var riskColor: Color {
-        switch explanation?.risk {
-        case "low": .green
-        case "high": .red
-        default: .orange
+        let hex = switch explanation?.risk {
+        case "low": Icons.background(named: "green").bottom
+        case "high": Icons.background(named: "red").bottom
+        default: Icons.background(named: "yellow").bottom
         }
+        let color = Icons.color(hex: hex) ?? .systemOrange
+        guard explanation?.risk != "low" && explanation?.risk != "high" else { return Color(nsColor: color) }
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? color : color.blended(withFraction: 0.3, of: .black) ?? color
+        })
     }
 
     var body: some View {
@@ -1057,13 +1056,6 @@ struct ApprovalCard: View {
                 // No fixedSize here: it makes SwiftUI size the text for its narrowest possible width, and that
                 // height became the whole window's minimum, growing the window past the screen.
                 Text(explanation.summary).font(.headline)
-                Label {
-                    Text("\(explanation.risk.capitalized) risk").bold() + Text(explanation.why.isEmpty ? "" : ": \(explanation.why)")
-                } icon: {
-                    Image(systemName: explanation.risk == "low" ? "checkmark.shield" : "exclamationmark.triangle")
-                }
-                .font(.callout)
-                .foregroundStyle(riskColor)
             } else {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
@@ -1096,7 +1088,11 @@ struct ApprovalCard: View {
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
             }
             HStack {
-                Text(footnote).font(.caption).foregroundStyle(.secondary)
+                if let explanation {
+                    (Text("\(explanation.risk.capitalized) risk").bold() + Text(explanation.why.isEmpty ? "" : ": \(explanation.why)"))
+                        .font(.callout)
+                        .foregroundStyle(riskColor)
+                }
                 Spacer()
                 if highRisk {
                     // Risky: denying is the default, and there's no blanket "allow all".
