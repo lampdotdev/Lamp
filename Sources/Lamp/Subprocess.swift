@@ -40,15 +40,10 @@ enum Subprocess {
         } catch {
             return Result(status: -1, output: "", errors: "Could not start \(tool): \(error.localizedDescription)", timedOut: false)
         }
-        // Drained on their own threads from the start, so neither pipe can fill while the tool runs.
-        let group = DispatchGroup()
-        var output = Data(), errors = Data()
-        group.enter()
-        DispatchQueue.global().async { output = out.fileHandleForReading.readDataToEndOfFile(); group.leave() }
-        if !mergeErrors {
-            group.enter()
-            DispatchQueue.global().async { errors = err.fileHandleForReading.readDataToEndOfFile(); group.leave() }
-        }
+        // Drained as it arrives, so neither pipe can fill while the tool runs, and what has arrived is kept
+        // even if the pipe never closes (a child the tool left behind can hold it open).
+        let output = Drain(out.fileHandleForReading)
+        let errors = mergeErrors ? nil : Drain(err.fileHandleForReading)
         // Polled rather than waitUntilExit(), which off the main thread can wait forever for a process that
         // has already gone.
         let deadline = timeout.map { Date().addingTimeInterval($0) }
@@ -59,10 +54,42 @@ enum Subprocess {
         }
         while process.isRunning { Thread.sleep(forTimeInterval: 0.02) }
         // The pipes close when the last holder goes: normally the tool itself. A child it left behind could
-        // keep them open, so the wait for the rest of the output is bounded.
-        _ = group.wait(timeout: .now() + 2)
-        return Result(status: process.terminationStatus, output: String(decoding: output, as: UTF8.self),
-                      errors: String(decoding: errors, as: UTF8.self), timedOut: timedOut)
+        // keep them open, so the wait for the rest of the output is bounded, and the readers are stopped
+        // before the result is taken.
+        let deadlineForOutput = Date().addingTimeInterval(2)
+        output.finish(by: deadlineForOutput)
+        errors?.finish(by: deadlineForOutput)
+        return Result(status: process.terminationStatus, output: output.text, errors: errors?.text ?? "", timedOut: timedOut)
+    }
+
+    /// Reads a pipe as data arrives, on the file handle's own queue, into a buffer the result is taken from.
+    private final class Drain: @unchecked Sendable {
+        private let handle: FileHandle
+        private let lock = NSLock()
+        private var data = Data()
+        private let closed = DispatchSemaphore(value: 0)
+
+        init(_ handle: FileHandle) {
+            self.handle = handle
+            handle.readabilityHandler = { [weak self] handle in
+                let chunk = handle.availableData
+                guard let self else { return }
+                if chunk.isEmpty {   // end of output
+                    handle.readabilityHandler = nil
+                    self.closed.signal()
+                } else {
+                    self.lock.withLock { self.data.append(chunk) }
+                }
+            }
+        }
+
+        /// Waits for the end of the output until `deadline`, then stops reading either way.
+        func finish(by deadline: Date) {
+            _ = closed.wait(timeout: .now() + max(0, deadline.timeIntervalSinceNow))
+            handle.readabilityHandler = nil
+        }
+
+        var text: String { lock.withLock { String(decoding: data, as: UTF8.self) } }
     }
 
     // MARK: Stopping

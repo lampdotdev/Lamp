@@ -204,7 +204,8 @@ enum ToolLocator {
         if let resolvedPath { return resolvedPath }
         let home = NSHomeDirectory()
         var parts: [String] = []
-        let shell = Subprocess.runBlocking("/bin/zsh", ["-ilc", "printf '%s' \"$PATH\""], timeout: 5)
+        // Only what the shell prints, not what its startup files say on stderr: that would land in the PATH.
+        let shell = Subprocess.runBlocking("/bin/zsh", ["-ilc", "printf '%s' \"$PATH\""], mergeErrors: false, timeout: 5)
         if shell.ok { parts = shell.output.split(separator: ":").map(String.init).filter { $0.hasPrefix("/") } }
         parts += ["\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
         var seen = Set<String>()
