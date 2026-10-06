@@ -484,7 +484,8 @@ struct ProjectView: View {
                     .help("Attach files. You can also paste or drop images and files here.")
                     .frame(height: Composer.lineHeight)
                 Composer(text: $draft, height: $composerHeight,
-                         placeholder: busy ? "Working… describe the next change" : "Describe a change…",
+                         placeholder: busy ? "Working… describe the next change"
+                            : lines.isEmpty ? "Describe an app…" : "Describe a change…",
                          suggestion: shownSuggestion, onDismissSuggestion: { dismissedSuggestion = suggestion },
                          isEnabled: true, focusRequest: focusRequest,
                          onSubmit: send, onFiles: { attachments.append(contentsOf: $0) })
