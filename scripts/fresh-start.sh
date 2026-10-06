@@ -16,8 +16,8 @@
 set -euo pipefail
 
 support="$HOME/Library/Application Support"
-state="$support/Lamp"
-backup="$support/Lamp-fresh-start"
+state="$support/Forge"
+backup="$support/Forge-fresh-start"
 domain="dev.forge.host"
 
 # The accounts of every Keychain item with Lamp's service name, one per line.

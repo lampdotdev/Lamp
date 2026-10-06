@@ -25,9 +25,9 @@ swift build
 ffmpeg -framerate 30 -i out/tour/%04d.png -c:v libx264 -pix_fmt yuv420p -crf 16 out/tour.mp4
 ```
 
-`Icon.swift` makes the app icon from the same lamp, with golden smoke on its own layer:
-`.build/debug/LampLab icon out ../../../Resources` (from this folder) writes the Icon Composer document and
-replaces the app's icon files; copy `out/AppIcon.icon` to `Resources/Icon/` too.
+`Icon.swift` made an earlier app icon from the same lamp, with golden smoke on its own layer. The app no
+longer uses it: its icon is now a painted lamp at sunset (`Resources/Icon/`), and running
+`.build/debug/LampLab icon out ../../../Resources` would replace that with the porcelain one.
 
 `Scene3D.swift` and `Welcome.swift` are the earlier gold version (lamp, smoke, and the apps as blocks rising
 out of it, reflected in the gold), kept for reference: `.build/debug/LampLab still out` and `video out`.

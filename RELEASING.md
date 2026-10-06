@@ -60,6 +60,12 @@ copied out of the DMG. Then it packages a drag-to-Applications DMG, notarizes an
 verifies both with Gatekeeper. `SKIP_NOTARIZE=1` stops after the signed DMG,
 which is useful for checking signing without submitting to Apple.
 
+The DMG's window (Lamp, an arrow and Applications over a night sky) is laid out by
+[dmgbuild](https://github.com/dmgbuild/dmgbuild), which `release.sh` installs into a throwaway virtualenv,
+from `scripts/dmg-settings.py`. Its background is `Resources/DMG/background.tiff`; after changing the
+picture (`Resources/DMG/sky.png`) or the icons' positions, run `swift scripts/dmg-background.swift` to draw
+it again.
+
 ## Version numbers
 
 A release's version is its tag: `v0.3.1` builds Lamp 0.3.1. Nothing bumps it automatically; the person
@@ -82,11 +88,11 @@ trigger a signed build. The certificate owner adds the secrets once. Run these y
 for its value or reads the file:
 
 ```bash
-gh secret set MACOS_CERT_P12_BASE64 --env release --repo RooCodeInc/Lamp < <(base64 -i ~/Desktop/DeveloperID.p12)
-gh secret set MACOS_CERT_PASSWORD   --env release --repo RooCodeInc/Lamp   # the .p12 export password
-gh secret set NOTARY_APPLE_ID       --env release --repo RooCodeInc/Lamp
-gh secret set NOTARY_TEAM_ID        --env release --repo RooCodeInc/Lamp
-gh secret set NOTARY_PASSWORD       --env release --repo RooCodeInc/Lamp   # the app-specific password
+gh secret set MACOS_CERT_P12_BASE64 --env release --repo RooCodeInc/Forge < <(base64 -i ~/Desktop/DeveloperID.p12)
+gh secret set MACOS_CERT_PASSWORD   --env release --repo RooCodeInc/Forge   # the .p12 export password
+gh secret set NOTARY_APPLE_ID       --env release --repo RooCodeInc/Forge
+gh secret set NOTARY_TEAM_ID        --env release --repo RooCodeInc/Forge
+gh secret set NOTARY_PASSWORD       --env release --repo RooCodeInc/Forge   # the app-specific password
 ```
 
 Then move `DeveloperID.p12` into 1Password and delete it from the Desktop.
@@ -116,6 +122,6 @@ Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.
 - **The feed:** `updates/` is a small Vercel app (project `forge-updates` on the Roo Code team) that keeps the repo private:
   - `/appcast.xml` builds the feed from the GitHub releases that have a `sparkle.json`, with each release's notes.
   - `/download/<tag>` redirects to GitHub's short-lived download link for that release's DMG.
-  - It reads the releases with `GITHUB_TOKEN`, a fine-grained token with **Contents: read-only** on `RooCodeInc/Lamp` only.
+  - It reads the releases with `GITHUB_TOKEN`, a fine-grained token with **Contents: read-only** on `RooCodeInc/Forge` only.
   - Deploy with `cd updates && vercel deploy --prod --scope roo-code`.
 - **Only newer releases appear:** releases before the first one with `sparkle.json` aren't in the feed, because Sparkle couldn't verify them. Copies of Lamp from before Sparkle was added need one manual update to a release that includes it.

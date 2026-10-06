@@ -35,7 +35,11 @@ struct ContentView: View {
             AppSidebar()
                 .navigationSplitViewColumnWidth(min: 200, ideal: 230)
         } detail: {
-            Group {
+            // The banner sits in a stack rather than a top safe-area inset: an inset, even an empty one, keeps
+            // the chat's scroll view from reaching the toolbar, and macOS then drops the toolbar's background
+            // and divider when the chat scrolls under it.
+            VStack(spacing: 0) {
+                if store.setup.checked && !store.setup.hasBuildTools { BuildToolsBanner() }
                 if let project = store.selected {
                     ProjectView(project: project).id(project.id)
                 } else if store.projects.isEmpty {
@@ -49,9 +53,6 @@ struct ContentView: View {
                 } else {
                     ContentUnavailableView("Select an app", systemImage: "sidebar.left")
                 }
-            }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if store.setup.checked && !store.setup.hasBuildTools { BuildToolsBanner() }
             }
         }
         .alert("Rename “\(store.renaming?.name ?? "")”", isPresented: Binding(
@@ -381,9 +382,12 @@ struct ProjectView: View {
     @State private var dismissedSuggestion: String?
 
     private var lines: [LogLine] {
-        LogLine.visible(store.logs[project.id] ?? [], details: showDetails, busy: busy)
+        LogLine.visible(store.logs[project.id] ?? [], details: showDetails)
     }
     private var busy: Bool { store.busy.contains(project.id) }
+    /// How much of its latest message the agent has written so far: a message being written grows without
+    /// adding a line, and the chat follows it down.
+    private var written: Int { busy ? lines.last?.text.count ?? 0 : 0 }
     /// The chat area has to be about twice the build card's height before the card is pinned.
     private static let roomToPinCard: CGFloat = 560
 
@@ -445,6 +449,7 @@ struct ProjectView: View {
                     // no scrolling to get there.
                     .defaultScrollAnchor(.bottom)
                     .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
+                    .onChange(of: written) { proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: store.progress[project.id]?.plan.count) { proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: store.progress[project.id]?.screenshot != nil) { proxy.scrollTo("bottom", anchor: .bottom) }
@@ -1028,7 +1033,7 @@ struct ImportReviewView: View {
 
 /// A shell command the agent wants to run, explained in plain words. Nothing runs until the user allows it.
 struct ApprovalCard: View {
-    var title = "The agent wants to run a command"
+    var title = Store.PendingApproval.commandTitle
     let command: String
     let explanation: Store.CommandExplanation?
     let onAllow: () -> Void
@@ -1038,20 +1043,19 @@ struct ApprovalCard: View {
 
     private var highRisk: Bool { explanation?.risk == "high" }
 
-    private var footnote: String {
-        switch explanation?.risk {
-        case "low": ""
-        case "high": "Only allow this if you're sure it's what you asked for."
-        default: "Check it's something you expected."
-        }
-    }
-
+    /// The same green, yellow and red as app icons' backgrounds. The icon yellow is too pale to read on a
+    /// light background, so light mode gets a darker shade of it.
     private var riskColor: Color {
-        switch explanation?.risk {
-        case "low": .green
-        case "high": .red
-        default: .orange
+        let hex = switch explanation?.risk {
+        case "low": Icons.background(named: "green").bottom
+        case "high": Icons.background(named: "red").bottom
+        default: Icons.background(named: "yellow").bottom
         }
+        let color = Icons.color(hex: hex) ?? .systemOrange
+        guard explanation?.risk != "low" && explanation?.risk != "high" else { return Color(nsColor: color) }
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? color : color.blended(withFraction: 0.3, of: .black) ?? color
+        })
     }
 
     var body: some View {
@@ -1061,13 +1065,6 @@ struct ApprovalCard: View {
                 // No fixedSize here: it makes SwiftUI size the text for its narrowest possible width, and that
                 // height became the whole window's minimum, growing the window past the screen.
                 Text(explanation.summary).font(.headline)
-                Label {
-                    Text("\(explanation.risk.capitalized) risk").bold() + Text(explanation.why.isEmpty ? "" : ": \(explanation.why)")
-                } icon: {
-                    Image(systemName: explanation.risk == "low" ? "checkmark.shield" : "exclamationmark.triangle")
-                }
-                .font(.callout)
-                .foregroundStyle(riskColor)
             } else {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
@@ -1100,7 +1097,11 @@ struct ApprovalCard: View {
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
             }
             HStack {
-                Text(footnote).font(.caption).foregroundStyle(.secondary)
+                if let explanation {
+                    (Text("\(explanation.risk.capitalized) risk").bold() + Text(explanation.why.isEmpty ? "" : ": \(explanation.why)"))
+                        .font(.callout)
+                        .foregroundStyle(riskColor)
+                }
                 Spacer()
                 if highRisk {
                     // Risky: denying is the default, and there's no blanket "allow all".
