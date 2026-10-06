@@ -1319,15 +1319,18 @@ final class Store: ObservableObject {
             if await updateForThisForge(project) { return }
         }
         if let running = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first {
-            // Ask the app to show a window (opening a new one if all were closed); see LampWindows.
+            // Ask the app to show a window (opening a new one if all were closed); see LampWindows. The app
+            // says when it has: a window, or the panel of an app that lives in the menu bar, which isn't an
+            // ordinary window and wouldn't be found below.
+            let acknowledged = Acknowledgement(name: "dev.lamp.windowShown", object: project.bundleID)
             DistributedNotificationCenter.default().postNotificationName(
                 Notification.Name("dev.lamp.showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
             running.activate()
             // Whatever the app did with that (an app built before the listener existed ignores it; one that
-            // replaced New Window can't open one), a window has to be on screen: if there's none, relaunch it.
-            try? await Task.sleep(for: .seconds(1.5))
+            // replaced New Window can't open one), something has to be on screen: if there's nothing, relaunch it.
+            let shown = await acknowledged.wait(seconds: 1.5)
             guard !running.isTerminated else { return }   // it's relaunching itself (LampWindows.relaunch)
-            guard !Self.hasWindow(running.processIdentifier) else { return }
+            guard !shown, !Self.hasWindow(running.processIdentifier) else { return }
             running.terminate()
             for _ in 0..<30 where !running.isTerminated { try? await Task.sleep(for: .milliseconds(100)) }
             if !running.isTerminated { running.forceTerminate() }
@@ -1487,6 +1490,32 @@ final class Store: ObservableObject {
     }
 
     /// Whether the installed app was built with LampWindows (its binary contains the message name).
+    /// One distributed notification, awaited with a time limit.
+    private final class Acknowledgement: @unchecked Sendable {
+        private let observer: NSObjectProtocol
+
+        init(name: String, object: String) {
+            let lock = NSLock()
+            var flag = false
+            observer = DistributedNotificationCenter.default().addObserver(forName: Notification.Name(name), object: object, queue: nil) { _ in
+                lock.lock(); flag = true; lock.unlock()
+            }
+            check = { lock.lock(); defer { lock.unlock() }; return flag }
+        }
+        private let check: () -> Bool
+
+        deinit { DistributedNotificationCenter.default().removeObserver(observer) }
+
+        func wait(seconds: Double) async -> Bool {
+            let deadline = Date().addingTimeInterval(seconds)
+            while Date() < deadline {
+                if check() { return true }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            return check()
+        }
+    }
+
     /// Whether a process has a normal window on screen (window list metadata needs no permission).
     private static func hasWindow(_ pid: pid_t) -> Bool {
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []

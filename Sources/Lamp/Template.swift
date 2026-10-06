@@ -219,23 +219,32 @@ enum Template {
             if !windows.contains(where: \.isVisible) {
                 if let minimized = windows.first(where: \.isMiniaturized) {
                     minimized.deminiaturize(nil)
+                } else if let (menu, item) = windowOpener() {
+                    // A main window first, even for an app that also has a menu bar icon.
+                    menu.performActionForItem(at: menu.index(of: item))
                 } else if LampMenuBar.isInstalled {
                     // An app that lives in the menu bar: the panel behind its icon is its window.
-                    return LampMenuBar.show()
-                } else if let (menu, item) = windowOpener() {
-                    menu.performActionForItem(at: menu.index(of: item))
+                    LampMenuBar.show()
+                    return shown()
                 }
             }
             NSApp.activate()
             if let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) {
                 window.makeKeyAndOrderFront(nil)
-                return
+                return shown()
             }
             // Nothing could bring a window back: the app replaced New Window with something else, or its only
             // window has no menu item. Rather than sit in the Dock with nothing to show, start again with one.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) { relaunch() }
             }
+        }
+
+        /// Tells Lamp the app has something on screen (a window or its menu bar panel), so Lamp's Play doesn't
+        /// take a missing ordinary window for a failure and relaunch the app.
+        private static func shown() {
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name("dev.lamp.windowShown"), object: Bundle.main.bundleIdentifier, userInfo: nil, deliverImmediately: true)
         }
 
         /// The menu item that opens a window: File ▸ New Window (⌘N) while it still does that, or for an app with
