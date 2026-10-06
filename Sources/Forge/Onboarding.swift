@@ -428,6 +428,8 @@ private struct SetupStep: View {
     @State private var choice: Builder.Choice?
     @State private var signedIn: [Engine: Bool] = [:]
     @State private var signingIn: Engine?
+    /// Whether the Forge Agent option on screen (that provider, that model) is the one set up to build.
+    @State private var forgeReady = false
 
     var body: some View {
         // Centered like the other steps. The Forge Agent options can make it taller than a small window,
@@ -439,7 +441,7 @@ private struct SetupStep: View {
                     Heading(title: "Get the Forge ready to work", detail: "We need to configure two things.")
                     VStack(spacing: 12) {
                         ToolsCard()
-                        BuilderCard(choice: $choice, signedIn: $signedIn, signingIn: $signingIn)
+                        BuilderCard(choice: $choice, signedIn: $signedIn, signingIn: $signingIn, forgeReady: $forgeReady)
                     }
                     .frame(width: 720)
                     .padding(.top, 26)
@@ -476,7 +478,7 @@ private struct SetupStep: View {
         switch choice {
         case .claude: return signedIn[.claude] == true
         case .chatGPT: return signedIn[.codex] == true
-        default: return true
+        default: return forgeReady
         }
     }
 
@@ -582,6 +584,7 @@ private struct BuilderCard: View {
     @Binding var choice: Builder.Choice?
     @Binding var signedIn: [Engine: Bool]
     @Binding var signingIn: Engine?
+    @Binding var forgeReady: Bool
     @AppStorage("engine") private var engine = Engine.pi.rawValue
     @State private var problem: String?
 
@@ -609,7 +612,7 @@ private struct BuilderCard: View {
                         switch choice {
                         case .claude: account(.claude, app: "Claude", download: "https://claude.ai/download")
                         case .chatGPT: account(.codex, app: "ChatGPT", download: "https://openai.com/chatgpt/download/")
-                        default: ForgeAgentOptions(choice: Binding(get: { choice }, set: { pick($0) }))
+                        default: ForgeAgentOptions(choice: Binding(get: { choice }, set: { pick($0) }), ready: $forgeReady)
                         }
                     }
                     .transition(.opacity.combined(with: .offset(y: -6)))
@@ -680,6 +683,7 @@ private struct ForgeAgentOptions: View {
     @EnvironmentObject private var store: Store
     @ObservedObject private var local = LocalModels.shared
     @Binding var choice: Builder.Choice
+    @Binding var ready: Bool
     @AppStorage("engine") private var engine = Engine.pi.rawValue
     @AppStorage("piProvider") private var piProvider = "openrouter"
     @State private var key = ""
@@ -710,6 +714,9 @@ private struct ForgeAgentOptions: View {
             localChoice = defaultLocalChoice()
             apply()
         }
+        // Ready only when what's on screen is exactly what will build: not a provider chosen before, nor a
+        // model that isn't downloaded yet.
+        .onChange(of: showsReady, initial: true) { ready = showsReady }
         .onChange(of: local.installed) {
             // A download finished: switch to the model it installed, and use it.
             if let spec = spec(localChoice), let id = local.installedID(for: spec) {
@@ -733,7 +740,7 @@ private struct ForgeAgentOptions: View {
         case .openRouter:
             if KeyStore.key(for: "openrouter") != nil { use(provider: "openrouter", model: nil) }
         case .another:
-            if providerReady, !model.isEmpty { use(provider: provider, model: model) }
+            if providerReady, models.contains(model) { use(provider: provider, model: model) }
         case .onThisMac:
             if localChoice.hasPrefix("installed:") { use(provider: Builder.localProvider, model: String(localChoice.dropFirst(10))) }
         default:
@@ -748,6 +755,21 @@ private struct ForgeAgentOptions: View {
         engine = Engine.pi.rawValue
         piProvider = id
         Task { await store.recheckSetup() }
+    }
+
+    private var showsReady: Bool {
+        guard isUsing(choice) else { return false }
+        switch choice {
+        case .openRouter:
+            return piProvider == "openrouter"
+        case .another:
+            return piProvider == provider && providerReady && models.contains(model) && Builder.piModel == model
+        case .onThisMac:
+            return localChoice.hasPrefix("installed:") && piProvider == Builder.localProvider
+                && Builder.piModel == String(localChoice.dropFirst(10))
+        default:
+            return false
+        }
     }
 
     private func isUsing(_ option: Builder.Choice) -> Bool {
@@ -813,11 +835,18 @@ private struct ForgeAgentOptions: View {
             }
         }
         .onChange(of: provider) {
+            // The last provider's models don't belong to this one: nothing to pick until its own list is in.
+            models = []
+            model = ""
             key = ""
             problem = nil
             Task { await loadModels() }
         }
-        .onChange(of: model) { if !model.isEmpty { UserDefaults.standard.set(model, forKey: "piModel.\(provider)"); apply() } }
+        .onChange(of: model) {
+            guard models.contains(model) else { return }
+            UserDefaults.standard.set(model, forKey: "piModel.\(provider)")
+            apply()
+        }
         .task { await loadModels() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             // Back from opening Ollama or LM Studio.

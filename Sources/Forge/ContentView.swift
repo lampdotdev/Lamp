@@ -14,7 +14,13 @@ struct ContentView: View {
                 OnboardingView().ignoresSafeArea()
             } else {
                 Group {
-                    if store.setup.checked && !store.setup.ready { SetupView() } else { main }
+                    // Only Apple's tools missing (say, still installing after the welcome): Forge stays usable,
+                    // and anything asked for waits in its chat until they're in.
+                    if store.setup.checked && !store.setup.ready && !(store.setup.hasBuilder && store.setup.hasAgent) {
+                        SetupView()
+                    } else {
+                        main
+                    }
                 }
                 .frame(minWidth: 760, minHeight: 480)
             }
@@ -29,18 +35,23 @@ struct ContentView: View {
             AppSidebar()
                 .navigationSplitViewColumnWidth(min: 200, ideal: 230)
         } detail: {
-            if let project = store.selected {
-                ProjectView(project: project).id(project.id)
-            } else if store.projects.isEmpty {
-                ContentUnavailableView {
-                    Label("No apps yet", systemImage: "hammer")
-                } description: {
-                    Text("Describe an app and Forge builds it for you.")
-                } actions: {
-                    Button("New App") { store.create() }
+            Group {
+                if let project = store.selected {
+                    ProjectView(project: project).id(project.id)
+                } else if store.projects.isEmpty {
+                    ContentUnavailableView {
+                        Label("No apps yet", systemImage: "hammer")
+                    } description: {
+                        Text("Describe an app and Forge builds it for you.")
+                    } actions: {
+                        Button("New App") { store.create() }
+                    }
+                } else {
+                    ContentUnavailableView("Select an app", systemImage: "sidebar.left")
                 }
-            } else {
-                ContentUnavailableView("Select an app", systemImage: "sidebar.left")
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if store.setup.checked && !store.setup.hasBuildTools { BuildToolsBanner() }
             }
         }
         .alert("Rename “\(store.renaming?.name ?? "")”", isPresented: Binding(
@@ -801,6 +812,27 @@ struct AppInfoView: View {
     private func runs(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
     private func label(_ models: [(id: String, label: String)], _ id: String) -> String {
         models.first { $0.id == id }?.label ?? id
+    }
+}
+
+/// While Apple's tools install, above everything: what's happening, and that requests wait for it.
+private struct BuildToolsBanner: View {
+    @EnvironmentObject private var store: Store
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView().controlSize(.small)
+            Text("Installing Apple's app-building tools. Anything you ask for starts as soon as they're in.")
+                .font(.callout)
+            Spacer()
+            Button(store.setup.installRequested ? "Show Installer" : "Install…") {
+                if store.setup.installRequested { SetupCheck.installBuildTools() } else { store.requestBuildTools() }
+            }
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
     }
 }
 

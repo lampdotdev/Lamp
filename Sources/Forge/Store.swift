@@ -161,6 +161,7 @@ final class Store: ObservableObject {
     private init() {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         reload()
+        restoreWaiting()
         for project in projects { discardIfUnused(project.id) }
         Onboarding.settle(hasApps: !projects.isEmpty)
         selection = projects.first?.id
@@ -200,6 +201,7 @@ final class Store: ObservableObject {
     /// Requests sent before setup finished (the welcome's first app) start now.
     private func becameReady() async {
         for project in projects where !(queued[project.id] ?? []).isEmpty { startQueued(project) }
+        saveWaiting()
         await backfillIcons()
     }
 
@@ -606,6 +608,27 @@ final class Store: ObservableObject {
     func send(_ prompt: String, attachments: [URL] = [], to project: ForgeProject) {
         queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: attachments))
         startQueued(project)
+        saveWaiting()
+    }
+
+    /// Requests waiting for setup (the welcome's first app, while Apple's tools install), kept on disk so
+    /// quitting meanwhile doesn't lose them: they come back on the next launch and start once setup is done.
+    private static let waitingKey = "waitingRequests"
+
+    private func saveWaiting() {
+        let waiting = setup.ready ? [:] : queued.filter { !$0.value.isEmpty }.mapValues { $0.map(\.text) }
+        if waiting.isEmpty {
+            UserDefaults.standard.removeObject(forKey: Self.waitingKey)
+        } else {
+            UserDefaults.standard.set(waiting, forKey: Self.waitingKey)
+        }
+    }
+
+    private func restoreWaiting() {
+        guard let waiting = UserDefaults.standard.dictionary(forKey: Self.waitingKey) as? [String: [String]] else { return }
+        for (id, texts) in waiting where projects.contains(where: { $0.id == id }) {
+            queued[id] = texts.map { QueuedMessage(text: $0) }
+        }
     }
 
     /// The version label for a request without words: what was sent.
@@ -640,6 +663,7 @@ final class Store: ObservableObject {
 
     func unqueue(_ message: QueuedMessage, from project: ForgeProject) {
         queued[project.id]?.removeAll { $0.id == message.id }
+        saveWaiting()
     }
 
     private func startQueued(_ project: ForgeProject) {
