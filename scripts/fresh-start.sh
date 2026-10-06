@@ -50,7 +50,8 @@ begin() {
     printf '%s\t%s\n' "$account" "$secret" >> "$backup/keychain.txt"
   done
   [ -d "$backup" ] || exit 1   # the loop runs in a subshell; it removed the backup on failure
-  if [ -e "$state" ]; then mv "$state" "$backup/Forge"; fi
+  # A Mac that never ran Forge has no folder: remember that, so restore can take the fresh one away.
+  if [ -e "$state" ]; then mv "$state" "$backup/Forge"; else touch "$backup/no-folder"; fi
   defaults export "$domain" "$backup/defaults.plist" 2>/dev/null || true
   defaults delete "$domain" >/dev/null 2>&1 || true
   keychain_accounts | while read -r account; do
@@ -80,10 +81,13 @@ restore() {
   defaults delete "$domain" >/dev/null 2>&1 || true
   if [ -s "$backup/defaults.plist" ]; then defaults import "$domain" "$backup/defaults.plist"; fi
   # Whatever the fresh run made is thrown away; your apps come back. Only when the backup still holds
-  # them, so running this twice can't remove a folder that was already restored.
+  # them (or says there were none), so running this twice can't remove a folder that was already restored.
   if [ -e "$backup/Forge" ]; then
     rm -rf "$state"
     mv "$backup/Forge" "$state"
+  elif [ -e "$backup/no-folder" ]; then
+    rm -rf "$state"
+    rm -f "$backup/no-folder"
   fi
   rm -rf "$backup"
   echo "Your Forge setup is back."
