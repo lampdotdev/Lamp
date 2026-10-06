@@ -15,10 +15,11 @@
 # you've already answered: for those, use a second macOS user (permissions) or a clean VM (everything).
 set -euo pipefail
 
+# EDITION=dev sets aside the development build's state (Lamp Dev) instead of the installed Lamp's.
 support="$HOME/Library/Application Support"
-state="$support/Lamp"
-backup="$support/Lamp-fresh-start"
-domain="dev.lamp.host"
+if [ "${EDITION:-release}" = dev ]; then name="Lamp Dev"; domain="dev.lamp.host.dev"; else name="Lamp"; domain="dev.lamp.host"; fi
+state="$support/$name"
+backup="$support/$name-fresh-start"
 
 # The accounts of every Keychain item with Lamp's service name, one per line.
 keychain_accounts() {

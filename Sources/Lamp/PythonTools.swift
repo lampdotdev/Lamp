@@ -17,8 +17,7 @@ final class PythonTools: ObservableObject {
     @Published var installing: Set<Tool> = []
     @Published var errors: [Tool: String] = [:]
 
-    nonisolated private static let ownUV = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Lamp/Tools/uv")
+    nonisolated private static let ownUV = Edition.supportFolder.appendingPathComponent("Tools/uv")
 
     /// The user's own uv if they have one, else the copy Lamp downloaded.
     nonisolated static var uvPath: String? {

@@ -10,7 +10,7 @@ struct LampProject: Identifiable, Hashable {
     /// Made with New App and not named yet. The first message names it.
     var untitled = false
 
-    var bundleID: String { "dev.lamp.app.\(id)" }
+    var bundleID: String { Edition.appBundlePrefix + id }
     var builtURL: URL { dir.appendingPathComponent("build/\(exe).app") }
     /// Every successful build is copied here so it shows up in Spotlight and Launchpad.
     var installedURL: URL { Store.installDir.appendingPathComponent("\(name).app") }
@@ -223,11 +223,9 @@ final class Store: ObservableObject {
     private var agentTokens: [String: String] = [:]
     private var gateway: Gateway?
 
-    nonisolated static let installDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Applications/Lamp Apps")
+    nonisolated static let installDir = Edition.appsFolder
 
-    let root = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Lamp/Apps")
+    let root = Edition.supportFolder.appendingPathComponent("Apps")
 
     private init() {
         Migration.fromForge()
@@ -450,7 +448,7 @@ final class Store: ObservableObject {
             importApp(from: url)
             return
         }
-        guard url.scheme == "lamp",
+        guard url.scheme == Edition.urlScheme,
               let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "app" })?.value else { return }
         showChat(slug)
@@ -587,7 +585,7 @@ final class Store: ObservableObject {
         return project
     }
 
-    /// Display names must be unique: each app installs as "<name>.app" in ~/Applications/Lamp Apps.
+    /// Display names must be unique: each app installs as "<name>.app" in the apps folder (Edition.appsFolder).
     private func uniqueName(_ name: String, ignoring id: String? = nil) -> String {
         let taken = Set(projects.filter { $0.id != id }.map { $0.name.lowercased() })
         let base = name.trimmed
@@ -1034,7 +1032,7 @@ final class Store: ObservableObject {
                     // The look opened it behind the user's windows. Now it's theirs: it shows itself, as when it's
                     // opened again. An app that lives in the menu bar opens its panel (see LampWindows).
                     DistributedNotificationCenter.default().postNotificationName(
-                        Notification.Name("dev.lamp.showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
+                        Notification.Name(Edition.notificationPrefix + "showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
                     app.activate()
                     log(project, .status, "\(project.name) is ready")
                 } else {
@@ -1444,9 +1442,9 @@ final class Store: ObservableObject {
             // Ask the app to show a window (opening a new one if all were closed); see LampWindows. The app
             // says when it has: a window, or the panel of an app that lives in the menu bar, which isn't an
             // ordinary window and wouldn't be found below.
-            let acknowledged = Acknowledgement(name: "dev.lamp.windowShown", object: project.bundleID)
+            let acknowledged = Acknowledgement(name: Edition.notificationPrefix + "windowShown", object: project.bundleID)
             DistributedNotificationCenter.default().postNotificationName(
-                Notification.Name("dev.lamp.showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
+                Notification.Name(Edition.notificationPrefix + "showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
             running.activate()
             // Whatever the app did with that (an app built before the listener existed ignores it; one that
             // replaced New Window can't open one), something has to be on screen: if there's nothing, relaunch it.
@@ -1494,7 +1492,7 @@ final class Store: ObservableObject {
         let signature = HMAC<SHA256>.authenticationCode(for: Data("\(id)\n\(json)".utf8), using: key)
             .map { String(format: "%02x", $0) }.joined()
         DistributedNotificationCenter.default().postNotificationName(
-            Notification.Name("dev.lamp.useApp.\(project.id)"), object: nil,
+            Notification.Name(Edition.notificationPrefix + "useApp.\(project.id)"), object: nil,
             userInfo: ["actions": json, "id": id, "lampUseAppSignature": signature], deliverImmediately: true)
         let waits = actions.reduce(0.0) { $0 + (($1["action"] as? String) == "wait" ? min($1["amount"] as? Double ?? 1, 10) : 0) }
         let wait = Double(actions.count) * 0.4 + waits + 5
@@ -1927,7 +1925,7 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Puts the icon into the freshly built bundle, re-signs it, and swaps it into ~/Applications/Lamp Apps.
+    /// Puts the icon into the freshly built bundle, re-signs it, and swaps it into the apps folder.
     /// The swap is atomic, so it's safe even while the app is running.
     private func deploy(_ project: LampProject) async throws {
         let fm = FileManager.default
@@ -2140,7 +2138,7 @@ final class Store: ObservableObject {
     }
 
     private func refreshOpenApps() {
-        let prefix = "dev.lamp.app."
+        let prefix = Edition.appBundlePrefix
         let ids = NSWorkspace.shared.runningApplications
             .compactMap { $0.isTerminated ? nil : $0.bundleIdentifier }
             .filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }

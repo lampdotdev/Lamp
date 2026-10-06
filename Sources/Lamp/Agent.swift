@@ -80,8 +80,7 @@ enum Agent {
     }
 
     /// Lamp's own pi settings and caches, separate from any pi the user runs themselves.
-    static let configDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Lamp/pi").path
+    static let configDir = Edition.supportFolder.appendingPathComponent("pi").path
 
     static let systemPrompt = """
     You are Lamp's builder agent. The current directory is a standalone macOS SwiftUI app \

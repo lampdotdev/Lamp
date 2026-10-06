@@ -26,7 +26,7 @@ Each one is a real `.app` in `~/Applications/Lamp Apps`, with **Edit with Lamp (
 | An OpenRouter key (optional) | The best image models, icon artwork, and the fast in-app AI models | Without one, apps' text AI uses whatever builds them (pi's provider, a local model, or your Claude Code or Codex sign-in) |
 | A TypeSafe key (optional) | Decisions in apps, directly from TypeSafe | Jev is also available through an OpenRouter key |
 
-Nothing else needs installing. The coding agent ([pi](https://github.com/badlogic/pi-mono)) and llama.cpp's model server are bundled inside `Lamp.app`; `build.sh` downloads pinned, checksum-verified copies (about 40 MB together). No Apple developer account is needed to build it: a build from source is signed only for your own Mac (release builds are signed and notarized with the team's Developer ID and update themselves). Every app Lamp builds is signed with a certificate Lamp makes on your Mac the first time, so an app keeps the permissions you give it across rebuilds.
+Nothing else needs installing. The coding agent ([pi](https://github.com/badlogic/pi-mono)) and llama.cpp's model server are bundled inside `Lamp.app`; `build.sh` downloads pinned, checksum-verified copies (about 40 MB together). No Apple developer account is needed to build it. A build from source is **Lamp Dev**: a separate app from the Lamp you install, with its own icon, folders, apps and settings, signed only for your own Mac and never updating itself (release builds are signed and notarized with the team's Developer ID and update themselves). Every app Lamp builds is signed with a certificate Lamp makes on your Mac the first time, so an app keeps the permissions you give it across rebuilds.
 
 ## Download
 

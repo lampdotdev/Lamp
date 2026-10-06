@@ -7,7 +7,7 @@ struct LampApp: App {
     @StateObject private var store = Store.shared
 
     var body: some Scene {
-        Window("Lamp", id: "main") {
+        Window(Edition.name, id: "main") {
             ContentView()
                 .environmentObject(store)
         }
