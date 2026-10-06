@@ -378,7 +378,7 @@ extension Agent {
               -c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true \\
               -c web_search="live" -c "$FORGE_CODEX_INSTRUCTIONS" -c "$FORGE_CODEX_HOOKS" \\
               -c mcp_servers.forge.url="http://127.0.0.1:\(Gateway.port)/mcp" -c mcp_servers.forge.bearer_token_env_var="FORGE_TOKEN" \\
-              -c mcp_servers.forge.tool_timeout_sec=600
+              -c mcp_servers.forge.tool_timeout_sec=600 -c mcp_servers.forge.default_tools_approval_mode="approve"
             """
             if session != nil {
                 // `exec resume` keeps the conversation; it takes no -C/-i (Forge already runs in the app's folder).
@@ -514,7 +514,8 @@ extension Agent {
             return [.step("")]
         case ("item.started", "mcp_tool_call"):
             let name = item["tool"] as? String ?? "tool"
-            return [.tool(name, call: callKey(name, item["arguments"] as? [String: Any] ?? [:]))]
+            let arguments = item["arguments"] as? [String: Any] ?? [:]
+            return [.tool(tool(name, arguments), call: callKey(name, arguments))]
         case ("item.started", "command_execution"):
             let command = "Run: \(item["command"] as? String ?? "")"
             return [.tool(command, call: command)]
