@@ -304,6 +304,7 @@ enum Agent {
             "LAMP_SYSTEM": systemPrompt + tryRules,
             "LAMP_PROMPT": prompt,
             "LAMP_TOOLS": lampTools?.path ?? "",
+            "LAMP_TOOLS_JSON": Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json").path ?? "",
             // "My pi setup" uses the user's own pi config (their logins); everything else uses Lamp's.
             "PI_CODING_AGENT_DIR": Builder.piProvider == Builder.myPiProvider ? userConfigDir : configDir,
             "PI_SKIP_VERSION_CHECK": "1",

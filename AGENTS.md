@@ -12,9 +12,11 @@ the output of each is read by its own parser there (`parseClaude`, `parseCodex`,
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, …): pi gets them from `Resources/lamp-tools.ts`;
-  Claude Code and Codex get them from Lamp's MCP endpoint, `Store.mcp` (`/mcp` on the gateway). Both
-  define the same tools with the same descriptions and schemas, so a change to one is a change to the other.
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, the version tools): their
+  names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
+  (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
+  endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
+  entry there, an `execute` in the extension, and a `case` in `Store.mcp`.
   Codex has no file tools of its own, so the endpoint also gives it `read`, `ls`, `find` and `grep`
   (`FileTools`, listed when the URL carries `files=1`): they mirror pi's built-in ones, and each call is
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks

@@ -82,7 +82,7 @@ cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp Resources/Assets.car "$APP/Contents/Resources/Assets.car"
 cp Resources/THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 install -m 755 Resources/lamp-approve.sh "$APP/Contents/Resources/lamp-approve.sh"
-cp Resources/lamp-tools.ts "$APP/Contents/Resources/"   # pi extension: the agent's look_at_app and plan tools
+cp Resources/lamp-tools.ts Resources/lamp-tools.json "$APP/Contents/Resources/"   # the agent's tools: pi's extension and the registry both it and the MCP endpoint read
 cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Lamp builds a stable signature
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
