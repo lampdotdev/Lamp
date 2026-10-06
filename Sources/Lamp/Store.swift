@@ -127,7 +127,6 @@ final class Store: ObservableObject {
     }
     @Published var approvals: [String: PendingApproval] = [:]   // project id → the command waiting
     private var approving: Set<String> = []                       // project ids between the queue check and the card
-    private var allowAllThisTurn: Set<String> = []
     private var lastReloadForToken = Date.distantPast
     private var computerUseRefused: Set<String> = []   // apps told once this launch that using other apps is off
     /// The app whose Rename… alert is showing.
@@ -138,37 +137,76 @@ final class Store: ObservableObject {
     @Published var naming: VersionNaming?
     /// Bumped when a version is named, so open version lists reload.
     @Published var versionsRevision = 0
-    private var running: [String: Process] = [:]    // project id → agent process, for Stop
-    private var building: [String: Process] = [:]   // project id → the app's build, for Stop
-    private var stopped: Set<String> = []
+    /// One span of Lamp owning an app: a chat turn, a rebuild, an undo, an icon redesign. Everything that
+    /// belongs to that span lives here and goes with it, so Stop, Delete and quit have one thing to cancel,
+    /// and nothing has to be kept in step across a dozen dictionaries. `busy` is the set of apps that have
+    /// one, for the interface.
+    @MainActor final class Turn {
+        var agent: Process?                 // the engine, while it runs
+        var build: Process?                 // the app's build.sh, while it runs
+        var stopped = false                 // the user pressed Stop (or deleted the app, or quit Lamp)
+        var allowAll = false                // "Allow all for this turn"
+        var approving = false               // between the queue check and the approval card
+        var look = Look()                   // what the agent's look_at_app has done
+        var pendingName: String?            // a name the agent gave the version this request makes
+        var request: String?                // the user's words, for the command classifiers
+        var writing: (line: UUID, unshown: String)?   // the message the agent is writing right now
+        var showingWritten = false
+        /// The agent's token for this turn (Store.agentTokens): the only way to its routes.
+        let agentToken = UUID().uuidString + UUID().uuidString
+
+        var isWorking: Bool { agent != nil || build != nil }
+
+        /// Stops what's running. Returns the processes signalled, for a caller that waits for them (quit).
+        @discardableResult func cancel() -> [pid_t] {
+            stopped = true
+            allowAll = false
+            var pids: [pid_t] = []
+            if let agent { pids += Shell.terminateTree(agent) }
+            if let build { pids += Shell.terminateTree(build) }
+            return pids
+        }
+    }
+    private var turns: [String: Turn] = [:]
+
+    /// Takes the app for a span of work. Nil when something else has it.
+    private func begin(_ project: LampProject) -> Turn? {
+        guard turns[project.id] == nil else { return nil }
+        let turn = Turn()
+        turns[project.id] = turn
+        agentTokens[turn.agentToken] = project.id
+        busy.insert(project.id)
+        return turn
+    }
+
+    /// Gives the app back, without starting anything queued (see `finish`).
+    private func release(_ project: LampProject) {
+        if let turn = turns.removeValue(forKey: project.id) { agentTokens[turn.agentToken] = nil }
+        busy.remove(project.id)
+    }
 
     /// Whether any app has an agent or a build going, for the question asked before quitting.
-    var isWorking: Bool { !running.isEmpty || !building.isEmpty }
+    var isWorking: Bool { turns.values.contains(where: \.isWorking) }
 
     /// Stops every agent and build, as when Lamp quits: otherwise they'd carry on without it. Returns the
     /// processes signalled, so quitting can wait until they're gone.
     func stopAll() -> [pid_t] {
         var pids: [pid_t] = []
         for project in projects {
-            guard running[project.id] != nil || building[project.id] != nil else { continue }
-            stopped.insert(project.id)
+            guard let turn = turns[project.id], turn.isWorking else { continue }
             endApprovals(for: project)
-            if let process = running[project.id] { pids += Shell.terminateTree(process) }
-            if let process = building[project.id] { pids += Shell.terminateTree(process) }
+            pids += turn.cancel()
         }
         return pids + Shell.stopping
     }
 
     /// Whether the app still exists: a turn can outlive Delete by a moment, and mustn't write to the Trash.
     private func exists(_ project: LampProject) -> Bool { projects.contains { $0.id == project.id } }
-    private var looks: [String: Look] = [:]         // project id → the agent's looks at the app this turn
-    /// A name the agent gave the version its current request will make, applied once that's committed.
-    private var pendingNames: [String: String] = [:]
     /// Apps whose versions are getting titles, so only one run at a time asks the model.
     private var titling: Set<String> = []
 
     /// What the agent's `look_at_app` tool has done during the current turn.
-    private struct Look {
+    struct Look {
         var inProgress = false
         /// The app was built and opened by the last look, and this is how that launch went.
         var installed = false
@@ -313,8 +351,6 @@ final class Store: ObservableObject {
 
     /// The message each app's agent is writing right now: its chat line, and text that has arrived but isn't
     /// in the chat yet.
-    private var writing: [String: (line: UUID, unshown: String)] = [:]
-    private var showingWritten: Set<String> = []
 
     /// Adds a piece of the message the agent is writing, so it shows in the chat as it arrives. Pieces come
     /// twenty a second, and after a tool call the first few seconds' worth arrive all at once, so they go into
@@ -322,29 +358,31 @@ final class Store: ObservableObject {
     /// main thread busy for seconds, and nothing shows until it has caught up. The message isn't saved
     /// until it's whole, since saving rewrites the chat's file.
     private func write(_ piece: String, for project: LampProject) {
-        guard writing[project.id] != nil else {
+        guard let turn = turns[project.id] else { return }
+        guard turn.writing != nil else {
             guard !piece.trimmed.isEmpty else { return }
             let line = LogLine(kind: .agent, text: String(piece.drop(while: \.isWhitespace)))
             logs[project.id, default: []].append(line)
-            writing[project.id] = (line.id, "")
+            turn.writing = (line.id, "")
             note("Replying", for: project)
             return
         }
-        writing[project.id]?.unshown += piece
-        guard showingWritten.insert(project.id).inserted else { return }
+        turn.writing?.unshown += piece
+        guard !turn.showingWritten else { return }
+        turn.showingWritten = true
         Task {
             try? await Task.sleep(for: .milliseconds(80))
-            showingWritten.remove(project.id)
+            turn.showingWritten = false
             showWritten(for: project)
         }
     }
 
     /// Puts what has arrived of the message being written into its chat line.
     private func showWritten(for project: LampProject) {
-        guard let (line, unshown) = writing[project.id], !unshown.isEmpty,
+        guard let turn = turns[project.id], let (line, unshown) = turn.writing, !unshown.isEmpty,
               let index = logs[project.id]?.lastIndex(where: { $0.id == line }) else { return }
         logs[project.id]?[index].text += unshown
-        writing[project.id]?.unshown = ""
+        turn.writing?.unshown = ""
     }
 
     /// Updates what the app's turn is doing right now, for the build card and the activity line.
@@ -469,7 +507,7 @@ final class Store: ObservableObject {
     /// executable and bundle ID match. After that only the display name changes: the bundle ID stays,
     /// so the app keeps its settings and data. Returns the app as it is now.
     func rename(_ project: LampProject, to name: String) async {
-        guard busy.insert(project.id).inserted else { return }
+        guard begin(project) != nil else { return }
         finish(await performRename(project, to: name))
     }
 
@@ -536,7 +574,12 @@ final class Store: ObservableObject {
         logs[project.id] = logs.removeValue(forKey: old.id)
         usage[project.id] = usage.removeValue(forKey: old.id)
         queued[project.id] = queued.removeValue(forKey: old.id)
-        if busy.remove(old.id) != nil { busy.insert(project.id) }
+        if let turn = turns.removeValue(forKey: old.id) {   // the rename itself is a turn: it moves with the app
+            turns[project.id] = turn
+            agentTokens[turn.agentToken] = project.id
+            busy.remove(old.id)
+            busy.insert(project.id)
+        }
         if unread.remove(old.id) != nil { unread.insert(project.id) }
         tokens = tokens.filter { $0.value != old.id }
         reload()
@@ -807,7 +850,7 @@ final class Store: ObservableObject {
 
     private func startQueued(_ project: LampProject) {
         guard setup.ready, let messages = queued[project.id], !messages.isEmpty,
-              busy.insert(project.id).inserted else { return }
+              begin(project) != nil else { return }
         queued[project.id] = nil
         let first = !(logs[project.id] ?? []).contains { $0.kind == .user }
         // Still a new app until a request has made its first version: after the agent only asked questions,
@@ -890,7 +933,6 @@ final class Store: ObservableObject {
     /// Marks the app idle again, then starts anything queued while it was busy.
     private func finish(_ project: LampProject) {
         endApprovals(for: project)   // a card nobody can answer any more, from a request that raced the agent's end
-        allowAllThisTurn.remove(project.id)
         // Artwork that arrived during the turn, for an icon that was installed without it: applied now, still
         // owning the app, so nothing else builds or installs meanwhile. With more work queued, the next
         // install picks the artwork up itself.
@@ -899,12 +941,12 @@ final class Store: ObservableObject {
             pendingIconArt.remove(project.id)
             Task {
                 await applyIconArt(project, spec: spec)
-                busy.remove(project.id)
+                release(project)
                 startQueued(project)
             }
             return
         }
-        busy.remove(project.id)
+        release(project)
         startQueued(project)
     }
 
@@ -958,9 +1000,7 @@ final class Store: ObservableObject {
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
         let notes = Attachments.note(for: saved) + Versions.note(for: project) + Runtime.crashNote(for: project)
             + Runtime.screenshotNote(for: project)
-        currentRequests[project.id] = prompt
-        looks[project.id] = Look()
-        pendingNames[project.id] = nil
+        turns[project.id]?.request = prompt
         guard await runAgent(prompt + notes, files: files, on: project) else {
             return TurnResult(end: .failed, watched: isWatching(project.id))
         }
@@ -987,7 +1027,7 @@ final class Store: ObservableObject {
         var crash: String?
         if changed {
             crash = await install(project)
-        } else if let look = looks[project.id], look.installed {
+        } else if let look = turns[project.id]?.look, look.installed {
             crash = look.crash
             if crash == nil {
                 if let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first {
@@ -1017,8 +1057,11 @@ final class Store: ObservableObject {
             log(project, .error, "\(project.name) still quits right after opening. Try describing the change differently, or press Undo.")
         }
         // After the crash fixes, which amend the commit, so the name and the links stay on the version that's kept.
-        if committed || pendingNames[project.id] != nil, let head = await Versions.head(project) {
-            if let name = pendingNames.removeValue(forKey: project.id) { await Versions.name(project, head, name) }
+        if committed || turns[project.id]?.pendingName != nil, let head = await Versions.head(project) {
+            if let name = turns[project.id]?.pendingName {
+                turns[project.id]?.pendingName = nil
+                await Versions.name(project, head, name)
+            }
             if committed {
                 link(asked, to: head, in: project)
                 if crash == nil { keepPicture(of: project, version: head) }
@@ -1051,13 +1094,13 @@ final class Store: ObservableObject {
         var errors = await build(project)
         for _ in 0..<3 where errors != nil {
             // A build the user stopped (or whose app they deleted) isn't a problem for the agent to fix.
-            guard !stopped.contains(project.id), exists(project) else { return false }
+            guard turns[project.id]?.stopped != true, exists(project) else { return false }
             log(project, .status, "Fixing a problem…")
             guard await runAgent("The app failed to build. Fix these compiler errors:\n\n\(errors!)",
                                  on: project) else { return false }
             errors = await build(project)
         }
-        guard !stopped.contains(project.id), exists(project) else { return false }
+        guard turns[project.id]?.stopped != true, exists(project) else { return false }
         if errors != nil {
             log(project, .error, "Sorry, I couldn't get that change working. Try describing it differently, or press Undo.")
         }
@@ -1091,15 +1134,14 @@ final class Store: ObservableObject {
         // The tool call the model is writing at the moment, for the activity shown to the user.
         var streamingTool = ""
         var streamingArguments = ""
-        stopped.remove(project.id)
+        guard let turn = turns[project.id] else { return false }   // only inside a turn (startQueued)
+        turn.stopped = false
         let sessionFile = Self.sessionFile(for: project, engine: engine)
-        let agentToken = UUID().uuidString + UUID().uuidString
-        agentTokens[agentToken] = project.id
         let run = Agent.run(prompt: prompt, files: files, project: project,
                             session: engine == .pi ? Self.piSession(for: project) : Self.savedSession(sessionFile),
-                            token: agentToken)
+                            token: turn.agentToken)
         let status = await Shell.run(run.command, cwd: project.dir, env: run.env,
-                                     started: { [weak self] in self?.running[project.id] = $0 }) { [weak self] line in
+                                     started: { turn.agent = $0 }) { [weak self] line in
             guard let self else { return }
             for event in Agent.parseLine(line) {
                 switch event {
@@ -1107,8 +1149,9 @@ final class Store: ObservableObject {
                     write(piece, for: project)
                 case .text(let text):
                     // The whole message. It takes the place of what was shown of it while it was written.
-                    if let line = writing.removeValue(forKey: project.id)?.line,
-                       let index = logs[project.id]?.lastIndex(where: { $0.id == line }) {
+                    let written = turn.writing?.line
+                    turn.writing = nil
+                    if let line = written, let index = logs[project.id]?.lastIndex(where: { $0.id == line }) {
                         logs[project.id]?[index].text = text
                         saveChat(project)
                     } else {
@@ -1140,7 +1183,7 @@ final class Store: ObservableObject {
                         failure = repeats >= 6
                             ? "The model got stuck repeating the same step, so Lamp stopped it."
                             : "The model made over 150 changes in one go, so Lamp stopped it."
-                        if let process = running[project.id] { Shell.terminateTree(process) }
+                        if let process = turn.agent { Shell.terminateTree(process) }
                     }
                 case .cost(let amount): cost += amount
                 case .failed(let text): failure = text
@@ -1149,15 +1192,15 @@ final class Store: ObservableObject {
                 }
             }
         }
-        running[project.id] = nil
-        agentTokens[agentToken] = nil   // before any retry below starts a run with a token of its own
+        turn.agent = nil
         endApprovals(for: project)
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
         showWritten(for: project)
-        writing[project.id] = nil
+        turn.writing = nil
         log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost))
         recordAgent(project, cost: cost)
-        if stopped.remove(project.id) != nil {
+        if turn.stopped {
+            turn.stopped = false
             log(project, .status, "Stopped. Any changes made so far are kept; press Undo to discard them.")
             return false
         }
@@ -1220,7 +1263,7 @@ final class Store: ObservableObject {
         usage[project.id] = nil
         queued[project.id] = nil
         icons[project.id] = nil
-        busy.remove(project.id)
+        release(project)
         unread.remove(project.id)
         tokens = tokens.filter { $0.value != project.id }
         if selection == project.id {
@@ -1231,7 +1274,6 @@ final class Store: ObservableObject {
     // MARK: - Approvals
 
     /// The latest request per app, so the decision model can judge commands against what the user asked for.
-    private var currentRequests: [String: String] = [:]
 
     /// Applies Settings → Building → "Ask before running commands" to one command.
     private func approveCommand(_ command: String, for project: LampProject, escalated: Bool, shell: Bool = true) async -> Bool {
@@ -1258,7 +1300,7 @@ final class Store: ObservableObject {
         if Privacy.reachesOutside(command, project: project) { return false }
         let state: [String: Any] = [
             "command": command,
-            "user_request": currentRequests[project.id] ?? "",
+            "user_request": turns[project.id]?.request ?? "",
             "working_folder": "The app's own project folder: \(project.dir.path)",
         ]
         // A command that reads is held to the privacy setting the file tools follow: what's outside the app's
@@ -1312,7 +1354,7 @@ final class Store: ObservableObject {
         the app's folder, needs administrator rights, changes system settings, sends personal data somewhere, reads \
         sign-ins, keys, passwords or browser data, or runs code downloaded from the internet.
         """
-        let prompt = "The user's request: \(currentRequests[project.id] ?? "(unknown)")\n\nThe command:\n\(command)"
+        let prompt = "The user's request: \(turns[project.id]?.request ?? "(unknown)")\n\nThe command:\n\(command)"
         guard let (text, _) = try? await AppAI.complete(prompt: prompt, images: [], system: system, json: true),
               let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
               let summary = (json["summary"] as? String)?.trimmed, !summary.isEmpty else { return nil }
@@ -1331,22 +1373,22 @@ final class Store: ObservableObject {
     func requestApproval(for project: LampProject, command: String, title: String? = nil,
                          explanation given: CommandExplanation? = nil, shell: Bool = true) async -> Bool {
         guard !command.trimmed.isEmpty else { return false }
-        if allowAllThisTurn.contains(project.id) {
+        if turns[project.id]?.allowAll == true {
             log(project, .detail, "Ran (allowed for this turn): \(command)")
             return true
         }
         // One request per app at a time, from here on: a second one waits, including through the
         // explanation below, so two can't both put up a card for the same slot.
-        while approvals[project.id] != nil || approving.contains(project.id) { try? await Task.sleep(for: .milliseconds(200)) }
-        guard running[project.id] != nil else { return false }   // the agent is gone: nobody to answer for
-        approving.insert(project.id)
-        defer { approving.remove(project.id) }
+        while approvals[project.id] != nil || turns[project.id]?.approving == true { try? await Task.sleep(for: .milliseconds(200)) }
+        guard let turn = turns[project.id], turn.agent != nil else { return false }   // the agent is gone: nobody to answer for
+        turn.approving = true
+        defer { turn.approving = false }
         // "Only when risky": a shell command the in-app model rates low risk runs without the card.
         var given = given
         if shell, title == nil, CommandApproval.current == .risky {
             note("Checking a command", for: project)
             if given == nil { given = await explain(command, for: project) }
-            guard running[project.id] != nil else { return false }
+            guard turn.agent != nil else { return false }
             if let explanation = given, explanation.risk == "low" {
                 log(project, .status, "Ran: \(command)")
                 log(project, .detail, "Ran without asking (low risk): \(explanation.summary)")
@@ -1370,7 +1412,7 @@ final class Store: ObservableObject {
 
     func answerApproval(for project: LampProject, allow: Bool, allowAll: Bool = false) {
         guard let pending = approvals.removeValue(forKey: project.id) else { return }
-        if allowAll { allowAllThisTurn.insert(project.id) }
+        if allowAll { turns[project.id]?.allowAll = true }
         log(project, .detail, (allow ? "Allowed: " : "Denied: ") + pending.command)
         note(allow && pending.title == PendingApproval.commandTitle ? "Running a command" : "Thinking", for: project)
         pending.answer.resume(returning: allow)
@@ -1384,12 +1426,9 @@ final class Store: ObservableObject {
 
     /// Stops the agent working on an app, and the build if one is going.
     func stop(_ project: LampProject) {
-        guard running[project.id] != nil || building[project.id] != nil else { return }
-        stopped.insert(project.id)
+        guard let turn = turns[project.id], turn.isWorking else { return }
         endApprovals(for: project)   // a command waiting for approval counts as denied
-        allowAllThisTurn.remove(project.id)
-        if let process = running[project.id] { Shell.terminateTree(process) }
-        if let process = building[project.id] { Shell.terminateTree(process) }
+        turn.cancel()
     }
 
     /// Opens the installed app, or brings it to the front if it's running. Only builds when there's
@@ -1436,7 +1475,7 @@ final class Store: ObservableObject {
     /// The agent's `use_app` tool: hands its clicks, typing and keys to the open app, which performs them on its
     /// own front window (LampDriver in LampSupport), then reports what happened with a fresh picture.
     private func use(_ project: LampProject, request body: Data) async -> (Int, [String: Any]) {
-        guard running[project.id] != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        guard turns[project.id]?.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         guard let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let actions = request["actions"] as? [[String: Any]], !actions.isEmpty,
               let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
@@ -1725,7 +1764,7 @@ final class Store: ObservableObject {
     /// Rebuilds the app from its code, reinstalls it and relaunches it.
     /// Rebuilds an app made by an older Lamp and opens it. False if it didn't build, leaving the old one in place.
     private func updateForThisForge(_ project: LampProject) async -> Bool {
-        guard busy.insert(project.id).inserted else { return false }
+        guard begin(project) != nil else { return false }
         defer { finish(project) }
         log(project, .status, "Updating \(project.name) for this version of Lamp…")
         guard await build(project) == nil else {
@@ -1737,7 +1776,7 @@ final class Store: ObservableObject {
     }
 
     func run(_ project: LampProject) async {
-        guard busy.insert(project.id).inserted else { return }
+        guard begin(project) != nil else { return }
         defer { finish(project) }
         if await build(project) == nil {
             await installReportingCrash(project)
@@ -1748,7 +1787,7 @@ final class Store: ObservableObject {
 
     /// Goes back to the version before the current one. Like any restore, this is itself a new version.
     func undo(_ project: LampProject) async {
-        guard busy.insert(project.id).inserted else { return }
+        guard begin(project) != nil else { return }
         defer { finish(project) }
         let versions = await Versions.list(project)
         // A turn that was stopped, or never got the app building, leaves its changes unsaved: Undo discards those first.
@@ -1771,7 +1810,7 @@ final class Store: ObservableObject {
 
     /// Brings back an earlier version's files as a new version, so the restore can be undone too.
     func restore(_ project: LampProject, to version: AppVersion) async {
-        guard busy.insert(project.id).inserted else { return }
+        guard begin(project) != nil else { return }
         defer { finish(project) }
         guard await Versions.restore(project, to: version, message: "Restored to “\(version.label)”") else {
             log(project, .status, "The app is already like “\(version.label)”")
@@ -1896,8 +1935,8 @@ final class Store: ObservableObject {
         let fingerprint = Runtime.fingerprint(project)
         var output: [String] = []
         let status = await Shell.run(Shell.compatibleSDK + "./build.sh", cwd: project.dir,
-                                     started: { [weak self] in self?.building[project.id] = $0 }) { output.append($0) }
-        building[project.id] = nil
+                                     started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
+        turns[project.id]?.build = nil
         guard exists(project) else { return "The app was deleted." }
         guard status != 0 else {
             Runtime.markBuilt(project, from: fingerprint)
@@ -2108,7 +2147,7 @@ final class Store: ObservableObject {
                 // finish() applies it. Otherwise apply it now.
                 // Deploying touches build/ and the installed app, so it owns the app like a turn does. If a
                 // turn has it, the install that ends the turn (or finish()) picks the artwork up.
-                guard busy.insert(project.id).inserted else { pendingIconArt.insert(project.id); return }
+                guard begin(project) != nil else { pendingIconArt.insert(project.id); return }
                 await applyIconArt(project, spec: spec)
                 finish(project)
             } catch let failure as AppAI.Failure where failure.message == AppAI.noImageRoute {
@@ -2122,7 +2161,7 @@ final class Store: ObservableObject {
 
     /// Designs a fresh icon (different from the current one) and applies it without restarting the app.
     func newIcon(_ project: LampProject) async {
-        guard busy.insert(project.id).inserted else { return }
+        guard begin(project) != nil else { return }
         defer { finish(project) }
         log(project, .status, "Designing a new icon…")
         let spec = await Icons.design(for: project, avoiding: Icons.load(project))
@@ -2140,7 +2179,7 @@ final class Store: ObservableObject {
         for project in projects where Icons.load(project) == nil {
             // Owning the app for the whole of it: the icon design is an AI call, and a build starting
             // meanwhile would get a half-finished bundle installed.
-            guard busy.insert(project.id).inserted else { continue }
+            guard begin(project) != nil else { continue }
             await prepareIcon(project)
             if FileManager.default.fileExists(atPath: project.builtURL.path) {
                 try? await deploy(project)
@@ -2221,7 +2260,7 @@ final class Store: ObservableObject {
                 return (401, ["error": "Lamp isn't working on this app right now."])
             }
             guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
-            guard running[project.id] != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+            guard turns[project.id]?.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
             return await agentRequest(request, route: route, for: project)
         }
         // The app may have been created since the last reload. A reload rereads every app, so a stale app
@@ -2446,7 +2485,7 @@ final class Store: ObservableObject {
     private func versions(_ action: String, _ body: [String: Any], of project: LampProject) async -> (Int, [String: Any]) {
         // Only for the agent Lamp is running right now: the app knows the same token, and must not be
         // able to change its own history.
-        guard running[project.id] != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        guard turns[project.id]?.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         let versions = await Versions.list(project)
         let id = (body["version"] as? String)?.trimmed.nilIfEmpty
         let version = id.flatMap { Versions.find($0, in: versions) }
@@ -2457,7 +2496,7 @@ final class Store: ObservableObject {
         case "/name":
             guard let name = (body["name"] as? String)?.trimmed.nilIfEmpty else { return (400, ["error": "A name is needed."]) }
             guard let version else {
-                pendingNames[project.id] = name
+                turns[project.id]?.pendingName = name
                 return (200, ["text": "Lamp will name the version this request makes “\(name)”."])
             }
             await Versions.name(project, version.id, name)
@@ -2483,14 +2522,13 @@ final class Store: ObservableObject {
     private func look(at project: LampProject) async -> (Int, [String: Any]) {
         // Only for the agent Lamp is running right now. The app knows the same token and must not
         // be able to rebuild itself.
-        guard running[project.id] != nil, var look = looks[project.id] else {
+        guard let turn = turns[project.id], turn.agent != nil else {
             return (409, ["error": "Lamp isn't working on this app right now."])
         }
-        guard !look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
-        look.inProgress = true
-        look.installed = false
-        looks[project.id] = look
-        defer { looks[project.id]?.inProgress = false }
+        guard !turn.look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
+        turn.look.inProgress = true
+        turn.look.installed = false
+        defer { turn.look.inProgress = false }
 
         try? Template.writeSupport(for: project)
         let changed = Runtime.sourcesChanged(project)
@@ -2505,14 +2543,14 @@ final class Store: ObservableObject {
             Runtime.requestScreenshots(of: project)
             screenshots = await Runtime.screenshots(of: project, since: asked, waiting: 2)
             note = "The app is running your latest code; nothing needed rebuilding."
-            looks[project.id]?.installed = !screenshots.isEmpty
-            looks[project.id]?.crash = nil
+            turn.look.installed = !screenshots.isEmpty
+            turn.look.crash = nil
         }
         if screenshots.isEmpty {
             let launched = Date()
             let crash = await install(project, inFront: false)
-            looks[project.id]?.installed = true
-            looks[project.id]?.crash = crash
+            turn.look.installed = true
+            turn.look.crash = crash
             if let crash {
                 return (200, ["text": "The app \(changed ? "built" : "is built"), but it quit right after launching.\n\n\(crash)"])
             }
