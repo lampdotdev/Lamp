@@ -1234,8 +1234,8 @@ final class Store: ObservableObject {
         the main reason for that risk level, e.g. what it could change, delete, install or send>"}
         low: only reads, or changes files inside the app's own folder. medium: downloads things, installs tools for \
         this project, or changes files elsewhere that are easy to restore. high: deletes or overwrites files outside \
-        the app's folder, needs administrator rights, changes system settings, sends personal data somewhere, or \
-        runs code downloaded from the internet.
+        the app's folder, needs administrator rights, changes system settings, sends personal data somewhere, reads \
+        sign-ins, keys, passwords or browser data, or runs code downloaded from the internet.
         """
         let prompt = "The user's request: \(currentRequests[project.id] ?? "(unknown)")\n\nThe command:\n\(command)"
         guard let (text, _) = try? await AppAI.complete(prompt: prompt, images: [], system: system, json: true),
