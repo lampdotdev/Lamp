@@ -61,6 +61,7 @@ Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/
 
 ## Using it
 
+- **Help → Forge Help (⌘/)** opens an offline guide to getting started, changing and sharing apps, versions, AI and privacy, troubleshooting, and keyboard shortcuts.
 - A new app's empty chat shows six ideas to start from (a Downloads sorter, screenshot notes, a clipboard history, a reading queue, a focus timer and a photo studio). Clicking one fills in the request, ready to change before you send it. They go away once you start typing.
 - Click **New App** at the bottom of the app list, give the app a name and (optionally) describe it. Forge builds it and opens it, usually in under a minute.
 - If a request is too vague to build well ("an app for my sales stuff"), the agent asks up to three short questions, each with likely answers, before writing any code; answering starts the build. Clear requests are built straight away, and the agent ends by naming the main assumptions it made so you can correct them.

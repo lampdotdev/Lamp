@@ -14,6 +14,7 @@ struct ForgeApp: App {
         }
         .commands {
             CheckForUpdatesCommand()
+            ForgeHelpCommands()
             CommandGroup(replacing: .newItem) {
                 Button("New App") { store.create() }
                     .keyboardShortcut("n")
@@ -33,6 +34,7 @@ struct ForgeApp: App {
         Settings {
             SettingsView().environmentObject(store)
         }
+        ForgeHelpScene()
     }
 }
 
