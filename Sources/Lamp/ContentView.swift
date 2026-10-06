@@ -387,6 +387,8 @@ struct ProjectView: View {
     @AppStorage("showVersions") private var showVersions = false
     @State private var suggestion: String?
     @State private var dismissedSuggestion: String?
+    /// The request being changed to send it again.
+    @State private var editing: UUID?
 
     /// Worked out once per body (see `body`): it filters the whole chat, and body runs on every streamed token.
     private var lines: [LogLine] {
@@ -433,6 +435,8 @@ struct ProjectView: View {
                                     transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy)
                                 } header: {
                                     BuildCard(project: project, progress: card)
+                                        // It's of the first request, and goes with it when any is sent again.
+                                        .opacity(editing == nil ? 1 : 0.35)
                                         .padding(.top, 16).padding(.bottom, 12)
                                         .background(Color(nsColor: .textBackgroundColor))
                                 }
@@ -581,6 +585,8 @@ struct ProjectView: View {
             Text(problem.message)
         }
         .onChange(of: store.chatFocusRequest) { focusRequest += 1 }
+        .onChange(of: busy) { editing = nil }
+        .onChange(of: project.id) { editing = nil }
         .task(id: suggestionTurn) {
             suggestion = nil
             guard suggestionTurn != nil else { return }
@@ -589,9 +595,15 @@ struct ProjectView: View {
     }
 
     private func transcript(_ lines: [LogLine], busy: Bool, progressShown: Bool = false) -> some View {
-        Transcript(lines: lines, dir: project.dir, busy: busy, progressShown: progressShown) { line, before in
-            Task { await store.restore(project, toVersionOf: line, before: before) }
+        // The whole chat decides what an edit takes with it, not just the part of it drawn here.
+        let all = self.lines
+        let edit = RequestEdit(editing: $editing, latest: all.last { $0.kind == .user }?.id,
+                               leaving: Set(all.drop { $0.id != editing }.dropFirst().map(\.id))) { line, text in
+            Task { await store.sendAgain(line, as: text, in: project) }
         }
+        return Transcript(lines: lines, dir: project.dir, busy: busy, progressShown: progressShown, goBack: { line, before in
+            Task { await store.restore(project, toVersionOf: line, before: before) }
+        }, edit: self.busy ? nil : edit)
     }
 
     @ToolbarContentBuilder

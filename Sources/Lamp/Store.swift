@@ -39,6 +39,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var text: String
     var attachments: [String]? = nil   // names in the app's Attachments/ folder
     var version: String? = nil         // for a request: the version it made
+    var before: String? = nil          // for a request: the version the app was at when it was sent
 
     /// Hidden unless Agent Details is on.
     var isDetail: Bool { kind == .detail || kind == .tool || kind == .summary }
@@ -68,6 +69,8 @@ struct QueuedMessage: Identifiable {
     let id = UUID()
     let text: String
     var attachments: [URL] = []
+    /// Files already in the app's Attachments folder: those of a request that's sent again.
+    var kept: [String] = []
 }
 
 @MainActor
@@ -823,6 +826,8 @@ final class Store: ObservableObject {
                 project = await bootstrap(project, brief: brief)
                 if project.id != untitled.id { progress[project.id] = progress.removeValue(forKey: untitled.id) }
             }
+            // Where the app is as the turn starts, so the request can be changed and sent again from here.
+            if let head = await Versions.head(project) { mark(asked, sentFrom: head, in: project) }
             var worked = false
             var result = TurnResult(end: .failed, watched: true)
             defer {
@@ -918,7 +923,7 @@ final class Store: ObservableObject {
     private func post(_ messages: [QueuedMessage], to project: LampProject) -> [String] {
         var saved: [String] = []
         for message in messages {
-            let names = Attachments.save(message.attachments, to: project)
+            let names = message.kept + Attachments.save(message.attachments, to: project)
             log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
             saved += names
         }
@@ -1782,6 +1787,39 @@ final class Store: ObservableObject {
         await restore(project, to: target)
     }
 
+    /// Sends a request again in other words, from where the app was when it was first sent. The app's files
+    /// go back to that point (as a new version, like any restore, so what came later is still in Versions),
+    /// the request and everything after it leave the chat, and the new words go out as an ordinary turn.
+    /// The agent keeps its conversation, as it does after Undo, and is told what was taken back: the three
+    /// engines can't all be wound back to an earlier message, and a note works the same for each of them.
+    func sendAgain(_ line: LogLine, as text: String, in project: LampProject) async {
+        guard busy.insert(project.id).inserted else { return }
+        defer { finish(project) }   // which starts the turn queued below
+        let versions = await Versions.list(project)
+        // Requests from before Lamp noted where they were sent from: the version one made follows that point.
+        let start = line.before ?? line.version.flatMap { id in versions.first { $0.id == id }?.parent }
+        guard let target = start.flatMap({ id in versions.first { $0.id == id } }),
+              await Versions.restoreFiles(project, to: target),
+              let chat = logs[project.id], let index = chat.firstIndex(where: { $0.id == line.id }) else {
+            log(project, .error, "Lamp couldn't go back to how the app was before that message, so nothing was sent.")
+            return
+        }
+        if await Versions.save(project, message: "Restored to “\(target.label)”"), let head = await Versions.head(project) {
+            Versions.copyPicture(in: project, from: target.id, to: head)
+            versionsRevision += 1
+        }
+        // Requests that went out together made one change, so the ones just before this one go out with it again.
+        var first = index
+        while first > chat.startIndex, chat[first - 1].kind == .user { first -= 1 }
+        var again = chat[first...index].map { QueuedMessage(text: $0.text, kept: $0.attachments ?? []) }
+        again[again.count - 1] = QueuedMessage(text: text, kept: line.attachments ?? [])
+        logs[project.id] = Array(chat[..<first])
+        saveChat(project)
+        progress[project.id] = nil   // a new app's build card belongs to the request that's gone
+        Versions.remember(project, tookBack: Self.label(for: line))
+        queued[project.id, default: []].insert(contentsOf: again, at: 0)
+    }
+
     /// After a restore: the new version looks like the old one, so it starts with its picture until the app
     /// takes a fresh one.
     private func rebuild(_ project: LampProject, restoredFrom version: AppVersion) async {
@@ -1849,6 +1887,14 @@ final class Store: ObservableObject {
     private func link(_ lines: [UUID], to version: String, in project: LampProject) {
         guard var chat = logs[project.id] else { return }
         for index in chat.indices where lines.contains(chat[index].id) { chat[index].version = version }
+        logs[project.id] = chat
+        saveChat(project)
+    }
+
+    /// Notes on requests the version the app was at when they were sent.
+    private func mark(_ lines: [UUID], sentFrom version: String, in project: LampProject) {
+        guard var chat = logs[project.id] else { return }
+        for index in chat.indices where lines.contains(chat[index].id) { chat[index].before = version }
         logs[project.id] = chat
         saveChat(project)
     }

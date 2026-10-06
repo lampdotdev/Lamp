@@ -115,6 +115,11 @@ enum Versions {
     /// Restores a version's files and saves the result as a new version. False when nothing changed.
     static func restore(_ project: LampProject, to version: AppVersion, message: String, trailer: String? = nil) async -> Bool {
         guard await restoreFiles(project, to: version) else { return false }
+        return await save(project, message: message, trailer: trailer)
+    }
+
+    /// Saves the app's files as they are now as a new version. False when nothing changed.
+    static func save(_ project: LampProject, message: String, trailer: String? = nil) async -> Bool {
         let trailerArgument = trailer.map { " -m \"\($0)\"" } ?? ""
         return await Shell.run("git add -A && ! git diff --cached --quiet && \(commit) -q -m \"$LAMP_MESSAGE\"\(trailerArgument)",
                                cwd: project.dir, env: ["LAMP_MESSAGE": message]) { _ in } == 0
@@ -170,6 +175,25 @@ enum Versions {
         Note from Lamp: before this message, the user went back to an earlier version of the app \
         (“\(label)”, from \(date.formatted(date: .abbreviated, time: .shortened))). The files may no longer \
         match what you remember from this conversation, so read them again before editing.
+        """
+        try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
+    }
+
+    /// Remembers that a request was taken back and sent again in other words, so the agent hears about it
+    /// with the new one. Its conversation still holds the old request and everything that followed it.
+    static func remember(_ project: LampProject, tookBack request: String) {
+        let old = request.count > 400 ? String(request.prefix(400)) + "…" : request
+        let note = """
+
+
+        Note from Lamp: the message above replaces an earlier one. The user went back to this message of \
+        theirs in the conversation, changed it to the message above and sent it again:
+
+        “\(old)”
+
+        That earlier message and everything after it (their later requests, your replies and your changes) no \
+        longer count, and the app's files are back to how they were just before it. Don't bring any of that \
+        back unless the message above asks for it, and read the files again before editing.
         """
         try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
     }
