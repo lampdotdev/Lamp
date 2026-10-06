@@ -1502,7 +1502,11 @@ final class Store: ObservableObject {
             plutil -replace CFBundleDisplayName -string "$FORGE_NAME" "$P" && \
             plutil -replace NSMicrophoneUsageDescription -string "$FORGE_NAME listens to your microphone." "$P" && \
             plutil -replace NSSpeechRecognitionUsageDescription -string "$FORGE_NAME turns your speech into text." "$P" && \
-            plutil -replace NSCameraUsageDescription -string "$FORGE_NAME uses your camera." "$P"
+            plutil -replace NSCameraUsageDescription -string "$FORGE_NAME uses your camera." "$P" && \
+            plutil -replace NSCalendarsFullAccessUsageDescription -string "$FORGE_NAME reads and adds calendar events." "$P" && \
+            plutil -replace NSRemindersFullAccessUsageDescription -string "$FORGE_NAME reads and adds reminders." "$P" && \
+            plutil -replace NSContactsUsageDescription -string "$FORGE_NAME looks up people in your contacts." "$P" && \
+            plutil -replace NSAppleEventsUsageDescription -string "$FORGE_NAME reads your email and drafts replies through Mail." "$P"
             """, cwd: project.dir, env: ["FORGE_APP": project.builtURL.path, "FORGE_NAME": project.name]) { _ in }
         if fm.fileExists(atPath: Icons.icnsURL(project).path) {
             try? fm.removeItem(at: resources.appendingPathComponent("AppIcon.icns"))

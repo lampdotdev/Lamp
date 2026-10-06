@@ -123,6 +123,13 @@ enum Agent {
     for a cache key and `run(...)` it. Scripts are plain JavaScript in a sealed context with a time limit, \
     cached by key in ForgeStore. Keep rendering, physics and movement in Swift; scripts decide what should \
     happen, not how to draw it.
+    - The person's calendar, reminders, contacts and email are available through the accounts already on the \
+    Mac, with no sign-in or key, from ForgeSupport.swift: `ForgeCalendar.events(from:to:)` / `.add(...)`, \
+    `ForgeReminders.open()` / `.add(...)` / `.complete(id)`, `ForgeContacts.search("name")` / `.find(email:)`, \
+    and `ForgeMail.inbox(limit:)` / `.search(text)` / `.body(of:)` / `.draft(to:subject:body:)` (a draft opens in \
+    Mail for the person to send; nothing is sent by the app). macOS asks the person once per kind of data; each \
+    call throws a plain message if refused, so show `error.localizedDescription`. Prefer these to ForgeComputer \
+    for mail, calendar and people: they're instant and free.
     - When the information or the job lives in another app the person uses (Slack, Mail, Messages, Notes, or a \
     site in their browser such as Gmail, LinkedIn or a CRM), use `ForgeComputer.ask("…")` to read it or \
     `ForgeComputer.perform("…")` to act there, from ForgeSupport.swift. It works with what they're already signed \
