@@ -107,18 +107,22 @@ enum Lamp {
                    .init(0.96, 0.9), .init(0.84, 0.99), .init(0.66, 1.04), .init(0.4, 1.065), .init(0, 1.075)],
                   segments: 720, steps: 28,
                   relief: { a, y in
+                      // The decoration fades out towards the front, which is drawn out into the spout: stretched,
+                      // it would turn into sharp ridges.
+                      let back = 1 - min(max((cos(a) - 0.45) / 0.4, 0), 1)
                       let lobes = (pow(abs(cos(a * 13)), 0.45) - 0.6) * band(y, 0.45, 0.7) * min((y - 0.45) / 0.12, 1)
                       let belt = band(y, 0.755, 0.785)
                       let ribs = (cos(a * 90) * 0.5 + 0.5) * band(y, 0.92, 0.985)
-                      return 1 + 0.045 * lobes + 0.018 * belt + 0.008 * ribs
+                      return 1 + back * (0.045 * lobes + 0.018 * belt + 0.008 * ribs)
                   }) { p in
-            // Towards the front it is drawn out and pinched to a narrow wedge that the spout's base swallows.
+            // Towards the front it is drawn out and narrowed evenly all round, so it stays rounded where the
+            // spout leaves it rather than flattening into a fin.
             var q = p
             if p.x > 0 {
                 let f = min(p.x, 1), g = pow(f, 1.6)
-                q.x = p.x * (1 + 0.65 * f)
-                q.y = 0.84 + (p.y - 0.84) * (1 - 0.62 * g) + 0.02 * f * f
-                q.z = p.z * (1 - 0.58 * g)
+                q.x = p.x * (1 + 0.5 * f)
+                q.y = 0.84 + (p.y - 0.84) * (1 - 0.5 * g) + 0.02 * f * f
+                q.z = p.z * (1 - 0.5 * g)
             }
             return q
         })
@@ -140,10 +144,30 @@ enum Lamp {
         ring(0.1, 0.018, y: 1.47)
 
         // The spout: wide where it leaves the body, with two raised rings, sweeping up to a flared lip.
-        add(tube([.init(0.35, 0.83, 0), .init(1.8, 0.78, 0), .init(2.25, 0.95, 0), spoutTip],
-                 radius: { t in 0.065 + 0.2 * pow(1 - t, 1.5) + 0.016 * bump(t, 0.5, 0.01) + 0.012 * bump(t, 0.78, 0.008)
+        let spout: [SIMD3<Float>] = [.init(0.35, 0.83, 0), .init(1.8, 0.78, 0), .init(2.25, 0.95, 0), spoutTip]
+        let spoutRadius: (Float) -> Float = { t in 0.065 + 0.2 * pow(1 - t, 1.5) }
+        let spoutSquash: (Float) -> Float = { t in 1 - 0.3 * (1 - t) }
+        add(tube(spout, radius: { t in spoutRadius(t) + 0.016 * bump(t, 0.5, 0.01) + 0.012 * bump(t, 0.78, 0.008)
                      + 0.02 * bump(t, 1, 0.03) },
-                 rows: 600, segments: 128, squash: { t in 1 - 0.3 * (1 - t) }))
+                 rows: 600, segments: 128, squash: spoutSquash))
+        // A collar where the spout leaves the body, as on a cast lamp, so the two meet in a clean join:
+        // a rounded band and a thin ring just ahead of it, following the spout's oval section.
+        let leaves = stride(from: Float(0), through: 1, by: 0.005).min { abs(bezier(spout, $0).x - 1.44) < abs(bezier(spout, $1).x - 1.44) }!
+        for (t, pipe) in [(leaves, Float(0.034)), (leaves + 0.035, Float(0.016))] {
+            let centre = bezier(spout, t)
+            let along = simd_normalize(bezier(spout, min(t + 0.002, 1)) - bezier(spout, max(t - 0.002, 0)))
+            let across = simd_normalize(simd_cross(SIMD3(0, 0, 1), along))
+            let collar = SCNTorus(ringRadius: CGFloat(spoutRadius(t) + pipe * 0.6), pipeRadius: CGFloat(pipe))
+            collar.ringSegmentCount = 160
+            collar.pipeSegmentCount = 32
+            collar.materials = [mat]
+            let node = SCNNode(geometry: collar)
+            // The torus rings its own y axis: turn that along the spout, and squash it to the spout's oval.
+            node.simdOrientation = simd_quatf(simd_float3x3(columns: (across, along, simd_cross(across, along))))
+            node.simdScale = SIMD3(spoutSquash(t), 1, 1)
+            node.simdPosition = centre
+            lamp.addChildNode(node)
+        }
         let lip = SCNTorus(ringRadius: 0.085, pipeRadius: 0.018)
         lip.ringSegmentCount = 96
         lip.pipeSegmentCount = 32

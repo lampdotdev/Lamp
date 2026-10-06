@@ -19,10 +19,10 @@ struct LampBackdrop: NSViewRepresentable {
         view.scene = context.coordinator.scene
         view.pointOfView = context.coordinator.camera
         view.delegate = context.coordinator
+        view.resized = { [weak stage = context.coordinator] in stage?.resize(to: $0) }
         view.backgroundColor = LampStage.page
         view.antialiasingMode = .multisampling4X
-        view.rendersContinuously = true
-        view.isPlaying = true
+        context.coordinator.view = view
         context.coordinator.go(to: step, animated: false, drifting: !reduceMotion)
         return view
     }
@@ -32,13 +32,31 @@ struct LampBackdrop: NSViewRepresentable {
     }
 }
 
-/// Lets clicks through to the welcome, so the window still drags by its background.
+/// Lets clicks through to the welcome, so the window still drags by its background, and says when its size
+/// changes, so the framings can follow the window's shape.
 private final class PassthroughSceneView: SCNView {
+    var resized: ((CGSize) -> Void)?
+
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func layout() {
+        super.layout()
+        resized?(bounds.size)
+    }
+
+    /// Renders at 1.5 times the screen's resolution and lets the compositor scale it down: multisampling alone
+    /// leaves the fine fluting and beads shimmering as the camera moves, and the soft shading in the creases
+    /// (which SceneKit works out at a lower resolution) blocky.
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        guard let layer, let window else { return }
+        layer.contentsScale = window.backingScaleFactor * 1.5
+        layer.minificationFilter = .trilinear
+    }
 }
 
 /// A camera framing: where it stands, what it looks at, how wide it sees.
-private struct Pose {
+private struct Pose: Equatable {
     var eye: SIMD3<Float>
     var target: SIMD3<Float>
     var fov: Float
@@ -88,22 +106,40 @@ private struct Pose {
 final class LampStage: NSObject, SCNSceneRendererDelegate {
     static let page = NSColor(srgbRed: 0.98, green: 0.976, blue: 0.97, alpha: 1)
 
-    /// One close, cropped framing per step, laid out around where each step's content sits.
-    private static let poses: [Pose] = [
-        // Hello: the lamp large and low under the headline, its foot cut off by the bottom of the window.
-        Pose(eye: SIMD3(0.55, 1.5, 5.6), target: SIMD3(0.75, 2.05, 0), fov: 30),
-        // The idea: the lid and its knob against the right edge, half out of the window.
-        .framing(eye: SIMD3(2.6, 2.2, 3.0), subject: SIMD3(0, 1.5, 0), screen: SIMD2(0.93, 0.05), fov: 34),
-        // Setup: seen from behind, the handle's loop against the left edge with the body beyond it.
-        .framing(eye: SIMD3(-4.2, 1.7, -0.4), subject: SIMD3(-1.46, 1.25, -0.53), screen: SIMD2(-0.88, 0.05), fov: 34),
-    ]
+    /// One close, cropped framing per step, laid out around where each step's content sits. Each is described
+    /// by where a part of the lamp should land on screen, so it holds as the window changes shape.
+    private static func poses(aspect: Float) -> [Pose] {
+        [
+            // Hello: the lamp large and low under the headline, its foot cut off by the bottom of the window.
+            Pose(eye: SIMD3(0.55, 1.5, 5.6), target: SIMD3(0.75, 2.05, 0), fov: 30),
+            // The idea: the lid and its knob against the right edge, half out of the window.
+            .framing(eye: SIMD3(2.6, 2.2, 3.0), subject: SIMD3(0, 1.5, 0), screen: SIMD2(0.93, 0.05), fov: 34, aspect: aspect),
+            // Setup: seen from behind, the handle's loop against the left edge with the body beyond it.
+            .framing(eye: SIMD3(-4.2, 1.7, -0.4), subject: SIMD3(-1.46, 1.25, -0.53), screen: SIMD2(-0.88, 0.05),
+                     fov: 34, aspect: aspect),
+        ]
+    }
     private static let glide = 1.8
+    /// How long the drift lasts before the camera is, for all purposes, still: then it stops for good, and so
+    /// does the rendering, until the step changes.
+    private static let settle = 40.0
 
     let scene = SCNScene()
     let camera = SCNNode()
+    /// Renders only while the camera moves; a still picture is drawn once and left.
+    weak var view: SCNView?
     private let lock = NSLock()
+    /// Bumped whenever the camera is sent somewhere new, so a stale "it's still now" is ignored.
+    private var generation = 0
+    /// The generation that has come to rest and stopped rendering, so it stops only once.
+    private var stopped = -1
+    /// The framing the camera was last given. Moving it, even to where it already is, makes SceneKit draw
+    /// again, so it's only touched when the framing changes.
+    private var placed: Pose?
     private var step = -1
-    private var from = poses[0]
+    private var aspect: Float = 1080.0 / 760
+    private lazy var poses = Self.poses(aspect: aspect)
+    private lazy var from = poses[0]
     private var started = CACurrentMediaTime()
     private var gliding = false
     private var drifting = true
@@ -158,40 +194,90 @@ final class LampStage: NSObject, SCNSceneRendererDelegate {
         camera.camera!.screenSpaceAmbientOcclusionRadius = 0.1
         camera.camera!.screenSpaceAmbientOcclusionBias = 0.02
         scene.rootNode.addChildNode(camera)
-        place(Self.poses[0])
+        place(poses[0])
     }
 
     /// Heads for `next`'s framing: gliding there from wherever the camera is now, or straight there.
     func go(to next: Int, animated: Bool, drifting: Bool) {
-        let next = min(max(next, 0), Self.poses.count - 1)
+        let next = min(max(next, 0), poses.count - 1)
         lock.lock()
         defer { lock.unlock() }
-        self.drifting = drifting
-        guard next != step else { return }
+        guard next != step || drifting != self.drifting else { return }
         let now = CACurrentMediaTime()
-        from = step < 0 ? Self.poses[next] : pose(at: now)
-        step = next
-        started = now
-        gliding = animated && from.eye != Self.poses[next].eye
+        if next != step {
+            from = step < 0 ? poses[next] : pose(at: now)
+            step = next
+            started = now
+            gliding = animated && from.eye != poses[next].eye
+        }
+        self.drifting = drifting
+        generation += 1
+        render(moving: moving(at: now), pose: pose(at: now))
+    }
+
+    /// Whether the camera is still on its way somewhere at `now`. Call with the lock held.
+    private func moving(at now: Double) -> Bool {
+        let elapsed = now - started
+        if gliding && elapsed < Self.glide { return true }
+        return drifting && (gliding ? elapsed - Self.glide : elapsed) < Self.settle
+    }
+
+    /// Starts rendering every frame while the camera moves, or draws the still picture once. On the main thread.
+    private func render(moving: Bool, pose: Pose) {
+        guard let view else { return }
+        view.rendersContinuously = moving
+        view.isPlaying = moving
+        if !moving {
+            place(pose)
+            view.needsDisplay = true
+        }
+    }
+
+    /// Stops rendering once the camera has come to rest, unless it has been sent somewhere since.
+    private func stopIfStill(_ seen: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        let now = CACurrentMediaTime()
+        guard seen == generation, stopped != generation, !moving(at: now) else { return }
+        stopped = generation
+        render(moving: false, pose: pose(at: now))
+    }
+
+    /// Re-frames for a window of this size.
+    func resize(to size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        let ratio = Float(size.width / size.height)
+        guard abs(ratio - aspect) > 0.001 else { return }
+        aspect = ratio
+        poses = Self.poses(aspect: ratio)
+        let now = CACurrentMediaTime()
+        if !moving(at: now) { render(moving: false, pose: pose(at: now)) }
     }
 
     func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
         lock.lock()
-        let pose = pose(at: CACurrentMediaTime())
+        let now = CACurrentMediaTime()
+        let still = !moving(at: now), seen = generation
+        place(pose(at: now))
         lock.unlock()
-        place(pose)
+        if still { DispatchQueue.main.async { [weak self] in self?.stopIfStill(seen) } }
     }
 
     /// Where the camera is at `now`. Call with the lock held.
     private func pose(at now: Double) -> Pose {
-        let rest = Self.poses[max(step, 0)]
+        let rest = poses[max(step, 0)]
         let elapsed = now - started
         if gliding && elapsed < Self.glide { return Pose.mix(from, rest, Float(elapsed / Self.glide)) }
         guard drifting else { return rest }
-        return rest.drifted(gliding ? elapsed - Self.glide : elapsed)
+        return rest.drifted(min(gliding ? elapsed - Self.glide : elapsed, Self.settle))
     }
 
+    /// Moves the camera. Call with the lock held (or before rendering starts).
     private func place(_ p: Pose) {
+        guard p != placed else { return }
+        placed = p
         camera.camera!.fieldOfView = CGFloat(p.fov)
         camera.simdPosition = p.eye
         camera.simdLook(at: p.target)
@@ -208,7 +294,6 @@ final class LampStage: NSObject, SCNSceneRendererDelegate {
 }
 
 // MARK: - The model
-
 
 /// A grid of points that wraps around in `cols`, turned into a smooth SceneKit surface.
 private func gridGeometry(rows: Int, cols: Int, flip: Bool = false, _ point: (Int, Int) -> SIMD3<Float>) -> SCNGeometry {
@@ -375,18 +460,22 @@ private enum LampModel {
                    .init(0.96, 0.9), .init(0.84, 0.99), .init(0.66, 1.04), .init(0.4, 1.065), .init(0, 1.075)],
                   segments: 720, steps: 28,
                   relief: { a, y in
+                      // The decoration fades out towards the front, which is drawn out into the spout: stretched,
+                      // it would turn into sharp ridges.
+                      let back = 1 - min(max((cos(a) - 0.45) / 0.4, 0), 1)
                       let lobes = (pow(abs(cos(a * 13)), 0.45) - 0.6) * band(y, 0.45, 0.7) * min((y - 0.45) / 0.12, 1)
                       let belt = band(y, 0.755, 0.785)
                       let ribs = (cos(a * 90) * 0.5 + 0.5) * band(y, 0.92, 0.985)
-                      return 1 + 0.045 * lobes + 0.018 * belt + 0.008 * ribs
+                      return 1 + back * (0.045 * lobes + 0.018 * belt + 0.008 * ribs)
                   }) { p in
-            // Towards the front it is drawn out and pinched to a narrow wedge that the spout's base swallows.
+            // Towards the front it is drawn out and narrowed evenly all round, so it stays rounded where the
+            // spout leaves it rather than flattening into a fin.
             var q = p
             if p.x > 0 {
                 let f = min(p.x, 1), g = pow(f, 1.6)
-                q.x = p.x * (1 + 0.65 * f)
-                q.y = 0.84 + (p.y - 0.84) * (1 - 0.62 * g) + 0.02 * f * f
-                q.z = p.z * (1 - 0.58 * g)
+                q.x = p.x * (1 + 0.5 * f)
+                q.y = 0.84 + (p.y - 0.84) * (1 - 0.5 * g) + 0.02 * f * f
+                q.z = p.z * (1 - 0.5 * g)
             }
             return q
         })
@@ -408,10 +497,30 @@ private enum LampModel {
         ring(0.1, 0.018, y: 1.47)
 
         // The spout: wide where it leaves the body, with two raised rings, sweeping up to a flared lip.
-        add(tube([.init(0.35, 0.83, 0), .init(1.8, 0.78, 0), .init(2.25, 0.95, 0), spoutTip],
-                 radius: { t in 0.065 + 0.2 * pow(1 - t, 1.5) + 0.016 * bump(t, 0.5, 0.01) + 0.012 * bump(t, 0.78, 0.008)
+        let spout: [SIMD3<Float>] = [.init(0.35, 0.83, 0), .init(1.8, 0.78, 0), .init(2.25, 0.95, 0), spoutTip]
+        let spoutRadius: (Float) -> Float = { t in 0.065 + 0.2 * pow(1 - t, 1.5) }
+        let spoutSquash: (Float) -> Float = { t in 1 - 0.3 * (1 - t) }
+        add(tube(spout, radius: { t in spoutRadius(t) + 0.016 * bump(t, 0.5, 0.01) + 0.012 * bump(t, 0.78, 0.008)
                      + 0.02 * bump(t, 1, 0.03) },
-                 rows: 600, segments: 128, squash: { t in 1 - 0.3 * (1 - t) }))
+                 rows: 600, segments: 128, squash: spoutSquash))
+        // A collar where the spout leaves the body, as on a cast lamp, so the two meet in a clean join:
+        // a rounded band and a thin ring just ahead of it, following the spout's oval section.
+        let leaves = stride(from: Float(0), through: 1, by: 0.005).min { abs(bezier(spout, $0).x - 1.44) < abs(bezier(spout, $1).x - 1.44) }!
+        for (t, pipe) in [(leaves, Float(0.034)), (leaves + 0.035, Float(0.016))] {
+            let centre = bezier(spout, t)
+            let along = simd_normalize(bezier(spout, min(t + 0.002, 1)) - bezier(spout, max(t - 0.002, 0)))
+            let across = simd_normalize(simd_cross(SIMD3(0, 0, 1), along))
+            let collar = SCNTorus(ringRadius: CGFloat(spoutRadius(t) + pipe * 0.6), pipeRadius: CGFloat(pipe))
+            collar.ringSegmentCount = 160
+            collar.pipeSegmentCount = 32
+            collar.materials = [mat]
+            let node = SCNNode(geometry: collar)
+            // The torus rings its own y axis: turn that along the spout, and squash it to the spout's oval.
+            node.simdOrientation = simd_quatf(simd_float3x3(columns: (across, along, simd_cross(across, along))))
+            node.simdScale = SIMD3(spoutSquash(t), 1, 1)
+            node.simdPosition = centre
+            lamp.addChildNode(node)
+        }
         let lip = SCNTorus(ringRadius: 0.085, pipeRadius: 0.018)
         lip.ringSegmentCount = 96
         lip.pipeSegmentCount = 32

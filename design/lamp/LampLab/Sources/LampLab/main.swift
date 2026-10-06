@@ -106,6 +106,19 @@ func writePNG(_ cg: CGImage, _ url: URL) {
         if args.count > 3 {
             try! AppIcon.export(doc, to: URL(fileURLWithPath: args[3]), scratch: out)
         }
+    case "crease":
+        // Close-ups of where the body meets the spout, from the side, below and above.
+        let clay = ClayScene()
+        let r = SCNRenderer(device: MTLCreateSystemDefaultDevice(), options: nil)
+        r.scene = clay.scene
+        r.pointOfView = clay.camera
+        let views: [Pose] = [Pose(eye: SIMD3(1.6, 0.7, 2.6), target: SIMD3(1.4, 0.8, 0.4), fov: 30),
+                             Pose(eye: SIMD3(1.9, 0.25, 1.9), target: SIMD3(1.4, 0.75, 0.4), fov: 30),
+                             Pose(eye: SIMD3(1.2, 2.2, 2.2), target: SIMD3(1.4, 0.85, 0.4), fov: 30)]
+        for (i, p) in views.enumerated() {
+            clay.pose(p)
+            writePNG(supersampled(r, pixels: CGSize(width: 600, height: 420)), out.appendingPathComponent("crease\(i).png"))
+        }
     case "poses":
         let clay = ClayScene()
         let r = SCNRenderer(device: MTLCreateSystemDefaultDevice(), options: nil)

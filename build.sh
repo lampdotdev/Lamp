@@ -154,14 +154,27 @@ else
   APP_ENTITLEMENTS=()
   QUIET=/dev/null
 fi
+# Signs one item. codesign's routine chatter stays quiet for local builds, but a failure always says what
+# went wrong, instead of the script stopping silently partway.
+sign() {
+  local output
+  if ! output="$("${SIGN[@]}" "$@" 2>&1)"; then
+    echo "$output" >&2
+    echo "Couldn't sign ${@[-1]} with \"$SIGN_ID\". For an unsigned build to try things out: SIGN_IDENTITY=- ./build.sh" >&2
+    return 1
+  fi
+  [[ -n "$output" ]] && echo "$output" >$QUIET
+  return 0
+}
 # Nested code first (pi's native module, llama.cpp's libraries and server, pi), then the app.
-find "$APP/Contents/Resources/pi" -name '*.node' -exec "${SIGN[@]}" {} \; >$QUIET 2>&1
-find "$APP/Contents/Resources/llama" -type f \( -name '*.dylib' -o -name 'llama-server' \) -exec "${SIGN[@]}" {} \; >$QUIET 2>&1
-"${SIGN[@]}" "${PI_ENTITLEMENTS[@]}" "$APP/Contents/Resources/pi/pi" >$QUIET 2>&1
+find "$APP/Contents/Resources/pi" -name '*.node' -print0 | while IFS= read -r -d '' item; do sign "$item"; done
+find "$APP/Contents/Resources/llama" -type f \( -name '*.dylib' -o -name 'llama-server' \) -print0 |
+  while IFS= read -r -d '' item; do sign "$item"; done
+sign "${PI_ENTITLEMENTS[@]}" "$APP/Contents/Resources/pi/pi"
 SPARKLE="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
-"${SIGN[@]}" "$SPARKLE/Autoupdate" >$QUIET 2>&1
-"${SIGN[@]}" "$SPARKLE/Updater.app" >$QUIET 2>&1
-"${SIGN[@]}" "$APP/Contents/Frameworks/Sparkle.framework" >$QUIET 2>&1
-"${SIGN[@]}" "${APP_ENTITLEMENTS[@]}" "$APP" >$QUIET 2>&1
+sign "$SPARKLE/Autoupdate"
+sign "$SPARKLE/Updater.app"
+sign "$APP/Contents/Frameworks/Sparkle.framework"
+sign "${APP_ENTITLEMENTS[@]}" "$APP"
 [ "$SIGN_ID" = "-" ] && echo "Signed ad-hoc (macOS may ask for Keychain access after each rebuild)"
 echo "Built $APP"

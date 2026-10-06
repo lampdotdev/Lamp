@@ -115,11 +115,14 @@ enum Template {
 
     /// The line every fresh scaffold shows. It's gone as soon as an agent writes the app's real interface.
     static let scaffoldHint = "Press ⇧⌘E to tell Lamp what to build."
+    /// The same line in scaffolds made before the app was renamed, which still say it.
+    static let earlierScaffoldHints = ["Press ⇧⌘E to tell Forge what to build."]
 
     /// Whether the app is still the empty scaffold: nothing has been built into it yet.
     static func isScaffold(_ project: ForgeProject) -> Bool {
-        let view = try? String(contentsOf: project.dir.appendingPathComponent("Sources/ContentView.swift"), encoding: .utf8)
-        return view?.contains(scaffoldHint) ?? false
+        guard let view = try? String(contentsOf: project.dir.appendingPathComponent("Sources/ContentView.swift"), encoding: .utf8)
+        else { return false }
+        return ([scaffoldHint] + earlierScaffoldHints).contains { view.contains($0) }
     }
 
     static let contentViewSwift = """

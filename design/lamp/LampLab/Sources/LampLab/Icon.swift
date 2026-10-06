@@ -35,7 +35,7 @@ import simd
         // and a softer one high over the lid, where it sweeps back across. Each reaches only its own part.
         let tip = clay.lamp.simdConvertPosition(Lamp.spoutTip, to: nil)
         // White porcelain shows the same light more strongly than charcoal, so it gets less.
-        let warmth = dark ? 130.0 : 70.0
+        let warmth = dark ? 120.0 : 55.0
         for (position, intensity, reach) in [(tip + SIMD3<Float>(-0.25, 0.8, 0.3), warmth, 1.45),
                                              (SIMD3<Float>(0.45, 2.55, 0.55), warmth, 1.75)] {
             let glow = SCNNode()
@@ -65,7 +65,7 @@ import simd
         bounce.light = SCNLight()
         bounce.light!.type = .omni
         bounce.light!.color = NSColor(srgbRed: 1, green: 0.6, blue: 0.25, alpha: 1)
-        bounce.light!.intensity = CGFloat(warmth * (dark ? 0.3 : 0.15))
+        bounce.light!.intensity = CGFloat(warmth * (dark ? 0.2 : 0.07))
         bounce.light!.attenuationEndDistance = 1.3
         bounce.light!.attenuationFalloffExponent = 2
         bounce.simdPosition = poolCentre + SIMD3(0, 0.08, 0)
