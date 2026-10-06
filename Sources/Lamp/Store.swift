@@ -826,7 +826,7 @@ final class Store: ObservableObject {
         // Artwork that arrived during the turn, for an icon that was installed without it: applied now, still
         // owning the app, so nothing else builds or installs meanwhile. With more work queued, the next
         // install picks the artwork up itself.
-        if pendingIconArt.contains(project.id), queued[project.id] == nil,
+        if pendingIconArt.contains(project.id), (queued[project.id] ?? []).isEmpty,
            let spec = Icons.load(project), artApplied[project.id] != spec {
             pendingIconArt.remove(project.id)
             Task {
