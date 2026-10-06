@@ -44,7 +44,8 @@ these come from, read off the bundle id that `build.sh` writes (`FLAVOR=dev` by 
 `FLAVOR=release`). Anything new that names Lamp on disk or on the network goes through `Edition`, and the
 generated apps get it through the `{{SCHEME}}`, `{{NOTE}}`, `{{HOST}}` and `{{APPS}}` placeholders in
 `Template.swift`. The app-signing keychain is shared on purpose, so apps keep their permissions whichever
-Lamp rebuilds them.
+Lamp rebuilds them. `scripts/dev-data.sh` copies your apps, keys, settings and the agent's sign-ins from the
+installed Lamp into Lamp Dev, so the development build has something to work on.
 
 ## Generated apps
 

@@ -51,7 +51,7 @@ Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/
    open "build/Lamp Dev.app"
    ```
 
-   The first build takes about a minute. It also creates a self-signed **Lamp App Signing** certificate in Lamp's own keychain, `~/Library/Application Support/Lamp/Signing` (see `scripts/signing-identity.sh`). That gives every build the same signature. Lamp's keychain has a password Lamp generated and keeps beside it, so signing never asks for keychain access the way the login keychain does. It's only used to sign Lamp on your Mac. It produces `build/Lamp Dev.app`: the development build, a separate app from the Lamp you install (its own icon, folders, apps and settings), so you can keep both.
+   The first build takes about a minute. It also creates a self-signed **Lamp App Signing** certificate in Lamp's own keychain, `~/Library/Application Support/Lamp/Signing` (see `scripts/signing-identity.sh`). That gives every build the same signature. Lamp's keychain has a password Lamp generated and keeps beside it, so signing never asks for keychain access the way the login keychain does. It's only used to sign Lamp on your Mac. It produces `build/Lamp Dev.app`: the development build, a separate app from the Lamp you install (its own icon, folders, apps and settings), so you can keep both. `scripts/dev-data.sh` copies your apps, keys and settings from the installed Lamp into it.
 
 3. **Finish setup in the app.** On first launch, Lamp checks for anything missing:
    - **App-building tools:** if the Command Line Tools are missing, Lamp opens Apple's installer right away (click **Install**, then **Agree**). It then checks every few seconds and carries on by itself when they're installed, so there's no button to press afterwards.
