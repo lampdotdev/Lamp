@@ -41,6 +41,7 @@ final class Gateway: @unchecked Sendable {
             var buffer = buffer
             if let data { buffer.append(data) }
             if let request = Self.parse(buffer) {
+                if request.method == "BAD" { self.respond(connection, status: 400, json: ["error": "Bad request"]); return }
                 Task {
                     let (status, json) = await self.handler(request)
                     self.respond(connection, status: status, json: json)
@@ -74,7 +75,10 @@ final class Gateway: @unchecked Sendable {
             guard let colon = line.firstIndex(of: ":") else { continue }
             headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         }
-        let length = Int(headers["content-length"] ?? "0") ?? 0
+        // A negative or absurd length is a malformed request, not one to wait for (prefix(-1) would trap).
+        guard let length = Int(headers["content-length"] ?? "0"), (0...40_000_000).contains(length) else {
+            return Request(method: "BAD", path: String(start[1]), headers: headers, body: Data())
+        }
         let body = data[split.upperBound...]
         guard body.count >= length else { return nil }
         return Request(method: String(start[0]), path: String(start[1]), headers: headers, body: Data(body.prefix(length)))

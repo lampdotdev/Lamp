@@ -823,6 +823,7 @@ final class Store: ObservableObject {
 
     /// Marks the app idle again, then starts anything queued while it was busy.
     private func finish(_ project: LampProject) {
+        endApprovals(for: project)   // a card nobody can answer any more, from a request that raced the agent's end
         // Artwork that arrived during the turn, for an icon that was installed without it: applied now, still
         // owning the app, so nothing else builds or installs meanwhile. With more work queued, the next
         // install picks the artwork up itself.
@@ -1198,6 +1199,7 @@ final class Store: ObservableObject {
                     + "; git status, log, diff, or cloning a repository the user mentioned; inspecting or converting files inside the working folder; fetching a public web page; running the app's own build or tests.",
                 "false": "Could cause harm or surprise: "
                     + (asks ? "reading, listing, searching or copying anything else outside the working folder (the user's home folder, documents, keys, settings, other apps' data), even when the user asked for it; " : "")
+                    + "reading sign-ins, keys, passwords, tokens or browser data wherever they are, even when the user asked for it; "
                     + "deleting or overwriting files outside the working folder, needing administrator rights, changing system settings, installing software system-wide, running downloaded scripts, sending files or data somewhere, pushing to a remote, or doing something the user didn't ask for.",
             ],
         ]
@@ -1233,8 +1235,8 @@ final class Store: ObservableObject {
         the main reason for that risk level, e.g. what it could change, delete, install or send>"}
         low: only reads, or changes files inside the app's own folder. medium: downloads things, installs tools for \
         this project, or changes files elsewhere that are easy to restore. high: deletes or overwrites files outside \
-        the app's folder, needs administrator rights, changes system settings, sends personal data somewhere, or \
-        runs code downloaded from the internet.
+        the app's folder, needs administrator rights, changes system settings, sends personal data somewhere, reads \
+        sign-ins, keys, passwords or browser data, or runs code downloaded from the internet.
         """
         let prompt = "The user's request: \(currentRequests[project.id] ?? "(unknown)")\n\nThe command:\n\(command)"
         guard let (text, _) = try? await AppAI.complete(prompt: prompt, images: [], system: system, json: true),
@@ -1262,7 +1264,7 @@ final class Store: ObservableObject {
         // One request per app at a time, from here on: a second one waits, including through the
         // explanation below, so two can't both put up a card for the same slot.
         while approvals[project.id] != nil || approving.contains(project.id) { try? await Task.sleep(for: .milliseconds(200)) }
-        guard busy.contains(project.id) else { return false }   // the turn ended while queued
+        guard running[project.id] != nil else { return false }   // the agent is gone: nobody to answer for
         approving.insert(project.id)
         defer { approving.remove(project.id) }
         // "Only when risky": a shell command the in-app model rates low risk runs without the card.
@@ -1270,7 +1272,7 @@ final class Store: ObservableObject {
         if shell, title == nil, CommandApproval.current == .risky {
             note("Checking a command", for: project)
             if given == nil { given = await explain(command, for: project) }
-            guard busy.contains(project.id) else { return false }
+            guard running[project.id] != nil else { return false }
             if let explanation = given, explanation.risk == "low" {
                 log(project, .status, "Ran: \(command)")
                 log(project, .detail, "Ran without asking (low risk): \(explanation.summary)")
@@ -2039,6 +2041,10 @@ final class Store: ObservableObject {
             return (401, ["error": "This app isn't registered with Lamp."])
         }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
+        // The app knows the same token as its agent; the agent's own routes only answer while a turn runs.
+        if route == "/mcp" || route == "/agent/approve", running[project.id] == nil {
+            return (409, ["error": "Lamp isn't working on this app right now."])
+        }
         if route == "/mcp" { return await mcp(request.body, for: project, fileTools: request.path.contains("files=1")) }
         if request.path == "/agent/look" { return await look(at: project) }
         if request.path == "/agent/use" { return await use(project, request: request.body) }

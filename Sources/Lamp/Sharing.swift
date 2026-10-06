@@ -154,6 +154,7 @@ struct ImportReview {
     var capabilities: [String]
     var concerns: [String]
     var risk: String            // "low", "medium", "high", or "unknown" when the AI check couldn't run
+    var checked = false         // the AI check ran and answered
     var detected: [String]      // from the fixed checklist; always shown
     var note: String?           // e.g. why the AI check didn't run
 }
@@ -177,19 +178,30 @@ extension Sharing {
         ("Uses AI (your OpenRouter credit)", ["LampAI."]),
         ("Reads or uses your other apps (Slack, Mail, your browser…)", ["LampComputer."]),
         ("Runs code the AI writes while the app runs (in a sealed context)", ["LampScript"]),
+        // The support library's own wrappers: the frameworks above live in LampSupport.swift, which isn't scanned.
+        ("Reads your mail, contacts, calendar or reminders", ["LampMail.", "LampContacts.", "LampCalendar.", "LampReminders."]),
+        ("Starts at login", ["LampLoginItem"]),
+        ("Watches what you copy", ["LampClipboardWatcher"]),
+        ("Listens for keyboard shortcuts in every app", ["LampHotKey"]),
+        ("Asks for Full Disk Access, Screen Recording or Accessibility", ["LampPermission"]),
     ]
 
     static func review(_ package: Package) async -> ImportReview {
+        // The fixed checks read every file; only what goes to the model is capped, since a sender picks
+        // the file order and could put the interesting part last.
         var code = ""
+        var everything = ""
         var truncated = false
         let base = package.folder.appendingPathComponent("Sources").standardizedFileURL.path + "/"
         for file in package.sources {
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             let name = file.standardizedFileURL.path.replacingOccurrences(of: base, with: "")
+            everything += text + "\n"
             if code.count + text.count > 150_000 { truncated = true; continue }
             code += "=== Sources/\(name) ===\n\(text)\n\n"
         }
-        let detected = checklist.filter { item in item.patterns.contains { code.contains($0) } }.map(\.label)
+        if let about = try? String(contentsOf: package.folder.appendingPathComponent("APP.md"), encoding: .utf8) { everything += about }
+        let detected = checklist.filter { item in item.patterns.contains { everything.contains($0) } }.map(\.label)
         let about = (try? String(contentsOf: package.folder.appendingPathComponent("APP.md"), encoding: .utf8)) ?? "(none)"
 
         var review = ImportReview(summary: "", capabilities: [], concerns: [], risk: "unknown", detected: detected)
@@ -226,6 +238,9 @@ extension Sharing {
             review.capabilities = answer.capabilities
             review.concerns += answer.concerns
             review.risk = ["low", "medium", "high"].contains(answer.risk.lowercased()) ? answer.risk.lowercased() : "unknown"
+            review.checked = review.risk != "unknown"
+            // Whatever the model says of the part it saw, it didn't see all of it.
+            if truncated, review.risk == "low" { review.risk = "medium" }
         } catch let failure as AppAI.Failure {
             review.note = "Lamp's AI check didn't run: \(failure.message)"
         } catch {

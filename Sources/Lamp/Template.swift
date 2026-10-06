@@ -597,18 +597,34 @@ enum Template {
             }
         }
 
-        /// Runs `body` as one transaction: all its changes are saved together, or none are.
+        /// Runs `body` as one transaction: all its changes are saved together, or none are. A statement that
+        /// fails inside it makes the whole transaction roll back. Transactions nest (a `put` of several items
+        /// inside your own): an inner failure undoes the inner part and the outer one carries on.
         static func transaction(_ body: () -> Void) {
             lock.withLock {
-                execute("BEGIN")
+                let depth = transactionDepth
+                let savepoint = "lamp_\(depth)"
+                if depth == 0 { backUpOnce() }   // a backup can't be taken inside a transaction
+                _ = depth == 0 ? run("BEGIN", []) { _ in } : run("SAVEPOINT \(savepoint)", []) { _ in }
+                transactionDepth += 1
+                transactionFailed.append(false)
                 body()
-                execute("COMMIT")
+                let failed = transactionFailed.removeLast()
+                transactionDepth -= 1
+                if depth == 0 {
+                    _ = run(failed ? "ROLLBACK" : "COMMIT", []) { _ in }
+                } else {
+                    if failed { _ = run("ROLLBACK TO \(savepoint)", []) { _ in } }
+                    _ = run("RELEASE \(savepoint)", []) { _ in }
+                }
             }
         }
 
         // MARK: Internals
 
         private static let lock = NSRecursiveLock()
+        nonisolated(unsafe) private static var transactionDepth = 0
+        nonisolated(unsafe) private static var transactionFailed: [Bool] = []
         nonisolated(unsafe) private static var unreadable: Set<String> = []
         nonisolated(unsafe) private static var backedUp = false
         nonisolated(unsafe) private static var warned = false
@@ -655,6 +671,7 @@ enum Template {
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
                 print("LampStore: SQL error in \(sql): \(String(cString: sqlite3_errmsg(db)))")
+                noteFailure()
                 return nil
             }
             defer { sqlite3_finalize(statement) }
@@ -680,9 +697,15 @@ enum Template {
                 case SQLITE_DONE: return ()
                 default:
                     print("LampStore: SQL error in \(sql): \(String(cString: sqlite3_errmsg(db)))")
+                    noteFailure()
                     return nil
                 }
             }
+        }
+
+        /// A failed statement inside a transaction means that transaction rolls back at its end.
+        private static func noteFailure() {
+            if !transactionFailed.isEmpty { transactionFailed[transactionFailed.count - 1] = true }
         }
 
         /// Before the first change of each launch: a copy of the database in Backups/, keeping the newest 20.
