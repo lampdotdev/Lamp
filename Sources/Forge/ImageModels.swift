@@ -52,39 +52,17 @@ final class ImageModels: ObservableObject {
 
     var installed: [ImageModelSpec] { Self.catalog.filter { Self.isInstalled($0) } }
 
-    /// The repo is in the cache under the revision refs/main names, and is whole: either Forge finished
-    /// downloading it (its marker names the revision), or every part a picture model needs is there with
-    /// its weights present. A download that stopped halfway leaves a text encoder and no transformer, or
-    /// links to blobs that never arrived.
+    /// Installed means Forge's own download finished: its marker names the revision refs/main points at.
+    /// Judging a snapshot by its files isn't trustworthy (which files a model needs differs per repo, and a
+    /// half-finished download can look whole), so a model fetched some other way shows as downloadable:
+    /// pressing Download then only verifies what's there, since blobs already present are skipped, and
+    /// writes the marker.
     nonisolated static func isInstalled(_ spec: ImageModelSpec) -> Bool {
-        let fm = FileManager.default
         let repoDir = LocalModels.hubDir.appendingPathComponent("models--" + spec.repo.replacingOccurrences(of: "/", with: "--"))
-        guard let ref = (try? String(contentsOf: repoDir.appendingPathComponent("refs/main"), encoding: .utf8))?.trimmed else { return false }
-        let snapshot = repoDir.appendingPathComponent("snapshots/\(ref)")
-        guard fm.fileExists(atPath: snapshot.path) else { return false }
-        if (try? String(contentsOf: repoDir.appendingPathComponent("forge-complete"), encoding: .utf8))?.trimmed == ref { return true }
-
-        func present(_ relative: String) -> Bool {
-            let target = snapshot.appendingPathComponent(relative).resolvingSymlinksInPath()
-            return ((try? target.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) > 0
-        }
-        guard let all = fm.enumerator(at: snapshot, includingPropertiesForKeys: nil)?.allObjects.compactMap({ $0 as? URL }) else { return false }
-        let relative = all.map { $0.path.replacingOccurrences(of: snapshot.path + "/", with: "") }
-        // Each part the model is made of, with at least one weights file that's really there.
-        for part in ["transformer", "vae", "text_encoder", "tokenizer"] {
-            let files = relative.filter { $0.hasPrefix(part + "/") && !$0.hasSuffix(".index.json") }
-            guard !files.isEmpty, files.allSatisfy(present) else { return false }
-            if part != "tokenizer", !files.contains(where: { $0.hasSuffix(".safetensors") }) { return false }
-        }
-        // Every shard an index names.
-        for index in relative where index.hasSuffix(".safetensors.index.json") {
-            guard let data = try? Data(contentsOf: snapshot.appendingPathComponent(index)),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let map = json["weight_map"] as? [String: String] else { return false }
-            let folder = (index as NSString).deletingLastPathComponent
-            for shard in Set(map.values) where !present(folder.isEmpty ? shard : folder + "/" + shard) { return false }
-        }
-        return true
+        guard let ref = (try? String(contentsOf: repoDir.appendingPathComponent("refs/main"), encoding: .utf8))?.trimmed,
+              let marked = (try? String(contentsOf: repoDir.appendingPathComponent("forge-complete"), encoding: .utf8))?.trimmed,
+              !ref.isEmpty, marked == ref else { return false }
+        return FileManager.default.fileExists(atPath: repoDir.appendingPathComponent("snapshots/\(ref)").path)
     }
 
     nonisolated static var uvPath: String? { ToolLocator.path(named: "uv") }
