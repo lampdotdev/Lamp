@@ -40,7 +40,14 @@ final class Dictation: ObservableObject {
         if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
 
         let input = engine.inputNode
-        input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0), block: Self.feed(request))
+        // With no input device the format is 0 Hz, and installing a tap with it raises an exception that
+        // can't be caught: say so instead.
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            problem = Problem(title: "No Microphone", message: "This Mac has no microphone connected, so there's nothing to listen to.")
+            return
+        }
+        input.installTap(onBus: 0, bufferSize: 1024, format: format, block: Self.feed(request))
         engine.prepare()
         do {
             try engine.start()
@@ -53,6 +60,12 @@ final class Dictation: ObservableObject {
         isListening = true
         session += 1
         task = recognizer.recognitionTask(with: request, resultHandler: Self.deliver(to: self, session: session, onText: onText))
+    }
+
+    /// Whether this Mac has a microphone right now; the dictation button is only shown when it does.
+    static var hasMicrophone: Bool {
+        AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone, .external], mediaType: .audio, position: .unspecified)
+            .devices.isEmpty == false
     }
 
     /// Stops listening and lets the recognizer deliver its final take on the last words.

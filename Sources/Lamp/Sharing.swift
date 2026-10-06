@@ -38,12 +38,13 @@ enum Sharing {
             try fm.copyItem(at: file, to: target)
         }
         // Attached files the app itself uses (through LampAssets), capped so shared apps stay small enough
-        // to send. The rest were only for the chat, such as screenshots or reference documents, and stay private.
+        // to send and within what another Lamp accepts (`open`). The rest were only for the chat, such as
+        // screenshots or reference documents, and stay private.
         var attachedBytes = 0
         for file in usedAttachments(of: project) {
             attachedBytes += (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            guard attachedBytes <= 100_000_000 else {
-                throw ImportError("This app's attached files are over 100 MB, too big to share.")
+            guard attachedBytes <= maxAttachedBytes else {
+                throw ImportError("This app's attached files are over \(maxAttachedBytes / 1_000_000) MB, too big to share.")
             }
             let target = stage.appendingPathComponent(Attachments.folder).appendingPathComponent(file.lastPathComponent)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -61,10 +62,22 @@ enum Sharing {
         try encoder.encode(Manifest(format: formatVersion, name: project.name, exportedAt: Date()))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
+        // Everything staged, counted and measured the way the importer's listing does (files and folders,
+        // bytes before compression), so Lamp never makes a file another Lamp refuses.
+        let staged = fm.enumerator(at: stage, includingPropertiesForKeys: [.fileSizeKey])?.compactMap { $0 as? URL } ?? []
+        guard staged.count <= maxFiles else { throw ImportError("This app has too many files to share (over \(maxFiles)).") }
+        let unpacked = staged.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) }
+        guard unpacked <= maxUnpackedBytes else { throw ImportError("This app is over \(maxUnpackedBytes / 1_000_000) MB, too big to share.") }
         let output = work.appendingPathComponent("\(project.name).lampapp")
         try run("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage.path, output.path])
+        // Media is already compressed, so the archive can be as big as what went in: make sure it's one Lamp opens.
+        let size = (try? output.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        guard size <= maxArchiveBytes else { throw ImportError("This app is over \(maxArchiveBytes / 1_000_000) MB packed, too big to share.") }
         return output
     }
+
+    /// Attached files up to this much go into a shared app: under the archive limit, with room for the code.
+    static let maxAttachedBytes = maxArchiveBytes - 8 * 1024 * 1024
 
     /// Attached files the app's code uses: those it names, or all of them if it lists them with `LampAssets.names`.
     static func usedAttachments(of project: LampProject) -> [URL] {
@@ -86,10 +99,25 @@ enum Sharing {
         let fileCount: Int
     }
 
+    /// An app file is a few source files and some attachments: anything much bigger isn't one, and a file
+    /// that inflates to gigabytes mustn't fill the disk before anyone has seen a review.
+    static let maxArchiveBytes = 64 * 1024 * 1024
+    static let maxUnpackedBytes = 256 * 1024 * 1024
+    static let maxFiles = 2000
+
     static func open(_ file: URL) throws -> Package {
         let fm = FileManager.default
+        let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        guard size <= maxArchiveBytes else { throw ImportError("This file is too large to be a Lamp app (over 64 MB).") }
         let folder = fm.temporaryDirectory.appendingPathComponent("forge-import-\(UUID().uuidString)")
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        // The archive's own listing says what it would unpack to, before anything is written.
+        let listing = try output("/usr/bin/zipinfo", ["-t", file.path])   // "N files, X bytes uncompressed, …"
+        let numbers = listing.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        guard numbers.count >= 2, numbers[0] <= maxFiles, numbers[1] <= maxUnpackedBytes else {
+            try? fm.removeItem(at: folder)
+            throw ImportError("This file holds more than a Lamp app would (over \(maxFiles) files or 256 MB unpacked).")
+        }
         try run("/usr/bin/ditto", ["-x", "-k", file.path, folder.path])
 
         let decoder = JSONDecoder()
@@ -132,6 +160,21 @@ enum Sharing {
             let values = try? url.resourceValues(forKeys: keys)
             return values?.isRegularFile == true && values?.isSymbolicLink != true
         }
+    }
+
+    /// What a tool prints; throws when it fails.
+    private static func output(_ tool: String, _ arguments: [String]) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: tool)
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { throw ImportError("Couldn't read the Lamp app file.") }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private static func run(_ tool: String, _ arguments: [String]) throws {

@@ -26,7 +26,7 @@ Each one is a real `.app` in `~/Applications/Lamp Apps`, with **Edit with Lamp (
 | An OpenRouter key (optional) | The best image models, icon artwork, and the fast in-app AI models | Without one, apps' text AI uses whatever builds them (pi's provider, a local model, or your Claude Code or Codex sign-in) |
 | A TypeSafe key (optional) | Decisions in apps, directly from TypeSafe | Jev is also available through an OpenRouter key |
 
-Nothing else needs installing. The coding agent ([pi](https://github.com/badlogic/pi-mono)) and llama.cpp's model server are bundled inside `Lamp.app`; `build.sh` downloads pinned, checksum-verified copies (about 40 MB together). No Apple developer account, signing certificate or notarization is needed. Lamp and every app it builds are ad-hoc signed and run only on your own Mac.
+Nothing else needs installing. The coding agent ([pi](https://github.com/badlogic/pi-mono)) and llama.cpp's model server are bundled inside `Lamp.app`; `build.sh` downloads pinned, checksum-verified copies (about 40 MB together). No Apple developer account is needed to build it: a build from source is signed only for your own Mac (release builds are signed and notarized with the team's Developer ID and update themselves). Every app Lamp builds is signed with a certificate Lamp makes on your Mac the first time, so an app keeps the permissions you give it across rebuilds.
 
 ## Download
 
@@ -95,7 +95,7 @@ High-risk apps default to **Cancel**. When imported, the shared code is rebuilt 
 
 - **Lamp's built-in agent (pi)** with any of these:
   - **An API key** for OpenRouter, Anthropic, OpenAI, Google Gemini, DeepSeek, Mistral, xAI, Groq, Cerebras, Together, Fireworks, Hugging Face, Vercel AI Gateway, Moonshot, Z.ai, MiniMax or NVIDIA. Pick any model from that provider's list; it's searchable.
-  - **On this Mac (local models).** **Settings → Local Models** lists every model Lamp can run. These include models already in the shared Hugging Face cache (`~/.cache/huggingface/hub`) or in Local's folder, so models downloaded for Local show up without downloading again. Lamp's own downloads (a list sized to your Mac's memory, or any GGUF repo) go into that same cache, in the standard `huggingface_hub` layout.
+  - **On this Mac (local models).** **Native Mac AI** in **Settings → Providers** lists every model Lamp can run. These include models already in the shared Hugging Face cache (`~/.cache/huggingface/hub`) or in Local's folder, so models downloaded for Local show up without downloading again. Lamp's own downloads (a list sized to your Mac's memory, or any GGUF repo) go into that same cache, in the standard `huggingface_hub` layout.
     - **GGUF models** run on Lamp's bundled llama.cpp server (`127.0.0.1:47812`, router mode, loading models on demand). It reads them through a folder of symlinks (`~/Library/Application Support/Lamp/Router`), so nothing is copied.
     - **MLX models** (like the ones Local uses) run on `mlx_lm.server` (`127.0.0.1:47813`) once mlx-lm is installed: Lamp installs it from Settings → Providers → Native Mac AI, with its own copy of uv if the Mac has none.
     - Servers start when needed and stop when Lamp quits.

@@ -369,6 +369,28 @@ final class Store: ObservableObject {
 
     func saveDraft(_ draft: Draft, for project: LampProject) {
         drafts[project.id] = draft
+        // Written to disk a moment after typing stops, not on every keystroke.
+        draftWrites[project.id]?.cancel()
+        draftWrites[project.id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            self?.writeDraft(for: project)
+        }
+    }
+
+    /// Writes every draft that's waiting for its pause, for when Lamp quits.
+    func flushDrafts() {
+        for project in projects where draftWrites[project.id] != nil {
+            draftWrites[project.id]?.cancel()
+            writeDraft(for: project)
+        }
+    }
+
+    private var draftWrites: [String: Task<Void, Never>] = [:]
+
+    private func writeDraft(for project: LampProject) {
+        draftWrites[project.id] = nil
+        guard exists(project), let draft = drafts[project.id] else { return }
         let file = project.dir.appendingPathComponent(".lamp/draft.txt")
         if draft.text.isEmpty {
             try? FileManager.default.removeItem(at: file)
@@ -585,29 +607,40 @@ final class Store: ObservableObject {
             alert.runModal()
             return
         }
-        let package: Sharing.Package
-        do {
-            package = try Sharing.open(file)
-        } catch {
-            NSAlert(error: error).runModal()
-            return
-        }
+        // The newest request wins: a file opened while an earlier one is still unpacking, or a Cancel
+        // meanwhile, makes the earlier result unwanted when it arrives.
+        let request = UUID()
+        importRequest = request
         if let previous = pendingImport { try? FileManager.default.removeItem(at: previous.package.folder) }
-        let pending = PendingImport(package: package)
-        pendingImport = pending
+        pendingImport = nil
         Task {
+            // Unpacking is a process and some file reads: off the main actor, so Lamp stays responsive.
+            let package: Sharing.Package
+            do {
+                package = try await Task.detached { try Sharing.open(file) }.value
+            } catch {
+                if importRequest == request { NSAlert(error: error).runModal() }
+                return
+            }
+            guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
+            let pending = PendingImport(package: package)
+            pendingImport = pending
             let review = await Sharing.review(package)
             if pendingImport?.id == pending.id { pendingImport?.review = review }
         }
     }
 
+    private var importRequest: UUID?
+
     func cancelImport() {
+        importRequest = nil
         if let pending = pendingImport { try? FileManager.default.removeItem(at: pending.package.folder) }
         pendingImport = nil
     }
 
     func confirmImport() {
         guard let pending = pendingImport else { return }
+        importRequest = nil
         pendingImport = nil
         finishImport(pending.package)
     }

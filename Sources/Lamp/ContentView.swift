@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import AVFoundation
 import QuickLook
 
 struct ContentView: View {
@@ -130,8 +131,8 @@ struct AppSidebar: View {
                     .help("Settings (⌘,)")
                 Spacer()
                 Picker("Layout", selection: $layout) {
-                    Image(systemName: "list.bullet").help("Show as List").tag(Layout.list)
-                    Image(systemName: "square.grid.2x2").help("Show as Tiles").tag(Layout.tiles)
+                    Image(systemName: "list.bullet").help("Show as List").accessibilityLabel("Show as List").tag(Layout.list)
+                    Image(systemName: "square.grid.2x2").help("Show as Tiles").accessibilityLabel("Show as Tiles").tag(Layout.tiles)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -190,10 +191,15 @@ struct AppSidebar: View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 84, maximum: 110), spacing: 4)], spacing: 8) {
                 ForEach(store.projects) { project in
-                    AppTile(project: project, selected: store.selection == project.id)
-                        .onTapGesture(count: 2) { Task { await store.open(project) } }
-                        .simultaneousGesture(TapGesture().onEnded { store.selection = project.id })
-                        .contextMenu { AppMenu(project: project) }
+                    // A button, so Tab reaches every tile and Space or Return selects it; a double-click opens.
+                    Button { store.selection = project.id } label: {
+                        AppTile(project: project, selected: store.selection == project.id)
+                    }
+                    .buttonStyle(.plain)
+                    .simultaneousGesture(TapGesture(count: 2).onEnded { Task { await store.open(project) } })
+                    .contextMenu { AppMenu(project: project) }
+                    .accessibilityLabel(project.name)
+                    .accessibilityAddTraits(store.selection == project.id ? [.isSelected] : [])
                 }
                 Button { store.create() } label: {
                     VStack(spacing: 6) {
@@ -369,6 +375,7 @@ struct ProjectView: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
     @State private var draft = ""
+    @State private var hasMicrophone = true
     @State private var attachments: [URL] = []
     @State private var composerHeight = Composer.lineHeight
     @State private var focusRequest = 0
@@ -381,13 +388,14 @@ struct ProjectView: View {
     @State private var suggestion: String?
     @State private var dismissedSuggestion: String?
 
+    /// Worked out once per body (see `body`): it filters the whole chat, and body runs on every streamed token.
     private var lines: [LogLine] {
         LogLine.visible(store.logs[project.id] ?? [], details: showDetails)
     }
     private var busy: Bool { store.busy.contains(project.id) }
     /// How much of its latest message the agent has written so far: a message being written grows without
     /// adding a line, and the chat follows it down.
-    private var written: Int { busy ? lines.last?.text.count ?? 0 : 0 }
+    private func written(_ lines: [LogLine]) -> Int { busy ? lines.last?.text.count ?? 0 : 0 }
     /// The chat area has to be about twice the build card's height before the card is pinned.
     private static let roomToPinCard: CGFloat = 560
 
@@ -404,7 +412,8 @@ struct ProjectView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        let lines = self.lines
+        return VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 GeometryReader { area in
                     ScrollView {
@@ -449,7 +458,7 @@ struct ProjectView: View {
                     // no scrolling to get there.
                     .defaultScrollAnchor(.bottom)
                     .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
-                    .onChange(of: written) { proxy.scrollTo("bottom", anchor: .bottom) }
+                    .onChange(of: written(lines)) { proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: store.progress[project.id]?.plan.count) { proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: store.progress[project.id]?.screenshot != nil) { proxy.scrollTo("bottom", anchor: .bottom) }
@@ -482,6 +491,7 @@ struct ProjectView: View {
                 Button(action: chooseFiles) { Image(systemName: "paperclip").font(.title3) }
                     .buttonStyle(.borderless)
                     .help("Attach files. You can also paste or drop images and files here.")
+                    .accessibilityLabel("Attach files")
                     .frame(height: Composer.lineHeight)
                 Composer(text: $draft, height: $composerHeight,
                          placeholder: busy ? "Working… describe the next change"
@@ -490,19 +500,23 @@ struct ProjectView: View {
                          isEnabled: true, focusRequest: focusRequest,
                          onSubmit: send, onFiles: { attachments.append(contentsOf: $0) })
                     .frame(height: composerHeight)
-                Button(action: toggleDictation) {
-                    Image(systemName: dictation.isListening ? "mic.fill" : "mic").font(.title3)
-                        .symbolEffect(.pulse, isActive: dictation.isListening)
+                if hasMicrophone {
+                    Button(action: toggleDictation) {
+                        Image(systemName: dictation.isListening ? "mic.fill" : "mic").font(.title3)
+                            .symbolEffect(.pulse, isActive: dictation.isListening)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(dictation.isListening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                    .help(dictation.isListening ? "Stop dictation" : "Dictate a change")
+                    .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Dictate a change")
+                    .frame(height: Composer.lineHeight)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(dictation.isListening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-                .help(dictation.isListening ? "Stop dictation" : "Dictate a change")
-                .frame(height: Composer.lineHeight)
                 if busy {
                     Button { store.stop(project) } label: { Image(systemName: "stop.circle.fill").font(.title2) }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
                         .help("Stop")
+                        .accessibilityLabel("Stop")
                         .frame(height: Composer.lineHeight)
                 }
                 Button(action: send) {
@@ -549,6 +563,10 @@ struct ProjectView: View {
         }
         .onChange(of: draft) { store.saveDraft(Store.Draft(text: draft, attachments: attachments), for: project) }
         .onChange(of: attachments) { store.saveDraft(Store.Draft(text: draft, attachments: attachments), for: project) }
+        .onAppear { hasMicrophone = Dictation.hasMicrophone }
+        // A microphone plugged in (or taken away) while the chat is open shows or hides the button.
+        .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasConnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
+        .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasDisconnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
         .onDisappear { dictation.cancel() }
         .alert(dictation.problem?.title ?? "Dictation",
                isPresented: Binding(get: { dictation.problem != nil }, set: { if !$0 { dictation.problem = nil } }),
@@ -611,7 +629,6 @@ struct ProjectView: View {
             .help("Delete this app")
             Menu {
                 Button("Copy App File") { store.copyAppFile(project) }
-                    .keyboardShortcut("c", modifiers: [.command, .shift])
                 ShareLink("Share…", item: SharedApp(project: project),
                           preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
                 Button("Export…") { store.chooseExport(project) }
@@ -871,6 +888,7 @@ struct QueuedRow: View {
                 Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                     .buttonStyle(.plain)
                     .help("Remove from the queue")
+                    .accessibilityLabel("Remove from the queue")
                 Text(message.text)
                     .lineSpacing(2)
                     .padding(.horizontal, 12).padding(.vertical, 8)
@@ -1113,10 +1131,10 @@ struct ApprovalCard: View {
                 }
                 Spacer()
                 if highRisk {
-                    // Risky: denying is the default, and there's no blanket "allow all".
+                    // Risky: denying is the default, on Escape as well, and there's no blanket "allow all".
                     Button("Allow", action: onAllow)
-                    Button("Deny", action: onDeny)
-                        .keyboardShortcut(.return, modifiers: .command)
+                    Button("Deny", role: .cancel, action: onDeny)
+                        .keyboardShortcut(.cancelAction)
                         .buttonStyle(.borderedProminent)
                 } else {
                     Button("Deny", role: .cancel, action: onDeny)

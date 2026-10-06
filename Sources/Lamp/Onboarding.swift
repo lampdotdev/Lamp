@@ -938,7 +938,7 @@ private struct Radio<Content: View>: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .focusEffectDisabled()
+            .accessibilityAddTraits(selected ? [.isSelected] : [])
             if selected {
                 VStack(alignment: .leading, spacing: 8) { content() }
                     .padding(.leading, 24)
