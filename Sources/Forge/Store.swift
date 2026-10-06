@@ -1100,7 +1100,7 @@ final class Store: ObservableObject {
                     "--cached", "--staged", "--no-pager", "-b", "-u", "--", "-am"],
         ]
         let gitLocal: Set<String> = ["init", "add", "commit", "status", "log", "diff", "show", "stash", "checkout", "restore", "tag"]
-        let root = Self.realPath(folder.path)
+        guard let root = Self.realPath(folder.path) else { return false }
         for part in simpleCommands(in: command) {
             guard let words = shellWords(part), let program = words.first else { return false }
             guard let allowed = flags[program] else {
@@ -1119,26 +1119,49 @@ final class Store: ObservableObject {
                     continue
                 }
                 if program == "swift" || program == "git", args.first == arg { continue }   // the subcommand
-                let path = Self.realPath(arg.hasPrefix("/") ? arg : folder.appendingPathComponent(arg).path)
-                guard path == root || path.hasPrefix(root + "/") else { return false }
+                guard let path = Self.realPath(arg.hasPrefix("/") ? arg : folder.appendingPathComponent(arg).path),
+                      path == root || path.hasPrefix(root + "/") else { return false }
             }
         }
         return true
     }
 
-    /// A path with `..` folded and symbolic links followed, so a link inside the app's folder that points
-    /// elsewhere is seen for where it leads. Parts that don't exist yet (a folder about to be made) are
-    /// appended to their nearest existing ancestor, resolved.
-    nonisolated static func realPath(_ path: String) -> String {
-        let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
-        var existing = standardized
-        var rest: [String] = []
-        while !FileManager.default.fileExists(atPath: existing), existing != "/" {
-            rest.insert((existing as NSString).lastPathComponent, at: 0)
-            existing = (existing as NSString).deletingLastPathComponent
+    /// Where a path really leads: walked one component at a time the way the file system would, following
+    /// each symbolic link as it's met (so `..` after a link climbs from the link's target, not its name).
+    /// Components that don't exist yet are kept as given. nil when it can't be established: a dangling link,
+    /// a link loop, or a target that can't be read.
+    nonisolated static func realPath(_ path: String, depth: Int = 0) -> String? {
+        guard depth < 40 else { return nil }
+        let manager = FileManager.default
+        var resolved = "/"
+        var components = (path as NSString).pathComponents.dropFirst()   // "/" first
+        var missing = false
+        while let component = components.first {
+            components = components.dropFirst()
+            if component == "." || component == "/" { continue }
+            if component == ".." {
+                if !missing { resolved = (resolved as NSString).deletingLastPathComponent }
+                else { return nil }   // ".." past a component that doesn't exist: the shell would too, but who knows where
+                continue
+            }
+            let next = (resolved as NSString).appendingPathComponent(component)
+            if missing { resolved = next; continue }
+            guard let attributes = try? manager.attributesOfItem(atPath: next) else {
+                // Not there (lstat failed): the rest is something about to be made.
+                missing = true
+                resolved = next
+                continue
+            }
+            if attributes[.type] as? FileAttributeType == .typeSymbolicLink {
+                guard let target = try? manager.destinationOfSymbolicLink(atPath: next) else { return nil }
+                let absolute = target.hasPrefix("/") ? target : (resolved as NSString).appendingPathComponent(target)
+                guard let followed = realPath(absolute, depth: depth + 1), manager.fileExists(atPath: followed) else { return nil }
+                resolved = followed
+            } else {
+                resolved = next
+            }
         }
-        let resolved = URL(fileURLWithPath: existing).resolvingSymlinksInPath().path
-        return rest.reduce(resolved) { ($0 as NSString).appendingPathComponent($1) }
+        return resolved
     }
 
     /// A simple command's words, with quotes removed, or nil when the shell would do something this can't
