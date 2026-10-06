@@ -55,10 +55,17 @@ enum Template {
     /// Apps used to build unoptimized (`-c debug`), which made games and simulations run many times slower.
     /// Lamp owns build.sh, so before each build it moves older apps to optimized builds, with debug info
     /// (-g) so crash reports keep file names and line numbers.
+    /// It also keeps the bundle id in step with this Lamp (Edition): an app copied from the installed Lamp
+    /// into the development build, or restored from a version made there, would otherwise build with the
+    /// other Lamp's id and open the other Lamp's copy of its data.
     static func upgradeBuildScript(for project: LampProject) {
         let url = project.dir.appendingPathComponent("build.sh")
-        guard let script = try? String(contentsOf: url, encoding: .utf8), script.contains("swift build -c debug") else { return }
-        let upgraded = script.replacingOccurrences(of: "swift build -c debug", with: "swift build -c release -Xswiftc -g")
+        guard let script = try? String(contentsOf: url, encoding: .utf8) else { return }
+        var upgraded = script.replacingOccurrences(of: "swift build -c debug", with: "swift build -c release -Xswiftc -g")
+        upgraded = upgraded.replacingOccurrences(
+            of: #"<key>CFBundleIdentifier</key><string>dev\.lamp\.(dev\.)?app\.[^<]+</string>"#,
+            with: "<key>CFBundleIdentifier</key><string>\(project.bundleID)</string>", options: .regularExpression)
+        guard upgraded != script else { return }
         try? upgraded.write(to: url, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
     }

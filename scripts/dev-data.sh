@@ -31,8 +31,13 @@ for app in "$from"/Apps/*(N/); do
     rm -rf "$to/Apps/$name"
   fi
   cp -R "$app" "$to/Apps/$name"
-  # Built from the installed Lamp: Lamp Dev builds it again, for its own bundle id and gateway.
+  # Built from the installed Lamp: Lamp Dev builds it again, for its own bundle id and gateway. The id in
+  # the app's build script is rewritten here and committed, so a restored version carries it too (Lamp
+  # also puts it right before every build, whichever way the app arrived).
   rm -f "$to/Apps/$name/.lamp/runtime/built"
+  sed -i '' "s|<string>dev\.lamp\.app\.$name</string>|<string>dev.lamp.dev.app.$name</string>|" "$to/Apps/$name/build.sh"
+  git -C "$to/Apps/$name" add build.sh >/dev/null 2>&1 && \
+    git -C "$to/Apps/$name" -c user.name=Lamp -c user.email=lamp@localhost commit -qm "Lamp Dev's copy" >/dev/null 2>&1 || true
   # The app's own saved data, under its dev bundle id, so it opens where it left off.
   if [ -d "$support/dev.lamp.app.$name" ] && { [ $replace = 1 ] || [ ! -d "$support/dev.lamp.dev.app.$name" ]; }; then
     rm -rf "$support/dev.lamp.dev.app.$name"
@@ -49,18 +54,34 @@ for item in keys.json pi; do
   rm -rf "$to/$item"; cp -R "$from/$item" "$to/$item"; echo "copied  $item"
 done
 
-# Keychain items (keys of a signed build): read each from Lamp's service, add under Lamp Dev's.
+# Keys the installed Lamp keeps in the Keychain (a signed build does). Lamp Dev is built without a Team ID
+# and reads keys.json instead, so they go into that file: merged, only you can read it, existing entries
+# kept unless --all.
+keys_file="$to/keys.json"
+[ -f "$keys_file" ] || { printf "{}" > "$keys_file"; chmod 600 "$keys_file"; }
 security dump-keychain 2>/dev/null | awk -v svc="\"$from_domain\"" '
   /"acct"<blob>=/ { acct = $0; sub(/.*"acct"<blob>="/, "", acct); sub(/"$/, "", acct) }
   /"svce"<blob>=/ { svce = $0; sub(/.*"svce"<blob>=/, "", svce); if (svce == svc) print acct }' |
 while read -r account; do
   [ -n "$account" ] || continue
-  if [ $replace = 0 ] && security find-generic-password -s "$to_domain" -a "$account" >/dev/null 2>&1; then
-    echo "kept    key for $account"; continue
-  fi
   secret="$(security find-generic-password -s "$from_domain" -a "$account" -w 2>/dev/null)" || continue
-  security add-generic-password -s "$to_domain" -a "$account" -w "$secret" -U >/dev/null && echo "copied  key for $account"
+  KEYS_FILE="$keys_file" ACCOUNT="$account" SECRET="$secret" REPLACE="$replace" python3 - <<'PY'
+import json, os
+path = os.environ["KEYS_FILE"]
+try:
+    keys = json.load(open(path))
+except Exception:
+    keys = {}
+if not isinstance(keys, dict): keys = {}
+if os.environ["ACCOUNT"] in keys and os.environ["REPLACE"] == "0":
+    print("kept    key for " + os.environ["ACCOUNT"])
+else:
+    keys[os.environ["ACCOUNT"]] = os.environ["SECRET"]
+    with open(path, "w") as f: json.dump(keys, f, indent=2)
+    print("copied  key for " + os.environ["ACCOUNT"])
+PY
 done
+chmod 600 "$keys_file"
 
 # Settings (which agent, models, approvals, privacy).
 if [ $replace = 1 ] || ! defaults read "$to_domain" >/dev/null 2>&1; then
