@@ -58,7 +58,11 @@ struct ContentView: View {
             get: { store.renaming != nil }, set: { if !$0 { store.renaming = nil } })) {
             TextField("Name", text: $newName)
             Button("Rename") {
-                if let project = store.renaming { Task { await store.rename(project, to: newName) } }
+                // Read the field now: by the time the task runs the alert has closed and the field is reset.
+                if let project = store.renaming {
+                    let name = newName
+                    Task { await store.rename(project, to: name) }
+                }
             }
             .disabled(newName.trimmed.isEmpty)
             Button("Cancel", role: .cancel) {}
@@ -68,7 +72,8 @@ struct ContentView: View {
             TextField("Name", text: $versionName)
             Button("Save") {
                 if let naming = store.naming {
-                    Task { await store.name(naming.version, of: naming.project, as: versionName) }
+                    let name = versionName   // same: the field is reset when the alert closes
+                    Task { await store.name(naming.version, of: naming.project, as: name) }
                 }
             }
             Button("Cancel", role: .cancel) {}
