@@ -6,6 +6,10 @@ import AppKit
 /// grows into Lamp itself at the end.
 enum Onboarding {
     static let key = "onboarded"
+    /// The first idea and how far the welcome got. Saved, so that quitting during setup, or losing the
+    /// window while away at an installer or a sign-in in the browser, comes back to setup with the idea intact.
+    static let ideaKey = "welcomeIdea"
+    static let stepKey = "welcomeStep"
 
     /// People who used Lamp before the welcome existed have apps already: they skip it.
     static func settle(hasApps: Bool) {
@@ -25,6 +29,14 @@ enum Onboarding {
 
 private enum Step: Int, CaseIterable {
     case hello, idea, setup
+
+    /// Where the welcome opens: at setup if that's where it was left, otherwise from the start.
+    /// `-onboardingStep 2` on the command line opens on a later step, for checking the welcome.
+    static var opening: Step {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: "onboardingStep") != nil { return Step(rawValue: defaults.integer(forKey: "onboardingStep")) ?? .hello }
+        return defaults.integer(forKey: Onboarding.stepKey) == Step.setup.rawValue ? .setup : .hello
+    }
 }
 
 /// Lamp's colours: near-black ink on a warm white page, where the porcelain lamp behind the welcome sits.
@@ -39,10 +51,9 @@ private enum Palette {
 struct OnboardingView: View {
     @EnvironmentObject private var store: Store
     @AppStorage(Onboarding.key) private var onboarded = false
-    /// `-onboardingStep 2` on the command line opens on a later step, for checking the welcome.
-    @State private var step = Step(rawValue: UserDefaults.standard.integer(forKey: "onboardingStep")) ?? .hello
+    @State private var step = Step.opening
     @State private var forward = true
-    @State private var prompt = ""
+    @AppStorage(Onboarding.ideaKey) private var prompt = ""
     @State private var leaving = false
     @State private var window: NSWindow?
 
@@ -96,6 +107,7 @@ struct OnboardingView: View {
 
     private func go(to next: Step) {
         forward = next.rawValue > step.rawValue
+        UserDefaults.standard.set(next.rawValue, forKey: Onboarding.stepKey)
         withAnimation(.spring(response: 0.6, dampingFraction: 0.88)) { step = next }
     }
 
@@ -106,6 +118,9 @@ struct OnboardingView: View {
             try? await Task.sleep(for: .seconds(0.3))
             let idea = prompt.trimmed
             let window = window
+            // The welcome is over: nothing to come back to.
+            UserDefaults.standard.removeObject(forKey: Onboarding.ideaKey)
+            UserDefaults.standard.removeObject(forKey: Onboarding.stepKey)
             withAnimation(.easeOut(duration: 0.4)) {
                 onboarded = true
                 store.welcomeFinished = true
