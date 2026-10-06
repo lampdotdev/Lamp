@@ -159,6 +159,7 @@ final class Store: ObservableObject {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         reload()
         for project in projects { discardIfUnused(project.id) }
+        Onboarding.settle(hasApps: !projects.isEmpty)
         selection = projects.first?.id
         startGateway()
         watchOpenApps()
@@ -181,14 +182,22 @@ final class Store: ObservableObject {
     func recheckSetup() async {
         let wasReady = setup.checked && setup.ready
         setup = await SetupCheck.run(keeping: setup)
-        if !setup.hasBuildTools && !setup.installRequested { requestBuildTools() }
+        // During the welcome, Apple's installer waits for the step that explains it.
+        if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone { requestBuildTools() }
         if !setup.hasBuildTools { pollSetup() }
-        if setup.ready && !wasReady { await backfillIcons() }
+        if setup.ready && !wasReady { await becameReady() }
     }
 
     func requestBuildTools() {
         SetupCheck.installBuildTools()
         setup.installRequested = true
+        pollSetup()
+    }
+
+    /// Requests sent before setup finished (the welcome's first app) start now.
+    private func becameReady() async {
+        for project in projects where !(queued[project.id] ?? []).isEmpty { startQueued(project) }
+        await backfillIcons()
     }
 
     private func pollSetup() {
@@ -200,7 +209,7 @@ final class Store: ObservableObject {
                 try? await Task.sleep(for: .seconds(5))
                 setup = await SetupCheck.run(keeping: setup)
             }
-            if setup.ready { await backfillIcons() }
+            if setup.ready { await becameReady() }
         }
     }
 
@@ -631,7 +640,7 @@ final class Store: ObservableObject {
     }
 
     private func startQueued(_ project: ForgeProject) {
-        guard let messages = queued[project.id], !messages.isEmpty,
+        guard setup.ready, let messages = queued[project.id], !messages.isEmpty,
               busy.insert(project.id).inserted else { return }
         queued[project.id] = nil
         let first = !(logs[project.id] ?? []).contains { $0.kind == .user }

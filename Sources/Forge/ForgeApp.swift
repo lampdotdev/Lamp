@@ -10,7 +10,6 @@ struct ForgeApp: App {
         Window("Forge", id: "main") {
             ContentView()
                 .environmentObject(store)
-                .frame(minWidth: 760, minHeight: 480)
         }
         .commands {
             CheckForUpdatesCommand()

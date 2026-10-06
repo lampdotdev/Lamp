@@ -14,7 +14,7 @@ Some things people build with it:
 
 Each one is a real `.app` in `~/Applications/Forge Apps`, with **Edit with Forge (⇧⌘E)** in its menu for when you want it to work differently. Its data is kept safe through every change, and you can send it to a coworker, who gets their own copy to adapt.
 
-[Download the latest release](https://github.com/RooCodeInc/Forge/releases/latest), open it, and add an OpenRouter key. That's the whole setup.
+[Download the latest release](https://github.com/RooCodeInc/Forge/releases/latest) and open it. The welcome asks for your first idea, then has you sign in with Claude or ChatGPT (or add a key for Forge's own agent), and starts building.
 
 ## Requirements
 
