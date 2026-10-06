@@ -353,9 +353,18 @@ extension Agent {
             // command is denied.
             var approval = CommandApproval.current
             if approval.isAutomatic && CommandApproval.claudeAutoUnavailable { approval = .always }
-            func hook(_ urlVariable: String) -> [String: Any] {
-                ["type": "command", "timeout": 3600,
-                 "command": "curl -sf --max-time 3600 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\""]
+            // When Lamp can't be reached (or answers with an error), the hook says no itself: Claude Code treats a
+            // hook that fails any other way as "carry on", which for a tool on the allowed list means running it.
+            // curl gives up before the hook's own deadline so that fallback gets to run.
+            func hook(_ urlVariable: String, event: String) -> [String: Any] {
+                let reason = "Lamp could not be reached, so this was not allowed."
+                let refusal: [String: Any] = event == "PermissionRequest"
+                    ? ["hookEventName": event, "decision": ["behavior": "deny", "message": reason]]
+                    : ["hookEventName": event, "permissionDecision": "deny", "permissionDecisionReason": reason]
+                let fallback = String(decoding: try! JSONSerialization.data(withJSONObject: ["hookSpecificOutput": refusal]), as: UTF8.self)
+                    .replacingOccurrences(of: "'", with: "'\\''")
+                return ["type": "command", "timeout": 3600,
+                        "command": "curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
             }
             var permissionMode = "acceptEdits"
             var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app"
@@ -373,15 +382,15 @@ extension Agent {
             // The file tools go through Lamp's privacy check like pi's and Codex's do, whatever the approval
             // mode: a read outside the app's folder asks, and sign-ins and keys are never opened.
             env["LAMP_FILE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-file"
-            var hooks: [String: Any] = ["PreToolUse": [["matcher": "Read|Edit|Write|Glob|Grep", "hooks": [hook("LAMP_FILE_URL")]]]]
+            var hooks: [String: Any] = ["PreToolUse": [["matcher": "Read|Edit|Write|Glob|Grep", "hooks": [hook("LAMP_FILE_URL", event: "PreToolUse")]]]]
             switch approval {
             case .risky, .unusual:
                 permissionMode = "auto"
                 env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-permission"
-                hooks["PermissionRequest"] = [["matcher": "*", "hooks": [hook("LAMP_APPROVE_URL")]]]
+                hooks["PermissionRequest"] = [["matcher": "*", "hooks": [hook("LAMP_APPROVE_URL", event: "PermissionRequest")]]]
             case .always:
                 env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude"
-                hooks["PreToolUse"] = (hooks["PreToolUse"] as! [[String: Any]]) + [["matcher": "Bash", "hooks": [hook("LAMP_APPROVE_URL")]]]
+                hooks["PreToolUse"] = (hooks["PreToolUse"] as! [[String: Any]]) + [["matcher": "Bash", "hooks": [hook("LAMP_APPROVE_URL", event: "PreToolUse")]]]
             case .never:
                 allowed += ",Bash"
             }

@@ -613,6 +613,9 @@ enum Template {
                 transactionDepth -= 1
                 if depth == 0 {
                     _ = run(failed ? "ROLLBACK" : "COMMIT", []) { _ in }
+                    let pending = afterCommit
+                    afterCommit = []
+                    if !failed { pending.forEach { $0() } }
                 } else {
                     if failed { _ = run("ROLLBACK TO \(savepoint)", []) { _ in } }
                     _ = run("RELEASE \(savepoint)", []) { _ in }
@@ -624,6 +627,7 @@ enum Template {
 
         private static let lock = NSRecursiveLock()
         nonisolated(unsafe) private static var transactionDepth = 0
+        nonisolated(unsafe) private static var afterCommit: [() -> Void] = []   // work that waits for the outer commit
         nonisolated(unsafe) private static var transactionFailed: [Bool] = []
         nonisolated(unsafe) private static var unreadable: Set<String> = []
         nonisolated(unsafe) private static var backedUp = false
@@ -732,8 +736,13 @@ enum Template {
             guard let data = try? Data(contentsOf: file), let json = String(data: data, encoding: .utf8) else { return }
             execute("INSERT OR IGNORE INTO forge_values (name, json, updated) VALUES (?, ?, ?)",
                     name, json, Date().timeIntervalSince1970)
-            try? FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
-            try? FileManager.default.moveItem(at: file, to: backups.appendingPathComponent("\(name)-imported.json"))
+            // Inside a transaction the insert may yet be rolled back, so the file waits for the commit:
+            // moving it now would lose the value if the transaction failed.
+            let archive = {
+                try? FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
+                try? FileManager.default.moveItem(at: file, to: backups.appendingPathComponent("\(name)-imported.json"))
+            }
+            if transactionDepth == 0 { archive() } else { afterCommit.append(archive) }
         }
 
         static func problem(_ message: String) {

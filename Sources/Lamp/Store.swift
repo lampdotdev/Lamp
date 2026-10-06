@@ -2068,7 +2068,12 @@ final class Store: ObservableObject {
                 // One of Claude Code's file tools, before it runs: the same check pi's and Codex's get.
                 let names = ["Read": "read", "Edit": "edit", "Write": "write", "Glob": "find", "Grep": "grep"]
                 let path = input["file_path"] as? String ?? input["path"] as? String ?? project.dir.path
-                let (allowed, reason) = await fileAccess(tool: names[tool] ?? "read", path: path, for: project)
+                var (allowed, reason) = (false, nil as String?)
+                if tool == "Glob" || tool == "Grep", Privacy.wouldUncover(root: path, project: project) {
+                    reason = "That search would pass over Lamp's own files, which aren't yours to open. Search a narrower folder."
+                } else {
+                    (allowed, reason) = await fileAccess(tool: names[tool] ?? "read", path: path, for: project)
+                }
                 var output: [String: Any] = ["hookEventName": "PreToolUse", "permissionDecision": allowed ? "allow" : "deny"]
                 if let reason { output["permissionDecisionReason"] = reason }
                 return (200, ["hookSpecificOutput": output])

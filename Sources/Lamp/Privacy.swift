@@ -49,6 +49,15 @@ enum Privacy {
         return .ask
     }
 
+    /// Whether a search of everything under `root` would pass over something the rule above never opens:
+    /// Lamp's own folder. Lamp's file tools skip such places as they go (`hides`); a search the agent's own
+    /// tool runs can't, so it isn't allowed to start above them.
+    static func wouldUncover(root raw: String, project: LampProject) -> Bool {
+        let root = resolved(raw, in: project.dir)
+        let forge = resolved(Agent.configDir, in: project.dir).deletingLastComponent
+        return forge == root || forge.hasPrefix(root.hasSuffix("/") ? root : root + "/")
+    }
+
     /// Whether a search that started somewhere the agent may look should still pass over `path` further down:
     /// the places the rule above never opens.
     static func hides(_ path: String, project: LampProject) -> Bool {
