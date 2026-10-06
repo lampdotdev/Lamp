@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Security
 
 /// Forge became Lamp. Whatever the old name left on this Mac is moved over once, the first time Lamp
@@ -8,6 +9,10 @@ enum Migration {
     static func fromForge() {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser
+        // Apps still running under their old ids would keep their old folder open.
+        for app in NSWorkspace.shared.runningApplications where app.bundleIdentifier?.hasPrefix("dev.forge.app.") == true {
+            app.terminate()
+        }
         // The support folder is moved one entry at a time: a build script may already have made
         // Lamp/Signing before the first launch, and that mustn't stop the apps coming over.
         let oldSupport = home.appendingPathComponent("Library/Application Support/Forge")
@@ -74,9 +79,10 @@ enum Migration {
             try? fm.removeItem(at: support)
             touched = true
         }
+        // The app's own build script carries its bundle id; its sources and APP.md the library's names.
         let sources = dir.appendingPathComponent("Sources")
         let files = (fm.enumerator(at: sources, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
-            .filter { $0.pathExtension == "swift" } + [dir.appendingPathComponent("APP.md")]
+            .filter { $0.pathExtension == "swift" } + ["APP.md", "build.sh", "Package.swift"].map { dir.appendingPathComponent($0) }
         for file in files {
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             var updated = text.replacingOccurrences(of: #"\bForge(?=[A-Z])"#, with: "Lamp", options: .regularExpression)
