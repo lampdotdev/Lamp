@@ -100,7 +100,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>Lamp</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleIconName</key><string>AppIcon</string>
-  <key>SUFeedURL</key><string>https://forge-updates.vercel.app/appcast.xml</string>
+  <key>SUFeedURL</key><string>https://updates.lamp.dev/appcast.xml</string>
   <key>SUPublicEDKey</key><string>/CAEd8+y31zAUX1M2jdBf+0plXRw1Bv5IEdrX6r6irA=</string>
   <key>SUEnableAutomaticChecks</key><true/>
   <key>CFBundlePackageType</key><string>APPL</string>
