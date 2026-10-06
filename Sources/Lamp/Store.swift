@@ -151,6 +151,8 @@ final class Store: ObservableObject {
         var crash: String?
     }
     private var artInProgress: Set<String> = []
+    private var pendingIconArt: Set<String> = []     // artwork finished during a turn, to apply after it
+    private var artApplied: [String: IconSpec] = [:] // the spec whose artwork the rendered icon includes
     private var iconDesigns: [String: Task<Void, Never>] = [:]   // icons designed from the first message
     private var tokens: [String: String] = [:]   // gateway token → project id
     private var gateway: Gateway?
@@ -722,6 +724,9 @@ final class Store: ObservableObject {
                 if Icons.load(designing) == nil {
                     Icons.save(spec, for: designing)
                     await renderIcon(designing, spec: spec)
+                    // The artwork takes a minute or two; the build takes longer. Started now, it's usually
+                    // there by the time the app first opens, instead of swapping in afterwards.
+                    upgradeIconArt(designing)
                 }
                 iconDesigns[designing.id] = nil
             }
@@ -818,8 +823,31 @@ final class Store: ObservableObject {
 
     /// Marks the app idle again, then starts anything queued while it was busy.
     private func finish(_ project: LampProject) {
+        // Artwork that arrived during the turn, for an icon that was installed without it: applied now, still
+        // owning the app, so nothing else builds or installs meanwhile. With more work queued, the next
+        // install picks the artwork up itself.
+        if pendingIconArt.contains(project.id), (queued[project.id] ?? []).isEmpty,
+           let spec = Icons.load(project), artApplied[project.id] != spec {
+            pendingIconArt.remove(project.id)
+            Task {
+                await applyIconArt(project, spec: spec)
+                busy.remove(project.id)
+                startQueued(project)
+            }
+            return
+        }
         busy.remove(project.id)
         startQueued(project)
+    }
+
+    /// Renders the icon with its artwork and installs it, when there's a built app to install it into;
+    /// otherwise the artwork waits in the cache for the first successful build.
+    private func applyIconArt(_ project: LampProject, spec: IconSpec) async {
+        await renderIcon(project, spec: spec)
+        let executable = project.builtURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else { return }
+        try? await deploy(project)
+        log(project, .status, "New icon artwork is in. It shows in the Dock after the app restarts.")
     }
 
     /// Puts the messages in the chat and their files in Attachments/. Returns the saved file names.
@@ -1869,7 +1897,9 @@ final class Store: ObservableObject {
 
     private func renderIcon(_ project: LampProject, spec: IconSpec) async {
         do {
-            icons[project.id] = try await Icons.write(spec, art: Icons.cachedArt(project, spec: spec), for: project)
+            let art = Icons.cachedArt(project, spec: spec)
+            if art != nil { artApplied[project.id] = spec }
+            icons[project.id] = try await Icons.write(spec, art: art, for: project)
         } catch {
             log(project, .detail, "Icon render failed: \(error.localizedDescription)")
         }
@@ -1903,11 +1933,11 @@ final class Store: ObservableObject {
                 guard let tiff = art.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?
                     .representation(using: .png, properties: [:]) else { return }
                 try png.write(to: url)
-                // Only apply if the spec hasn't changed meanwhile and no build is in flight.
-                guard Icons.load(project) == spec, !busy.contains(project.id) else { return }
-                await renderIcon(project, spec: spec)
-                try await deploy(project)
-                log(project, .status, "New icon artwork is in. It shows in the Dock after the app restarts.")
+                guard Icons.load(project) == spec else { return }   // the icon was redesigned meanwhile
+                // During a build the install that ends it picks the artwork up; if that install came first,
+                // finish() applies it. Otherwise apply it now.
+                if busy.contains(project.id) { pendingIconArt.insert(project.id); return }
+                await applyIconArt(project, spec: spec)
             } catch let failure as AppAI.Failure where failure.message == AppAI.noImageRoute {
                 // Codex signed out between the check and the pictures: the key card is still the right answer.
                 askForKey(project, because: "Lamp can draw a proper icon for \(project.name), and pictures inside your apps, with an OpenRouter key.")
