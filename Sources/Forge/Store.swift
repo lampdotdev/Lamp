@@ -111,7 +111,9 @@ final class Store: ObservableObject {
     struct PendingApproval: Identifiable {
         let id = UUID()
         let command: String
-        var title = "The agent wants to run a command"
+        /// A file request sets its own title; a command keeps this one.
+        static let commandTitle = "Can the agent do this?"
+        var title = commandTitle
         let answer: CheckedContinuation<Bool, Never>
         var explanation: CommandExplanation?
     }
@@ -1225,7 +1227,7 @@ final class Store: ObservableObject {
         guard let pending = approvals.removeValue(forKey: project.id) else { return }
         if allowAll { allowAllThisTurn.insert(project.id) }
         log(project, .detail, (allow ? "Allowed: " : "Denied: ") + pending.command)
-        note(allow && pending.title.contains("command") ? "Running a command" : "Thinking", for: project)
+        note(allow && pending.title == PendingApproval.commandTitle ? "Running a command" : "Thinking", for: project)
         pending.answer.resume(returning: allow)
     }
 

@@ -60,6 +60,12 @@ copied out of the DMG. Then it packages a drag-to-Applications DMG, notarizes an
 verifies both with Gatekeeper. `SKIP_NOTARIZE=1` stops after the signed DMG,
 which is useful for checking signing without submitting to Apple.
 
+The DMG's window (Lamp, an arrow and Applications over a night sky) is laid out by
+[dmgbuild](https://github.com/dmgbuild/dmgbuild), which `release.sh` installs into a throwaway virtualenv,
+from `scripts/dmg-settings.py`. Its background is `Resources/DMG/background.tiff`; after changing the
+picture (`Resources/DMG/sky.png`) or the icons' positions, run `swift scripts/dmg-background.swift` to draw
+it again.
+
 ## Version numbers
 
 A release's version is its tag: `v0.3.1` builds Lamp 0.3.1. Nothing bumps it automatically; the person
