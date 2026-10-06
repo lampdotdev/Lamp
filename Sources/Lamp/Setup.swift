@@ -952,6 +952,7 @@ private struct LocalAISheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var local = LocalModels.shared
     @ObservedObject private var images = ImageModels.shared
+    @ObservedObject private var tools = PythonTools.shared
     @State private var repo = ""
     @State private var custom: [LocalModelSpec] = []
     @State private var adding = false
@@ -1001,15 +1002,13 @@ private struct LocalAISheet: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("mflux").font(.headline)
-                                Text(ImageModels.uvPath == nil
-                                     ? "Runs picture models. Needs uv first: `brew install uv`, then come back here."
-                                     : "Runs picture models. A one-time install of about 500 MB.")
+                                Text("Runs picture models. A one-time install of about 500 MB.")
                                     .font(.caption).foregroundStyle(.secondary)
-                                if let error = images.installError { Text(error).font(.caption).foregroundStyle(.red) }
+                                if let error = tools.errors[.mflux] { Text(error).font(.caption).foregroundStyle(.red) }
                             }
                             Spacer()
-                            if images.installing { ProgressView().controlSize(.small) }
-                            else { Button("Install") { images.installMflux() }.disabled(ImageModels.uvPath == nil) }
+                            if tools.installing.contains(.mflux) { ProgressView().controlSize(.small) }
+                            else { Button("Install") { Task { await tools.install(.mflux) } } }
                         }
                     }
                     ForEach(ImageModels.catalog) { imageRow($0) }
@@ -1028,7 +1027,7 @@ private struct LocalAISheet: View {
                         }
                     }
                 } header: { Text("Servers") } footer: {
-                    Text("GGUF models run on Lamp's llama.cpp; MLX models run on mlx-lm\(LocalModels.mlxServerPath == nil ? " (not installed: `uv tool install mlx-lm`)" : "").")
+                    Text("GGUF models run on Lamp's llama.cpp; MLX models run on mlx-lm, which Lamp installs when one needs it.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -1058,10 +1057,16 @@ private struct LocalAISheet: View {
                 }
                 Text("\(ByteCountFormatter.string(fromByteCount: model.bytes, countStyle: .file)) · \(model.source)\(model.vision ? " · sees images" : "")")
                     .font(.caption).foregroundStyle(.secondary)
-                if needsMLX { Text("Needs mlx-lm: `uv tool install mlx-lm`").font(.caption).foregroundStyle(.orange) }
+                if needsMLX { Text("Needs a one-time install before it can run.").font(.caption).foregroundStyle(.orange) }
+                if needsMLX, let error = tools.errors[.mlx] { Text(error).font(.caption).foregroundStyle(.red) }
             }
             Spacer()
-            if !inUse { Button("Use") { use(model.id) }.disabled(needsMLX) }
+            if needsMLX {
+                if tools.installing.contains(.mlx) { ProgressView().controlSize(.small) }
+                else { Button("Install") { installMLX() } }
+            } else if !inUse {
+                Button("Use") { use(model.id) }
+            }
             if model.deletable { Button("Delete", role: .destructive) { local.delete(model.id) } }
         }
     }
@@ -1112,6 +1117,14 @@ private struct LocalAISheet: View {
             } else {
                 Button("Download") { images.download(spec) }
             }
+        }
+    }
+
+    /// What MLX models run on. Afterwards the model can build, so the setup check is run again.
+    private func installMLX() {
+        Task {
+            await tools.install(.mlx)
+            await store.recheckSetup()
         }
     }
 
