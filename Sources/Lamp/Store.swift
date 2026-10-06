@@ -1199,6 +1199,7 @@ final class Store: ObservableObject {
                     + "; git status, log, diff, or cloning a repository the user mentioned; inspecting or converting files inside the working folder; fetching a public web page; running the app's own build or tests.",
                 "false": "Could cause harm or surprise: "
                     + (asks ? "reading, listing, searching or copying anything else outside the working folder (the user's home folder, documents, keys, settings, other apps' data), even when the user asked for it; " : "")
+                    + "reading sign-ins, keys, passwords, tokens or browser data wherever they are, even when the user asked for it; "
                     + "deleting or overwriting files outside the working folder, needing administrator rights, changing system settings, installing software system-wide, running downloaded scripts, sending files or data somewhere, pushing to a remote, or doing something the user didn't ask for.",
             ],
         ]
