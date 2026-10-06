@@ -162,8 +162,8 @@ final class Store: ObservableObject {
             stopped = true
             allowAll = false
             var pids: [pid_t] = []
-            if let agent { pids += Shell.terminateTree(agent) }
-            if let build { pids += Shell.terminateTree(build) }
+            if let agent { pids += Subprocess.terminateTree(agent) }
+            if let build { pids += Subprocess.terminateTree(build) }
             return pids
         }
     }
@@ -197,7 +197,7 @@ final class Store: ObservableObject {
             endApprovals(for: project)
             pids += turn.cancel()
         }
-        return pids + Shell.stopping
+        return pids + Subprocess.stopping
     }
 
     /// Whether the app still exists: a turn can outlive Delete by a moment, and mustn't write to the Trash.
@@ -1183,7 +1183,7 @@ final class Store: ObservableObject {
                         failure = repeats >= 6
                             ? "The model got stuck repeating the same step, so Lamp stopped it."
                             : "The model made over 150 changes in one go, so Lamp stopped it."
-                        if let process = turn.agent { Shell.terminateTree(process) }
+                        if let process = turn.agent { Subprocess.terminateTree(process) }
                     }
                 case .cost(let amount): cost += amount
                 case .failed(let text): failure = text
@@ -1643,83 +1643,18 @@ final class Store: ObservableObject {
         return (200, ["text": "Deleted \(relative)."])
     }
 
-    /// The tools' descriptions match Lamp's pi extension (Resources/lamp-tools.ts).
-    private static let mcpTools: [[String: Any]] = [
-        ["name": "look_at_app",
-         "description": "Builds the app with your changes, opens it, and shows you the result: a picture of its windows, " +
-            "what it printed, and any build errors or crash. Takes up to a minute. Use it after a change to the " +
-            "interface, or to check a fix you can't verify by reading the code. Each look that has to rebuild takes " +
-            "a while, so make your edits first and don't use it for small changes you're sure of.",
-         "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false]],
-        ["name": "use_app",
-         "description": "Uses the open app the way a person would: clicks, types, presses keys, scrolls and picks from menus in its " +
-            "front window, then shows you what each action landed on, whether anything changed, a fresh picture, and " +
-            "what the app printed meanwhile. x and y are pixels in the latest picture of the front window from " +
-            "look_at_app or use_app: aim at the middle of what you want. Use it to check that something works, not " +
-            "just how it looks: click a column header and see whether the list re-sorts, fill in a form and submit it. " +
-            "Clicking a row of a list, table or sidebar selects it; double-clicking opens it. Keys and typing go to " +
-            "whatever has keyboard focus. " +
-            "Menus are read out to you, never opened: click a pop-up or pull-down button, or right_click something, and " +
-            "you get its items; repeat the same action with `item` set to pick one (\"Sub > Deep\" for a submenu). " +
-            "`menu` does the same for the menu bar: without `item` it lists every command, with `item` like " +
-            "\"File > Export…\" it picks one. " +
-            "`bar_icon` is for an app that lives in the menu bar: it opens the panel behind the app's icon there, which " +
-            "becomes the first picture and takes clicks and keys like a window (escape closes it); if the icon shows a " +
-            "menu instead, it lists it, and `item` picks from it. " +
-            "When a dialog or sheet opens it becomes the first picture and takes the clicks and keys: click one of its " +
-            "buttons, or press escape to cancel. The system's save panel can only be answered with return (save where " +
-            "it says) or escape. It can't drag. It uses the app as last built: after editing code, call look_at_app " +
-            "first so your changes are built and open. If it says nothing changed, the click most likely missed: look " +
-            "at the picture and aim again before changing any code.",
-         "inputSchema": ["type": "object", "required": ["actions"], "additionalProperties": false, "properties": [
-            "actions": ["type": "array", "minItems": 1, "maxItems": 30, "items": [
-                "type": "object", "required": ["action"], "additionalProperties": false, "properties": [
-                    "action": ["type": "string", "enum": ["click", "double_click", "right_click", "menu", "bar_icon",
-                                                           "type", "key", "scroll", "wait"]],
-                    "x": ["type": "number", "description": "click, double_click, right_click, scroll: pixels from the picture's left"],
-                    "y": ["type": "number", "description": "click, double_click, right_click, scroll: pixels from the picture's top"],
-                    "item": ["type": "string", "description": "click, right_click, menu, bar_icon: the menu item to pick by name, e.g. \"Export…\" or \"View > Zoom In\". Leave out to list the items."],
-                    "text": ["type": "string", "description": "type: the text, typed into whatever has focus (click a field first)"],
-                    "key": ["type": "string", "description": "key: return, escape, tab, delete, space, up, down, left, right, or a letter, with modifiers like cmd+a"],
-                    "amount": ["type": "number", "description": "scroll: points, positive scrolls down; wait: seconds"],
-                ]]]]]],
-        ["name": "plan",
-         "description": "Shows the user what you're building, as a short checklist in Lamp while they wait. For a new app, " +
-            "call it once before writing any code with the 3 to 5 main parts, each in plain words the user would " +
-            "use (what they'll be able to do, not file or type names), and the files you'll write for each part. " +
-            "Lamp ticks a part off when all of its files are written, so there's no need to call it again. " +
-            "Call it again only if the plan changes; every call replaces the whole list.",
-         "inputSchema": ["type": "object", "required": ["parts"], "additionalProperties": false, "properties": [
-            "parts": ["type": "array", "items": ["type": "object", "required": ["title", "files"], "additionalProperties": false, "properties": [
-                "title": ["type": "string", "description": "One part of the app, under ten words, in the user's words"],
-                "files": ["type": "array", "items": ["type": "string"],
-                          "description": "File names you'll write for this part, e.g. Scanner.swift. Each file belongs to one part."],
-                "done": ["type": "boolean", "description": "True to tick this part yourself"],
-            ]]]]]],
-        ["name": "delete_file",
-         "description": "Deletes one file in the app's folder that is no longer needed, such as a source file whose code " +
-            "moved elsewhere or a view that was removed. Use it instead of leaving an emptied file behind. " +
-            "It can't delete folders, files outside the app's folder, or the files Lamp generates.",
-         "inputSchema": ["type": "object", "required": ["path"], "additionalProperties": false, "properties": [
-            "path": ["type": "string", "description": "Path of the file, relative to the app's folder, e.g. Sources/CardsView.swift"]]]],
-        ["name": "list_versions",
-         "description": "Lists the app's saved versions, newest first: an id, when it was made, its name if it has one, and " +
-            "the request that made it. Lamp saves one after every request.",
-         "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false]],
-        ["name": "name_version",
-         "description": "Gives a version a short name the user will recognise, e.g. “Before the redesign” or “First working " +
-            "sync”. Without `version`, it names the version this request makes, once Lamp saves it. With a " +
-            "version id from list_versions, it names that one: use the current one before a big or risky change.",
-         "inputSchema": ["type": "object", "required": ["name"], "additionalProperties": false, "properties": [
-            "name": ["type": "string", "description": "A few words, in the user's terms"],
-            "version": ["type": "string", "description": "A version id from list_versions"]]]],
-        ["name": "restore_version",
-         "description": "Puts the app's files back as they were in an earlier version. Only use it when the user asks to go " +
-            "back to an earlier version, never to undo your own attempt. Find the id with list_versions first. " +
-            "Nothing is lost: the versions after it stay, so the user can go forward again.",
-         "inputSchema": ["type": "object", "required": ["version"], "additionalProperties": false, "properties": [
-            "version": ["type": "string", "description": "A version id from list_versions"]]]],
-    ]
+    /// The tools every engine gets, from Resources/lamp-tools.json: the one place their names, descriptions and
+    /// schemas live. pi's extension (lamp-tools.ts) reads the same file, so the two can't drift apart.
+    static let mcpTools: [[String: Any]] = {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json"),
+              let data = try? Data(contentsOf: url),
+              let tools = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else {
+            assertionFailure("lamp-tools.json is missing from the app")
+            return []
+        }
+        // `label` is pi's: MCP clients see name, description and inputSchema.
+        return tools.map { tool in tool.filter { $0.key != "label" } }
+    }()
 
     /// Whether the installed app's binary contains a string, which says which Lamp features it was built with.
     private static func binary(of project: LampProject, contains marker: String) -> Bool {

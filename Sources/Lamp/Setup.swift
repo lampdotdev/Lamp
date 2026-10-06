@@ -25,16 +25,9 @@ struct SetupCheck {
     static func buildToolsInstalled() -> Bool {
         let fm = FileManager.default
         if fm.isExecutableFile(atPath: "/Library/Developer/CommandLineTools/usr/bin/swift") { return true }
-        let select = Process()
-        select.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
-        select.arguments = ["-p"]
-        let pipe = Pipe()
-        select.standardOutput = pipe
-        select.standardError = FileHandle.nullDevice
-        guard (try? select.run()) != nil else { return false }
-        select.waitUntilExit()
-        let developer = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmed ?? ""
-        guard select.terminationStatus == 0, !developer.isEmpty else { return false }
+        let select = Subprocess.runBlocking("/usr/bin/xcode-select", ["-p"], mergeErrors: false, timeout: 10)
+        let developer = select.output.trimmed
+        guard select.ok, !developer.isEmpty else { return false }
         return fm.isExecutableFile(atPath: developer + "/usr/bin/swift")
             || fm.isExecutableFile(atPath: developer + "/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift")
     }

@@ -304,6 +304,7 @@ enum Agent {
             "LAMP_SYSTEM": systemPrompt + tryRules,
             "LAMP_PROMPT": prompt,
             "LAMP_TOOLS": lampTools?.path ?? "",
+            "LAMP_TOOLS_JSON": Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json").path ?? "",
             // "My pi setup" uses the user's own pi config (their logins); everything else uses Lamp's.
             "PI_CODING_AGENT_DIR": Builder.piProvider == Builder.myPiProvider ? userConfigDir : configDir,
             "PI_SKIP_VERSION_CHECK": "1",
@@ -451,54 +452,6 @@ enum Shell {
     fi
 
     """#
-
-    /// Stops a process and everything it started. Terminating only the shell leaves its children (the agent's
-    /// build, a clone, an approval request waiting an hour) running and holding the output pipe open, so the
-    /// turn would never end. Each gets a chance to quit cleanly, then whatever is left is killed. Returns the
-    /// processes signalled, for a caller that has to wait for them to be gone (`alive`).
-    @discardableResult
-    static func terminateTree(_ process: Process) -> [pid_t] {
-        guard process.isRunning else { return [] }
-        let pids = [process.processIdentifier] + descendants(of: process.processIdentifier)
-        shuttingDown.withLock { shuttingDownPids.formUnion(pids) }
-        for pid in pids { kill(pid, SIGTERM) }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-            for pid in pids where kill(pid, 0) == 0 { kill(pid, SIGKILL) }
-            shuttingDown.withLock { shuttingDownPids.subtract(pids) }
-        }
-        return pids
-    }
-
-    /// Processes told to stop whose two seconds aren't up yet. A Stop followed by Quit has to wait for these
-    /// too: the shell may have gone while a child that ignored the signal is still to be killed.
-    static var stopping: [pid_t] { shuttingDown.withLock { Array(shuttingDownPids) } }
-
-    /// Kills those outright, for when Lamp is about to exit and can't wait the two seconds for them.
-    static func killStopping() {
-        let pids = shuttingDown.withLock { let p = shuttingDownPids; shuttingDownPids = []; return p }
-        for pid in pids where kill(pid, 0) == 0 { kill(pid, SIGKILL) }
-    }
-    private static let shuttingDown = NSLock()
-    nonisolated(unsafe) private static var shuttingDownPids = Set<pid_t>()
-
-    /// Whether any of these processes is still around (a zombie waiting to be reaped doesn't count).
-    static func alive(_ pids: [pid_t]) -> Bool {
-        pids.contains { pid in
-            var info = proc_bsdinfo()
-            let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-            guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return false }
-            return info.pbi_status != UInt32(SZOMB)
-        }
-    }
-
-    private static func descendants(of pid: pid_t) -> [pid_t] {
-        var children = [pid_t](repeating: 0, count: 256)
-        let bytes = Int32(children.count * MemoryLayout<pid_t>.size)
-        let count = Int(proc_listchildpids(pid, &children, bytes))
-        guard count > 0 else { return [] }
-        let direct = Array(children.prefix(count))
-        return direct + direct.flatMap { descendants(of: $0) }
-    }
 
     /// Runs a zsh command, streaming merged stdout/stderr line by line. Returns the exit status.
     static func run(

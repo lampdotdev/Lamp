@@ -386,30 +386,11 @@ enum ComputerUse {
 
     @discardableResult
     private static func run(_ tool: String, _ arguments: [String]) async -> Int32 {
-        await withCheckedContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: tool)
-            process.arguments = arguments
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
-            do { try process.run() } catch { continuation.resume(returning: -1) }
-        }
+        await Subprocess.run(tool, arguments, timeout: 600).status   // an install can take a while
     }
 
     private static func capture(_ tool: String, _ arguments: [String]) async -> String {
-        await withCheckedContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: tool)
-            process.arguments = arguments
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = FileHandle.nullDevice
-            process.terminationHandler = { _ in
-                continuation.resume(returning: String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
-            }
-            do { try process.run() } catch { continuation.resume(returning: "") }
-        }
+        await Subprocess.run(tool, arguments, mergeErrors: false, timeout: 120).output
     }
 }
 
@@ -652,19 +633,7 @@ enum BrowserTabs {
 
     /// Runs AppleScript in osascript; errors come back as "error: …".
     private static func osascript(_ script: String) async -> String {
-        await withCheckedContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = ["-e", script]
-            let out = Pipe(), err = Pipe()
-            process.standardOutput = out
-            process.standardError = err
-            process.terminationHandler = { process in
-                let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                let error = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                continuation.resume(returning: process.terminationStatus == 0 ? text : "error: " + error)
-            }
-            do { try process.run() } catch { continuation.resume(returning: "error: \(error.localizedDescription)") }
-        }
+        let result = await Subprocess.run("/usr/bin/osascript", ["-e", script], mergeErrors: false, timeout: 120)
+        return result.ok ? result.output : "error: " + (result.timedOut ? "the script took too long" : result.errors)
     }
 }

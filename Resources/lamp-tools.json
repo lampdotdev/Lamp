@@ -1,0 +1,188 @@
+[
+  {
+    "name": "look_at_app",
+    "label": "Look at the app",
+    "description": "Builds the app with your changes, opens it, and shows you the result: a picture of its windows, what it printed, and any build errors or crash. Takes up to a minute. Use it after a change to the interface, or to check a fix you can't verify by reading the code. Each look that has to rebuild takes a while, so make your edits first and don't use it for small changes you're sure of.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    }
+  },
+  {
+    "name": "use_app",
+    "label": "Use the app",
+    "description": "Uses the open app the way a person would: clicks, types, presses keys, scrolls and picks from menus in its front window, then shows you what each action landed on, whether anything changed, a fresh picture, and what the app printed meanwhile. x and y are pixels in the latest picture of the front window from look_at_app or use_app: aim at the middle of what you want. Use it to check that something works, not just how it looks: click a column header and see whether the list re-sorts, fill in a form and submit it. Clicking a row of a list, table or sidebar selects it; double-clicking opens it. Keys and typing go to whatever has keyboard focus. Menus are read out to you, never opened: click a pop-up or pull-down button, or right_click something, and you get its items; repeat the same action with `item` set to pick one (\"Sub > Deep\" for a submenu). `menu` does the same for the menu bar: without `item` it lists every command, with `item` like \"File > Export…\" it picks one. `bar_icon` is for an app that lives in the menu bar: it opens the panel behind the app's icon there, which becomes the first picture and takes clicks and keys like a window (escape closes it); if the icon shows a menu instead, it lists it, and `item` picks from it. When a dialog or sheet opens it becomes the first picture and takes the clicks and keys: click one of its buttons, or press escape to cancel. The system's save panel can only be answered with return (save where it says) or escape. It can't drag. It uses the app as last built: after editing code, call look_at_app first so your changes are built and open. If it says nothing changed, the click most likely missed: look at the picture and aim again before changing any code.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "click",
+                  "double_click",
+                  "right_click",
+                  "menu",
+                  "bar_icon",
+                  "type",
+                  "key",
+                  "scroll",
+                  "wait"
+                ],
+                "type": "string"
+              },
+              "amount": {
+                "description": "scroll: points, positive scrolls down; wait: seconds",
+                "type": "number"
+              },
+              "item": {
+                "description": "click, right_click, menu, bar_icon: the menu item to pick by name, e.g. \"Export…\" or \"View > Zoom In\". Leave out to list the items.",
+                "type": "string"
+              },
+              "key": {
+                "description": "key: return, escape, tab, delete, space, up, down, left, right, or a letter, with modifiers like cmd+a",
+                "type": "string"
+              },
+              "text": {
+                "description": "type: the text, typed into whatever has focus (click a field first)",
+                "type": "string"
+              },
+              "x": {
+                "description": "click, double_click, right_click, scroll: pixels from the picture's left",
+                "type": "number"
+              },
+              "y": {
+                "description": "click, double_click, right_click, scroll: pixels from the picture's top",
+                "type": "number"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
+          "maxItems": 30,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "actions"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "plan",
+    "label": "Plan",
+    "description": "Shows the user what you're building, as a short checklist in Lamp while they wait. For a new app, call it once before writing any code with the 3 to 5 main parts, each in plain words the user would use (what they'll be able to do, not file or type names), and the files you'll write for each part. Lamp ticks a part off when all of its files are written, so there's no need to call it again. Call it again only if the plan changes; every call replaces the whole list.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "parts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "done": {
+                "description": "True to tick this part yourself",
+                "type": "boolean"
+              },
+              "files": {
+                "description": "File names you'll write for this part, e.g. Scanner.swift. Each file belongs to one part.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "title": {
+                "description": "One part of the app, under ten words, in the user's words",
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "files"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "parts"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "delete_file",
+    "label": "Delete file",
+    "description": "Deletes one file in the app's folder that is no longer needed, such as a source file whose code moved elsewhere or a view that was removed. Use it instead of leaving an emptied file behind. It can't delete folders, files outside the app's folder, or the files Lamp generates.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "description": "Path of the file, relative to the app's folder, e.g. Sources/CardsView.swift",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_versions",
+    "label": "List versions",
+    "description": "Lists the app's saved versions, newest first: an id, when it was made, its name if it has one, and the request that made it. Lamp saves one after every request.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    }
+  },
+  {
+    "name": "name_version",
+    "label": "Name version",
+    "description": "Gives a version a short name the user will recognise, e.g. “Before the redesign” or “First working sync”. Without `version`, it names the version this request makes, once Lamp saves it. With a version id from list_versions, it names that one: use the current one before a big or risky change.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "A few words, in the user's terms",
+          "type": "string"
+        },
+        "version": {
+          "description": "A version id from list_versions",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "restore_version",
+    "label": "Restore version",
+    "description": "Puts the app's files back as they were in an earlier version. Only use it when the user asks to go back to an earlier version, never to undo your own attempt. Find the id with list_versions first. Nothing is lost: the versions after it stay, so the user can go forward again.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "description": "A version id from list_versions",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "type": "object"
+    }
+  }
+]
