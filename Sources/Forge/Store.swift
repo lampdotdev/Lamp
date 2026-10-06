@@ -35,7 +35,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey }
     var id = UUID()
     let kind: Kind
-    let text: String
+    var text: String
     var attachments: [String]? = nil   // names in the app's Attachments/ folder
     var version: String? = nil         // for a request: the version it made
 
@@ -952,6 +952,8 @@ final class Store: ObservableObject {
         // The tool call the model is writing at the moment, for the activity shown to the user.
         var streamingTool = ""
         var streamingArguments = ""
+        // The chat line of the message the model is writing at the moment, which grows as its text arrives.
+        var writing: UUID?
         stopped.remove(project.id)
         let sessionFile = Self.sessionFile(for: project, engine: engine)
         let run = Agent.run(prompt: prompt, files: files, project: project,
@@ -961,8 +963,25 @@ final class Store: ObservableObject {
             guard let self else { return }
             for event in Agent.parseLine(line) {
                 switch event {
+                case .textPiece(let piece):
+                    if let index = logs[project.id]?.lastIndex(where: { $0.id == writing }) {
+                        logs[project.id]?[index].text += piece
+                    } else if !piece.trimmed.isEmpty {
+                        // Not saved until it's whole: saving rewrites the chat's file, and pieces come many a second.
+                        let line = LogLine(kind: .agent, text: String(piece.drop(while: \.isWhitespace)))
+                        logs[project.id, default: []].append(line)
+                        writing = line.id
+                        note("Replying", for: project)
+                    }
                 case .text(let text):
-                    log(project, .agent, text)
+                    // The whole message. It takes the place of what was shown of it while it was written.
+                    if let index = logs[project.id]?.lastIndex(where: { $0.id == writing }) {
+                        logs[project.id]?[index].text = text
+                        saveChat(project)
+                    } else {
+                        log(project, .agent, text)
+                    }
+                    writing = nil
                 case .step(let tool):
                     streamingTool = tool
                     streamingArguments = ""
