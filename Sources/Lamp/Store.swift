@@ -823,16 +823,29 @@ final class Store: ObservableObject {
 
     /// Marks the app idle again, then starts anything queued while it was busy.
     private func finish(_ project: LampProject) {
-        busy.remove(project.id)
-        // Artwork that arrived during the turn, for an icon that was installed without it.
-        if pendingIconArt.remove(project.id) != nil, let spec = Icons.load(project), artApplied[project.id] != spec {
-            Task { await applyIconArt(project, spec: spec) }
+        // Artwork that arrived during the turn, for an icon that was installed without it: applied now, still
+        // owning the app, so nothing else builds or installs meanwhile. With more work queued, the next
+        // install picks the artwork up itself.
+        if pendingIconArt.contains(project.id), queued[project.id] == nil,
+           let spec = Icons.load(project), artApplied[project.id] != spec {
+            pendingIconArt.remove(project.id)
+            Task {
+                await applyIconArt(project, spec: spec)
+                busy.remove(project.id)
+                startQueued(project)
+            }
+            return
         }
+        busy.remove(project.id)
         startQueued(project)
     }
 
+    /// Renders the icon with its artwork and installs it, when there's a built app to install it into;
+    /// otherwise the artwork waits in the cache for the first successful build.
     private func applyIconArt(_ project: LampProject, spec: IconSpec) async {
         await renderIcon(project, spec: spec)
+        let executable = project.builtURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else { return }
         try? await deploy(project)
         log(project, .status, "New icon artwork is in. It shows in the Dock after the app restarts.")
     }
