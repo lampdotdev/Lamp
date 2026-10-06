@@ -1210,6 +1210,11 @@ final class Store: ObservableObject {
               let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
               let summary = (json["summary"] as? String)?.trimmed, !summary.isEmpty else { return nil }
         let risk = (json["risk"] as? String)?.lowercased() ?? "medium"
+        // The model judges what a command changes, and calls reading harmless. Reading outside the app's folder
+        // is at least what the same read through a file tool is: its contents go to the AI model.
+        if risk == "low", Privacy.reachesOutside(command, project: project) {
+            return CommandExplanation(summary: summary, risk: "medium", why: Privacy.outsideRead)
+        }
         return CommandExplanation(summary: summary, risk: ["low", "medium", "high"].contains(risk) ? risk : "medium",
                                   why: (json["why"] as? String)?.trimmed ?? "")
     }

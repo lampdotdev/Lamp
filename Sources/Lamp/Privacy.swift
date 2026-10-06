@@ -56,6 +56,54 @@ enum Privacy {
         return false
     }
 
+    /// Why reading outside the app's folder is the user's call, on a file tool's card and a command's alike.
+    static let outsideRead = "It's outside this app's folder, and what's read goes to the AI model."
+
+    /// Whether a shell command names something the rule above would ask about: a file or folder outside the
+    /// app's folder that isn't a system, developer or temporary one. It only keeps such a command's card from
+    /// calling it low risk, so it errs towards yes; whether the command runs is decided elsewhere.
+    static func reachesOutside(_ command: String, project: LampProject) -> Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return words(in: command).contains { word in
+            // `--from=/path` and `VAR=/path` carry a path after the sign.
+            var path = word.split(separator: "=", maxSplits: 1).last.map(String.init) ?? word
+            for name in ["${HOME}", "$HOME"] where path.hasPrefix(name) { path = home + path.dropFirst(name.count) }
+            if path.hasPrefix("/") {
+                // A search pattern like /api/ looks like a path: only something whose top folder exists is one.
+                guard let top = path.split(separator: "/").first,
+                      FileManager.default.fileExists(atPath: "/" + top) else { return false }
+            } else if !path.hasPrefix("~"), !path.contains("..") {
+                // A plain relative path stays in the app's folder unless a link leads out, which the rule works out.
+                guard path.contains("/") else { return false }
+            }
+            return verdict(tool: "read", path: path, project: project) == .ask
+        }
+    }
+
+    /// The words of a shell line, with quotes and escapes worked out, so a quoted path with a space in it
+    /// (the app's own folder has one) stays whole.
+    static func words(in command: String) -> [String] {
+        var words: [String] = []
+        var current = ""
+        var quote: Character?
+        var escaped = false
+        for character in command {
+            if escaped { current.append(character); escaped = false; continue }
+            if character == "\\", quote != "'" { escaped = true; continue }
+            if let open = quote {
+                if character == open { quote = nil } else { current.append(character) }
+            } else if character == "'" || character == "\"" {
+                quote = character
+            } else if character.isWhitespace || ";|&<>()".contains(character) {
+                if !current.isEmpty { words.append(current); current = "" }
+            } else {
+                current.append(character)
+            }
+        }
+        if !current.isEmpty { words.append(current) }
+        return words
+    }
+
     /// What the approval card says for a file request.
     static func explanation(tool: String, path raw: String, project: LampProject) -> (command: String, explanation: Store.CommandExplanation) {
         let shown = (resolved(raw, in: project.dir) as NSString).abbreviatingWithTildeInPath
@@ -70,8 +118,7 @@ enum Privacy {
         }
         return ("\(tool) \(shown)",
                 Store.CommandExplanation(summary: "\(verb) \(shown)", risk: reads ? "medium" : "high",
-                                         why: reads ? "It's outside this app's folder, and what's read goes to the AI model."
-                                                    : "It's outside this app's folder."))
+                                         why: reads ? outsideRead : "It's outside this app's folder."))
     }
 
     /// The path with `~`, `..` and links worked out, so a link inside the app's folder can't lead out of it.
