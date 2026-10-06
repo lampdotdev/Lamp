@@ -61,16 +61,16 @@ struct SetupView: View {
     private static var choices: [(id: String, title: String, detail: String)] {
         var all: [(id: String, title: String, detail: String)] = [
             ("openrouter", "OpenRouter",
-             "One key covers everything: building your apps, and the AI, images and decisions inside them. You pay OpenRouter only for what you use."),
+             "Any of hundreds of models, paying OpenRouter only for what you use."),
         ]
         for engine in [Engine.claude, .codex] where ToolLocator.path(for: engine) != nil {
             all.append((engine.rawValue, engine.title,
-                        "Builds with your \(engine.title) sign-in, and the AI inside your apps uses it too. Images need an OpenRouter key, which you can add later."))
+                        "Uses your \(engine.title) sign-in, for building and for the AI inside your apps."))
         }
         all.append(("local", "A model on this Mac",
-                    "Free and private: a model Forge downloads and runs here. Smaller models build simpler apps. Images need an OpenRouter key."))
+                    "Free and private: a model Forge downloads and runs here. Smaller models build simpler apps."))
         all.append(("other", "Another provider",
-                    "Anthropic, OpenAI, Google, Groq, Mistral and about twenty more, with your own key. Images need an OpenRouter key."))
+                    "Anthropic, OpenAI, Google, Groq, Mistral and about twenty more, with your own key."))
         return all
     }
 
