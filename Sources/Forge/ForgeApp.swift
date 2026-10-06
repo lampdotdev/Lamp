@@ -12,6 +12,7 @@ struct ForgeApp: App {
                 .environmentObject(store)
         }
         .commands {
+            AboutCommands()
             CheckForUpdatesCommand()
             ForgeHelpCommands()
             CommandGroup(replacing: .newItem) {
@@ -34,6 +35,7 @@ struct ForgeApp: App {
             SettingsView().environmentObject(store)
         }
         ForgeHelpScene()
+        AboutScene()
     }
 }
 
