@@ -475,16 +475,25 @@ enum Template {
         /// the types read it: it's the newer of the two, and it's what they last saw. The copy that couldn't be
         /// read is kept as a backup row rather than lost.
         private static func recoverIfReadable<T: Decodable>(_ type: T.Type, _ name: String) {
-            let copy = name + " (while unreadable)"
-            guard let json = query("SELECT json FROM forge_values WHERE name = ?", copy).first?["json"] as? String,
-                  (try? decoder.decode(T.self, from: Data(json.utf8))) != nil else { return }
-            transaction {
-                execute("INSERT OR REPLACE INTO forge_values (name, json, updated) SELECT ?, json, updated FROM forge_values WHERE name = ?",
-                        name + " (before recovery)", name)
-                execute("INSERT OR REPLACE INTO forge_values (name, json, updated) VALUES (?, ?, ?)", name, json, Date().timeIntervalSince1970)
-                execute("DELETE FROM forge_values WHERE name = ?", copy)
+            // All under the lock, so a save on another thread can't slip in between reading the copy and
+            // replacing it.
+            lock.withLock {
+                let copy = name + " (while unreadable)"
+                guard let row = query("SELECT json, updated FROM forge_values WHERE name = ?", copy).first,
+                      let json = row["json"] as? String, (try? decoder.decode(T.self, from: Data(json.utf8))) != nil else { return }
+                let copied = row["updated"] as? Double ?? 0
+                let primary = query("SELECT updated FROM forge_values WHERE name = ?", name).first?["updated"] as? Double ?? 0
+                // A copy left behind from before a relaunch can be older than what was saved since: then the
+                // saved value stays, and the copy goes to the backup row instead.
+                let newer = copied >= primary
+                transaction {
+                    execute("INSERT OR REPLACE INTO forge_values (name, json, updated) SELECT ?, json, updated FROM forge_values WHERE name = ?",
+                            name + " (before recovery)", newer ? name : copy)
+                    if newer { execute("INSERT OR REPLACE INTO forge_values (name, json, updated) VALUES (?, ?, ?)", name, json, copied) }
+                    execute("DELETE FROM forge_values WHERE name = ?", copy)
+                }
+                _ = unreadable.remove(name)
             }
-            lock.withLock { _ = unreadable.remove(name) }
         }
 
         static func save<T: Encodable>(_ value: T, to name: String = "data") {
@@ -547,8 +556,11 @@ enum Template {
                     args += ["$." + field, value is Bool ? ((value as! Bool) ? 1 : 0) : value]
                 }
                 if let order {
-                    sql += " ORDER BY json_extract(json, ?)"
-                    args.append("$." + order)
+                    // Dates are text: one saved before fractions of a second were kept ("…:00Z") would sort
+                    // after one with them ("…:00.123Z"), so such a value is read as "…:00.000Z" for sorting.
+                    sql += " ORDER BY CASE WHEN json_extract(json, ?) GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z'"
+                        + " THEN substr(json_extract(json, ?), 1, 19) || '.000Z' ELSE json_extract(json, ?) END"
+                    args += ["$." + order, "$." + order, "$." + order]
                 } else {
                     sql += " ORDER BY updated"
                 }
