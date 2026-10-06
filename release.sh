@@ -45,12 +45,13 @@ if [[ "${SKIP_NOTARIZE:-}" != 1 ]]; then
   xcrun stapler staple "$DIST/Lamp.app"
 fi
 
-# 3. Package as a DMG with a drag-to-Applications layout
-STAGE=$(mktemp -d)
-cp -R "$DIST/Lamp.app" "$STAGE/"
-ln -s /Applications "$STAGE/Applications"
-hdiutil create -quiet -volname "Lamp" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
-rm -rf "$STAGE"
+# 3. Package as a DMG with a drag-to-Applications layout: Lamp, an arrow and Applications over the night
+#    sky (scripts/dmg-settings.py). dmgbuild writes the window's layout without Finder, so CI gets it too.
+python3 -m venv "$DIST/.venv"
+"$DIST/.venv/bin/pip" install --quiet --disable-pip-version-check dmgbuild==1.6.7
+"$DIST/.venv/bin/dmgbuild" -s "$HERE/scripts/dmg-settings.py" -D app="$DIST/Lamp.app" \
+  -D background="$HERE/Resources/DMG/background.tiff" Lamp "$DMG"
+rm -rf "$DIST/.venv"
 codesign --force --timestamp -s "$SIGN_IDENTITY" "$DMG"
 
 if [[ "${SKIP_NOTARIZE:-}" == 1 ]]; then
