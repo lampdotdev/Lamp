@@ -77,6 +77,10 @@ struct OnboardingView: View {
         .tint(Palette.ember)
         .background(WindowReader { window = $0 })
         .onChange(of: window) { if let window { Chrome.hide(window) } }
+        // Menus can be rebuilt at any moment, so keep Settings switched off for as long as the welcome is up.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUpdateNotification)) { _ in
+            SettingsMenu.enable(false)
+        }
     }
 
     private func go(to next: Step) {
@@ -92,6 +96,7 @@ struct OnboardingView: View {
             let idea = prompt.trimmed
             let window = window
             withAnimation(.easeOut(duration: 0.4)) { onboarded = true }
+            SettingsMenu.enable(true)
             // Once Forge's own view is in, so the welcome's fixed size doesn't hold the window back.
             try? await Task.sleep(for: .seconds(0.05))
             if let window { Chrome.restore(window, to: Onboarding.appSize) }
@@ -422,19 +427,26 @@ private struct SetupStep: View {
     @State private var signingIn: Engine?
 
     var body: some View {
-        VStack(spacing: 0) {
-            Heading(title: "Let's get Forge ready",
-                    detail: "Two quick things, and they can happen at the same time.")
-                .padding(.top, 40)
-
-            VStack(spacing: 12) {
-                ToolsCard()
-                BuilderCard(choice: $choice, signedIn: $signedIn, signingIn: $signingIn)
+        // Centered like the other steps. The Forge Agent options can make it taller than a small window,
+        // so it scrolls rather than running into the buttons.
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 40)
+                    Heading(title: "Get the Forge ready to work", detail: "We need to configure two things.")
+                    VStack(spacing: 12) {
+                        ToolsCard()
+                        BuilderCard(choice: $choice, signedIn: $signedIn, signingIn: $signingIn)
+                    }
+                    .frame(width: 720)
+                    .padding(.top, 26)
+                    Spacer(minLength: 110)
+                }
+                .frame(maxWidth: .infinity, minHeight: proxy.size.height)
             }
-            .frame(width: 680)
-            .padding(.top, 22)
-
-            Spacer()
+            .scrollIndicators(.never)
+        }
+        .overlay(alignment: .bottom) {
             Footer(back: back) {
                 BigButton(title: "Continue", action: next).disabled(!ready)
             } aside: {
@@ -447,7 +459,7 @@ private struct SetupStep: View {
         }
         .task { await refreshSignIns() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            // Back from installing Claude or ChatGPT, signing in, or Settings.
+            // Back from installing Claude or ChatGPT, or signing in.
             Task {
                 await store.recheckSetup()
                 await refreshSignIns()
@@ -455,7 +467,7 @@ private struct SetupStep: View {
         }
     }
 
-    /// Ready once something can build. Claude and ChatGPT also need to be signed in.
+    /// Ready once something can build. Claude Code and ChatGPT also need to be signed in.
     private var ready: Bool {
         guard store.setup.hasBuilder, let choice, choice.matches(engine: engine, piProvider: piProvider) else { return false }
         switch choice {
@@ -475,7 +487,7 @@ private struct SetupStep: View {
 extension Builder {
     /// What the welcome offers to build apps with.
     enum Choice: Hashable {
-        case claude, chatGPT, openRouter, onThisMac, another
+        case claude, chatGPT, openRouter, another, onThisMac
 
         var isForge: Bool { self != .claude && self != .chatGPT }
 
@@ -487,20 +499,41 @@ extension Builder {
             default:
                 switch piProvider {
                 case "openrouter": return .openRouter
-                case Builder.localProvider, "ext-ollama", "ext-lmstudio": return .onThisMac
-                default: return .another
+                case let id where Provider.apiProvider(id) != nil || LocalModels.externalIDs.contains(id): return .another
+                default: return .onThisMac
                 }
             }
         }
 
         func matches(engine: String, piProvider: String) -> Bool {
+            let forge = engine == Engine.pi.rawValue
             switch self {
             case .claude: return engine == Engine.claude.rawValue
             case .chatGPT: return engine == Engine.codex.rawValue
-            case .openRouter: return engine == Engine.pi.rawValue && piProvider == "openrouter"
-            case .onThisMac, .another: return engine == Engine.pi.rawValue && piProvider != "openrouter"
+            case .openRouter: return forge && piProvider == "openrouter"
+            case .another:
+                return forge && piProvider != "openrouter"
+                    && (Provider.apiProvider(piProvider) != nil || LocalModels.externalIDs.contains(piProvider))
+            case .onThisMac:
+                return forge && Provider.apiProvider(piProvider) == nil && !LocalModels.externalIDs.contains(piProvider)
             }
         }
+    }
+
+    /// A good model to start with from a provider's list: the strongest current one, never a small or
+    /// preview model, so a first app has the best chance.
+    static func suggestedModel(_ models: [String], provider: String) -> String? {
+        let favorites: [String: [String]] = [
+            "anthropic": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5"],
+            "google": ["gemini-3.1-pro-preview", "gemini-2.5-pro"],
+        ]
+        if let favorite = favorites[provider]?.first(where: models.contains) { return favorite }
+        // OpenAI and others name their main line "gpt-5.2" and so on: take the newest plain one.
+        let plain = models.filter { $0.range(of: #"^gpt-\d+(\.\d+)?$"#, options: .regularExpression) != nil }
+        if let newest = plain.max(by: { $0.compare($1, options: .numeric) == .orderedAscending }) { return newest }
+        let small = ["mini", "nano", "lite", "haiku", "preview", "latest", "audio", "image", "realtime", "search",
+                     "embed", "tts", "transcribe", "instruct"]
+        return models.last { model in !small.contains { model.lowercased().contains($0) } } ?? models.last
     }
 }
 
@@ -510,9 +543,8 @@ private struct ToolsCard: View {
     var body: some View {
         Card {
             HStack(alignment: .center, spacing: 16) {
-                IdeaIcon(symbol: "hammer.fill", hue: 0.6, size: 44)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Apple's app-building tools").font(.system(size: 15, weight: .semibold))
+                    Text("Install Apple's app-building tools").font(.system(size: 15, weight: .semibold))
                     Text(LocalizedStringKey(detail))
                         .font(.system(size: 13)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -548,37 +580,37 @@ private struct BuilderCard: View {
     @Binding var signedIn: [Engine: Bool]
     @Binding var signingIn: Engine?
     @AppStorage("engine") private var engine = Engine.pi.rawValue
-    @AppStorage("piProvider") private var piProvider = "openrouter"
-    @AppStorage("settingsTab") private var settingsTab = "building"
-    @AppStorage("settingsSheet") private var settingsSheet = ""
-    @Environment(\.openSettings) private var openSettings
-    @State private var key = ""
-    @State private var checkingKey = false
     @State private var problem: String?
 
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Choose what makes your apps").font(.system(size: 15, weight: .semibold))
-                    Text("Use an AI account you already have, or Forge's own. You can change this any time.")
+                    Text("Choose your AI agent").font(.system(size: 15, weight: .semibold))
+                    Text("You can change this any time.")
                         .font(.system(size: 13)).foregroundStyle(.secondary)
                 }
                 HStack(spacing: 10) {
-                    Option(selected: choice == .claude, title: "Claude", detail: "Your Claude account") {
+                    Option(selected: choice == .claude, title: "Claude Code", detail: "Uses your Claude subscription") {
                         ProviderLogo(id: "anthropic", size: 30)
                     } action: { pick(.claude) }
-                    Option(selected: choice == .chatGPT, title: "ChatGPT", detail: "Your ChatGPT account") {
+                    Option(selected: choice == .chatGPT, title: "ChatGPT", detail: "Uses your ChatGPT subscription") {
                         ProviderLogo(id: "openai", size: 30)
                     } action: { pick(.chatGPT) }
-                    Option(selected: choice?.isForge == true, title: "Forge", detail: "Any AI, or one on this Mac") {
+                    Option(selected: choice?.isForge == true, title: "Forge Agent", detail: "You choose the AI") {
                         Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 34, height: 34)
                     } action: { pick(choice?.isForge == true ? choice! : .openRouter) }
                 }
                 if let choice {
-                    detail(for: choice)
-                        .transition(.opacity.combined(with: .offset(y: -6)))
-                        .id(choice)
+                    Group {
+                        switch choice {
+                        case .claude: account(.claude, app: "Claude", download: "https://claude.ai/download")
+                        case .chatGPT: account(.codex, app: "ChatGPT", download: "https://openai.com/chatgpt/download/")
+                        default: ForgeAgentOptions(choice: Binding(get: { choice }, set: { pick($0) }))
+                        }
+                    }
+                    .transition(.opacity.combined(with: .offset(y: -6)))
+                    .id(choice.isForge ? "forge" : "\(choice)")
                 }
             }
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: choice)
@@ -590,16 +622,7 @@ private struct BuilderCard: View {
         choice = new
     }
 
-    @ViewBuilder
-    private func detail(for choice: Builder.Choice) -> some View {
-        switch choice {
-        case .claude: account(.claude, app: "Claude", download: "https://claude.ai/download")
-        case .chatGPT: account(.codex, app: "ChatGPT", download: "https://openai.com/chatgpt/download/")
-        default: forge(choice)
-        }
-    }
-
-    /// Claude or ChatGPT: get the app if it's missing, then sign in.
+    /// Claude Code or ChatGPT: get the app if it's missing, then sign in.
     @ViewBuilder
     private func account(_ which: Engine, app: String, download: String) -> some View {
         let installed = ToolLocator.path(for: which) != nil
@@ -614,94 +637,20 @@ private struct BuilderCard: View {
                     .font(.system(size: 13, weight: .medium))
             } else if using && signedIn[which] == true {
                 Done()
-                Text("\(app) will make your apps.").font(.system(size: 13, weight: .medium))
+                Text("\(which == .claude ? "Claude Code" : app) will make your apps.").font(.system(size: 13, weight: .medium))
                 Spacer()
             } else if signingIn == which {
                 ProgressView().controlSize(.small)
                 Text("Finish signing in to \(app) in your browser…").font(.system(size: 13)).foregroundStyle(.secondary)
                 Spacer()
             } else {
-                Text(problem ?? "Sign in with your \(app) account. Forge uses it to make your apps.")
+                Text(problem ?? "Sign in with your \(app) account.")
                     .font(.system(size: 13)).foregroundStyle(problem == nil ? Color.secondary : Color.orange)
                 Spacer()
-                Button("Use \(app)") { use(which) }
+                Button("Use \(which == .claude ? "Claude Code" : app)") { use(which) }
             }
         }
         .padding(.top, 2)
-    }
-
-    @ViewBuilder
-    private func forge(_ choice: Builder.Choice) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Picker("", selection: Binding(get: { choice }, set: { pick($0) })) {
-                Text("OpenRouter").tag(Builder.Choice.openRouter)
-                Text("A model on this Mac").tag(Builder.Choice.onThisMac)
-                Text("Another provider").tag(Builder.Choice.another)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 420)
-
-            let using = store.setup.hasBuilder && choice.matches(engine: engine, piProvider: piProvider)
-            switch choice {
-            case .openRouter:
-                if using {
-                    HStack(spacing: 10) {
-                        Done()
-                        Text("Your OpenRouter key is saved.").font(.system(size: 13, weight: .medium))
-                    }
-                } else {
-                    Text("Hundreds of AI models, paying OpenRouter only for what you use.")
-                        .font(.system(size: 13)).foregroundStyle(.secondary)
-                    HStack(spacing: 10) {
-                        SecureField("Paste your OpenRouter key", text: $key)
-                            .textFieldStyle(.roundedBorder)
-                            .onSubmit(saveKey)
-                            .onChange(of: key) { problem = nil }
-                        if checkingKey {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Button("Save", action: saveKey).disabled(key.trimmed.isEmpty)
-                        }
-                        Link("Get a key", destination: URL(string: "https://openrouter.ai/keys")!)
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    if let problem {
-                        Label(problem, systemImage: "exclamationmark.triangle").font(.system(size: 12)).foregroundStyle(.orange)
-                    }
-                }
-            case .onThisMac:
-                settingsRow(using: using,
-                            detail: "Free and private: Forge downloads a model and runs it here. Smaller models make simpler apps.",
-                            button: "Choose a Model…") { open(tab: "providers", sheet: Builder.localProvider) }
-            default:
-                settingsRow(using: using,
-                            detail: "Anthropic, OpenAI, Google and about twenty more, with your own key.",
-                            button: "Choose a Provider…") { open(tab: "building") }
-            }
-        }
-    }
-
-    private func settingsRow(using: Bool, detail: String, button: String, action: @escaping () -> Void) -> some View {
-        HStack(spacing: 10) {
-            if using {
-                Done()
-                Text(Builder.summary).font(.system(size: 13, weight: .medium))
-                Spacer()
-                Button("Change…", action: action)
-            } else {
-                Text(detail).font(.system(size: 13)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer()
-                Button(button, action: action)
-            }
-        }
-    }
-
-    private func open(tab: String, sheet: String = "") {
-        settingsTab = tab
-        settingsSheet = sheet
-        openSettings()
     }
 
     private func use(_ which: Engine) {
@@ -721,9 +670,100 @@ private struct BuilderCard: View {
             await store.recheckSetup()
         }
     }
+}
+
+/// Forge's own agent: OpenRouter, another provider, or a model on this Mac, each set up right here.
+private struct ForgeAgentOptions: View {
+    @EnvironmentObject private var store: Store
+    @ObservedObject private var local = LocalModels.shared
+    @Binding var choice: Builder.Choice
+    @AppStorage("engine") private var engine = Engine.pi.rawValue
+    @AppStorage("piProvider") private var piProvider = "openrouter"
+    @State private var key = ""
+    @State private var checkingKey = false
+    @State private var problem: String?
+    @State private var provider = "anthropic"
+    @State private var models: [String] = []
+    @State private var model = ""
+    @State private var localChoice = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Radio(title: "OpenRouter", selected: choice == .openRouter) { pick(.openRouter) } content: {
+                openRouter
+            }
+            Radio(title: "Another provider", selected: choice == .another) { pick(.another) } content: {
+                anotherProvider
+            }
+            Radio(title: "A model on this Mac", selected: choice == .onThisMac) { pick(.onThisMac) } content: {
+                onThisMac
+            }
+        }
+        .padding(.top, 2)
+        .onAppear {
+            if piProvider != "openrouter", Provider.apiProvider(piProvider) != nil || LocalModels.externalIDs.contains(piProvider) {
+                provider = piProvider
+            }
+            localChoice = defaultLocalChoice()
+            apply()
+        }
+        .onChange(of: local.installed) {
+            // A download finished: switch to the model it installed, and use it.
+            if let spec = spec(localChoice), let id = local.installedID(for: spec) {
+                localChoice = "installed:" + id
+                apply()
+            }
+        }
+    }
+
+    private func pick(_ new: Builder.Choice) {
+        guard choice != new else { return }
+        problem = nil
+        key = ""
+        choice = new
+        apply()
+    }
+
+    /// Uses the chosen option straight away when it's ready (a saved key, a downloaded model).
+    private func apply() {
+        switch choice {
+        case .openRouter:
+            if KeyStore.key(for: "openrouter") != nil { use(provider: "openrouter", model: nil) }
+        case .another:
+            if providerReady, !model.isEmpty { use(provider: provider, model: model) }
+        case .onThisMac:
+            if localChoice.hasPrefix("installed:") { use(provider: Builder.localProvider, model: String(localChoice.dropFirst(10))) }
+        default:
+            break
+        }
+    }
+
+    private func use(provider id: String, model chosen: String?) {
+        Builder.engine = .pi
+        Builder.piProvider = id
+        if let chosen { Builder.piModel = chosen }
+        engine = Engine.pi.rawValue
+        piProvider = id
+        Task { await store.recheckSetup() }
+    }
+
+    private func isUsing(_ option: Builder.Choice) -> Bool {
+        store.setup.hasBuilder && option.matches(engine: engine, piProvider: piProvider)
+    }
+
+    // MARK: OpenRouter
+
+    @ViewBuilder private var openRouter: some View {
+        if isUsing(.openRouter) {
+            ready("Your OpenRouter key is saved.")
+        } else {
+            note("Hundreds of AI models, paying OpenRouter only for what you use.")
+            keyField(name: "OpenRouter", url: "https://openrouter.ai/keys", save: saveOpenRouterKey)
+        }
+    }
 
     /// Checks the key with OpenRouter before saving it, so a typo shows up now rather than at the first build.
-    private func saveKey() {
+    private func saveOpenRouterKey() {
         let candidate = key.trimmed
         guard !candidate.isEmpty, !checkingKey else { return }
         checkingKey = true
@@ -735,11 +775,213 @@ private struct BuilderCard: View {
             }
             KeyStore.setOpenRouterKey(candidate)
             key = ""
-            Builder.engine = .pi
-            Builder.piProvider = "openrouter"
-            engine = Engine.pi.rawValue
-            piProvider = "openrouter"
-            await store.recheckSetup()
+            use(provider: "openrouter", model: nil)
+        }
+    }
+
+    // MARK: Another provider
+
+    /// Cloud providers and the model apps on this Mac Forge can talk to, in one alphabetical list.
+    private var others: [(id: String, name: String)] {
+        (Provider.apiProviders.filter { $0.id != "openrouter" }.map { ($0.id, $0.name) }
+            + LocalModels.externalIDs.map { ($0, LocalModels.externalName($0)) })
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private var isServer: Bool { LocalModels.externalIDs.contains(provider) }
+
+    /// Ready to build: a cloud provider with its key, or a model app that's running with a model in it.
+    private var providerReady: Bool { isServer ? !models.isEmpty : KeyStore.key(for: provider) != nil }
+
+    @ViewBuilder private var anotherProvider: some View {
+        let name = others.first { $0.id == provider }?.name ?? provider
+        HStack(spacing: 10) {
+            Picker("", selection: $provider) {
+                ForEach(others, id: \.id) { Text($0.name).tag($0.id) }
+            }
+            .labelsHidden()
+            .frame(width: 200)
+            if providerReady && !models.isEmpty {
+                Picker("", selection: $model) {
+                    ForEach(models, id: \.self) { Text($0).tag($0) }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 260)
+            }
+        }
+        .onChange(of: provider) {
+            key = ""
+            problem = nil
+            Task { await loadModels() }
+        }
+        .onChange(of: model) { if !model.isEmpty { UserDefaults.standard.set(model, forKey: "piModel.\(provider)"); apply() } }
+        .task { await loadModels() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            // Back from opening Ollama or LM Studio.
+            if isServer { Task { await loadModels() } }
+        }
+        if isServer {
+            if models.isEmpty {
+                HStack(spacing: 10) {
+                    note("Open \(name) with a model downloaded in it, and Forge finds it here.")
+                    Spacer()
+                    Link("Get \(name)", destination: URL(string: provider == "ext-ollama" ? "https://ollama.com/download" : "https://lmstudio.ai")!)
+                        .font(.system(size: 13, weight: .medium))
+                }
+            } else if isUsing(.another) && piProvider == provider {
+                ready("\(name) will make your apps, right here on this Mac.")
+            }
+        } else if let current = Provider.apiProvider(provider) {
+            if KeyStore.key(for: provider) != nil {
+                if isUsing(.another) && piProvider == provider {
+                    ready("Your \(current.name) key is saved.")
+                }
+            } else {
+                keyField(name: current.name, url: current.keyURL) {
+                    let candidate = key.trimmed
+                    guard !candidate.isEmpty else { return }
+                    KeyStore.setKey(candidate, for: provider)
+                    key = ""
+                    Task {
+                        await loadModels()
+                        apply()
+                    }
+                }
+            }
+        }
+    }
+
+    private func loadModels() async {
+        let id = provider
+        let list: [String]
+        if LocalModels.externalIDs.contains(id) {
+            await local.detectExternal()
+            list = local.external[id] ?? []
+        } else {
+            list = await Agent.listModels(provider: id)
+        }
+        guard id == provider else { return }
+        models = list
+        let saved = UserDefaults.standard.string(forKey: "piModel.\(id)") ?? ""
+        model = list.contains(saved) ? saved : (Builder.suggestedModel(list, provider: id) ?? "")
+        apply()
+    }
+
+    // MARK: A model on this Mac
+
+    private var recommended: LocalModelSpec? {
+        LocalModels.catalog.filter { $0.minRAMGB <= LocalModels.ramGB }.max { $0.minRAMGB < $1.minRAMGB }
+            ?? LocalModels.catalog.min { $0.minRAMGB < $1.minRAMGB }
+    }
+
+    /// "installed:<id>" for a model on this Mac, "spec:<id>" for one to download.
+    private func defaultLocalChoice() -> String {
+        if Builder.piProvider == Builder.localProvider, local.installed.contains(where: { $0.id == Builder.piModel }) {
+            return "installed:" + Builder.piModel
+        }
+        if let recommended, let id = local.installedID(for: recommended) { return "installed:" + id }
+        if let first = local.installed.first { return "installed:" + first.id }
+        return recommended.map { "spec:" + $0.id } ?? ""
+    }
+
+    private func spec(_ tag: String) -> LocalModelSpec? {
+        guard tag.hasPrefix("spec:") else { return nil }
+        return LocalModels.catalog.first { $0.id == tag.dropFirst(5) }
+    }
+
+    @ViewBuilder private var onThisMac: some View {
+        note("Free and private: Forge runs the model right here. Smaller models make simpler apps.")
+        Picker("", selection: $localChoice) {
+            ForEach(local.installed) { Text("\($0.name) (on this Mac)").tag("installed:" + $0.id) }
+            ForEach(LocalModels.catalog.filter { !local.isInstalled($0) }) { spec in
+                Text(spec.name + (spec == recommended ? " (recommended)" : "")).tag("spec:" + spec.id)
+            }
+        }
+        .labelsHidden()
+        .frame(width: 320)
+        .onChange(of: localChoice) { apply() }
+        if let spec = spec(localChoice) {
+            HStack(spacing: 10) {
+                Text(String(format: "%@ %.1f GB download, needs %d GB of memory.", spec.blurb, spec.sizeGB, spec.minRAMGB))
+                    .font(.system(size: 12)).foregroundStyle(spec.minRAMGB > LocalModels.ramGB ? Color.orange : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                if let progress = local.progress[spec.id] {
+                    ProgressView(value: progress).frame(width: 100)
+                    Button("Cancel") { local.cancel(spec.id) }
+                } else {
+                    Button("Download") { local.download(spec) }
+                }
+            }
+            if let error = local.errors[spec.id] {
+                Text(error).font(.system(size: 12)).foregroundStyle(.orange)
+            }
+        } else if isUsing(.onThisMac) {
+            ready("\(local.installed.first { "installed:" + $0.id == localChoice }?.name ?? "This model") will make your apps.")
+        }
+    }
+
+    // MARK: Pieces
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func ready(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Done()
+            Text(text).font(.system(size: 13, weight: .medium))
+        }
+    }
+
+    @ViewBuilder
+    private func keyField(name: String, url: String, save: @escaping () -> Void) -> some View {
+        HStack(spacing: 10) {
+            SecureField("Paste your \(name) key", text: $key)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(save)
+                .onChange(of: key) { problem = nil }
+            if checkingKey {
+                ProgressView().controlSize(.small)
+            } else {
+                Button("Save", action: save).disabled(key.trimmed.isEmpty)
+            }
+            Link("Get a key", destination: URL(string: url)!)
+                .font(.system(size: 13, weight: .medium))
+        }
+        if let problem {
+            Label(problem, systemImage: "exclamationmark.triangle").font(.system(size: 12)).foregroundStyle(.orange)
+        }
+    }
+}
+
+/// A radio button whose own settings open up right beneath it when it's chosen.
+private struct Radio<Content: View>: View {
+    let title: String
+    let selected: Bool
+    let action: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: action) {
+                HStack(spacing: 8) {
+                    ZStack {
+                        Circle().strokeBorder(selected ? Palette.ember : .black.opacity(0.25), lineWidth: selected ? 5 : 1)
+                            .background(Circle().fill(.white))
+                    }
+                    .frame(width: 16, height: 16)
+                    Text(title).font(.system(size: 13.5, weight: selected ? .semibold : .regular)).foregroundStyle(Palette.ink)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .focusEffectDisabled()
+            if selected {
+                VStack(alignment: .leading, spacing: 8) { content() }
+                    .padding(.leading, 24)
+                    .transition(.opacity)
+            }
         }
     }
 }
@@ -996,6 +1238,20 @@ private extension View {
 }
 
 // MARK: - Window
+
+/// Settings waits until the welcome is done: everything it would offer is set up in the welcome itself.
+/// A menu item without an action is greyed out, and so is its ⌘, shortcut.
+enum SettingsMenu {
+    private static let open = Selector(("showSettingsWindow:"))
+
+    static func enable(_ on: Bool) {
+        guard let menu = NSApp.mainMenu?.items.first?.submenu else { return }
+        for item in menu.items where item.title.hasPrefix("Settings") {
+            if on, item.action == nil { item.action = open }
+            if !on, item.action != nil { item.action = nil }
+        }
+    }
+}
 
 /// Hands back the window a view is in.
 private struct WindowReader: NSViewRepresentable {

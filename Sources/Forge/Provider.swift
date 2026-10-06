@@ -14,6 +14,7 @@ enum Provider {
     /// OpenRouter key present: needed for image generation and the default in-app AI.
     static var hasKey: Bool { KeyStore.openRouterKey != nil }
 
+    /// In alphabetical order, as every list of them shows them.
     static let apiProviders: [PiProvider] = [
         PiProvider(id: "openrouter", name: "OpenRouter", envVar: "OPENROUTER_API_KEY", keyURL: "https://openrouter.ai/keys"),
         PiProvider(id: "anthropic", name: "Anthropic", envVar: "ANTHROPIC_API_KEY", keyURL: "https://console.anthropic.com/settings/keys"),
@@ -32,7 +33,7 @@ enum Provider {
         PiProvider(id: "zai", name: "Z.ai (GLM)", envVar: "ZAI_API_KEY", keyURL: "https://z.ai/manage-apikey/apikey-list"),
         PiProvider(id: "minimax", name: "MiniMax", envVar: "MINIMAX_API_KEY", keyURL: "https://www.minimax.io"),
         PiProvider(id: "nvidia", name: "NVIDIA", envVar: "NVIDIA_API_KEY", keyURL: "https://build.nvidia.com"),
-    ]
+    ].sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
     static func apiProvider(_ id: String) -> PiProvider? { apiProviders.first { $0.id == id } }
 
@@ -41,7 +42,8 @@ enum Provider {
                                      keyURL: "https://typesafe.ai")
 
     /// Every provider Forge keeps an API key for, as listed in Settings → Providers.
-    static let keyProviders = apiProviders + [typesafe]
+    static let keyProviders = (apiProviders + [typesafe])
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
     static func keyProvider(_ id: String) -> PiProvider? { keyProviders.first { $0.id == id } }
 
