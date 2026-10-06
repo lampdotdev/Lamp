@@ -443,7 +443,7 @@ struct AppsSettings: View {
                     ForEach(AppAI.models, id: \.id) { Text($0.label).tag($0.id) }
                 }
                 Picker("Images (icons and in-app)", selection: $imageModel) {
-                    ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
+                    ForEach(Icons.imageChoices, id: \.id) { Text($0.label).tag($0.id) }
                 }
                 let _ = revision   // re-read KeyStore after the TypeSafe key changes
                 Text(KeyStore.openRouterKey == nil
@@ -948,6 +948,7 @@ private struct LocalAISheet: View {
     @EnvironmentObject private var store: Store
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var local = LocalModels.shared
+    @ObservedObject private var images = ImageModels.shared
     @State private var repo = ""
     @State private var custom: [LocalModelSpec] = []
     @State private var adding = false
@@ -989,6 +990,30 @@ private struct LocalAISheet: View {
                     if let addError { Text(addError).font(.caption).foregroundStyle(.red) }
                 } header: { Text("Download") } footer: {
                     Text("This Mac has \(LocalModels.ramGB) GB of memory. Any GGUF repo works: Lamp picks the Q4_K_M version, plus image support if there is one.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                Section {
+                    if !ImageModels.hasMflux {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("mflux").font(.headline)
+                                Text(ImageModels.uvPath == nil
+                                     ? "Runs picture models. Needs uv first: `brew install uv`, then come back here."
+                                     : "Runs picture models. A one-time install of about 500 MB.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                if let error = images.installError { Text(error).font(.caption).foregroundStyle(.red) }
+                            }
+                            Spacer()
+                            if images.installing { ProgressView().controlSize(.small) }
+                            else { Button("Install") { images.installMflux() }.disabled(ImageModels.uvPath == nil) }
+                        }
+                    }
+                    ForEach(ImageModels.catalog) { imageRow($0) }
+                } header: { Text("Pictures") } footer: {
+                    Text(ImageModels.ready
+                         ? "Apps' pictures and icon artwork are made here with \(images.chosen?.name ?? "the chosen model") when there's no OpenRouter key. About 10–30 seconds a picture."
+                         : "Pictures made on this Mac, free and private, when there's no OpenRouter key. Slower than the cloud models, and they can't edit existing pictures.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
@@ -1055,6 +1080,34 @@ private struct LocalAISheet: View {
                 Button("Cancel") { local.cancel(spec.id) }
             } else {
                 Button("Download") { local.download(spec) }
+            }
+        }
+    }
+
+    private func imageRow(_ spec: ImageModelSpec) -> some View {
+        let installed = ImageModels.isInstalled(spec)
+        let inUse = installed && images.chosen?.id == spec.id
+        let tight = spec.minRAMGB > LocalModels.ramGB
+        return HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text(spec.name).font(.headline)
+                    if inUse { Text("In use").font(.caption).padding(.horizontal, 6).background(.green.opacity(0.2), in: Capsule()) }
+                }
+                Text(spec.blurb).font(.caption).foregroundStyle(.secondary)
+                Text(String(format: "%.1f GB · needs %d GB memory%@", spec.sizeGB, spec.minRAMGB, tight ? " (more than this Mac has)" : ""))
+                    .font(.caption).foregroundStyle(tight ? .orange : .secondary)
+                if let error = local.errors["image:" + spec.id] { Text(error).font(.caption).foregroundStyle(.red) }
+            }
+            Spacer()
+            if let progress = local.progress["image:" + spec.id] {
+                ProgressView(value: progress).frame(width: 90)
+                Button("Cancel") { local.cancel("image:" + spec.id) }
+            } else if installed {
+                if !inUse { Button("Use") { images.choose(spec) } }
+                Button("Delete", role: .destructive) { images.delete(spec) }
+            } else {
+                Button("Download") { images.download(spec) }
             }
         }
     }

@@ -451,7 +451,11 @@ struct ProjectView: View {
                              onAllow: { store.answerApproval(for: project, allow: true) },
                              onAllowAll: { store.answerApproval(for: project, allow: true, allowAll: true) },
                              onDeny: { store.answerApproval(for: project, allow: false) })
-                    .padding(.horizontal, 12).padding(.top, 10)
+                    .padding(12)
+                    // Each request starts with its command hidden, even when one follows another.
+                    .id(approval.id)
+                // Part of the bottom panel, set off from the message box the way the chat is.
+                Divider()
             }
             if !attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -724,7 +728,7 @@ struct AppInfoView: View {
                     ForEach(AppAI.models, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
                 }
                 Picker("Making images", selection: choice(\.image, default: Icons.artModel)) {
-                    ForEach(Icons.artModels, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
+                    ForEach(Icons.imageChoices, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
                 }
                 Picker("Decisions", selection: choice(\.decision, default: AppAI.decisionModel.id)) {
                     ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }
@@ -1065,18 +1069,30 @@ struct ApprovalCard: View {
                     Text("Working out what this does…").foregroundStyle(.secondary)
                 }
             }
-            DisclosureGroup(isExpanded: $showCommand) {
-                ScrollView {
-                    Text(command)
-                        .font(.system(.callout, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            // Not a DisclosureGroup: on the Mac only its chevron toggles it, so clicking the words did nothing.
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { showCommand.toggle() }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .rotationEffect(.degrees(showCommand ? 90 : 0))
+                    Text(showCommand ? "Hide command" : "Show command").font(.caption)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            if showCommand {
+                // A short command takes only the room it needs; a long one scrolls rather than pushing the chat
+                // out of the window.
+                ViewThatFits(in: .vertical) {
+                    commandText
+                    ScrollView { commandText }
                 }
                 .frame(maxHeight: 120)
                 .padding(8)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
-            } label: {
-                Text("Show command").font(.caption)
             }
             HStack {
                 Text(footnote).font(.caption).foregroundStyle(.secondary)
@@ -1097,10 +1113,14 @@ struct ApprovalCard: View {
                 }
             }
         }
-        .padding(12)
-        .background(riskColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(riskColor.opacity(0.35)))
-        .onAppear { showCommand = false }
+    }
+
+    private var commandText: some View {
+        Text(command)
+            .font(.system(.callout, design: .monospaced))
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
