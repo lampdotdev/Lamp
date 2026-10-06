@@ -116,17 +116,26 @@ enum FileTools {
         }
         var shown: [String] = []
         var bytes = 0
+        var cut: String?
         for line in lines[start...].prefix(min(max(1, limit ?? maxLines), maxLines)) {
             bytes += line.utf8.count + 1
-            if bytes > maxBytes, !shown.isEmpty { break }
+            if bytes > maxBytes {
+                // One line can be the whole file (minified code, a data dump). Lines can't be read in parts, so
+                // the first one shown is cut at the limit rather than sent whole, and says so.
+                if shown.isEmpty {
+                    shown.append(String(decoding: line.utf8.prefix(maxBytes), as: UTF8.self))
+                    cut = "Line \(start + 1) is \(line.utf8.count / 1024)KB long: only its first \(maxBytes / 1024)KB is shown, and the rest of that line can't be read with this tool."
+                }
+                break
+            }
             shown.append(line)
         }
         let end = start + shown.count
-        var text = shown.joined(separator: "\n")
+        var notes = cut.map { [$0] } ?? []
         if end < lines.count {
-            text += "\n\n[Showing lines \(start + 1)-\(end) of \(lines.count). Use offset=\(end + 1) to continue.]"
+            notes.append("Showing lines \(start + 1)-\(end) of \(lines.count). Use offset=\(end + 1) to continue.")
         }
-        return Reply(text: text)
+        return Reply(text: shown.joined(separator: "\n") + (notes.isEmpty ? "" : "\n\n[" + notes.joined(separator: " ") + "]"))
     }
 
     private static func list(_ path: String, limit: Int, hidden: (String) -> Bool) throws -> String {
