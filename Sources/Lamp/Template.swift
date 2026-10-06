@@ -216,18 +216,39 @@ enum Template {
         @MainActor static func show() {
             NSApp.unhide(nil)
             let windows = NSApp.windows.filter { $0.canBecomeMain }
-            if let minimized = windows.first(where: \.isMiniaturized), !windows.contains(where: \.isVisible) {
-                minimized.deminiaturize(nil)
-            } else if !windows.contains(where: \.isVisible), let item = newWindowItem(in: NSApp.mainMenu),
-                      let menu = item.menu {
-                // SwiftUI's File ▸ New … Window (⌘N).
-                menu.performActionForItem(at: menu.index(of: item))
-            } else if !windows.contains(where: \.isVisible), LampMenuBar.isInstalled {
-                // An app that lives in the menu bar: the panel behind its icon is its window.
-                return LampMenuBar.show()
+            if !windows.contains(where: \.isVisible) {
+                if let minimized = windows.first(where: \.isMiniaturized) {
+                    minimized.deminiaturize(nil)
+                } else if LampMenuBar.isInstalled {
+                    // An app that lives in the menu bar: the panel behind its icon is its window.
+                    return LampMenuBar.show()
+                } else if let (menu, item) = windowOpener() {
+                    menu.performActionForItem(at: menu.index(of: item))
+                }
             }
             NSApp.activate()
-            NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+            if let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) {
+                window.makeKeyAndOrderFront(nil)
+                return
+            }
+            // Nothing could bring a window back: the app replaced New Window with something else, or its only
+            // window has no menu item. Rather than sit in the Dock with nothing to show, start again with one.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) { relaunch() }
+            }
+        }
+
+        /// The menu item that opens a window: File ▸ New Window (⌘N) while it still does that, or for an app with
+        /// one window scene, the item SwiftUI puts in the Window menu under the app's name.
+        private static func windowOpener() -> (NSMenu, NSMenuItem)? {
+            if let item = newWindowItem(in: NSApp.mainMenu), item.title.localizedCaseInsensitiveContains("window"), let menu = item.menu {
+                return (menu, item)
+            }
+            let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ""
+            if let menu = NSApp.windowsMenu, let item = menu.items.first(where: { $0.title == name && $0.isEnabled }) {
+                return (menu, item)
+            }
+            return nil
         }
 
         private static func newWindowItem(in menu: NSMenu?) -> NSMenuItem? {
@@ -236,6 +257,22 @@ enum Template {
                 if let found = newWindowItem(in: item.submenu) { return found }
             }
             return nil
+        }
+
+        /// Quits the app and opens it again, in front, so it comes back with a window. Also what a permission
+        /// macOS only applies to a fresh start needs (LampPermissions).
+        @MainActor static func relaunch() {
+            let wait = "n=0; while kill -0 \"$1\" 2>/dev/null && [ $n -lt 100 ]; do sleep 0.1; n=$((n+1)); done; "
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/sh")
+            task.arguments = ["-c", wait + "/usr/bin/open \"$2\" --args -LampInFront YES", "sh",
+                              String(ProcessInfo.processInfo.processIdentifier), Bundle.main.bundlePath]
+            do {
+                try task.run()
+                NSApp.terminate(nil)
+            } catch {
+                print("LampWindows: couldn't reopen the app: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -2916,20 +2953,7 @@ enum Template {
         }
 
         /// Quits the app and opens it again, for a permission macOS only applies to a fresh start.
-        @MainActor static func reopen() {
-            let wait = "n=0; while kill -0 \"$1\" 2>/dev/null && [ $n -lt 100 ]; do sleep 0.1; n=$((n+1)); done; "
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/bin/sh")
-            // -LampInFront: an app that lives in the menu bar shows its panel again (LampMenuBar).
-            task.arguments = ["-c", wait + "/usr/bin/open \"$2\" --args -LampInFront YES", "sh",
-                              String(ProcessInfo.processInfo.processIdentifier), Bundle.main.bundlePath]
-            do {
-                try task.run()
-                NSApp.terminate(nil)
-            } catch {
-                print("LampPermissions: couldn't reopen the app: \(error.localizedDescription)")
-            }
-        }
+        @MainActor static func reopen() { LampWindows.relaunch() }
 
         /// For trying the screens from Terminal on a Mac where nobody can flip the switch:
         /// LAMP_PERMISSIONS=granted, denied, asked (denied, after Open System Settings was pressed) or reopen.

@@ -188,7 +188,9 @@ enum Agent {
     don't add standard UI they didn't ask for. Otherwise, make it feel like Apple made it, following the macOS \
     Human Interface Guidelines: content first, little chrome. Collections go in a NavigationSplitView with a \
     sidebar. Primary actions go in the toolbar as SF Symbols with help tooltips, and also in the menu bar with the \
-    standard shortcuts (⌘N new, ⌫ delete, ⌘F find). Right-click gives context menus. Settings go in a `Settings` \
+    standard shortcuts (⌫ delete, ⌘F find). Leave File ▸ New Window (⌘N) as it is, even in an app meant \
+    for one window: Lamp uses it to bring a window back after the user closes the last one, so give \
+    "new document" its own shortcut (⇧⌘N, say) rather than replacing New Window. Right-click gives context menus. Settings go in a `Settings` \
     scene, not in the window. Focused tasks use sheets, and destructive actions ask first with confirmationDialog. \
     Use native controls and grouped Forms rather than custom-drawn ones, semantic text styles and system colours \
     rather than fixed sizes and hex values, so dark mode and the accent colour just work. Show a \

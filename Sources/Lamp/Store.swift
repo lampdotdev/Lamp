@@ -1323,9 +1323,10 @@ final class Store: ObservableObject {
             DistributedNotificationCenter.default().postNotificationName(
                 Notification.Name("dev.lamp.showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
             running.activate()
-            // Apps built before this listener existed ignore the message: if one has no window on screen, relaunch it.
-            guard !Self.listensForShowWindow(project) else { return }
-            try? await Task.sleep(for: .seconds(1))
+            // Whatever the app did with that (an app built before the listener existed ignores it; one that
+            // replaced New Window can't open one), a window has to be on screen: if there's none, relaunch it.
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !running.isTerminated else { return }   // it's relaunching itself (LampWindows.relaunch)
             guard !Self.hasWindow(running.processIdentifier) else { return }
             running.terminate()
             for _ in 0..<30 where !running.isTerminated { try? await Task.sleep(for: .milliseconds(100)) }
@@ -1486,12 +1487,6 @@ final class Store: ObservableObject {
     }
 
     /// Whether the installed app was built with LampWindows (its binary contains the message name).
-    private static func listensForShowWindow(_ project: LampProject) -> Bool {
-        let binary = project.installedURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
-        guard let data = try? Data(contentsOf: binary, options: .alwaysMapped) else { return false }
-        return data.range(of: Data("dev.lamp.showWindow".utf8)) != nil
-    }
-
     /// Whether a process has a normal window on screen (window list metadata needs no permission).
     private static func hasWindow(_ pid: pid_t) -> Bool {
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
