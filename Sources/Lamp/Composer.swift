@@ -341,6 +341,11 @@ enum Attachments {
 
     static func isImage(_ url: URL) -> Bool { imageTypes.contains(url.pathExtension.lowercased()) }
 
+    /// Where saved attachments are, from their names.
+    static func urls(_ names: [String], in project: LampProject) -> [URL] {
+        names.map { project.dir.appendingPathComponent(folder).appendingPathComponent($0) }
+    }
+
     /// Copies files into <app>/Attachments with unique names. Returns the saved names.
     static func save(_ files: [URL], to project: LampProject) -> [String] {
         let fm = FileManager.default

@@ -173,24 +173,20 @@ enum ChatItem: Identifiable {
     }
 }
 
-/// Changing a request that was already sent, to send it again (see `Store.sendAgain`).
-struct RequestEdit {
-    /// The request being edited.
-    var editing: Binding<UUID?>
-    /// The latest request shows its pencil all the time, so there's one to find; earlier ones show it when pointed at.
-    let latest: UUID?
-    /// What comes after the request being edited, and goes when it's sent: shown faded meanwhile.
-    let leaving: Set<UUID>
-    let send: (LogLine, String) -> Void
+/// The mark above the message box while a request taken back from the chat is in it, with the way out.
+struct SendingAgainMark: View {
+    let onCancel: () -> Void
 
-    enum Mode { case onHover, always, editor }
-
-    /// Nil when Lamp doesn't know where the app was before a request (some from older chats).
-    func mode(of line: LogLine) -> Mode? {
-        guard line.kind == .user, line.before != nil || line.version != nil else { return nil }
-        // While one request is being edited, the others don't offer to be.
-        if let editing = editing.wrappedValue { return editing == line.id ? .editor : nil }
-        return line.id == latest ? .always : .onHover
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.clockwise")
+            Text("Editing message")
+            Button(action: onCancel) { Image(systemName: "xmark.circle.fill") }
+                .buttonStyle(.plain)
+                .help("Put the message back in the chat")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
 }
 
@@ -203,24 +199,26 @@ struct Transcript: View {
     var progressShown = false
     /// Goes back to the version a request made, or (true) to the one before it.
     var goBack: ((LogLine, Bool) -> Void)?
-    /// Nil while the app is being worked on: a request can't be sent again until that's done.
-    var edit: RequestEdit?
+    /// Takes a request back into the message box, to change it and send it again. Nil while the app is being
+    /// worked on: that has to finish first.
+    var sendAgain: ((LogLine) -> Void)?
 
     var body: some View {
         let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(lines) : lines)
         let finalAnswers = Self.finalAnswers(in: lines, busy: busy)
+        let latestRequest = lines.last { $0.kind == .user }?.id
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
             let isLast = index == items.count - 1
             Group {
                 switch item {
-                case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack, edit: edit).equatable()
+                case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack, sendAgain: sendAgain,
+                                             isLatestRequest: line.id == latestRequest).equatable()
                 case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && !progressShown).equatable()
                 case .statuses(let lines): StatusGroup(lines: lines, running: isLast && busy && !progressShown)
                 }
             }
             .padding(.top, ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item,
                                         isFinalAnswer: finalAnswers.contains(item.id)))
-            .opacity(edit?.leaving.contains(item.id) == true ? 0.35 : 1)
         }
     }
 
@@ -254,13 +252,15 @@ struct LogRow: View, Equatable {
     let dir: URL
     var busy = false
     var goBack: ((LogLine, Bool) -> Void)?
-    var edit: RequestEdit?
+    var sendAgain: ((LogLine) -> Void)?
+    /// The latest request shows its Send Again button all the time, so there's one to find; earlier ones
+    /// show it when pointed at.
+    var isLatestRequest = false
     @State private var hovered = false
-    @State private var edited = ""
-    @FocusState private var editorFocused: Bool
 
     static func == (a: LogRow, b: LogRow) -> Bool {
-        a.line == b.line && a.busy == b.busy && a.dir == b.dir && a.edit?.mode(of: a.line) == b.edit?.mode(of: b.line)
+        a.line == b.line && a.busy == b.busy && a.dir == b.dir
+            && a.isLatestRequest == b.isLatestRequest && (a.sendAgain == nil) == (b.sendAgain == nil)
     }
 
     var body: some View {
@@ -299,37 +299,16 @@ struct LogRow: View, Equatable {
                         .opacity(hovered ? 1 : 0)
                         .help("Go back to how the app was around this request")
                     }
-                    if let edit, let mode = edit.mode(of: line), mode != .editor {
-                        Button { edit.editing.wrappedValue = line.id } label: { Image(systemName: "pencil") }
+                    if let sendAgain, line.canSendAgain {
+                        Button { sendAgain(line) } label: { Image(systemName: "arrow.clockwise") }
                             .buttonStyle(.plain)
                             .foregroundStyle(.secondary)
-                            .opacity(hovered || mode == .always ? 1 : 0)
+                            .opacity(hovered || isLatestRequest ? 1 : 0)
                             .help("Change this message and send it again")
-                            .accessibilityLabel("Edit Message")
+                            .accessibilityLabel("Edit and Send Again")
                     }
-                    if let edit, edit.mode(of: line) == .editor {
-                        // The message's own bubble, now a text box. Return sends, as in the message box below.
-                        TextField("Describe a change…", text: $edited, axis: .vertical)
-                            .textFieldStyle(.plain)
-                            .lineLimit(1...12)
-                            .lineSpacing(2)
-                            .focused($editorFocused)
-                            .onSubmit { sendAgain(edit) }
-                            .onExitCommand { edit.editing.wrappedValue = nil }
-                            .padding(.horizontal, 12).padding(.vertical, 8)
-                            .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
-                            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.accentColor, lineWidth: 1.5))
-                            .onAppear {
-                                edited = line.text
-                                editorFocused = true
-                                // A text box that takes focus selects all of its text, and the next key would
-                                // replace the message: start at its end instead, ready to add to it or fix it.
-                                DispatchQueue.main.async {
-                                    (NSApp.keyWindow?.firstResponder as? NSTextView)?.moveToEndOfDocument(nil)
-                                }
-                            }
-                    } else if !line.text.isEmpty {
-                        // A message that's only attachments shows just them.
+                    // A message that's only attachments shows just them.
+                    if !line.text.isEmpty {
                         Text(line.text)
                             .textSelection(.enabled)
                             .lineSpacing(2)
@@ -339,20 +318,6 @@ struct LogRow: View, Equatable {
                 }
                 // The width limit goes around the buttons too, so they stay next to a short message.
                 .frame(maxWidth: 480 + 50, alignment: .trailing)
-                if let edit, edit.mode(of: line) == .editor {
-                    // Said before it happens, since the messages that go can't be brought back.
-                    Text("The app goes back to how it was before this message, and everything after it leaves the chat. The versions made since then stay in Versions.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.trailing)
-                        .frame(maxWidth: 480, alignment: .trailing)
-                    HStack(spacing: 8) {
-                        Button("Cancel", role: .cancel) { edit.editing.wrappedValue = nil }
-                        Button("Send Again") { sendAgain(edit) }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(edited.trimmed.isEmpty && (line.attachments ?? []).isEmpty)
-                    }
-                }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .onHover { hovered = $0 }
@@ -389,13 +354,6 @@ struct LogRow: View, Equatable {
         case .needsKey:
             KeyCard(reason: line.text)
         }
-    }
-
-    private func sendAgain(_ edit: RequestEdit) {
-        let text = edited.trimmed
-        guard !text.isEmpty || !(line.attachments ?? []).isEmpty else { return }
-        edit.editing.wrappedValue = nil
-        edit.send(line, text)
     }
 
     /// Parsed once per message: parsing markdown on every redraw adds up while an agent is streaming.
