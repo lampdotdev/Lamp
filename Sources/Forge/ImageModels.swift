@@ -52,24 +52,39 @@ final class ImageModels: ObservableObject {
 
     var installed: [ImageModelSpec] { Self.catalog.filter { Self.isInstalled($0) } }
 
-    /// The repo is in the cache under the revision refs/main names, with every file's weights present: a
-    /// download that stopped halfway leaves links to blobs that aren't there.
+    /// The repo is in the cache under the revision refs/main names, and is whole: either Forge finished
+    /// downloading it (its marker names the revision), or every part a picture model needs is there with
+    /// its weights present. A download that stopped halfway leaves a text encoder and no transformer, or
+    /// links to blobs that never arrived.
     nonisolated static func isInstalled(_ spec: ImageModelSpec) -> Bool {
         let fm = FileManager.default
         let repoDir = LocalModels.hubDir.appendingPathComponent("models--" + spec.repo.replacingOccurrences(of: "/", with: "--"))
         guard let ref = (try? String(contentsOf: repoDir.appendingPathComponent("refs/main"), encoding: .utf8))?.trimmed else { return false }
         let snapshot = repoDir.appendingPathComponent("snapshots/\(ref)")
-        guard let files = fm.enumerator(at: snapshot, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])?
-            .allObjects.compactMap({ $0 as? URL }), !files.isEmpty else { return false }
-        var weights = 0
-        for file in files {
-            let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-            guard values?.isRegularFile == true || values?.isSymbolicLink == true else { continue }
-            let target = file.resolvingSymlinksInPath()
-            guard let size = (try? target.resourceValues(forKeys: [.fileSizeKey]))?.fileSize else { return false }
-            if file.pathExtension == "safetensors" { weights += size }
+        guard fm.fileExists(atPath: snapshot.path) else { return false }
+        if (try? String(contentsOf: repoDir.appendingPathComponent("forge-complete"), encoding: .utf8))?.trimmed == ref { return true }
+
+        func present(_ relative: String) -> Bool {
+            let target = snapshot.appendingPathComponent(relative).resolvingSymlinksInPath()
+            return ((try? target.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) > 0
         }
-        return weights > 1_000_000_000
+        guard let all = fm.enumerator(at: snapshot, includingPropertiesForKeys: nil)?.allObjects.compactMap({ $0 as? URL }) else { return false }
+        let relative = all.map { $0.path.replacingOccurrences(of: snapshot.path + "/", with: "") }
+        // Each part the model is made of, with at least one weights file that's really there.
+        for part in ["transformer", "vae", "text_encoder", "tokenizer"] {
+            let files = relative.filter { $0.hasPrefix(part + "/") && !$0.hasSuffix(".index.json") }
+            guard !files.isEmpty, files.allSatisfy(present) else { return false }
+            if part != "tokenizer", !files.contains(where: { $0.hasSuffix(".safetensors") }) { return false }
+        }
+        // Every shard an index names.
+        for index in relative where index.hasSuffix(".safetensors.index.json") {
+            guard let data = try? Data(contentsOf: snapshot.appendingPathComponent(index)),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let map = json["weight_map"] as? [String: String] else { return false }
+            let folder = (index as NSString).deletingLastPathComponent
+            for shard in Set(map.values) where !present(folder.isEmpty ? shard : folder + "/" + shard) { return false }
+        }
+        return true
     }
 
     nonisolated static var uvPath: String? { ToolLocator.path(named: "uv") }
@@ -86,6 +101,11 @@ final class ImageModels: ObservableObject {
 
     func download(_ spec: ImageModelSpec) {
         LocalModels.shared.download(id: "image:" + spec.id, repo: spec.repo, files: nil) { [weak self] in
+            // Forge's own record that the whole repo arrived, for the revision it fetched.
+            let repoDir = LocalModels.hubDir.appendingPathComponent("models--" + spec.repo.replacingOccurrences(of: "/", with: "--"))
+            if let ref = try? String(contentsOf: repoDir.appendingPathComponent("refs/main"), encoding: .utf8) {
+                try? ref.write(to: repoDir.appendingPathComponent("forge-complete"), atomically: true, encoding: .utf8)
+            }
             self?.objectWillChange.send()
         }
     }

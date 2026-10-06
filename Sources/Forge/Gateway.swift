@@ -509,10 +509,11 @@ enum AppAI {
     }
 
     /// The route to use now. Codex counts only when it's signed in (the copy inside the ChatGPT app is there
-    /// whether or not anyone ever logged in); that's checked at most every few minutes.
-    static func imageRoute() async -> ImageRoute? {
+    /// whether or not anyone ever logged in); that's checked at most every few minutes. A model on this Mac
+    /// makes pictures from words only, so a request that edits existing pictures skips it.
+    static func imageRoute(editing: Bool = false) async -> ImageRoute? {
         if Provider.hasKey { return .openRouter }
-        if ImageModels.ready { return .local }
+        if ImageModels.ready, !editing { return .local }
         if ToolLocator.path(for: .codex) != nil {
             if codexSignedIn == nil || Date().timeIntervalSince(codexChecked) > 300 {
                 codexSignedIn = await EngineSignIn.isSignedIn(.codex) ?? true
@@ -545,12 +546,13 @@ enum AppAI {
                       model appChoice: String? = nil) async throws -> (Data, Double) {
         // Someone who picked the Mac's own model over the cloud ones gets it, key or no key.
         let wantsLocal = (appChoice == Icons.localArt || (appChoice == nil && Icons.artModel == Icons.localArt)) && ImageModels.ready
-        switch wantsLocal ? .local : await imageRoute() {
+        if wantsLocal, !references.isEmpty {
+            throw Failure(message: "\(ImageModels.chosen?.name ?? "The model on this Mac") makes pictures from words and can't edit one. Pick a cloud image model in Forge → Settings → AI for this.")
+        }
+        switch wantsLocal ? .local : await imageRoute(editing: !references.isEmpty) {
         case .openRouter: break
         case .codex: return (try await viaCodexImage(prompt: prompt, references: references, aspectRatio: aspectRatio), 0)
         case .local:
-            // A local model makes pictures from words; it can't edit the ones an app hands over.
-            guard references.isEmpty else { throw Failure(message: noImageRoute) }
             let (width, height) = localSize(aspectRatio)
             return (try await ImageModels.generate(prompt: prompt, width: width, height: height), 0)
         case nil: throw Failure(message: noImageRoute)
