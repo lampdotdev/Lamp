@@ -154,23 +154,22 @@ enum Ideas {
 #if canImport(FoundationModels)
 @available(macOS 26, *)
 private enum Inventor {
-    @Generable
-    struct Invented {
-        @Guide(description: "A short, friendly app name of one to three words")
-        var title: String
-        @Guide(description: "What the app does, in under ten plain words")
-        var blurb: String
-        @Guide(description: "Two or three sentences asking for the app, written as the person would describe it, starting with the app name and a colon")
-        var request: String
-        @Guide(description: "An SF Symbols name that fits the app, such as calendar, leaf or music.note")
-        var symbol: String
-    }
-
-    @Generable
-    struct Batch {
-        @Guide(.count(6))
-        var ideas: [Invented]
-    }
+    /// What the model has to fill in for each idea, and that there are six of them. Described to the
+    /// model as data rather than with the framework's macros, whose compiler plugin comes only with
+    /// Xcode: this way Forge builds with just the Command Line Tools.
+    private static let schema: GenerationSchema? = {
+        let text = DynamicGenerationSchema(type: String.self)
+        let idea = DynamicGenerationSchema(name: "Invented", properties: [
+            .init(name: "title", description: "A short, friendly app name of one to three words", schema: text),
+            .init(name: "blurb", description: "What the app does, in under ten plain words", schema: text),
+            .init(name: "request", description: "Two or three sentences asking for the app, written as the person would describe it, starting with the app name and a colon", schema: text),
+            .init(name: "symbol", description: "An SF Symbols name that fits the app, such as calendar, leaf or music.note", schema: text),
+        ])
+        let batch = DynamicGenerationSchema(name: "Batch", properties: [
+            .init(name: "ideas", schema: DynamicGenerationSchema(arrayOf: idea, minimumElements: 6, maximumElements: 6)),
+        ])
+        return try? GenerationSchema(root: batch, dependencies: [])
+    }()
 
     /// Who the ideas are for this time, so pressing again gives a different mix.
     private static let audiences = ["a student", "a small business owner", "a parent", "a freelancer", "a home cook",
@@ -188,14 +187,20 @@ private enum Inventor {
             Suggest six different Mac apps that would make life easier for \(audience). \
             Don't suggest any of these: \(seen.suffix(40).joined(separator: ", ")).
             """
-        guard let batch = try? await session.respond(to: prompt, generating: Batch.self).content else { return nil }
-        let ideas = batch.ideas.compactMap { invented -> Idea? in
-            let title = invented.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !title.isEmpty, !seen.contains(title), !invented.request.isEmpty else { return nil }
+        guard let schema,
+              let batch = try? await session.respond(to: prompt, schema: schema).content,
+              let invented = try? batch.value([GeneratedContent].self, forProperty: "ideas") else { return nil }
+        let ideas = invented.compactMap { invented -> Idea? in
+            guard let named = try? invented.value(String.self, forProperty: "title"),
+                  let blurb = try? invented.value(String.self, forProperty: "blurb"),
+                  let request = try? invented.value(String.self, forProperty: "request") else { return nil }
+            let title = named.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty, !seen.contains(title), !request.isEmpty else { return nil }
             // A made-up symbol name would draw nothing.
-            let symbol = NSImage(systemSymbolName: invented.symbol, accessibilityDescription: nil) == nil ? "sparkles" : invented.symbol
+            let wanted = (try? invented.value(String.self, forProperty: "symbol")) ?? ""
+            let symbol = NSImage(systemSymbolName: wanted, accessibilityDescription: nil) == nil ? "sparkles" : wanted
             let hue = Double(abs(title.hashValue) % 100) / 100
-            return Idea(title, symbol, hue, invented.blurb, invented.request)
+            return Idea(title, symbol, hue, blurb, request)
         }
         return ideas.count >= 4 ? Array(ideas.prefix(6)) : nil
     }
