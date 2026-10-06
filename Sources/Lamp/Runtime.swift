@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 
 /// What Lamp can see of a generated app while it runs. The app saves what it prints to
 /// `.lamp/runtime/log.txt` and pictures of its windows next to it (see `LampRuntime` in
@@ -9,10 +10,30 @@ enum Runtime {
     static func logURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("log.txt") }
     private static func builtURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("built") }
 
-    /// Remembers when the current build was made, so crashes of older builds aren't blamed on it.
-    static func markBuilt(_ project: LampProject) {
+    /// Remembers when the current build was made (the file's date, so crashes of older builds aren't blamed
+    /// on it) and what it was made from: the fingerprint of the sources as they were when the build started.
+    static func markBuilt(_ project: LampProject, from fingerprint: String) {
         try? FileManager.default.createDirectory(at: folder(project), withIntermediateDirectories: true)
-        try? Data().write(to: builtURL(project))
+        try? Data(fingerprint.utf8).write(to: builtURL(project))
+    }
+
+    /// What the app is built from, as one hash: the contents of Sources, Package.swift and the icon design.
+    /// Not Attachments, which the user adds for the agent to look at, and not file dates, which move when a
+    /// file is rewritten unchanged. Comparing this with the one recorded at build time says whether a build
+    /// is needed, including for an edit made while the last build was running.
+    static func fingerprint(_ project: LampProject) -> String {
+        var hasher = SHA256()
+        let roots = ["Sources", "Package.swift", "icon.json"].map { project.dir.appendingPathComponent($0) }
+        for root in roots {
+            let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])
+                .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
+            for file in ([root] + files).sorted(by: { $0.path < $1.path }) {
+                guard let data = try? Data(contentsOf: file) else { continue }
+                hasher.update(data: Data(file.path.dropFirst(project.dir.path.count).utf8))
+                hasher.update(data: data)
+            }
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: - Launch
@@ -132,19 +153,8 @@ enum Runtime {
     /// or there's no build at all.
     static func sourcesChanged(_ project: LampProject) -> Bool {
         guard FileManager.default.fileExists(atPath: project.builtURL.path),
-              let built = (try? builtURL(project).resourceValues(forKeys: [.contentModificationDateKey]))?
-            .contentModificationDate else { return true }
-        let roots = ["Sources", "Attachments", "Package.swift", "icon.json"].map { project.dir.appendingPathComponent($0) }
-        for root in roots {
-            let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey])?
-                .compactMap { $0 as? URL } ?? []
-            for file in [root] + files {
-                // Folders count too: deleting a file changes only the date of the folder it was in.
-                if let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
-                   modified > built { return true }
-            }
-        }
-        return false
+              let built = try? String(contentsOf: builtURL(project), encoding: .utf8), !built.isEmpty else { return true }
+        return built != fingerprint(project)
     }
 
     // MARK: - Log

@@ -128,6 +128,8 @@ final class Store: ObservableObject {
     @Published var approvals: [String: PendingApproval] = [:]   // project id → the command waiting
     private var approving: Set<String> = []                       // project ids between the queue check and the card
     private var allowAllThisTurn: Set<String> = []
+    private var lastReloadForToken = Date.distantPast
+    private var computerUseRefused: Set<String> = []   // apps told once this launch that using other apps is off
     /// The app whose Rename… alert is showing.
     @Published var renaming: LampProject?
     /// The app whose Delete confirmation is showing.
@@ -847,6 +849,7 @@ final class Store: ObservableObject {
     /// Marks the app idle again, then starts anything queued while it was busy.
     private func finish(_ project: LampProject) {
         endApprovals(for: project)   // a card nobody can answer any more, from a request that raced the agent's end
+        allowAllThisTurn.remove(project.id)
         // Artwork that arrived during the turn, for an icon that was installed without it: applied now, still
         // owning the app, so nothing else builds or installs meanwhile. With more work queued, the next
         // install picks the artwork up itself.
@@ -1328,10 +1331,10 @@ final class Store: ObservableObject {
         pending.answer.resume(returning: allow)
     }
 
-    /// Ends approvals with the turn: anything still waiting is denied, and "allow all" resets.
+    /// Ends the approvals of one agent run: anything still waiting is denied. "Allow all for this turn" lasts
+    /// the turn (its compile and crash fixes are further agent runs), so it resets in finish() and stop().
     private func endApprovals(for project: LampProject) {
         answerApproval(for: project, allow: false)
-        allowAllThisTurn.remove(project.id)
     }
 
     /// Stops the agent working on an app, and the build if one is going.
@@ -1339,6 +1342,7 @@ final class Store: ObservableObject {
         guard running[project.id] != nil || building[project.id] != nil else { return }
         stopped.insert(project.id)
         endApprovals(for: project)   // a command waiting for approval counts as denied
+        allowAllThisTurn.remove(project.id)
         if let process = running[project.id] { Shell.terminateTree(process) }
         if let process = building[project.id] { Shell.terminateTree(process) }
     }
@@ -1763,13 +1767,15 @@ final class Store: ObservableObject {
         log(project, .status, "Building…")
         try? Template.writeSupport(for: project)
         Template.upgradeBuildScript(for: project)
+        // Taken before the build, so an edit made while it runs still counts as a change afterwards.
+        let fingerprint = Runtime.fingerprint(project)
         var output: [String] = []
         let status = await Shell.run(Shell.compatibleSDK + "./build.sh", cwd: project.dir,
                                      started: { [weak self] in self?.building[project.id] = $0 }) { output.append($0) }
         building[project.id] = nil
         guard exists(project) else { return "The app was deleted." }
         guard status != 0 else {
-            Runtime.markBuilt(project)
+            Runtime.markBuilt(project, from: fingerprint)
             BuildStamp.write(to: project.builtURL)   // deploy signs the app afterwards
             return nil
         }
@@ -1975,8 +1981,11 @@ final class Store: ObservableObject {
                 guard Icons.load(project) == spec else { return }   // the icon was redesigned meanwhile
                 // During a build the install that ends it picks the artwork up; if that install came first,
                 // finish() applies it. Otherwise apply it now.
-                if busy.contains(project.id) { pendingIconArt.insert(project.id); return }
+                // Deploying touches build/ and the installed app, so it owns the app like a turn does. If a
+                // turn has it, the install that ends the turn (or finish()) picks the artwork up.
+                guard busy.insert(project.id).inserted else { pendingIconArt.insert(project.id); return }
                 await applyIconArt(project, spec: spec)
+                finish(project)
             } catch let failure as AppAI.Failure where failure.message == AppAI.noImageRoute {
                 // Codex signed out between the check and the pictures: the key card is still the right answer.
                 askForKey(project, because: "Lamp can draw a proper icon for \(project.name), and pictures inside your apps, with an OpenRouter key.")
@@ -2003,11 +2012,15 @@ final class Store: ObservableObject {
 
     /// Gives apps made before icons existed an icon, once.
     private func backfillIcons() async {
-        for project in projects where Icons.load(project) == nil && !busy.contains(project.id) {
+        for project in projects where Icons.load(project) == nil {
+            // Owning the app for the whole of it: the icon design is an AI call, and a build starting
+            // meanwhile would get a half-finished bundle installed.
+            guard busy.insert(project.id).inserted else { continue }
             await prepareIcon(project)
             if FileManager.default.fileExists(atPath: project.builtURL.path) {
                 try? await deploy(project)
             }
+            finish(project)
             upgradeIconArt(project)
         }
     }
@@ -2073,7 +2086,12 @@ final class Store: ObservableObject {
             return (404, ["error": "Not found"])
         }
         let token = request.headers["authorization"]?.replacingOccurrences(of: "Bearer ", with: "") ?? ""
-        if tokens[token] == nil { reload() }   // app may have been created since the last reload
+        // The app may have been created since the last reload. A reload rereads every app, so a stale app
+        // polling with an old token can't make Lamp do that on every request.
+        if tokens[token] == nil, Date().timeIntervalSince(lastReloadForToken) > 5 {
+            lastReloadForToken = Date()
+            reload()
+        }
         guard let id = tokens[token], let project = projects.first(where: { $0.id == id }) else {
             return (401, ["error": "This app isn't registered with Lamp."])
         }
@@ -2196,15 +2214,18 @@ final class Store: ObservableObject {
               let task = (json["task"] as? String)?.trimmed, !task.isEmpty else { return (400, ["error": "Missing task."]) }
         let allowActions = json["act"] as? Bool ?? false
         guard ComputerUse.enabled, await ComputerUse.status() == .ready else {
-            NSApp.activate()
-            let alert = NSAlert()
-            alert.messageText = "\(project.name) wants to use your other apps"
-            alert.informativeText = "To let apps read and use apps like Slack, Mail or your browser, turn on “Let apps use your other apps” in Lamp's settings."
-            alert.addButton(withTitle: "Open Settings")
-            alert.addButton(withTitle: "Not Now")
-            if alert.runModal() == .alertFirstButtonReturn {
-                UserDefaults.standard.set("apps", forKey: "settingsTab")
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            // Asked once per app per launch: an app that keeps trying would otherwise raise a dialog per call.
+            if computerUseRefused.insert(project.id).inserted {
+                NSApp.activate()
+                let alert = NSAlert()
+                alert.messageText = "\(project.name) wants to use your other apps"
+                alert.informativeText = "To let apps read and use apps like Slack, Mail or your browser, turn on “Let apps use your other apps” in Lamp's settings."
+                alert.addButton(withTitle: "Open Settings")
+                alert.addButton(withTitle: "Not Now")
+                if await present(alert) == .alertFirstButtonReturn {
+                    UserDefaults.standard.set("apps", forKey: "settingsTab")
+                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                }
             }
             return (503, ["error": "Using other apps is turned off. Turn on “Let apps use your other apps” in Lamp → Settings → Apps, then try again."])
         }
@@ -2240,11 +2261,20 @@ final class Store: ObservableObject {
         alert.addButton(withTitle: "Allow")
         alert.addButton(withTitle: "Allow All for This Task")
         alert.addButton(withTitle: "Don't Allow")
-        switch alert.runModal() {
+        switch await present(alert) {
         case .alertFirstButtonReturn: return .allow
         case .alertSecondButtonReturn: return .allowAll
         default: return .deny
         }
+    }
+
+    /// Shows an alert without stopping everything else: as a sheet on Lamp's window when there is one, so
+    /// other apps' turns and requests carry on while it waits for an answer.
+    private func present(_ alert: NSAlert) async -> NSApplication.ModalResponse {
+        guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.canBecomeKey }) else {
+            return alert.runModal()
+        }
+        return await alert.beginSheetModal(for: window)
     }
 
     /// The agent's version tools: `list_versions`, `name_version` and `restore_version`.
