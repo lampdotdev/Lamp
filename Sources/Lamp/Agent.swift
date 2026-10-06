@@ -449,6 +449,27 @@ enum Shell {
 
     """#
 
+    /// Stops a process and everything it started. Terminating only the shell leaves its children (the agent's
+    /// build, a clone, an approval request waiting an hour) running and holding the output pipe open, so the
+    /// turn would never end. Each gets a chance to quit cleanly, then whatever is left is killed.
+    static func terminateTree(_ process: Process) {
+        guard process.isRunning else { return }
+        let pids = [process.processIdentifier] + descendants(of: process.processIdentifier)
+        for pid in pids { kill(pid, SIGTERM) }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+            for pid in pids where kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+        }
+    }
+
+    private static func descendants(of pid: pid_t) -> [pid_t] {
+        var children = [pid_t](repeating: 0, count: 256)
+        let bytes = Int32(children.count * MemoryLayout<pid_t>.size)
+        let count = Int(proc_listchildpids(pid, &children, bytes))
+        guard count > 0 else { return [] }
+        let direct = Array(children.prefix(count))
+        return direct + direct.flatMap { descendants(of: $0) }
+    }
+
     /// Runs a zsh command, streaming merged stdout/stderr line by line. Returns the exit status.
     static func run(
         _ command: String,
