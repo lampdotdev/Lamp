@@ -1,4 +1,4 @@
-// Sparkle's appcast for Forge, built from the GitHub releases that carry a sparkle.json.
+// Sparkle's appcast for Lamp, built from the GitHub releases that carry a sparkle.json.
 import { dmgAsset, releases, sparkleInfo } from "../lib/github.js";
 
 const escape = (text) => String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

@@ -12,7 +12,7 @@ a secure timestamp. Nested code is signed first:
 - llama.cpp's server and libraries (`Resources/llama/`)
 - pi's native module and the pi executable, with `Resources/pi.entitlements`: pi is Bun-compiled, and Bun's
   JIT needs `allow-jit` and friends under hardened runtime
-- `Lamp.app`, with `Resources/Forge.entitlements` (microphone, for dictation)
+- `Lamp.app`, with `Resources/Lamp.entitlements` (microphone, for dictation)
 
 Releases build into `dist/`, so they never replace the `build/Lamp.app` you run day to day. Release builds
 have a Team ID, so they keep API keys in the login Keychain; local builds use `keys.json`.
@@ -105,8 +105,8 @@ gh workflow run mac-release.yml --ref v0.2.0 -f version=0.2.0
 
 ## Trying the first run
 
-`scripts/fresh-start.sh begin` quits Lamp, puts your whole setup aside (the Forge folder in Application
-Support, the `dev.forge.host` defaults and any Keychain items) and opens Lamp as a first-time user would
+`scripts/fresh-start.sh begin` quits Lamp, puts your whole setup aside (the Lamp folder in Application
+Support, the `dev.lamp.host` defaults and any Keychain items) and opens Lamp as a first-time user would
 see it: the welcome screen, the key check, picking an engine, making the first app. `scripts/fresh-start.sh
 restore` throws away what the fresh run made and puts your setup back. Nothing is deleted until you restore.
 
@@ -118,7 +118,7 @@ shows everything, and is worth doing once for a release that changes setup.
 
 Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.org) 2. Once a day, and from **Lamp → Check for Updates…**, Lamp reads the update feed at `https://forge-updates.vercel.app/appcast.xml`. When there's a newer release, Sparkle shows its standard window with the release notes and an **Install** button. Builds from source, which have no Apple Team ID, don't check for updates.
 
-- **Signing:** every update is signed with an Ed25519 key. The release workflow runs `scripts/sparkle-sign.swift` on the DMG, using the `SPARKLE_PRIVATE_KEY` secret in the `release` environment, and attaches the result to the release as `sparkle.json`. Sparkle checks the signature against `SUPublicEDKey` in `build.sh`, and it also requires the new app to be signed by the same Developer ID team. A local backup of the private key is in `~/Library/Application Support/Forge/Signing/sparkle-private-key` on Matt's Mac; keep a copy in 1Password. Losing the key means shipping a new public key in a release that users install by hand.
+- **Signing:** every update is signed with an Ed25519 key. The release workflow runs `scripts/sparkle-sign.swift` on the DMG, using the `SPARKLE_PRIVATE_KEY` secret in the `release` environment, and attaches the result to the release as `sparkle.json`. Sparkle checks the signature against `SUPublicEDKey` in `build.sh`, and it also requires the new app to be signed by the same Developer ID team. A local backup of the private key is in `~/Library/Application Support/Lamp/Signing/sparkle-private-key` on Matt's Mac; keep a copy in 1Password. Losing the key means shipping a new public key in a release that users install by hand.
 - **The feed:** `updates/` is a small Vercel app (project `forge-updates` on the Roo Code team) that keeps the repo private:
   - `/appcast.xml` builds the feed from the GitHub releases that have a `sparkle.json`, with each release's notes.
   - `/download/<tag>` redirects to GitHub's short-lived download link for that release's DMG.

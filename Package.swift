@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "Forge",
+    name: "Lamp",
     platforms: [.macOS(.v14)],
     dependencies: [
         // Updates for release builds (MIT). build.sh copies Sparkle.framework into Forge.app/Contents/Frameworks.
@@ -10,9 +10,9 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "Forge",
+            name: "Lamp",
             dependencies: [.product(name: "Sparkle", package: "Sparkle")],
-            path: "Sources/Forge",
+            path: "Sources/Lamp",
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
         ),
     ]

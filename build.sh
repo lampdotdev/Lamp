@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds build/Lamp.app (registers the forge:// URL scheme).
+# Builds build/Lamp.app (registers the lamp:// URL scheme).
 #
 # Local builds are signed with a self-signed "Forge Local Signing" identity (see scripts/signing-identity.sh).
 # Releases set SIGN_IDENTITY to a Developer ID certificate (see release.sh): everything is then signed with
@@ -10,7 +10,7 @@ cd "$(dirname "$0")"
 
 # The version. Releases pass APP_VERSION (the tag). A local build takes it from git: "0.3.1" on the
 # release tag itself, "0.3.1+6" six commits after it, so a build from source says which release it's
-# ahead of. APP_BUILD is the all-numeric form macOS compares when two copies of Forge are on disk.
+# ahead of. APP_BUILD is the all-numeric form macOS compares when two copies of Lamp are on disk.
 if [[ -z "${APP_VERSION:-}" ]]; then
   described="$(git describe --tags --match 'v[0-9]*' 2>/dev/null || true)"   # v0.3.1 or v0.3.1-6-g8065f74
   if [[ "$described" =~ '^v([0-9.]+)(-([0-9]+)-g[0-9a-f]+)?$' ]]; then
@@ -56,7 +56,7 @@ fi
 
 # The macOS 27 SDK makes @State a macro, and its compiler plugin only ships with full Xcode.
 # With just the Command Line Tools, build against the newest installed SDK that doesn't need it.
-# (Forge does the same for the apps it builds: Shell.compatibleSDK in Sources/Forge/Agent.swift.)
+# (Lamp does the same for the apps it builds: Shell.compatibleSDK in Sources/Lamp/Agent.swift.)
 dev="$(xcode-select -p 2>/dev/null)"
 if [ -z "${SDKROOT:-}" ] && [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
   for sdk in "$dev"/SDKs/MacOSX*.sdk(/NnOn); do
@@ -67,23 +67,23 @@ if [ -z "${SDKROOT:-}" ] && [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/hos
 fi
 
 swift build -c release
-BIN="$(swift build -c release --show-bin-path)/Forge"
+BIN="$(swift build -c release --show-bin-path)/Lamp"
 APP="${BUILD_DIR:-build}/Lamp.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Lamp"
-# Sparkle (updates for release builds). Forge isn't sandboxed, so Sparkle's XPC services aren't needed.
+# Sparkle (updates for release builds). Lamp isn't sandboxed, so Sparkle's XPC services aren't needed.
 mkdir -p "$APP/Contents/Frameworks"
 ditto "$(dirname "$BIN")/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
 rm -rf "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices" "$APP/Contents/Frameworks/Sparkle.framework/XPCServices"
-# Forge's icon, made with the same pipeline as the apps' icons (see Resources/Icon): the classic .icns,
+# Lamp's icon, made with the same pipeline as the apps' icons (see Resources/Icon): the classic .icns,
 # plus the compiled Icon Composer icon that macOS 26 draws in Liquid Glass.
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp Resources/Assets.car "$APP/Contents/Resources/Assets.car"
 cp Resources/THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
-install -m 755 Resources/forge-approve.sh "$APP/Contents/Resources/forge-approve.sh"
-cp Resources/forge-tools.ts "$APP/Contents/Resources/"   # pi extension: the agent's look_at_app and plan tools
-cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Forge builds a stable signature
+install -m 755 Resources/lamp-approve.sh "$APP/Contents/Resources/lamp-approve.sh"
+cp Resources/lamp-tools.ts "$APP/Contents/Resources/"   # pi extension: the agent's look_at_app and plan tools
+cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Lamp builds a stable signature
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
 # Only the server and its libraries (symlinks kept), not llama.cpp's other tools.
@@ -95,7 +95,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleExecutable</key><string>Lamp</string>
-  <key>CFBundleIdentifier</key><string>dev.forge.host</string>
+  <key>CFBundleIdentifier</key><string>dev.lamp.host</string>
   <key>CFBundleName</key><string>Lamp</string>
   <key>CFBundleDisplayName</key><string>Lamp</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -110,26 +110,26 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>UTExportedTypeDeclarations</key><array><dict>
-    <key>UTTypeIdentifier</key><string>dev.forge.forgeapp</string>
+    <key>UTTypeIdentifier</key><string>dev.lamp.lampapp</string>
     <key>UTTypeDescription</key><string>Lamp App</string>
     <key>UTTypeConformsTo</key><array><string>public.data</string></array>
     <key>UTTypeIconFile</key><string>AppIcon</string>
     <key>UTTypeTagSpecification</key><dict>
-      <key>public.filename-extension</key><array><string>forgeapp</string></array>
+      <key>public.filename-extension</key><array><string>lampapp</string></array>
     </dict>
   </dict></array>
   <key>CFBundleDocumentTypes</key><array><dict>
     <key>CFBundleTypeName</key><string>Lamp App</string>
     <key>CFBundleTypeRole</key><string>Viewer</string>
     <key>LSHandlerRank</key><string>Owner</string>
-    <key>LSItemContentTypes</key><array><string>dev.forge.forgeapp</string></array>
+    <key>LSItemContentTypes</key><array><string>dev.lamp.lampapp</string></array>
   </dict></array>
   <key>NSMicrophoneUsageDescription</key><string>Lamp listens to your microphone when you dictate a change.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Lamp turns your dictation into text for the prompt box.</string>
   <key>NSAppleEventsUsageDescription</key><string>Lamp lists and switches your browser tabs when one of your apps reads a web page you have open.</string>
   <key>CFBundleURLTypes</key><array><dict>
-    <key>CFBundleURLName</key><string>dev.forge.host</string>
-    <key>CFBundleURLSchemes</key><array><string>forge</string></array>
+    <key>CFBundleURLName</key><string>dev.lamp.host</string>
+    <key>CFBundleURLSchemes</key><array><string>lamp</string></array>
   </dict></array>
 </dict></plist>
 PLIST
@@ -140,11 +140,11 @@ if [[ "$SIGN_ID" == "Developer ID Application:"* ]]; then
   # Release: hardened runtime + secure timestamp (both required for notarization).
   SIGN=(codesign --force --timestamp --options runtime -s "$SIGN_ID")
   PI_ENTITLEMENTS=(--entitlements Resources/pi.entitlements)
-  APP_ENTITLEMENTS=(--entitlements Resources/Forge.entitlements)
+  APP_ENTITLEMENTS=(--entitlements Resources/Lamp.entitlements)
   QUIET=/dev/stdout
 elif [[ "$SIGN_ID" != "-" ]]; then
-  # Local: Forge's own keychain, which signing-identity.sh unlocks, so codesign never asks.
-  SIGN=(codesign --force --keychain "$HOME/Library/Application Support/Forge/Signing/forge-signing.keychain-db" -s "$SIGN_ID")
+  # Local: Lamp's own keychain, which signing-identity.sh unlocks, so codesign never asks.
+  SIGN=(codesign --force --keychain "$HOME/Library/Application Support/Lamp/Signing/lamp-signing.keychain-db" -s "$SIGN_ID")
   PI_ENTITLEMENTS=()
   APP_ENTITLEMENTS=()
   QUIET=/dev/null

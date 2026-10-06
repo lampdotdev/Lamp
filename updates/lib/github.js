@@ -1,5 +1,5 @@
-// Reads Forge's releases from the private GitHub repo with a read-only token kept on the server
-// (GITHUB_TOKEN: a fine-grained token with Contents: read on RooCodeInc/Forge only).
+// Reads Lamp's releases from the private GitHub repo with a read-only token kept on the server
+// (GITHUB_TOKEN: a fine-grained token with Contents: read on RooCodeInc/Forge only; the repo keeps its old name).
 export const REPO = process.env.FORGE_REPO || "RooCodeInc/Forge";
 
 export async function github(path, accept = "application/vnd.github+json", redirect = "follow") {
