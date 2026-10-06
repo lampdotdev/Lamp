@@ -6,7 +6,7 @@ for [docs.lamp.dev](https://docs.lamp.dev).
 ## What belongs here
 
 What someone using Lamp needs: installing it, choosing an AI, building and changing apps, versions, sharing,
-privacy, troubleshooting and sending feedback.
+privacy and troubleshooting.
 
 ## What does not belong here
 
