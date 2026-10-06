@@ -547,15 +547,6 @@ struct IconTools {
 
     /// Runs a tool off the main thread, discarding its output. True when it exits cleanly.
     static func run(_ path: String, _ arguments: [String], env: [String: String] = [:]) async -> Bool {
-        await withCheckedContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = arguments
-            process.environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            process.terminationHandler = { continuation.resume(returning: $0.terminationStatus == 0) }
-            do { try process.run() } catch { continuation.resume(returning: false) }
-        }
+        await Subprocess.run(path, arguments, env: env, timeout: 300).ok
     }
 }

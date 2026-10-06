@@ -204,20 +204,8 @@ enum ToolLocator {
         if let resolvedPath { return resolvedPath }
         let home = NSHomeDirectory()
         var parts: [String] = []
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-ilc", "printf '%s' \"$PATH\""]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-        if (try? process.run()) != nil {
-            let deadline = Date().addingTimeInterval(5)
-            while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
-            if process.isRunning { process.terminate() }
-            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            parts = output.split(separator: ":").map(String.init).filter { $0.hasPrefix("/") }
-        }
+        let shell = Subprocess.runBlocking("/bin/zsh", ["-ilc", "printf '%s' \"$PATH\""], timeout: 5)
+        if shell.ok { parts = shell.output.split(separator: ":").map(String.init).filter { $0.hasPrefix("/") } }
         parts += ["\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
         var seen = Set<String>()
         let path = parts.filter { seen.insert($0).inserted }.joined(separator: ":")
@@ -285,22 +273,8 @@ enum ToolLocator {
 
     /// The numbers in `<tool> --version` (e.g. "codex-cli 0.160.0" → [0, 160, 0]); [] if it can't tell.
     private static func version(of path: String) -> [Int] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = ["--version"]
-        var env = ProcessInfo.processInfo.environment
-        env["PATH"] = userPath
-        process.environment = env
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return [] }
-        let deadline = Date().addingTimeInterval(5)
-        while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
-        if process.isRunning { process.terminate(); return [] }
-        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        guard let match = output.firstMatch(of: #/(\d+)\.(\d+)(?:\.(\d+))?/#) else { return [] }
+        let result = Subprocess.runBlocking(path, ["--version"], env: ["PATH": userPath], mergeErrors: false, timeout: 5)
+        guard !result.timedOut, let match = result.output.firstMatch(of: #/(\d+)\.(\d+)(?:\.(\d+))?/#) else { return [] }
         return [Int(match.1) ?? 0, Int(match.2) ?? 0, Int(match.3 ?? "0") ?? 0]
     }
 }
@@ -644,23 +618,7 @@ enum EngineSignIn {
     }
 
     private static func run(_ tool: String, _ arguments: [String], timeout: TimeInterval) async -> (status: Int32, output: String) {
-        await withCheckedContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: tool)
-            process.arguments = arguments
-            var env = ProcessInfo.processInfo.environment
-            env["PATH"] = ToolLocator.userPath
-            process.environment = env
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-            process.standardInput = FileHandle.nullDevice
-            process.terminationHandler = { process in
-                let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                continuation.resume(returning: (process.terminationStatus, output))
-            }
-            do { try process.run() } catch { continuation.resume(returning: (-1, "")); return }
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { if process.isRunning { process.terminate() } }
-        }
+        let result = await Subprocess.run(tool, arguments, env: ["PATH": ToolLocator.userPath], timeout: timeout)
+        return (result.status, result.output)
     }
 }

@@ -149,16 +149,6 @@ enum Migration {
     }
 
     private static func git(_ arguments: [String], in dir: URL) -> String {
-        let git = Process()
-        git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        git.arguments = arguments
-        git.currentDirectoryURL = dir
-        let out = Pipe()
-        git.standardOutput = out
-        git.standardError = FileHandle.nullDevice
-        try? git.run()
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        git.waitUntilExit()
-        return String(decoding: data, as: UTF8.self).trimmed
+        Subprocess.runBlocking("/usr/bin/git", arguments, cwd: dir, mergeErrors: false, timeout: 120).output.trimmed
     }
 }

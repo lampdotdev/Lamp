@@ -65,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         MainActor.assumeIsolated {
             // A Stop a moment ago may still have processes on their two seconds' notice; they go now.
-            Shell.killStopping()
+            Subprocess.killStopping()
             guard Store.shared.isWorking else { return .terminateNow }
             let alert = NSAlert()
             alert.messageText = "An app is still being worked on. Quit anyway?"
@@ -74,11 +74,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
             // Not .terminateNow: the processes get a moment to quit (and are killed after two seconds; see
-            // Shell.terminateTree), and Lamp waits for that rather than leaving them behind.
+            // Subprocess.terminateTree), and Lamp waits for that rather than leaving them behind.
             let pids = Store.shared.stopAll()
             Task { @MainActor in
-                for _ in 0..<40 where Shell.alive(pids) { try? await Task.sleep(for: .milliseconds(100)) }
-                Shell.killStopping()
+                for _ in 0..<40 where Subprocess.alive(pids) { try? await Task.sleep(for: .milliseconds(100)) }
+                Subprocess.killStopping()
                 sender.reply(toApplicationShouldTerminate: true)
             }
             return .terminateLater
@@ -88,7 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
             _ = Store.shared.stopAll()   // for a quit that didn't go through the question above
-            Shell.killStopping()
+            Subprocess.killStopping()
             Store.shared.flushDrafts()
             LocalModels.shared.stopServer()
         }
