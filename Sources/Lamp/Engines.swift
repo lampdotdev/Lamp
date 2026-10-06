@@ -26,14 +26,25 @@ enum Engine: String, CaseIterable, Identifiable {
 
 /// When the agent needs the user's go-ahead to run a shell command (Settings → Building).
 enum CommandApproval: String, CaseIterable, Identifiable {
-    case auto, always, never
+    /// risky: routine commands run, and so does anything the in-app model rates low risk; the card is for
+    /// medium and high. unusual: the same, but low-risk ones wait for the person too (the older "auto").
+    case risky, unusual, always, never
 
     var id: String { rawValue }
 
     static var current: CommandApproval {
-        get { CommandApproval(rawValue: UserDefaults.standard.string(forKey: "commandApproval") ?? "") ?? .auto }
+        get {
+            let saved = UserDefaults.standard.string(forKey: "commandApproval") ?? ""
+            if let mode = CommandApproval(rawValue: saved) { return mode }
+            // "auto", from before "risky" existed: written back, so the picker shows the choice it stands for.
+            if !saved.isEmpty { UserDefaults.standard.set(CommandApproval.risky.rawValue, forKey: "commandApproval") }
+            return .risky
+        }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "commandApproval") }
     }
+
+    /// The modes where a classifier or model decides, as opposed to the person every time or never.
+    var isAutomatic: Bool { self == .risky || self == .unusual }
 
     /// Claude Code's auto mode turned out to be unavailable for this account; use "always" instead.
     static var claudeAutoUnavailable: Bool {
@@ -43,7 +54,8 @@ enum CommandApproval: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .auto: "Only when needed"
+        case .risky: "Only when risky"
+        case .unusual: "Anything unusual"
         case .always: "Always"
         case .never: "Never"
         }
@@ -51,7 +63,8 @@ enum CommandApproval: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .auto: "Routine commands run on their own; Lamp asks about anything risky or unexpected. Claude Code uses its safety classifier; other agents use the decision model."
+        case .risky: "Routine commands run on their own, and so does anything the in-app model rates low risk. Lamp asks about the rest."
+        case .unusual: "Routine commands run on their own; Lamp asks about anything else, including the low-risk ones. Claude Code uses its safety classifier; other agents use the decision model."
         case .always: "Lamp asks before every command."
         case .never: "Commands run without asking. They still show in the chat."
         }
@@ -339,7 +352,7 @@ extension Agent {
             // Hooks call Lamp's gateway and wait for the user; if Lamp can't be reached the hook fails and the
             // command is denied.
             var approval = CommandApproval.current
-            if approval == .auto && CommandApproval.claudeAutoUnavailable { approval = .always }
+            if approval.isAutomatic && CommandApproval.claudeAutoUnavailable { approval = .always }
             let hook = #"{"type":"command","timeout":3600,"command":"curl -sf --max-time 3600 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$LAMP_APPROVE_URL\""}"#
             var permissionMode = "acceptEdits"
             var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app"
@@ -351,7 +364,7 @@ extension Agent {
             env["LAMP_CLAUDE_MCP"] = #"{"mcpServers":{"lamp":{"type":"http","url":"http://127.0.0.1:"# + "\(Gateway.port)" +
                 #"/mcp","headers":{"Authorization":"Bearer "# + Template.token(for: project) + #""}}}}"#
             switch approval {
-            case .auto:
+            case .risky, .unusual:
                 permissionMode = "auto"
                 env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-permission"
                 env["LAMP_CLAUDE_SETTINGS"] = #"{"hooks":{"PermissionRequest":[{"matcher":"*","hooks":["# + hook + "]}]}}"

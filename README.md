@@ -124,7 +124,7 @@ Local models are slower and much less capable than the best cloud models for who
 ## How it works
 
 - **Agent loop:** each message runs the chosen agent in the app's folder. It can read, search and edit files and read the web freely. **Shell commands can need your approval** (Settings → Building → "Ask before running commands"):
-  - **Only when needed** (default): routine commands run on their own and still show in the chat. Anything risky or unexpected comes to you. Claude Code decides with its own safety classifier (`--permission-mode auto`, falling back to Always if your account doesn't offer it). Other agents use the decision model (Jev), which judges each command against your request, and obviously risky patterns (sudo, piping into a shell, deleting outside the app, `git push`) always ask.
+  - **Only when risky** (default): routine commands run on their own and still show in the chat, and so does anything the in-app model rates low risk once it has explained it; medium and high risk come to you. **Anything unusual** asks about the low-risk ones too. Claude Code decides with its own safety classifier (`--permission-mode auto`, falling back to Always if your account doesn't offer it). Other agents use the decision model (Jev), which judges each command against your request.
   - **Always**: every command asks first.
   - **Never**: commands run without asking.
 

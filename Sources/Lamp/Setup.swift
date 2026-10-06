@@ -280,7 +280,10 @@ struct BuildingSettings: View {
     @AppStorage("piProvider") private var provider = "openrouter"
     @AppStorage("settingsTab") private var tab = "building"
     @AppStorage("notify") private var notify = true
-    @AppStorage("commandApproval") private var approval = CommandApproval.auto.rawValue
+    @AppStorage("commandApproval") private var approval = CommandApproval.risky.rawValue
+    private var approvalChoice: Binding<String> {   // a saved "auto" from before shows as Only when risky
+        Binding(get: { CommandApproval(rawValue: approval)?.rawValue ?? CommandApproval.risky.rawValue }, set: { approval = $0 })
+    }
     @AppStorage("askOutsideFolder") private var askOutsideFolder = true
     @AppStorage("shareAppLog") private var shareLog = true
     @AppStorage("shareAppPictures") private var sharePictures = true
@@ -376,12 +379,12 @@ struct BuildingSettings: View {
                 }
             }
             Section {
-                Picker("Ask before running commands", selection: $approval) {
+                Picker("Ask before running commands", selection: approvalChoice) {
                     ForEach(CommandApproval.allCases) { Text($0.title).tag($0.rawValue) }
                 }
-                Text((CommandApproval(rawValue: approval) ?? .auto).detail)
+                Text((CommandApproval(rawValue: approval) ?? .risky).detail)
                     .font(.caption).foregroundStyle(.secondary)
-                if approval == CommandApproval.auto.rawValue && CommandApproval.claudeAutoUnavailable && selectedEngine == .claude {
+                if (CommandApproval(rawValue: approval) ?? .risky).isAutomatic && CommandApproval.claudeAutoUnavailable && selectedEngine == .claude {
                     Text("Claude Code's auto mode isn't available for your account, so Lamp asks before every command.")
                         .font(.caption).foregroundStyle(.orange)
                 }
