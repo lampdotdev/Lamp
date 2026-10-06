@@ -382,9 +382,12 @@ struct ProjectView: View {
     @State private var dismissedSuggestion: String?
 
     private var lines: [LogLine] {
-        LogLine.visible(store.logs[project.id] ?? [], details: showDetails, busy: busy)
+        LogLine.visible(store.logs[project.id] ?? [], details: showDetails)
     }
     private var busy: Bool { store.busy.contains(project.id) }
+    /// How much of its latest message the agent has written so far: a message being written grows without
+    /// adding a line, and the chat follows it down.
+    private var written: Int { busy ? lines.last?.text.count ?? 0 : 0 }
     /// The chat area has to be about twice the build card's height before the card is pinned.
     private static let roomToPinCard: CGFloat = 560
 
@@ -446,6 +449,7 @@ struct ProjectView: View {
                     // no scrolling to get there.
                     .defaultScrollAnchor(.bottom)
                     .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
+                    .onChange(of: written) { proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: store.progress[project.id]?.plan.count) { proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: store.progress[project.id]?.screenshot != nil) { proxy.scrollTo("bottom", anchor: .bottom) }

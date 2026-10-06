@@ -99,10 +99,11 @@ extension LogLine {
     /// The chat as most people read it: what they asked, what the agent answered and what happened to the
     /// app. The agent's working is left out, both its steps and what it says between them, which is where
     /// the file names and code are; the progress line stands in for it. Agent Details shows everything.
-    static func visible(_ lines: [LogLine], details: Bool, busy: Bool) -> [LogLine] {
+    static func visible(_ lines: [LogLine], details: Bool) -> [LogLine] {
         if details { return lines }
-        // The last thing the agent says in a run is its answer. A run ends with its summary, so while
-        // one is going there's no telling yet whether the latest message is the answer.
+        // The last thing the agent says in a run is its answer. A run ends with its summary; while one is
+        // going, the latest message shows as it's written (it says what the agent is about to do, or is
+        // the answer arriving) and gives way to the next.
         var answers: Set<UUID> = []
         var latest: UUID?
         for line in lines {
@@ -114,7 +115,7 @@ extension LogLine {
             default: break
             }
         }
-        if !busy, let latest { answers.insert(latest) }
+        if let latest { answers.insert(latest) }
         return lines.filter { $0.kind == .agent ? answers.contains($0.id) : !$0.isDetail }
     }
 }
@@ -283,7 +284,8 @@ struct LogRow: View, Equatable {
             .frame(maxWidth: .infinity, alignment: .trailing)
             .onHover { hovered = $0 }
         case .agent:
-            Text(Self.prose(line.text))
+            // While a turn is going this may be a message still being written, a little longer every time.
+            Text(Self.prose(line.text, keep: !busy))
                 .lineSpacing(4)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -320,14 +322,14 @@ struct LogRow: View, Equatable {
     @MainActor private static var proseCache: [String: AttributedString] = [:]
 
     /// Inline markdown, with code spans set off by a faint background.
-    @MainActor static func prose(_ text: String) -> AttributedString {
+    @MainActor static func prose(_ text: String, keep: Bool = true) -> AttributedString {
         if let cached = proseCache[text] { return cached }
         if proseCache.count > 2000 { proseCache.removeAll() }
         var string = (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
             ?? AttributedString(text)
         let code = string.runs.filter { $0.inlinePresentationIntent?.contains(.code) == true }.map(\.range)
         for range in code { string[range].backgroundColor = Color.primary.opacity(0.07) }
-        proseCache[text] = string
+        if keep { proseCache[text] = string }
         return string
     }
 }
