@@ -114,7 +114,7 @@ final class Dictation: ObservableObject {
                     2. Scroll down to Dictation and turn it on.
                     3. Click Enable when macOS asks.
 
-                    Then click the mic in Forge again. Speech is processed on your Mac.
+                    Then click the mic in Lamp again. Speech is processed on your Mac.
                     """,
                 settingsURL: URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension"),
                 settingsButton: "Open Keyboard Settings")
@@ -158,12 +158,12 @@ final class Dictation: ObservableObject {
         Problem(
             title: "Allow \(name) Access",
             message: """
-                Forge needs \(name) access to take dictation. To allow it:
+                Lamp needs \(name) access to take dictation. To allow it:
 
                 1. Click Open Privacy Settings.
-                2. Turn on Forge in the list.
+                2. Turn on Lamp in the list.
 
-                Then click the mic in Forge again.
+                Then click the mic in Lamp again.
                 """,
             settingsURL: URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)"),
             settingsButton: "Open Privacy Settings")

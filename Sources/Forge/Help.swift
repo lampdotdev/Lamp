@@ -6,7 +6,7 @@ struct ForgeHelpCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .help) {
-            Button("Forge Help") { openWindow(id: "help") }
+            Button("Lamp Help") { openWindow(id: "help") }
                 // macOS reserves ⇧⌘/ for the Help menu's search field.
                 .keyboardShortcut("/", modifiers: .command)
         }
@@ -15,7 +15,7 @@ struct ForgeHelpCommands: Commands {
 
 struct ForgeHelpScene: Scene {
     var body: some Scene {
-        Window("Forge Help", id: "help") {
+        Window("Lamp Help", id: "help") {
             ForgeHelpView()
         }
         .defaultSize(width: 780, height: 640)
@@ -95,16 +95,16 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
         switch self {
         case .gettingStarted:
             [
-                HelpSection(title: "Make the app you need", text: "Describe a task and Forge builds a real Mac app for it. Start with one small job, then keep improving the app in its chat."),
-                HelpSection(title: "Finish setup", text: "The first time you open Forge, it welcomes you and asks what your first app should do. Then it gets two things ready. If Apple's app-building tools are missing, it opens Apple's installer: click Install, then Agree. It usually takes 5–10 minutes, and you can carry on meanwhile. Then choose what makes your apps: your Claude or ChatGPT account, or Forge's own, with an OpenRouter key, a model on this Mac or another provider. Your first app starts building as soon as everything is ready. You can change this later in Forge → Settings (⌘,)."),
-                HelpSection(title: "Build your first app", text: "Click New App at the bottom of the app list, or press ⌘N. Describe what the app should do: what you give it and what you want back. Or pick one of the starter ideas and change its request to suit you. Press Return to send. If the request is unclear, Forge asks up to three short questions first. Then it names the app, designs its icon, builds it and opens it."),
-                HelpSection(title: "Find your apps", text: "Your apps are listed in Forge's sidebar and installed in Applications → Forge Apps in your home folder. Double-click one in the sidebar to open it. In an app you built, choose Edit with Forge… (⇧⌘E) from the app's own menu to return to its chat in Forge.")
+                HelpSection(title: "Make the app you need", text: "Describe a task and Lamp builds a real Mac app for it. Start with one small job, then keep improving the app in its chat."),
+                HelpSection(title: "Finish setup", text: "The first time you open Lamp, it welcomes you and asks what your first app should do. Then it gets two things ready. If Apple's app-building tools are missing, it opens Apple's installer: click Install, then Agree. It usually takes 5–10 minutes, and you can carry on meanwhile. Then choose what makes your apps: your Claude or ChatGPT account, or Lamp's own, with an OpenRouter key, a model on this Mac or another provider. Your first app starts building as soon as everything is ready. You can change this later in Lamp → Settings (⌘,)."),
+                HelpSection(title: "Build your first app", text: "Click New App at the bottom of the app list, or press ⌘N. Describe what the app should do: what you give it and what you want back. Or pick one of the starter ideas and change its request to suit you. Press Return to send. If the request is unclear, Lamp asks up to three short questions first. Then it names the app, designs its icon, builds it and opens it."),
+                HelpSection(title: "Find your apps", text: "Your apps are listed in Lamp's sidebar and installed in Applications → Forge Apps in your home folder. Double-click one in the sidebar to open it. In an app you built, choose Edit with Lamp… (⇧⌘E) from the app's own menu to return to its chat in Lamp.")
             ]
         case .changingApps:
             [
-                HelpSection(title: "Ask for a change", text: "Select an app in the sidebar and describe the change in its chat. Be specific about what happens now and what you want instead. Forge rebuilds the app and reopens it, keeping its data."),
-                HelpSection(title: "Show what you mean", text: "Attach screenshots, documents or data with the paperclip, drag them onto the chat, or paste a copied image or file. Say what Forge should use from each attachment."),
-                HelpSection(title: "While Forge is working", text: "You can keep typing. Messages you send wait until the current change is finished, then go out together; click the ✕ beside a waiting message to take it back. Click Stop, beside the Send button, to cancel the change in progress. Turn on Agent Details in the toolbar to see each step the agent takes."),
+                HelpSection(title: "Ask for a change", text: "Select an app in the sidebar and describe the change in its chat. Be specific about what happens now and what you want instead. Lamp rebuilds the app and reopens it, keeping its data."),
+                HelpSection(title: "Show what you mean", text: "Attach screenshots, documents or data with the paperclip, drag them onto the chat, or paste a copied image or file. Say what Lamp should use from each attachment."),
+                HelpSection(title: "While Lamp is working", text: "You can keep typing. Messages you send wait until the current change is finished, then go out together; click the ✕ beside a waiting message to take it back. Click Stop, beside the Send button, to cancel the change in progress. Turn on Agent Details in the toolbar to see each step the agent takes."),
                 HelpSection(title: "Open or quit an app", text: "Click Open App (the Play button) in the toolbar. While the app is open, that button becomes Quit App. You can also right-click the app in the sidebar and choose Open or Quit, or Rebuild & Open to build it again from its code. Double-click an open app in the sidebar to bring it to the front.")
             ]
         case .versions:
@@ -115,31 +115,31 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
             ]
         case .sharing:
             [
-                HelpSection(title: "Send an app", text: "Click Share App in the toolbar, or right-click the app in the sidebar. Share… sends it with AirDrop, Messages or Mail. Copy App File (⇧⌘C) puts it on the clipboard, ready to paste into a message. Export… saves it as a file. The recipient needs Forge to open it."),
+                HelpSection(title: "Send an app", text: "Click Share App in the toolbar, or right-click the app in the sidebar. Share… sends it with AirDrop, Messages or Mail. Copy App File (⇧⌘C) puts it on the clipboard, ready to paste into a message. Export… saves it as a file. The recipient needs Lamp to open it."),
                 HelpSection(title: "What is included", text: "A shared app carries its code, its description, its icon and the attached files the app itself uses. Your chat, your keys, the data you saved in the app and its version history stay on your Mac. The recipient gets their own copy to use and change."),
-                HelpSection(title: "Open a shared app", text: "Double-click a shared app file (its name ends in .forgeapp), or choose File → Import Shared App… (⌘O). Before building anything, Forge lists what the app can access and, when AI is set up, says what the app does, raises any concerns and rates the risk. Read it, then click Build & Open or Cancel. Forge's check is a guide, not a guarantee: only open apps from people you trust.")
+                HelpSection(title: "Open a shared app", text: "Double-click a shared app file (its name ends in .forgeapp), or choose File → Import Shared App… (⌘O). Before building anything, Lamp lists what the app can access and, when AI is set up, says what the app does, raises any concerns and rates the risk. Read it, then click Build & Open or Cancel. Lamp's check is a guide, not a guarantee: only open apps from people you trust.")
             ]
         case .ai:
             [
-                HelpSection(title: "Choose what builds your apps", text: "Open Forge → Settings (⌘,) → Building to choose the agent, and its provider and model. Forge's built-in agent works with an OpenRouter key (the easiest way to start), about twenty other providers, or a model running on this Mac. Claude Code and Codex use their own sign-in. Add, replace and remove keys, and download models for this Mac, in Settings → Providers."),
-                HelpSection(title: "AI inside your apps", text: "Settings → Apps chooses the models your apps use. One app's own choices are in App Info in the toolbar. Without an OpenRouter key, the text AI in your apps goes through whatever builds your apps, and pictures are made by Codex, with your ChatGPT sign-in, if it is installed; otherwise an app that wants a picture asks for a key. Letting apps use your other apps (also in Settings → Apps) needs an OpenRouter key. Apps reach AI through Forge, and open it in the background if it is not running."),
-                HelpSection(title: "Commands and files", text: "Settings → Building sets when Forge asks before the agent runs a command (Only when needed, Always or Never) and whether Forge's built-in agent asks before opening files outside the app's folder. When a request appears above the message box, read it and choose Allow or Deny. Lower-risk requests also offer Allow All This Turn. Claude Code and Codex follow their own rules for files."),
+                HelpSection(title: "Choose what builds your apps", text: "Open Lamp → Settings (⌘,) → Building to choose the agent, and its provider and model. Lamp's built-in agent works with an OpenRouter key (the easiest way to start), about twenty other providers, or a model running on this Mac. Claude Code and Codex use their own sign-in. Add, replace and remove keys, and download models for this Mac, in Settings → Providers."),
+                HelpSection(title: "AI inside your apps", text: "Settings → Apps chooses the models your apps use. One app's own choices are in App Info in the toolbar. Without an OpenRouter key, the text AI in your apps goes through whatever builds your apps, and pictures are made by Codex, with your ChatGPT sign-in, if it is installed; otherwise an app that wants a picture asks for a key. Letting apps use your other apps (also in Settings → Apps) needs an OpenRouter key. Apps reach AI through Lamp, and open it in the background if it is not running."),
+                HelpSection(title: "Commands and files", text: "Settings → Building sets when Lamp asks before the agent runs a command (Only when needed, Always or Never) and whether Lamp's built-in agent asks before opening files outside the app's folder. When a request appears above the message box, read it and choose Allow or Deny. Lower-risk requests also offer Allow All This Turn. Claude Code and Codex follow their own rules for files."),
                 HelpSection(title: "Pictures and app output", text: "Settings → Building also controls whether the agent sees pictures of your apps' windows and what they print while running. Both help the agent find and fix problems, and both go to the AI model you chose. Turn them off for apps that show or print things you would rather keep to yourself.")
             ]
         case .troubleshooting:
             [
-                HelpSection(title: "A build or change failed", text: "Read the message in the chat. When an app does not build, Forge sends the compiler errors back to the agent, up to three times. If it still fails, describe what you wanted and ask Forge to fix it, or click Undo Last Change. Agent Details in the toolbar shows more of what happened."),
+                HelpSection(title: "A build or change failed", text: "Read the message in the chat. When an app does not build, Lamp sends the compiler errors back to the agent, up to three times. If it still fails, describe what you wanted and ask Lamp to fix it, or click Undo Last Change. Agent Details in the toolbar shows more of what happened."),
                 HelpSection(title: "Your key or sign-in does not work", text: "Double-click the provider in Settings → Providers to replace its key, and check that the account has credit or quota. For Claude Code or Codex, Settings → Building shows whether it is installed and signed in, with a Sign In… button if it is not. It also helps to check that the tool works on its own in Terminal."),
                 HelpSection(title: "A local model will not start", text: "Try a smaller model; it may need more memory than your Mac has. Double-click Native Mac AI in Settings → Providers to see how much memory each model needs and to download another."),
-                HelpSection(title: "An app says it couldn't reach Forge", text: "Open Forge and try again. If the app still cannot reach Forge, quit any extra copies of Forge and reopen the one you want to use."),
-                HelpSection(title: "Edit with Forge opens the wrong copy", text: "You have more than one Forge on this Mac. Open the copy you want once, or delete the copies you no longer use."),
-                HelpSection(title: "App-building tools need attention", text: "If Apple's app-building tools are missing, for example after a macOS update, Forge shows its Welcome screen and opens Apple's installer. Click Install, then Agree. If the installer does not appear, click Show Installer Again, or run `xcode-select --install` in Terminal. If you use full Xcode and a build mentions its license, open Xcode and agree to the license.")
+                HelpSection(title: "An app says it couldn't reach Lamp", text: "Open Lamp and try again. If the app still cannot reach Lamp, quit any extra copies of Lamp and reopen the one you want to use."),
+                HelpSection(title: "Edit with Lamp opens the wrong copy", text: "You have more than one Lamp on this Mac. Open the copy you want once, or delete the copies you no longer use."),
+                HelpSection(title: "App-building tools need attention", text: "If Apple's app-building tools are missing, for example after a macOS update, Lamp shows its Welcome screen and opens Apple's installer. Click Install, then Agree. If the installer does not appear, click Show Installer Again, or run `xcode-select --install` in Terminal. If you use full Xcode and a build mentions its license, open Xcode and agree to the license.")
             ]
         case .shortcuts:
             [
-                HelpSection(title: "In Forge", text: "⌘N — New App\n⌘O — Import Shared App\n⌘S — Name This Version\n⇧⌘C — Copy App File\n⌘, — Settings\n⌘/ — Forge Help\n⇧⌘/ — Search the Help menu"),
+                HelpSection(title: "In Lamp", text: "⌘N — New App\n⌘O — Import Shared App\n⌘S — Name This Version\n⇧⌘C — Copy App File\n⌘, — Settings\n⌘/ — Lamp Help\n⇧⌘/ — Search the Help menu"),
                 HelpSection(title: "In the chat", text: "Return — Send a message\nShift-Return — Add a new line\n⌘V — Paste text, or attach a copied image or file\nTab — Use the suggested next request\nEsc — Dismiss the suggestion"),
-                HelpSection(title: "In an app built with Forge", text: "⇧⌘E — Edit with Forge")
+                HelpSection(title: "In an app built with Lamp", text: "⇧⌘E — Edit with Lamp")
             ]
         }
     }

@@ -5,7 +5,7 @@ import Foundation
 @MainActor
 enum NextStep {
     private static let prompt = """
-    You suggest the next message a user might send to Forge, an AI that builds and changes a Mac app for \
+    You suggest the next message a user might send to Lamp, an AI that builds and changes a Mac app for \
     them while they describe what they want in plain words.
 
     Propose ONE short follow-up message the user is most likely to want to send next.
@@ -14,11 +14,11 @@ enum NextStep {
     - Always suggest something. If the next step is uncertain, pick the most plausible concrete one rather \
     than generic filler like "keep going" or "looks good".
     - Keep it to 5-10 words, on a single line, with no surrounding quotes, markdown, or emoji.
-    - Write it as an instruction or question addressed to Forge, mimicking the voice and tone of the user's \
+    - Write it as an instruction or question addressed to Lamp, mimicking the voice and tone of the user's \
     previous messages: match their casing, punctuation, formality, and phrasing habits so it reads like \
     something they would actually type.
     - Make it specific to this conversation (reference the actual app and work).
-    - Prefer a concrete next step: taking up a suggestion Forge just made, fixing something it mentioned, \
+    - Prefer a concrete next step: taking up a suggestion Lamp just made, fixing something it mentioned, \
     extending the change, or polishing how the app looks and feels.
 
     Respond with JSON: {"suggestion": "..."}
@@ -62,7 +62,7 @@ enum NextStep {
         for line in lines.reversed() {
             let text = line.text.trimmed
             guard !text.isEmpty else { continue }
-            let part = "\(line.kind == .user ? "User" : "Forge"): \(text)\n\n"
+            let part = "\(line.kind == .user ? "User" : "Lamp"): \(text)\n\n"
             if total + part.count > maxConversationChars { break }
             parts.insert(part, at: 0)
             total += part.count

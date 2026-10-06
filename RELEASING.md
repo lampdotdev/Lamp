@@ -1,7 +1,7 @@
-# Releasing Forge
+# Releasing Lamp
 
 A release is a signed, notarized `.dmg` on GitHub Releases. Anyone on macOS 14+ with Apple Silicon can
-download and open it without Gatekeeper warnings. On first launch, Forge installs Apple's Command Line
+download and open it without Gatekeeper warnings. On first launch, Lamp installs Apple's Command Line
 Tools if needed.
 
 ## What gets signed
@@ -12,12 +12,12 @@ a secure timestamp. Nested code is signed first:
 - llama.cpp's server and libraries (`Resources/llama/`)
 - pi's native module and the pi executable, with `Resources/pi.entitlements`: pi is Bun-compiled, and Bun's
   JIT needs `allow-jit` and friends under hardened runtime
-- `Forge.app`, with `Resources/Forge.entitlements` (microphone, for dictation)
+- `Lamp.app`, with `Resources/Forge.entitlements` (microphone, for dictation)
 
-Releases build into `dist/`, so they never replace the `build/Forge.app` you run day to day. Release builds
+Releases build into `dist/`, so they never replace the `build/Lamp.app` you run day to day. Release builds
 have a Team ID, so they keep API keys in the login Keychain; local builds use `keys.json`.
 
-Apps that Forge generates are built on the user's Mac and ad-hoc signed. They're never downloaded, so they
+Apps that Lamp generates are built on the user's Mac and ad-hoc signed. They're never downloaded, so they
 don't need notarization.
 
 ## One-time setup
@@ -51,18 +51,18 @@ If you already have a profile from another app (such as Local's `local-assistant
 
 ```bash
 ./release.sh 0.2.0
-gh release create v0.2.0 dist/Forge-0.2.0.dmg --title "Forge 0.2.0" --generate-notes
+gh release create v0.2.0 dist/Lamp-0.2.0.dmg --title "Lamp 0.2.0" --generate-notes
 ```
 
 `release.sh` builds and signs, then notarizes twice with Apple (each usually 2 to 10 minutes). First it
-notarizes the app and staples its ticket, so Forge.app opens without a network check even after it's
+notarizes the app and staples its ticket, so Lamp.app opens without a network check even after it's
 copied out of the DMG. Then it packages a drag-to-Applications DMG, notarizes and staples that, and
 verifies both with Gatekeeper. `SKIP_NOTARIZE=1` stops after the signed DMG,
 which is useful for checking signing without submitting to Apple.
 
 ## Version numbers
 
-A release's version is its tag: `v0.3.1` builds Forge 0.3.1. Nothing bumps it automatically; the person
+A release's version is its tag: `v0.3.1` builds Lamp 0.3.1. Nothing bumps it automatically; the person
 tagging picks the next number.
 
 A local `./build.sh` takes its version from git, so it says which release it's ahead of: `0.3.1` on the
@@ -99,8 +99,8 @@ gh workflow run mac-release.yml --ref v0.2.0 -f version=0.2.0
 
 ## Trying the first run
 
-`scripts/fresh-start.sh begin` quits Forge, puts your whole setup aside (the Forge folder in Application
-Support, the `dev.forge.host` defaults and any Keychain items) and opens Forge as a first-time user would
+`scripts/fresh-start.sh begin` quits Lamp, puts your whole setup aside (the Forge folder in Application
+Support, the `dev.forge.host` defaults and any Keychain items) and opens Lamp as a first-time user would
 see it: the welcome screen, the key check, picking an engine, making the first app. `scripts/fresh-start.sh
 restore` throws away what the fresh run made and puts your setup back. Nothing is deleted until you restore.
 
@@ -110,7 +110,7 @@ shows everything, and is worth doing once for a release that changes setup.
 
 ## Updates (Sparkle)
 
-Release builds of Forge update themselves with [Sparkle](https://sparkle-project.org) 2. Once a day, and from **Forge → Check for Updates…**, Forge reads the update feed at `https://forge-updates.vercel.app/appcast.xml`. When there's a newer release, Sparkle shows its standard window with the release notes and an **Install** button. Builds from source, which have no Apple Team ID, don't check for updates.
+Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.org) 2. Once a day, and from **Lamp → Check for Updates…**, Lamp reads the update feed at `https://forge-updates.vercel.app/appcast.xml`. When there's a newer release, Sparkle shows its standard window with the release notes and an **Install** button. Builds from source, which have no Apple Team ID, don't check for updates.
 
 - **Signing:** every update is signed with an Ed25519 key. The release workflow runs `scripts/sparkle-sign.swift` on the DMG, using the `SPARKLE_PRIVATE_KEY` secret in the `release` environment, and attaches the result to the release as `sparkle.json`. Sparkle checks the signature against `SUPublicEDKey` in `build.sh`, and it also requires the new app to be signed by the same Developer ID team. A local backup of the private key is in `~/Library/Application Support/Forge/Signing/sparkle-private-key` on Matt's Mac; keep a copy in 1Password. Losing the key means shipping a new public key in a release that users install by hand.
 - **The feed:** `updates/` is a small Vercel app (project `forge-updates` on the Roo Code team) that keeps the repo private:
@@ -118,4 +118,4 @@ Release builds of Forge update themselves with [Sparkle](https://sparkle-project
   - `/download/<tag>` redirects to GitHub's short-lived download link for that release's DMG.
   - It reads the releases with `GITHUB_TOKEN`, a fine-grained token with **Contents: read-only** on `RooCodeInc/Forge` only.
   - Deploy with `cd updates && vercel deploy --prod --scope roo-code`.
-- **Only newer releases appear:** releases before the first one with `sparkle.json` aren't in the feed, because Sparkle couldn't verify them. Copies of Forge from before Sparkle was added need one manual update to a release that includes it.
+- **Only newer releases appear:** releases before the first one with `sparkle.json` aren't in the feed, because Sparkle couldn't verify them. Copies of Lamp from before Sparkle was added need one manual update to a release that includes it.

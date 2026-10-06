@@ -465,7 +465,7 @@ final class Store: ObservableObject {
     func chooseImport() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.forgeApp]
-        panel.message = "Choose a Forge app someone shared with you"
+        panel.message = "Choose a Lamp app someone shared with you"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         importApp(from: url)
     }
@@ -513,7 +513,7 @@ final class Store: ObservableObject {
         NSApp.activate()
         guard setup.ready else {
             let alert = NSAlert()
-            alert.messageText = "Finish setting up Forge first"
+            alert.messageText = "Finish setting up Lamp first"
             alert.informativeText = "Then open the shared app again."
             alert.runModal()
             return
@@ -929,7 +929,7 @@ final class Store: ObservableObject {
     private func runAgent(_ prompt: String, files: [String] = [], on project: ForgeProject) async -> Bool {
         try? Template.writeSupport(for: project)
         if let problem = Builder.problem() {
-            log(project, .error, "\(problem) Open Forge → Settings (⌘,) to fix it.")
+            log(project, .error, "\(problem) Open Lamp → Settings (⌘,) to fix it.")
             return false
         }
         let engine = Builder.engine
@@ -987,8 +987,8 @@ final class Store: ObservableObject {
                     lastTool = fullCall
                     if repeats >= 6 || toolCalls > 150, failure == nil {
                         failure = repeats >= 6
-                            ? "The model got stuck repeating the same step, so Forge stopped it."
-                            : "The model made over 150 changes in one go, so Forge stopped it."
+                            ? "The model got stuck repeating the same step, so Lamp stopped it."
+                            : "The model made over 150 changes in one go, so Lamp stopped it."
                         running[project.id]?.terminate()
                     }
                 case .cost(let amount): cost += amount
@@ -1019,7 +1019,7 @@ final class Store: ObservableObject {
         if engine == .claude, CommandApproval.current == .auto, !CommandApproval.claudeAutoUnavailable,
            lower.contains("auto"), lower.contains("mode") || lower.contains("permission") {
             CommandApproval.claudeAutoUnavailable = true
-            log(project, .status, "Claude Code's auto mode isn't available, so Forge will ask before every command.")
+            log(project, .status, "Claude Code's auto mode isn't available, so Lamp will ask before every command.")
             return await runAgent(prompt, files: files, on: project)
         }
         log(project, .error, Provider.friendlyError(failure))
@@ -1283,7 +1283,7 @@ final class Store: ObservableObject {
     /// The agent's `use_app` tool: hands its clicks, typing and keys to the open app, which performs them on its
     /// own front window (ForgeDriver in ForgeSupport), then reports what happened with a fresh picture.
     private func use(_ project: ForgeProject, request body: Data) async -> (Int, [String: Any]) {
-        guard running[project.id] != nil else { return (409, ["error": "Forge isn't working on this app right now."]) }
+        guard running[project.id] != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         guard let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let actions = request["actions"] as? [[String: Any]], !actions.isEmpty,
               let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
@@ -1354,7 +1354,7 @@ final class Store: ObservableObject {
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
             if status != 200 {
-                return reply(["content": [["type": "text", "text": answer["error"] as? String ?? "Forge couldn't do that."]], "isError": true])
+                return reply(["content": [["type": "text", "text": answer["error"] as? String ?? "Lamp couldn't do that."]], "isError": true])
             }
             var content: [[String: Any]] = [["type": "text", "text": answer["text"] as? String ?? ""]]
             for path in answer["screenshots"] as? [String] ?? [] {
@@ -1437,7 +1437,7 @@ final class Store: ObservableObject {
     private func updateForThisForge(_ project: ForgeProject) async -> Bool {
         guard busy.insert(project.id).inserted else { return false }
         defer { finish(project) }
-        log(project, .status, "Updating \(project.name) for this version of Forge…")
+        log(project, .status, "Updating \(project.name) for this version of Lamp…")
         guard await build(project) == nil else {
             log(project, .status, "Couldn't update \(project.name), so it opened as it was")
             return false
@@ -1742,8 +1742,8 @@ final class Store: ObservableObject {
             print("\(project.name) is signed differently from the copy it replaced, so its macOS permissions were cleared:\n"
                   + "  was: \(replaced)\n  now: \(requirement)")
             log(project, .status, signed
-                ? "If you gave \(project.name) a permission in System Settings (such as Full Disk Access or Screen Recording), macOS needs it once more: Forge signs apps with a new certificate. After that it stays on."
-                : "Forge couldn't sign \(project.name) properly, so macOS will ask for its permissions again after every change.")
+                ? "If you gave \(project.name) a permission in System Settings (such as Full Disk Access or Screen Recording), macOS needs it once more: Lamp signs apps with a new certificate. After that it stays on."
+                : "Lamp couldn't sign \(project.name) properly, so macOS will ask for its permissions again after every change.")
         }
     }
 
@@ -1786,7 +1786,7 @@ final class Store: ObservableObject {
         Task {
             defer { artInProgress.remove(project.id) }
             guard await AppAI.imageRoute() != nil else {
-                askForKey(project, because: "Forge can draw a proper icon for \(project.name), and pictures inside your apps, with an OpenRouter key.")
+                askForKey(project, because: "Lamp can draw a proper icon for \(project.name), and pictures inside your apps, with an OpenRouter key.")
                 return
             }
             do {
@@ -1805,7 +1805,7 @@ final class Store: ObservableObject {
                 log(project, .status, "New icon artwork is in. It shows in the Dock after the app restarts.")
             } catch let failure as AppAI.Failure where failure.message == AppAI.noImageRoute {
                 // Codex signed out between the check and the pictures: the key card is still the right answer.
-                askForKey(project, because: "Forge can draw a proper icon for \(project.name), and pictures inside your apps, with an OpenRouter key.")
+                askForKey(project, because: "Lamp can draw a proper icon for \(project.name), and pictures inside your apps, with an OpenRouter key.")
             } catch {
                 log(project, .detail, "Icon artwork failed: \(error.localizedDescription)")
             }
@@ -1885,7 +1885,7 @@ final class Store: ObservableObject {
             try gateway.start()
             self.gateway = gateway
         } catch {
-            NSLog("Forge AI gateway failed to start: \(error)")
+            NSLog("Lamp AI gateway failed to start: \(error)")
         }
     }
 
@@ -1901,9 +1901,9 @@ final class Store: ObservableObject {
         let token = request.headers["authorization"]?.replacingOccurrences(of: "Bearer ", with: "") ?? ""
         if tokens[token] == nil { reload() }   // app may have been created since the last reload
         guard let id = tokens[token], let project = projects.first(where: { $0.id == id }) else {
-            return (401, ["error": "This app isn't registered with Forge."])
+            return (401, ["error": "This app isn't registered with Lamp."])
         }
-        guard setup.ready else { return (503, ["error": "Forge isn't set up yet. Open Forge to finish setup."]) }
+        guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         if route == "/mcp" { return await mcp(request.body, for: project) }
         if request.path == "/agent/look" { return await look(at: project) }
         if request.path == "/agent/use" { return await use(project, request: request.body) }
@@ -1920,7 +1920,7 @@ final class Store: ObservableObject {
                     let allowed = await requestApproval(for: project, command: card.command,
                                                         title: "The agent wants a file outside this app's folder",
                                                         explanation: card.explanation)
-                    return (200, ["allow": allowed, "reason": allowed ? "Approved in Forge."
+                    return (200, ["allow": allowed, "reason": allowed ? "Approved in Lamp."
                         : "The user didn't allow that. It's outside the app's folder; work with what's inside it, or say what you need and why."])
                 }
             }
@@ -1940,10 +1940,10 @@ final class Store: ObservableObject {
                 let allowed = await approveCommand(command, for: project, escalated: false)
                 return (200, allowed ? [:] : ["hookSpecificOutput": ["hookEventName": "PreToolUse",
                                                                      "permissionDecision": "deny",
-                                                                     "permissionDecisionReason": "The user denied this command in Forge."]])
+                                                                     "permissionDecisionReason": "The user denied this command in Lamp."]])
             }
             let allowed = await approveCommand(command, for: project, escalated: escalated)
-            let reason = allowed ? "Approved in Forge." : "The user denied this command in Forge."
+            let reason = allowed ? "Approved in Lamp." : "The user denied this command in Lamp."
             if escalated {
                 let decision: [String: Any] = allowed ? ["behavior": "allow"] : ["behavior": "deny", "message": reason]
                 return (200, ["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": decision]])
@@ -2016,14 +2016,14 @@ final class Store: ObservableObject {
             NSApp.activate()
             let alert = NSAlert()
             alert.messageText = "\(project.name) wants to use your other apps"
-            alert.informativeText = "To let apps read and use apps like Slack, Mail or your browser, turn on “Let apps use your other apps” in Forge's settings."
+            alert.informativeText = "To let apps read and use apps like Slack, Mail or your browser, turn on “Let apps use your other apps” in Lamp's settings."
             alert.addButton(withTitle: "Open Settings")
             alert.addButton(withTitle: "Not Now")
             if alert.runModal() == .alertFirstButtonReturn {
                 UserDefaults.standard.set("apps", forKey: "settingsTab")
                 NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
             }
-            return (503, ["error": "Using other apps is turned off. Turn on “Let apps use your other apps” in Forge → Settings → Apps, then try again."])
+            return (503, ["error": "Using other apps is turned off. Turn on “Let apps use your other apps” in Lamp → Settings → Apps, then try again."])
         }
         // The model the app chose in its info panel; Sonnet if it hasn't chosen one.
         let model = AppAI.models.first { $0.id == AppModels.load(project).text }?.openRouter ?? AppAI.defaultModel.openRouter
@@ -2068,7 +2068,7 @@ final class Store: ObservableObject {
     private func versions(_ request: Gateway.Request, of project: ForgeProject) async -> (Int, [String: Any]) {
         // Only for the agent Forge is running right now: the app knows the same token, and must not be
         // able to change its own history.
-        guard running[project.id] != nil else { return (409, ["error": "Forge isn't working on this app right now."]) }
+        guard running[project.id] != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
         let versions = await Versions.list(project)
         let id = (body["version"] as? String)?.trimmed.nilIfEmpty
@@ -2081,7 +2081,7 @@ final class Store: ObservableObject {
             guard let name = (body["name"] as? String)?.trimmed.nilIfEmpty else { return (400, ["error": "A name is needed."]) }
             guard let version else {
                 pendingNames[project.id] = name
-                return (200, ["text": "Forge will name the version this request makes “\(name)”."])
+                return (200, ["text": "Lamp will name the version this request makes “\(name)”."])
             }
             await Versions.name(project, version.id, name)
             versionsRevision += 1
@@ -2089,12 +2089,12 @@ final class Store: ObservableObject {
         case "/agent/versions/restore":
             guard let version else { return (400, ["error": "Say which version to restore."]) }
             guard await Versions.restoreFiles(project, to: version) else {
-                return (500, ["error": "Forge couldn't restore that version."])
+                return (500, ["error": "Lamp couldn't restore that version."])
             }
             log(project, .status, "Restored to “\(version.label)”")
             return (200, ["text": """
                 The app's files are now as they were in “\(version.label)”. Your changes earlier in this request \
-                are gone too. Read files again before editing them. Forge builds and opens the app when you finish.
+                are gone too. Read files again before editing them. Lamp builds and opens the app when you finish.
                 """])
         default:
             return (200, ["text": Versions.describe(versions)])
@@ -2107,9 +2107,9 @@ final class Store: ObservableObject {
         // Only for the agent Forge is running right now. The app knows the same token and must not
         // be able to rebuild itself.
         guard running[project.id] != nil, var look = looks[project.id] else {
-            return (409, ["error": "Forge isn't working on this app right now."])
+            return (409, ["error": "Lamp isn't working on this app right now."])
         }
-        guard !look.inProgress else { return (200, ["text": "Forge is already looking at the app. Wait for that result."]) }
+        guard !look.inProgress else { return (200, ["text": "Lamp is already looking at the app. Wait for that result."]) }
         look.inProgress = true
         look.installed = false
         looks[project.id] = look

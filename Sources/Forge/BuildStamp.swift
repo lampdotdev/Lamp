@@ -39,8 +39,8 @@ struct BuildStamp: Equatable {
 
     /// What built the app, to follow "built with": "Forge 0.2.0", "an older version of Forge".
     var builder: String {
-        guard let forge else { return "an older version of Forge" }
-        return isOutdated && forge == Self.current.forge ? "an earlier build of Forge \(forge)" : "Forge \(forge)"
+        guard let forge else { return "an older version of Lamp" }
+        return isOutdated && forge == Self.current.forge ? "an earlier build of Lamp \(forge)" : "Lamp \(forge)"
     }
 
     /// The same, to stand alone in the app's info panel.

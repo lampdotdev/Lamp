@@ -7,7 +7,7 @@ struct ForgeApp: App {
     @StateObject private var store = Store.shared
 
     var body: some Scene {
-        Window("Forge", id: "main") {
+        Window("Lamp", id: "main") {
             ContentView()
                 .environmentObject(store)
         }

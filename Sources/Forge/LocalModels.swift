@@ -132,7 +132,7 @@ final class LocalModels: ObservableObject {
         // Forge's older download folder.
         for dir in (try? fm.contentsOfDirectory(at: legacyDir, includingPropertiesForKeys: nil)) ?? []
         where fm.fileExists(atPath: dir.appendingPathComponent(".complete").path) {
-            for model in runnable(in: dir, repo: "", source: "Forge", deletable: false, preferredID: dir.lastPathComponent) { add(model) }
+            for model in runnable(in: dir, repo: "", source: "Lamp", deletable: false, preferredID: dir.lastPathComponent) { add(model) }
         }
         return models.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
@@ -403,7 +403,7 @@ final class LocalModels: ObservableObject {
 
     private func ensureLlama() async throws {
         if await Self.healthy("\(Self.baseURL)/health") { serverRunning = true; return }
-        guard let binary = Self.serverBinary else { throw LocalError("Forge's local model server is missing. Download Forge again.") }
+        guard let binary = Self.serverBinary else { throw LocalError("Lamp's local model server is missing. Download Lamp again.") }
         rebuildRouter()
         let process = Process()
         process.executableURL = binary

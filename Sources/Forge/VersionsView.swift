@@ -16,7 +16,7 @@ struct VersionsView: View {
         VStack(spacing: 0) {
             if versions.isEmpty {
                 ContentUnavailableView(loaded ? "No versions yet" : "Loading…", systemImage: "clock.arrow.circlepath",
-                                       description: Text(loaded ? "Forge saves a version every time the app changes." : ""))
+                                       description: Text(loaded ? "Lamp saves a version every time the app changes." : ""))
             } else {
                 ScrollView {
                     LazyVStack(spacing: 2) {

@@ -42,7 +42,7 @@ struct ContentView: View {
                     ContentUnavailableView {
                         Label("No apps yet", systemImage: "hammer")
                     } description: {
-                        Text("Describe an app and Forge builds it for you.")
+                        Text("Describe an app and Lamp builds it for you.")
                     } actions: {
                         Button("New App") { store.create() }
                     }
@@ -607,7 +607,7 @@ struct ProjectView: View {
             } label: {
                 Label("Share App", systemImage: "square.and.arrow.up")
             }
-            .help("Send this app to someone with Forge")
+            .help("Send this app to someone with Lamp")
         }
         gap
         ToolbarItemGroup {
@@ -899,8 +899,8 @@ struct NewAppIntro: View {
                 .frame(maxWidth: 360)
                 .help("Rename this app")
             Text(project.untitled
-                 ? "Describe the app you want below. Forge names it, designs an icon and builds it, unless you name it here first."
-                 : "Describe what \(project.name) should do. Forge builds it and opens it for you.")
+                 ? "Describe the app you want below. Lamp names it, designs an icon and builds it, unless you name it here first."
+                 : "Describe what \(project.name) should do. Lamp builds it and opens it for you.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 400)
@@ -943,7 +943,7 @@ struct ImportReviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Open “\(pending.package.name)”?").font(.title2.bold())
-            Text("Someone shared this app with you. Forge will build it and open it on your Mac, where it can do anything an app you run can do.")
+            Text("Someone shared this app with you. Lamp will build it and open it on your Mac, where it can do anything an app you run can do.")
                 .foregroundStyle(.secondary)
 
             if let review {
@@ -974,7 +974,7 @@ struct ImportReviewView: View {
                 if let note = review.note {
                     Text(note).font(.callout).foregroundStyle(.secondary)
                 }
-                Text("Forge's check is a guide, not a guarantee. Only open apps from people you trust.")
+                Text("Lamp's check is a guide, not a guarantee. Only open apps from people you trust.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 HStack(spacing: 10) {

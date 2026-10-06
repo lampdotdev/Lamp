@@ -9,8 +9,8 @@ enum Privacy {
     /// Show the agent pictures of the app's windows.
     static var sharesPictures: Bool { UserDefaults.standard.object(forKey: "shareAppPictures") as? Bool ?? true }
 
-    static let picturesOff = "The user has turned off sharing pictures of the app with you (Forge → Settings → Building)."
-    static let logOff = "The user has turned off sharing what the app prints with you (Forge → Settings → Building)."
+    static let picturesOff = "The user has turned off sharing pictures of the app with you (Lamp → Settings → Building)."
+    static let logOff = "The user has turned off sharing what the app prints with you (Lamp → Settings → Building)."
 
     enum Verdict: Equatable {
         case allow
@@ -41,7 +41,7 @@ enum Privacy {
         // Forge's keys, its agent's sign-ins and the user's other apps: never, whatever the settings say.
         let forge = resolved(Agent.configDir, in: project.dir).deletingLastComponent
         if path == forge || path.hasPrefix(forge + "/") {
-            return .deny("That belongs to Forge or to another of the user's apps, and isn't yours to open.")
+            return .deny("That belongs to Lamp or to another of the user's apps, and isn't yours to open.")
         }
         guard asksOutsideFolder else { return .allow }
         if scratchRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) { return .allow }

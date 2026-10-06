@@ -68,7 +68,7 @@ struct SetupView: View {
                         "Uses your \(engine.title) sign-in, for building and for the AI inside your apps."))
         }
         all.append(("local", "A model on this Mac",
-                    "Free and private: a model Forge downloads and runs here. Smaller models build simpler apps."))
+                    "Free and private: a model Lamp downloads and runs here. Smaller models build simpler apps."))
         all.append(("other", "Another provider",
                     "Anthropic, OpenAI, Google, Groq, Mistral and about twenty more, with your own key."))
         return all
@@ -76,12 +76,12 @@ struct SetupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            Text("Welcome to Forge").font(.largeTitle.bold())
-            Text("Describe an app your Mac is missing, and Forge builds it: a real app you can keep using, change whenever you like, and share. Two one-time steps first, and they can happen at the same time.")
+            Text("Welcome to Lamp").font(.largeTitle.bold())
+            Text("Describe an app your Mac is missing, and Lamp builds it: a real app you can keep using, change whenever you like, and share. Two one-time steps first, and they can happen at the same time.")
                 .foregroundStyle(.secondary)
 
             if !store.setup.hasAgent {
-                Label("Forge's AI builder is missing from the app. Download Forge again.",
+                Label("Lamp's AI builder is missing from the app. Download Lamp again.",
                       systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             }
@@ -89,7 +89,7 @@ struct SetupView: View {
             step(done: store.setup.hasBuildTools,
                  title: "Install Apple's app-building tools",
                  detail: store.setup.installRequested
-                    ? "Apple's installer window is open. Click **Install**, then **Agree**. It usually takes 5–10 minutes, and Forge carries on by itself when it's done."
+                    ? "Apple's installer window is open. Click **Install**, then **Agree**. It usually takes 5–10 minutes, and Lamp carries on by itself when it's done."
                     : "Free from Apple, and no developer account needed.") {
                 VStack(alignment: .trailing, spacing: 6) {
                     if store.setup.installRequested {
@@ -382,14 +382,14 @@ struct BuildingSettings: View {
                 Text((CommandApproval(rawValue: approval) ?? .auto).detail)
                     .font(.caption).foregroundStyle(.secondary)
                 if approval == CommandApproval.auto.rawValue && CommandApproval.claudeAutoUnavailable && selectedEngine == .claude {
-                    Text("Claude Code's auto mode isn't available for your account, so Forge asks before every command.")
+                    Text("Claude Code's auto mode isn't available for your account, so Lamp asks before every command.")
                         .font(.caption).foregroundStyle(.orange)
                 }
             }
             Section("Privacy") {
                 Toggle("Ask before the agent opens files outside an app's folder", isOn: $askOutsideFolder)
-                Text("The agent works in the app's own folder. Anything else on your Mac it wants to read or change, it asks for first; system and developer files don't count. Forge's keys and your other apps are always off limits."
-                     + (selectedEngine == .pi ? "" : " This applies to Forge's built-in agent; \(selectedEngine.title) follows its own rules."))
+                Text("The agent works in the app's own folder. Anything else on your Mac it wants to read or change, it asks for first; system and developer files don't count. Lamp's keys and your other apps are always off limits."
+                     + (selectedEngine == .pi ? "" : " This applies to Lamp's built-in agent; \(selectedEngine.title) follows its own rules."))
                     .font(.caption).foregroundStyle(.secondary)
                 Toggle("Show the agent what an app prints while it runs", isOn: $shareLog)
                 Toggle("Show the agent pictures of an app's windows", isOn: $sharePictures)
@@ -400,7 +400,7 @@ struct BuildingSettings: View {
                 Toggle("Notify me when an app is ready or needs me", isOn: $notify)
                 if notify && notificationsDenied {
                     HStack {
-                        Text("Notifications are turned off for Forge in System Settings.")
+                        Text("Notifications are turned off for Lamp in System Settings.")
                             .font(.caption).foregroundStyle(.orange)
                         Spacer()
                         Button("Open System Settings") {
@@ -628,7 +628,7 @@ struct ProvidersSettings: View {
                 changed()
             }
         } message: {
-            Text("Forge forgets its API key. Apps and builds that use it stop working until you add it again.")
+            Text("Lamp forgets its API key. Apps and builds that use it stop working until you add it again.")
         }
         .onAppear(perform: openPending)
         .onChange(of: pendingSheet) { openPending() }
@@ -989,7 +989,7 @@ private struct LocalAISheet: View {
                     if adding { ProgressView().controlSize(.small) }
                     if let addError { Text(addError).font(.caption).foregroundStyle(.red) }
                 } header: { Text("Download") } footer: {
-                    Text("This Mac has \(LocalModels.ramGB) GB of memory. Any GGUF repo works: Forge picks the Q4_K_M version, plus image support if there is one.")
+                    Text("This Mac has \(LocalModels.ramGB) GB of memory. Any GGUF repo works: Lamp picks the Q4_K_M version, plus image support if there is one.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
@@ -1025,7 +1025,7 @@ private struct LocalAISheet: View {
                         }
                     }
                 } header: { Text("Servers") } footer: {
-                    Text("GGUF models run on Forge's llama.cpp; MLX models run on mlx-lm\(LocalModels.mlxServerPath == nil ? " (not installed: `uv tool install mlx-lm`)" : "").")
+                    Text("GGUF models run on Lamp's llama.cpp; MLX models run on mlx-lm\(LocalModels.mlxServerPath == nil ? " (not installed: `uv tool install mlx-lm`)" : "").")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
