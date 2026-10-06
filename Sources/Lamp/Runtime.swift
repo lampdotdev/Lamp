@@ -17,10 +17,11 @@ enum Runtime {
         try? Data(fingerprint.utf8).write(to: builtURL(project))
     }
 
-    /// What the app is built from, as one hash: the contents of Sources, Package.swift and the icon design.
-    /// Not Attachments, which the user adds for the agent to look at, and not file dates, which move when a
-    /// file is rewritten unchanged. Comparing this with the one recorded at build time says whether a build
-    /// is needed, including for an edit made while the last build was running.
+    /// What the app is built from, as one hash: the contents of Sources, Package.swift and the icon design,
+    /// and the attached files the app itself uses (they're copied into the bundle, so a new picture for the
+    /// app needs a build; a screenshot attached for the agent to look at doesn't). Not file dates, which move
+    /// when a file is rewritten unchanged. Comparing this with the one recorded at build time says whether
+    /// a build is needed, including for an edit made while the last build was running.
     static func fingerprint(_ project: LampProject) -> String {
         var hasher = SHA256()
         let roots = ["Sources", "Package.swift", "icon.json"].map { project.dir.appendingPathComponent($0) }
@@ -32,6 +33,11 @@ enum Runtime {
                 hasher.update(data: Data(file.path.dropFirst(project.dir.path.count).utf8))
                 hasher.update(data: data)
             }
+        }
+        // Attachments can be big (pictures, data files): their name, size and date stand in for their contents.
+        for file in Sharing.usedAttachments(of: project).sorted(by: { $0.path < $1.path }) {
+            let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            hasher.update(data: Data("\(file.lastPathComponent)\n\(values?.fileSize ?? 0)\n\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)".utf8))
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
