@@ -154,7 +154,7 @@ final class Store: ObservableObject {
             if let process = running[project.id] { pids += Shell.terminateTree(process) }
             if let process = building[project.id] { pids += Shell.terminateTree(process) }
         }
-        return pids
+        return pids + Shell.stopping
     }
 
     /// Whether the app still exists: a turn can outlive Delete by a moment, and mustn't write to the Trash.

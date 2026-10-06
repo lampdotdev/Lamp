@@ -457,12 +457,20 @@ enum Shell {
     static func terminateTree(_ process: Process) -> [pid_t] {
         guard process.isRunning else { return [] }
         let pids = [process.processIdentifier] + descendants(of: process.processIdentifier)
+        shuttingDown.withLock { shuttingDownPids.formUnion(pids) }
         for pid in pids { kill(pid, SIGTERM) }
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
             for pid in pids where kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+            shuttingDown.withLock { shuttingDownPids.subtract(pids) }
         }
         return pids
     }
+
+    /// Processes told to stop whose two seconds aren't up yet. A Stop followed by Quit has to wait for these
+    /// too: the shell may have gone while a child that ignored the signal is still to be killed.
+    static var stopping: [pid_t] { shuttingDown.withLock { Array(shuttingDownPids) } }
+    private static let shuttingDown = NSLock()
+    nonisolated(unsafe) private static var shuttingDownPids = Set<pid_t>()
 
     /// Whether any of these processes is still around (a zombie waiting to be reaped doesn't count).
     static func alive(_ pids: [pid_t]) -> Bool {
