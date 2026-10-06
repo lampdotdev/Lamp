@@ -96,13 +96,13 @@ enum Sharing {
         decoder.dateDecodingStrategy = .iso8601
         guard let data = try? Data(contentsOf: folder.appendingPathComponent("forge-app.json")),
               let manifest = try? decoder.decode(Manifest.self, from: data) else {
-            throw ImportError("This isn't a Forge app file.")
+            throw ImportError("This isn't a Lamp app file.")
         }
         guard manifest.format <= formatVersion else {
-            throw ImportError("This app was shared from a newer version of Forge. Update Forge to open it.")
+            throw ImportError("This app was shared from a newer version of Lamp. Update Lamp to open it.")
         }
         let sources = swiftSources(in: folder.appendingPathComponent("Sources"))
-        guard !sources.isEmpty else { throw ImportError("This Forge app file has no code in it.") }
+        guard !sources.isEmpty else { throw ImportError("This Lamp app file has no code in it.") }
         let all = fm.enumerator(at: folder, includingPropertiesForKeys: nil)?.allObjects.count ?? 0
         let attachments = regularFiles(in: folder.appendingPathComponent(Attachments.folder))
         return Package(name: manifest.name, folder: folder, sources: sources, attachments: attachments, fileCount: all)
@@ -142,7 +142,7 @@ enum Sharing {
         process.standardError = FileHandle.nullDevice
         try process.run()
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else { throw ImportError("Couldn't read or write the Forge app file.") }
+        guard process.terminationStatus == 0 else { throw ImportError("Couldn't read or write the Lamp app file.") }
     }
 }
 
@@ -193,14 +193,14 @@ extension Sharing {
         let about = (try? String(contentsOf: package.folder.appendingPathComponent("APP.md"), encoding: .utf8)) ?? "(none)"
 
         var review = ImportReview(summary: "", capabilities: [], concerns: [], risk: "unknown", detected: detected)
-        if truncated { review.concerns.append("This app is too large for Forge to check all of its code.") }
+        if truncated { review.concerns.append("This app is too large for Lamp to check all of its code.") }
         guard AppAI.canAnswer else {
-            review.note = "Set up AI in Forge → Settings to have it check what this app does."
+            review.note = "Set up AI in Lamp → Settings to have it check what this app does."
             return review
         }
 
         let system = """
-        You are the security reviewer in Forge, a Mac app that builds small personal apps. Someone has been sent \
+        You are the security reviewer in Lamp, a Mac app that builds small personal apps. Someone has been sent \
         an app by another person and is deciding whether to build and run it on their Mac. Explain plainly what \
         it does and whether anything looks malicious.
 
@@ -227,9 +227,9 @@ extension Sharing {
             review.concerns += answer.concerns
             review.risk = ["low", "medium", "high"].contains(answer.risk.lowercased()) ? answer.risk.lowercased() : "unknown"
         } catch let failure as AppAI.Failure {
-            review.note = "Forge's AI check didn't run: \(failure.message)"
+            review.note = "Lamp's AI check didn't run: \(failure.message)"
         } catch {
-            review.note = "Forge's AI check didn't run. Look at the list above carefully."
+            review.note = "Lamp's AI check didn't run. Look at the list above carefully."
         }
         return review
     }

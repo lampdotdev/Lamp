@@ -104,7 +104,7 @@ enum ComputerUse {
             let script = """
             do shell script "/bin/rm -rf " & quoted form of "\(app.path)" & " && /usr/bin/ditto " & \
             quoted form of "\(unpacked.path)" & " " & quoted form of "\(app.path)" with administrator privileges \
-            with prompt "Forge needs to add CuaDriver to the Applications folder so your apps can use your other apps."
+            with prompt "Lamp needs to add CuaDriver to the Applications folder so your apps can use your other apps."
             """
             guard await run("/usr/bin/osascript", ["-e", script]) == 0, isInstalled else {
                 throw Failure(message: "Couldn't add CuaDriver to the Applications folder. It needs an administrator's password; on a work Mac, ask your IT team.")
@@ -213,14 +213,14 @@ enum ComputerUse {
     static func run(task: String, appName: String, allowActions: Bool, model: String,
                     approve: @escaping (Action) async -> Bool) async throws -> (String, Double) {
         guard isInstalled else {
-            throw Failure(message: "Using other apps isn't set up yet. Turn on “Let apps use your other apps” in Forge → Settings → Apps.")
+            throw Failure(message: "Using other apps isn't set up yet. Turn on “Let apps use your other apps” in Lamp → Settings → Apps.")
         }
         // While the Mac is locked, apps don't expose their windows and screen capture is refused.
         if (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true {
             throw Failure(message: "The Mac is locked, so other apps can't be read. Try again once it's unlocked.")
         }
         guard let key = KeyStore.openRouterKey else {
-            throw Failure(message: "Using other apps needs an OpenRouter key. Add one in Forge → Settings → Providers.")
+            throw Failure(message: "Using other apps needs an OpenRouter key. Add one in Lamp → Settings → Providers.")
         }
         let client = try MCPClient(executable: executable, arguments: ["mcp"])
         defer { client.close() }
@@ -259,7 +259,7 @@ enum ComputerUse {
         var cost = 0.0
         var labels: [String: String] = [:]   // element tokens from the windows read so far
         // Turning the setting off stops a task that's already running, before its next step.
-        let stopped = Failure(message: "Using other apps was turned off, so Forge stopped the task.")
+        let stopped = Failure(message: "Using other apps was turned off, so Lamp stopped the task.")
         for _ in 0..<40 {
             guard enabled else { throw stopped }
             let (message, stepCost) = try await complete(messages: messages, tools: allTools, model: model, key: key)
@@ -324,7 +324,7 @@ enum ComputerUse {
                 if seen > 1 { messages[index]["content"] = "(An earlier picture, removed to save space.)" }
             }
         }
-        throw Failure(message: "The task took too many steps, so Forge stopped it.")
+        throw Failure(message: "The task took too many steps, so Lamp stopped it.")
     }
 
     /// The driver's pictures are PNGs, around a megabyte each: as JPEGs they're a tenth of that, which keeps each
@@ -356,7 +356,7 @@ enum ComputerUse {
         request.timeoutInterval = 180
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Forge", forHTTPHeaderField: "X-Title")
+        request.setValue("Lamp", forHTTPHeaderField: "X-Title")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": model, "messages": messages, "tools": tools, "usage": ["include": true],
         ] as [String: Any])
@@ -455,7 +455,7 @@ final class MCPClient: @unchecked Sendable {
     func initialize() async throws -> String {
         let result = try await request("initialize", [
             "protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any],
-            "clientInfo": ["name": "Forge", "version": BuildStamp.current.forge ?? "0"],
+            "clientInfo": ["name": "Lamp", "version": BuildStamp.current.forge ?? "0"],
         ])
         notify("notifications/initialized")
         return result["instructions"] as? String ?? ""
@@ -593,7 +593,7 @@ enum BrowserTabs {
             for browser in browsers {
                 let output = await osascript(listScript(browser.id))
                 if output.hasPrefix("error:") {
-                    lines.append("\(browser.name): couldn't list tabs (\(String(output.dropFirst(6)).trimmed)). The person may need to allow Forge to control \(browser.name).")
+                    lines.append("\(browser.name): couldn't list tabs (\(String(output.dropFirst(6)).trimmed)). The person may need to allow Lamp to control \(browser.name).")
                     continue
                 }
                 for row in output.split(separator: "\n") {

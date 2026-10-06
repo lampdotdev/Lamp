@@ -35,6 +35,15 @@ app (`ForgeAI`, `ForgeStore`, `ForgeScript`, the connectors, `ForgeDriver` for `
 string: after editing it, extract and type-check it (`swiftc -typecheck`), and bump anything that detects
 an outdated app (`Store.open` rebuilds apps built by an older Forge).
 
+## Naming: Lamp and Forge
+
+The app is called **Lamp**: that's the name in everything the user reads (the interface, Help, the agent's
+words to the user, the "Edit with Lamp" command in generated apps, the bundle and the DMG). **Forge** is its
+code name and stays in code, comments, type names (`ForgeSupport`, `ForgeAI`, …) and in everything existing
+installs depend on: the bundle ID `dev.forge.host`, `~/Library/Application Support/Forge`,
+`~/Applications/Forge Apps`, the `forge://` scheme, the `.forgeapp` extension and the signing certificates.
+Renaming any of those needs a migration, not a find-and-replace.
+
 ## Conventions
 
 - Comments explain why, in plain prose; user-facing text never names files, types or frameworks.

@@ -32,7 +32,8 @@ begin() {
     echo "A fresh start is already in progress ($backup). Run 'restore' first." >&2
     exit 1
   fi
-  osascript -e 'quit app "Forge"' >/dev/null 2>&1 || true
+  osascript -e 'quit app "Lamp"' >/dev/null 2>&1 || true
+  osascript -e 'quit app "Forge"' >/dev/null 2>&1 || true   # a copy from before the rename
   sleep 1
   mkdir -p "$backup"
   chmod 700 "$backup"
@@ -57,9 +58,9 @@ begin() {
   keychain_accounts | while read -r account; do
     security delete-generic-password -s "$domain" -a "$account" >/dev/null 2>&1 || true
   done
-  echo "Your Forge setup is in $backup. Opening Forge as a first-time user."
+  echo "Your Lamp setup is in $backup. Opening Lamp as a first-time user."
   echo "When you're done: scripts/fresh-start.sh restore"
-  open -a Forge 2>/dev/null || open "$(dirname "$0")/../build/Forge.app"
+  open -a Lamp 2>/dev/null || open "$(dirname "$0")/../build/Lamp.app"
 }
 
 restore() {
@@ -67,7 +68,8 @@ restore() {
     echo "Nothing to restore: no $backup." >&2
     exit 1
   fi
-  osascript -e 'quit app "Forge"' >/dev/null 2>&1 || true
+  osascript -e 'quit app "Lamp"' >/dev/null 2>&1 || true
+  osascript -e 'quit app "Forge"' >/dev/null 2>&1 || true   # a copy from before the rename
   sleep 1
   # The steps that can fail come first, while the backup is untouched, so a failed restore can simply be
   # run again. Whatever the fresh run saved in the Keychain goes, then the original items come back.
@@ -90,7 +92,7 @@ restore() {
     rm -f "$backup/no-folder"
   fi
   rm -rf "$backup"
-  echo "Your Forge setup is back."
+  echo "Your Lamp setup is back."
 }
 
 case "${1:-}" in

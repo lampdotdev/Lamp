@@ -155,7 +155,7 @@ enum Versions {
         let note = """
 
 
-        Note from Forge: before this message, the user went back to an earlier version of the app \
+        Note from Lamp: before this message, the user went back to an earlier version of the app \
         (“\(label)”, from \(date.formatted(date: .abbreviated, time: .shortened))). The files may no longer \
         match what you remember from this conversation, so read them again before editing.
         """
@@ -206,7 +206,7 @@ enum VersionTitles {
 
     Say what changed for the person using the app, in 2 to 5 plain words, starting with a past-tense verb \
     when it fits: "Added account shortcuts", "Fixed vanishing profile photo", "Darker sidebar", "First \
-    version". Never mention files, code, types or Forge. If the request and the change disagree, describe the \
+    version". Never mention files, code, types or Lamp. If the request and the change disagree, describe the \
     change. No quotes, no full stop.
 
     Respond with JSON: {"title": "..."}
@@ -218,7 +218,7 @@ enum VersionTitles {
         _ = await Shell.run("git show --format= --name-only \"$FORGE_VERSION\"", cwd: project.dir,
                             env: ["FORGE_VERSION": version.id]) { if !$0.trimmed.isEmpty { files.append($0.trimmed) } }
         // Forge refreshing the support code it puts in every app isn't a change the user made.
-        if !files.isEmpty, files.allSatisfy({ $0 == "Sources/ForgeSupport.swift" }) { return "Forge update" }
+        if !files.isEmpty, files.allSatisfy({ $0 == "Sources/ForgeSupport.swift" }) { return "Lamp update" }
         var diff = ""
         _ = await Shell.run("git show --format= --unified=1 \"$FORGE_VERSION\" -- . ':!Sources/ForgeSupport.swift' ':!\(Attachments.folder)'",
                             cwd: project.dir, env: ["FORGE_VERSION": version.id]) { line in

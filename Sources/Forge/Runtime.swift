@@ -46,7 +46,7 @@ enum Runtime {
         return """
 
 
-        Note from Forge: the app has crashed since it was last built. Fix the cause as part of this request.\
+        Note from Lamp: the app has crashed since it was last built. Fix the cause as part of this request.\
         \(Privacy.sharesLog ? "\nWhat it printed is in .forge/runtime/log.txt (the latest launch) and .forge/runtime/previous-log.txt (the launch before)." : "")
 
         \(crash)
@@ -69,7 +69,7 @@ enum Runtime {
         return """
 
 
-        Note from Forge: .forge/runtime/screenshot.png is a picture of the app's front window, taken at \
+        Note from Lamp: .forge/runtime/screenshot.png is a picture of the app's front window, taken at \
         \(taken.formatted(date: .omitted, time: .shortened)), just after it opened or when the user last switched away from it\
         \(more.isEmpty ? "" : " (other open windows: " + more.map { ".forge/runtime/" + $0 }.joined(separator: ", ") + ")"). \
         If you can view images, look at it when this request is about how the app looks or behaves.

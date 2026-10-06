@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds build/Forge.app (registers the forge:// URL scheme).
+# Builds build/Lamp.app (registers the forge:// URL scheme).
 #
 # Local builds are signed with a self-signed "Forge Local Signing" identity (see scripts/signing-identity.sh).
 # Releases set SIGN_IDENTITY to a Developer ID certificate (see release.sh): everything is then signed with
@@ -22,7 +22,7 @@ if [[ -z "${APP_VERSION:-}" ]]; then
 fi
 APP_BUILD="${APP_BUILD:-$APP_VERSION}"
 
-# The pi coding agent (MIT, github.com/badlogic/pi-mono) is bundled inside Forge.app.
+# The pi coding agent (MIT, github.com/badlogic/pi-mono) is bundled inside Lamp.app.
 # Pinned version + checksums from the release's SHA256SUMS; downloads are cached in vendor/.
 PI_VERSION="1.0.0"
 case "$(uname -m)" in
@@ -68,10 +68,10 @@ fi
 
 swift build -c release
 BIN="$(swift build -c release --show-bin-path)/Forge"
-APP="${BUILD_DIR:-build}/Forge.app"
+APP="${BUILD_DIR:-build}/Lamp.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/Forge"
+cp "$BIN" "$APP/Contents/MacOS/Lamp"
 # Sparkle (updates for release builds). Forge isn't sandboxed, so Sparkle's XPC services aren't needed.
 mkdir -p "$APP/Contents/Frameworks"
 ditto "$(dirname "$BIN")/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
@@ -94,9 +94,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleExecutable</key><string>Forge</string>
+  <key>CFBundleExecutable</key><string>Lamp</string>
   <key>CFBundleIdentifier</key><string>dev.forge.host</string>
-  <key>CFBundleName</key><string>Forge</string>
+  <key>CFBundleName</key><string>Lamp</string>
+  <key>CFBundleDisplayName</key><string>Lamp</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleIconName</key><string>AppIcon</string>
   <key>SUFeedURL</key><string>https://forge-updates.vercel.app/appcast.xml</string>
@@ -110,7 +111,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSHighResolutionCapable</key><true/>
   <key>UTExportedTypeDeclarations</key><array><dict>
     <key>UTTypeIdentifier</key><string>dev.forge.forgeapp</string>
-    <key>UTTypeDescription</key><string>Forge App</string>
+    <key>UTTypeDescription</key><string>Lamp App</string>
     <key>UTTypeConformsTo</key><array><string>public.data</string></array>
     <key>UTTypeIconFile</key><string>AppIcon</string>
     <key>UTTypeTagSpecification</key><dict>
@@ -118,14 +119,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     </dict>
   </dict></array>
   <key>CFBundleDocumentTypes</key><array><dict>
-    <key>CFBundleTypeName</key><string>Forge App</string>
+    <key>CFBundleTypeName</key><string>Lamp App</string>
     <key>CFBundleTypeRole</key><string>Viewer</string>
     <key>LSHandlerRank</key><string>Owner</string>
     <key>LSItemContentTypes</key><array><string>dev.forge.forgeapp</string></array>
   </dict></array>
-  <key>NSMicrophoneUsageDescription</key><string>Forge listens to your microphone when you dictate a change.</string>
-  <key>NSSpeechRecognitionUsageDescription</key><string>Forge turns your dictation into text for the prompt box.</string>
-  <key>NSAppleEventsUsageDescription</key><string>Forge lists and switches your browser tabs when one of your apps reads a web page you have open.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Lamp listens to your microphone when you dictate a change.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>Lamp turns your dictation into text for the prompt box.</string>
+  <key>NSAppleEventsUsageDescription</key><string>Lamp lists and switches your browser tabs when one of your apps reads a web page you have open.</string>
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLName</key><string>dev.forge.host</string>
     <key>CFBundleURLSchemes</key><array><string>forge</string></array>

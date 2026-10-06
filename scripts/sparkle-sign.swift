@@ -1,5 +1,5 @@
 // Signs a release DMG for Sparkle and writes the sparkle.json the update feed reads (updates/api/appcast.js).
-// Usage: SPARKLE_PRIVATE_KEY=<base64 Ed25519 key> swift scripts/sparkle-sign.swift Forge-0.4.2.dmg 0.4.2 > sparkle.json
+// Usage: SPARKLE_PRIVATE_KEY=<base64 Ed25519 key> swift scripts/sparkle-sign.swift Lamp-0.4.2.dmg 0.4.2 > sparkle.json
 // The key's public half is SUPublicEDKey in build.sh; Sparkle refuses updates that don't verify against it.
 import CryptoKit
 import Foundation

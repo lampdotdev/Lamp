@@ -29,7 +29,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             guard await allowed(center) else { return }
             let content = UNMutableNotificationContent()
             // From Forge about the app, not from the app itself.
-            content.title = "Forge on \(project.name)"
+            content.title = "Lamp on \(project.name)"
             content.subtitle = subtitle
             content.body = body
             content.sound = .default

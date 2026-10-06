@@ -67,7 +67,7 @@ enum Provider {
         let text = raw.lowercased()
         let name = Builder.engine == .pi ? (apiProvider(Builder.piProvider)?.name ?? "AI provider") : Builder.engine.title
         if text.contains("401") || text.contains("authenticat") || text.contains("api key") || text.contains("unauthorized") {
-            return "Your \(name) key or sign-in didn't work. Check it in Forge → Settings (⌘,)."
+            return "Your \(name) key or sign-in didn't work. Check it in Lamp → Settings (⌘,)."
         }
         if text.contains("402") || text.contains("credit") || text.contains("insufficient") || text.contains("quota") {
             return "Your \(name) account is out of credit or quota. Top it up, or pick another provider in Settings."

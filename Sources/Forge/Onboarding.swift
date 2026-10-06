@@ -132,7 +132,7 @@ private struct HelloStep: View {
                 .foregroundStyle(Palette.ink)
                 .padding(.top, 22)
                 .reveal(shown, delay: 0.1)
-            Text("Forge turns your ideas into your very own native Mac apps.")
+            Text("Lamp turns your ideas into your very own native Mac apps.")
                 .font(.system(size: 19))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -438,7 +438,7 @@ private struct SetupStep: View {
             ScrollView {
                 VStack(spacing: 0) {
                     Spacer(minLength: 40)
-                    Heading(title: "Get the Forge ready to work", detail: "We need to configure two things.")
+                    Heading(title: "Get Lamp ready", detail: "We need to configure two things.")
                     VStack(spacing: 12) {
                         ToolsCard()
                         BuilderCard(choice: $choice, signedIn: $signedIn, signingIn: $signingIn, forgeReady: $forgeReady)
@@ -603,7 +603,7 @@ private struct BuilderCard: View {
                     Option(selected: choice == .chatGPT, title: "ChatGPT", detail: "Uses your ChatGPT subscription") {
                         ProviderLogo(id: "openai", size: 30)
                     } action: { pick(.chatGPT) }
-                    Option(selected: choice?.isForge == true, title: "Forge Agent", detail: "You choose the AI") {
+                    Option(selected: choice?.isForge == true, title: "Lamp Agent", detail: "You choose the AI") {
                         Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 34, height: 34)
                     } action: { pick(choice?.isForge == true ? choice! : .openRouter) }
                 }
@@ -855,7 +855,7 @@ private struct ForgeAgentOptions: View {
         if isServer {
             if models.isEmpty {
                 HStack(spacing: 10) {
-                    note("Open \(name) with a model downloaded in it, and Forge finds it here.")
+                    note("Open \(name) with a model downloaded in it, and Lamp finds it here.")
                     Spacer()
                     Link("Get \(name)", destination: URL(string: provider == "ext-ollama" ? "https://ollama.com/download" : "https://lmstudio.ai")!)
                         .font(.system(size: 13, weight: .medium))
@@ -922,7 +922,7 @@ private struct ForgeAgentOptions: View {
     }
 
     @ViewBuilder private var onThisMac: some View {
-        note("Free and private: Forge runs the model right here. Smaller models make simpler apps.")
+        note("Free and private: Lamp runs the model right here. Smaller models make simpler apps.")
         Picker("", selection: $localChoice) {
             ForEach(local.installed) { Text("\($0.name) (on this Mac)").tag("installed:" + $0.id) }
             ForEach(LocalModels.catalog.filter { !local.isInstalled($0) }) { spec in

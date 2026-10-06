@@ -40,14 +40,14 @@ const lookAtApp = defineTool({
 
 	async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
 		const url = process.env.FORGE_LOOK_URL;
-		if (!url) throw new Error("Forge isn't available to look at the app.");
+		if (!url) throw new Error("Lamp isn't available to look at the app.");
 		const response = await fetch(url, {
 			method: "POST",
 			headers: { Authorization: `Bearer ${process.env.FORGE_TOKEN ?? ""}`, "Content-Type": "application/json" },
 			body: "{}",
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(600_000)]) : AbortSignal.timeout(600_000),
 		});
-		return pictureReply(response, ctx.model, "Forge couldn't look at the app.");
+		return pictureReply(response, ctx.model, "Lamp couldn't look at the app.");
 	},
 });
 
@@ -114,14 +114,14 @@ const useApp = defineTool({
 
 	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 		const url = process.env.FORGE_USE_URL;
-		if (!url) throw new Error("Forge isn't available to use the app.");
+		if (!url) throw new Error("Lamp isn't available to use the app.");
 		const response = await fetch(url, {
 			method: "POST",
 			headers: { Authorization: `Bearer ${process.env.FORGE_TOKEN ?? ""}`, "Content-Type": "application/json" },
 			body: JSON.stringify({ actions: params.actions }),
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
 		});
-		return pictureReply(response, ctx.model, "Forge couldn't use the app.");
+		return pictureReply(response, ctx.model, "Lamp couldn't use the app.");
 	},
 });
 
@@ -129,10 +129,10 @@ const plan = defineTool({
 	name: "plan",
 	label: "Plan",
 	description:
-		"Shows the user what you're building, as a short checklist in Forge while they wait. For a new app, " +
+		"Shows the user what you're building, as a short checklist in Lamp while they wait. For a new app, " +
 		"call it once before writing any code with the 3 to 5 main parts, each in plain words the user would " +
 		"use (what they'll be able to do, not file or type names), and the files you'll write for each part. " +
-		"Forge ticks a part off when all of its files are written, so there's no need to call it again. " +
+		"Lamp ticks a part off when all of its files are written, so there's no need to call it again. " +
 		"Call it again only if the plan changes; every call replaces the whole list.",
 	parameters: Type.Object({
 		parts: Type.Array(
@@ -164,7 +164,7 @@ const webFetch = defineTool({
 	async execute(_toolCallId, params, signal) {
 		if (!/^https?:\/\//i.test(params.url)) throw new Error("Only http and https URLs can be read.");
 		const response = await fetch(params.url, {
-			headers: { "User-Agent": "Forge (pi web_fetch)", Accept: "text/html,text/plain,application/json,*/*" },
+			headers: { "User-Agent": "Lamp (pi web_fetch)", Accept: "text/html,text/plain,application/json,*/*" },
 			redirect: "follow",
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
 		});
@@ -190,7 +190,7 @@ const webFetch = defineTool({
 /** Asks Forge to approve a shell command; resolves to an error message when it isn't approved. */
 async function askForge(command: string, signal?: AbortSignal): Promise<string | undefined> {
 	const url = process.env.FORGE_APPROVE_URL;
-	if (!url) return "Shell commands need approval in Forge, and Forge isn't available.";
+	if (!url) return "Shell commands need approval in Lamp, and Lamp isn't available.";
 	try {
 		const response = await fetch(url, {
 			method: "POST",
@@ -237,7 +237,7 @@ async function checkFile(tool: string, given: string, signal?: AbortSignal): Pro
 	const inside = target === home || target.startsWith(home + path.sep);
 	if (inside && !target.startsWith(path.join(home, ".forge", "runtime") + path.sep)) return undefined;
 	const url = process.env.FORGE_APPROVE_URL;
-	if (!url) return inside ? undefined : "Files outside the app's folder need approval in Forge, and Forge isn't available.";
+	if (!url) return inside ? undefined : "Files outside the app's folder need approval in Lamp, and Lamp isn't available.";
 	try {
 		const response = await fetch(url, {
 			method: "POST",
@@ -261,7 +261,7 @@ const deleteFile = defineTool({
 	description:
 		"Deletes one file in the app's folder that is no longer needed, such as a source file whose code " +
 		"moved elsewhere or a view that was removed. Use it instead of leaving an emptied file behind. " +
-		"It can't delete folders, files outside the app's folder, or the files Forge generates.",
+		"It can't delete folders, files outside the app's folder, or the files Lamp generates.",
 	parameters: Type.Object({
 		path: Type.String({ description: "Path of the file, relative to the app's folder, e.g. Sources/CardsView.swift" }),
 	}),
@@ -274,7 +274,7 @@ const deleteFile = defineTool({
 			throw new Error("Only files inside the app's folder can be deleted.");
 		}
 		if (protectedPaths.some((item) => relative === item || relative.startsWith(item + path.sep))) {
-			throw new Error(`${relative} belongs to Forge and can't be deleted.`);
+			throw new Error(`${relative} belongs to Lamp and can't be deleted.`);
 		}
 		const info = await lstat(target).catch(() => undefined);
 		if (!info) throw new Error(`There's no file at ${relative}.`);
@@ -292,7 +292,7 @@ const deleteFile = defineTool({
 /** Calls one of Forge's version endpoints and returns its reply as the tool's text. */
 async function versions(endpoint: string, body: object, signal?: AbortSignal) {
 	const url = process.env.FORGE_VERSIONS_URL;
-	if (!url) throw new Error("Forge isn't available to manage versions.");
+	if (!url) throw new Error("Lamp isn't available to manage versions.");
 	const response = await fetch(url + endpoint, {
 		method: "POST",
 		headers: { Authorization: `Bearer ${process.env.FORGE_TOKEN ?? ""}`, "Content-Type": "application/json" },
@@ -300,7 +300,7 @@ async function versions(endpoint: string, body: object, signal?: AbortSignal) {
 		signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
 	});
 	const reply = (await response.json()) as { text?: string; error?: string };
-	if (!response.ok) throw new Error(reply.error ?? "Forge couldn't do that.");
+	if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
 	return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
 }
 
@@ -309,7 +309,7 @@ const listVersions = defineTool({
 	label: "List versions",
 	description:
 		"Lists the app's saved versions, newest first: an id, when it was made, its name if it has one, and " +
-		"the request that made it. Forge saves one after every request.",
+		"the request that made it. Lamp saves one after every request.",
 	parameters: Type.Object({}),
 
 	async execute(_toolCallId, _params, signal) {
@@ -322,7 +322,7 @@ const nameVersion = defineTool({
 	label: "Name version",
 	description:
 		"Gives a version a short name the user will recognise, e.g. “Before the redesign” or “First working " +
-		"sync”. Without `version`, it names the version this request makes, once Forge saves it. With a " +
+		"sync”. Without `version`, it names the version this request makes, once Lamp saves it. With a " +
 		"version id from list_versions, it names that one: use the current one before a big or risky change.",
 	parameters: Type.Object({
 		name: Type.String({ description: "A few words, in the user's terms" }),

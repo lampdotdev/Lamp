@@ -18,9 +18,9 @@ export async function releases() {
   return (await response.json()).filter((release) => !release.draft && !release.prerelease);
 }
 
-/** A release's DMG asset: Forge-<version>.dmg. */
+/** A release's DMG asset: Lamp-<version>.dmg, or Forge-<version>.dmg for releases from before the rename. */
 export function dmgAsset(release) {
-  return release.assets.find((asset) => /^Forge-[0-9][0-9A-Za-z.+-]*\.dmg$/.test(asset.name));
+  return release.assets.find((asset) => /^(Lamp|Forge)-[0-9][0-9A-Za-z.+-]*\.dmg$/.test(asset.name));
 }
 
 /** The release's sparkle.json (version, signature, length), written by the release workflow. */

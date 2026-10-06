@@ -8,7 +8,7 @@ enum Engine: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .pi: "Forge's built-in agent"
+        case .pi: "Lamp's built-in agent"
         case .claude: "Claude Code"
         case .codex: "Codex"
         }
@@ -51,8 +51,8 @@ enum CommandApproval: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .auto: "Routine commands run on their own; Forge asks about anything risky or unexpected. Claude Code uses its safety classifier; other agents use the decision model."
-        case .always: "Forge asks before every command."
+        case .auto: "Routine commands run on their own; Lamp asks about anything risky or unexpected. Claude Code uses its safety classifier; other agents use the decision model."
+        case .always: "Lamp asks before every command."
         case .never: "Commands run without asking. They still show in the chat."
         }
     }
@@ -135,7 +135,7 @@ enum Builder {
     static func problem() -> String? {
         switch engine {
         case .pi:
-            if Agent.executable == nil { return "Forge's AI builder is missing from the app. Download Forge again." }
+            if Agent.executable == nil { return "Lamp's AI builder is missing from the app. Download Lamp again." }
             switch piProvider {
             case localProvider:
                 let installed = LocalModels.scan()

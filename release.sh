@@ -14,7 +14,7 @@ set -euo pipefail
 VERSION="${1:?usage: ./release.sh <version>}"
 HERE="${0:A:h}"
 DIST="$HERE/dist"
-DMG="$DIST/Forge-$VERSION.dmg"
+DMG="$DIST/Lamp-$VERSION.dmg"
 NOTARY_PROFILE="${NOTARY_PROFILE:-forge-notary}"
 
 if [[ -z "${SIGN_IDENTITY:-}" ]]; then
@@ -25,10 +25,10 @@ echo "Signing as: $SIGN_IDENTITY"
 
 # 1. Build + sign the app (hardened runtime, entitlements, secure timestamp)
 rm -rf "$DIST" && mkdir -p "$DIST"
-# Builds into dist/, not build/, so a release never replaces the Forge you run day to day.
+# Builds into dist/, not build/, so a release never replaces the Lamp you run day to day.
 BUILD_DIR="$DIST/build" APP_VERSION="$VERSION" SIGN_IDENTITY="$SIGN_IDENTITY" "$HERE/build.sh"
-mv "$DIST/build/Forge.app" "$DIST/" && rmdir "$DIST/build"
-codesign --verify --deep --strict "$DIST/Forge.app"
+mv "$DIST/build/Lamp.app" "$DIST/" && rmdir "$DIST/build"
+codesign --verify --deep --strict "$DIST/Lamp.app"
 
 notarize() {
   xcrun notarytool submit "$1" --keychain-profile "$NOTARY_PROFILE" --wait | tee "$DIST/notary.log"
@@ -36,20 +36,20 @@ notarize() {
   rm "$DIST/notary.log"
 }
 
-# 2. Notarize the app itself and staple its ticket, so Forge.app opens without a network check
+# 2. Notarize the app itself and staple its ticket, so Lamp.app opens without a network check
 #    even after it's copied out of the DMG.
 if [[ "${SKIP_NOTARIZE:-}" != 1 ]]; then
-  ditto -c -k --keepParent "$DIST/Forge.app" "$DIST/Forge-notarize.zip"
-  notarize "$DIST/Forge-notarize.zip"
-  rm "$DIST/Forge-notarize.zip"
-  xcrun stapler staple "$DIST/Forge.app"
+  ditto -c -k --keepParent "$DIST/Lamp.app" "$DIST/Lamp-notarize.zip"
+  notarize "$DIST/Lamp-notarize.zip"
+  rm "$DIST/Lamp-notarize.zip"
+  xcrun stapler staple "$DIST/Lamp.app"
 fi
 
 # 3. Package as a DMG with a drag-to-Applications layout
 STAGE=$(mktemp -d)
-cp -R "$DIST/Forge.app" "$STAGE/"
+cp -R "$DIST/Lamp.app" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -quiet -volname "Forge" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+hdiutil create -quiet -volname "Lamp" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
 rm -rf "$STAGE"
 codesign --force --timestamp -s "$SIGN_IDENTITY" "$DMG"
 
@@ -64,8 +64,8 @@ xcrun stapler staple "$DMG"
 
 # 5. Verify Gatekeeper accepts both, with the tickets stapled
 spctl --assess --type open --context context:primary-signature -v "$DMG"
-spctl --assess --type execute -v "$DIST/Forge.app"
-xcrun stapler validate "$DIST/Forge.app"
+spctl --assess --type execute -v "$DIST/Lamp.app"
+xcrun stapler validate "$DIST/Lamp.app"
 echo
 echo "Release ready: $DMG"
-echo "Publish:  gh release create v$VERSION \"$DMG\" --title \"Forge $VERSION\" --generate-notes"
+echo "Publish:  gh release create v$VERSION \"$DMG\" --title \"Lamp $VERSION\" --generate-notes"

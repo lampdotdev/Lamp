@@ -190,7 +190,7 @@ enum AppAI {
             (text, cost) = try await viaEngine(Builder.engine, prompt: prompt, images: images, system: system,
                                                model: chosen.id)
         } else {
-            throw Failure(message: "Apps' AI features need an OpenRouter key, or a working builder. Set one up in Forge → Settings (⌘,).")
+            throw Failure(message: "Apps' AI features need an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,).")
         }
         return (text, cost)
     }
@@ -202,7 +202,7 @@ enum AppAI {
     /// One-shot pi call (no tools, no session) with the builder's provider and model. Covers every
     /// provider pi supports, including "My pi setup" subscriptions.
     private static func viaPi(prompt: String, images: [Image], system: String) async throws -> (String, Double) {
-        guard Agent.executable != nil else { throw Failure(message: "Forge's AI builder is missing. Download Forge again.") }
+        guard Agent.executable != nil else { throw Failure(message: "Lamp's AI builder is missing. Download Lamp again.") }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("forge-ai-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -359,7 +359,7 @@ enum AppAI {
             // No decision model: a small text model answers the same questions in JSON instead.
             if canAnswer { return try await decideByText(state: state, questions: questions) }
             let name = choice.provider == "typesafe" ? "a TypeSafe" : "an OpenRouter"
-            throw Failure(message: "Decisions need \(name) key. Add one in Forge → Settings (⌘,) → AI.")
+            throw Failure(message: "Decisions need \(name) key. Add one in Lamp → Settings (⌘,) → AI.")
         }
         let endpoint = choice.provider == "typesafe" ? "https://api.typesafe.ai/v1/systemone"
                                                      : "https://openrouter.ai/api/v1/systemone"
@@ -368,7 +368,7 @@ enum AppAI {
         request.timeoutInterval = 60
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Forge", forHTTPHeaderField: "X-Title")
+        request.setValue("Lamp", forHTTPHeaderField: "X-Title")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["state": state, "model": choice.model,
                                                                        "questions": questions] as [String: Any])
         // Rate limits (429) and overload (529) are expected under load: back off and retry a few times.
@@ -534,7 +534,7 @@ enum AppAI {
     }
 
     /// The failure an app gets when nothing can make images: Forge shows a card asking for a key.
-    static let noImageRoute = "Making images needs an OpenRouter key. Add one in Forge → Settings (⌘,)."
+    static let noImageRoute = "Making images needs an OpenRouter key. Add one in Lamp → Settings (⌘,)."
 
     /// Creates or edits an image. `references` are input images to edit or combine. Returns PNG data and
     /// the cost in USD (0 through Codex).
@@ -550,7 +550,7 @@ enum AppAI {
         request.timeoutInterval = 240
         request.setValue("Bearer \(KeyStore.openRouterKey ?? "")", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Forge", forHTTPHeaderField: "X-Title")
+        request.setValue("Lamp", forHTTPHeaderField: "X-Title")
         let imageModel = Icons.artModels.contains { $0.id == appChoice } ? appChoice! : Icons.artModel
         var body: [String: Any] = ["model": imageModel, "prompt": prompt, "n": 1, "output_format": "png"]
         if let aspectRatio { body["aspect_ratio"] = aspectRatio }
@@ -609,7 +609,7 @@ enum AppAI {
         }
         if let failure { throw Failure(message: Provider.friendlyError(failure)) }
         guard let data = try? Data(contentsOf: folder.appendingPathComponent("image.png")), NSImage(data: data) != nil else {
-            throw Failure(message: "Codex didn't make the picture. Check it's signed in (Forge → Settings → Building).")
+            throw Failure(message: "Codex didn't make the picture. Check it's signed in (Lamp → Settings → Building).")
         }
         return data
     }
@@ -621,7 +621,7 @@ enum AppAI {
         request.timeoutInterval = 120
         request.setValue("Bearer \(KeyStore.openRouterKey ?? "")", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Forge", forHTTPHeaderField: "X-Title")
+        request.setValue("Lamp", forHTTPHeaderField: "X-Title")
         var messages: [[String: Any]] = []
         if !system.trimmed.isEmpty { messages.append(["role": "system", "content": system]) }
         let content: [[String: Any]] = [["type": "text", "text": prompt]] + images.map {
