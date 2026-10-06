@@ -39,10 +39,7 @@ final class PythonTools: ObservableObject {
             var output: [String] = []
             let status = await Shell.run(#""$LAMP_UV" tool install --python 3.12 --upgrade "$LAMP_PACKAGE""#,
                                          cwd: FileManager.default.temporaryDirectory, env: env) { output.append($0) }
-            if status != 0 {
-                throw Failure(message: "It didn't install: " + (output.suffix(3).joined(separator: " ").nilIfEmpty ?? "no reason was given.")
-                              + " Check your internet connection and try again.")
-            }
+            if status != 0 { throw Failure(installing: output) }
         } catch {
             errors[tool] = error.localizedDescription
         }
@@ -57,33 +54,96 @@ final class PythonTools: ObservableObject {
         let name = "uv-x86_64-apple-darwin"
         #endif
         let release = "https://github.com/astral-sh/uv/releases/latest/download/\(name).tar.gz"
-        let failure = Failure(message: "Lamp couldn't download what it needs to install this. Check your internet connection and try again.")
-        guard let (archive, response) = try? await URLSession.shared.download(from: URL(string: release)!),
-              (response as? HTTPURLResponse)?.statusCode == 200 else { throw failure }
+        let archive: URL, sum: Data
+        do {
+            let (file, response) = try await URLSession.shared.download(from: URL(string: release)!)
+            archive = file
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { try? FileManager.default.removeItem(at: file); throw Failure.unavailable }
+        } catch {
+            throw Failure(downloading: error)
+        }
         defer { try? FileManager.default.removeItem(at: archive) }
         // The release publishes each archive's checksum beside it: a download cut short doesn't get run.
-        guard let (sum, _) = try? await URLSession.shared.data(from: URL(string: release + ".sha256")!),
-              let expected = String(data: sum, encoding: .utf8)?.split(separator: " ").first,
+        do {
+            let (data, response) = try await URLSession.shared.data(from: URL(string: release + ".sha256")!)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw Failure.unavailable }
+            sum = data
+        } catch {
+            throw Failure(downloading: error)
+        }
+        guard let expected = String(data: sum, encoding: .utf8)?.split(separator: " ").first,
               let data = try? Data(contentsOf: archive),
-              SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == expected else { throw failure }
+              SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == expected else { throw Failure.damaged }
 
         // Unpacked beside its final place and moved in only when whole: an unpacking cut short (a full disk,
         // say) would otherwise leave half a uv there, and every later try would run that instead of fetching it again.
         let folder = ownUV.deletingLastPathComponent()
         let scratch = folder.appendingPathComponent("unpacking-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: scratch) }
-        guard (try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)) != nil else { throw failure }
+        guard (try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)) != nil else { throw Failure(saving: []) }
+        var output: [String] = []
         let status = await Shell.run(#"/usr/bin/tar -xzf "$LAMP_ARCHIVE" -C "$LAMP_FOLDER" --strip-components 1"#, cwd: scratch,
-                                     env: ["LAMP_ARCHIVE": archive.path, "LAMP_FOLDER": scratch.path]) { _ in }
+                                     env: ["LAMP_ARCHIVE": archive.path, "LAMP_FOLDER": scratch.path]) { output.append($0) }
         let unpacked = scratch.appendingPathComponent("uv")
-        guard status == 0, FileManager.default.isExecutableFile(atPath: unpacked.path) else { throw failure }
+        guard status == 0, FileManager.default.isExecutableFile(atPath: unpacked.path) else { throw Failure(saving: output) }
         try? FileManager.default.removeItem(at: ownUV)
-        guard (try? FileManager.default.moveItem(at: unpacked, to: ownUV)) != nil else { throw failure }
+        guard (try? FileManager.default.moveItem(at: unpacked, to: ownUV)) != nil else { throw Failure(saving: output) }
         return ownUV.path
     }
 
-    struct Failure: LocalizedError {
-        let message: String
-        var errorDescription: String? { message }
+    /// Why an install stopped, told apart as far as Lamp can, so the message says what to do about it:
+    /// a full disk isn't fixed by checking the internet connection.
+    enum Failure: LocalizedError {
+        case offline, unavailable, damaged, diskFull, saving
+        case installing(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .offline: "Lamp couldn't reach the internet to download this. Check your connection, then click Install again."
+            case .unavailable: "The download isn't available right now. The problem is at the other end, not on your Mac. Click Install again in a few minutes."
+            case .damaged: "The download arrived damaged. Click Install again."
+            case .diskFull: "This Mac is almost out of storage space. Free up about 3 GB (emptying the Trash is a good start), then click Install again."
+            case .saving: "Lamp couldn't save what it downloaded. Click Install again."
+            case .installing(let detail): "It didn't install. Click Install again." + (detail.isEmpty ? "" : " (What it said: \(detail))")
+            }
+        }
+
+        /// A download that didn't arrive. Anything that isn't plainly the far end's fault counts as the connection.
+        init(downloading error: Error) {
+            if let failure = error as? Failure { self = failure; return }
+            let code = (error as? URLError)?.code
+            if Self.outOfSpace([error.localizedDescription]) || code == .cannotWriteToFile || code == .cannotCreateFile {
+                self = .diskFull
+            } else if [.badServerResponse, .cannotParseResponse, .resourceUnavailable, .fileDoesNotExist].contains(code) {
+                self = .unavailable
+            } else {
+                self = .offline
+            }
+        }
+
+        /// Unpacking or moving what was downloaded, with whatever the unpacking said.
+        init(saving output: [String]) {
+            self = Self.outOfSpace(output) ? .diskFull : .saving
+        }
+
+        /// uv's own failure, with its output: the disk, the connection, or its last words when it's neither.
+        init(installing output: [String]) {
+            let said = output.joined(separator: " ").lowercased()
+            if Self.outOfSpace(output) {
+                self = .diskFull
+            } else if ["dns error", "error sending request", "failed to fetch", "connection refused", "timed out", "network"].contains(where: said.contains) {
+                self = .offline
+            } else {
+                self = .installing(output.suffix(3).joined(separator: " "))
+            }
+        }
+
+        /// The disk is full: something said so, or there's next to nothing left on it.
+        private static func outOfSpace(_ output: [String]) -> Bool {
+            if output.contains(where: { $0.localizedCaseInsensitiveContains("no space left") || $0.contains("os error 28") }) { return true }
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            let free = (try? home.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?.volumeAvailableCapacity
+            return free.map { $0 < 200_000_000 } ?? false
+        }
     }
 }
