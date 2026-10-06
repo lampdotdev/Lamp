@@ -15,7 +15,7 @@ struct ImageModelSpec: Identifiable, Hashable {
 }
 
 /// Pictures made on the Mac itself: free, private and offline, through mflux and a model from Hugging Face.
-/// mflux is a Python tool, installed with uv like mlx-lm; the weights live in the Hugging Face cache beside
+/// mflux is a Python tool, installed by `PythonTools` like mlx-lm; the weights live in the Hugging Face cache beside
 /// the text models, and one picture is made at a time, since each run loads the whole model.
 @MainActor
 final class ImageModels: ObservableObject {
@@ -32,9 +32,6 @@ final class ImageModels: ObservableObject {
                        tool: "mflux-generate", baseModel: "schnell", steps: 4, sizeGB: 9.6, minRAMGB: 24,
                        blurb: "The original fast FLUX. Big, and needs a lot of memory."),
     ]
-
-    @Published var installing = false        // mflux, through uv
-    @Published var installError: String?
 
     /// The model pictures are made with: the chosen one if it's installed, else the first installed.
     nonisolated static var chosen: ImageModelSpec? {
@@ -66,7 +63,6 @@ final class ImageModels: ObservableObject {
         return FileManager.default.fileExists(atPath: repoDir.appendingPathComponent("snapshots/\(ref)").path)
     }
 
-    nonisolated static var uvPath: String? { ToolLocator.path(named: "uv") }
     nonisolated static func toolPath(_ spec: ImageModelSpec) -> String? { ToolLocator.path(named: spec.tool) }
     nonisolated static var hasMflux: Bool { ToolLocator.path(named: "mflux-generate") != nil }
 
@@ -93,20 +89,6 @@ final class ImageModels: ObservableObject {
         let repoDir = LocalModels.hubDir.appendingPathComponent("models--" + spec.repo.replacingOccurrences(of: "/", with: "--"))
         try? FileManager.default.removeItem(at: repoDir)
         objectWillChange.send()
-    }
-
-    /// `uv tool install mflux`: a few hundred megabytes of Python packages, a minute or two.
-    func installMflux() {
-        guard !installing, let uv = Self.uvPath else { return }
-        installing = true
-        installError = nil
-        Task {
-            defer { installing = false }
-            var output: [String] = []
-            let status = await Shell.run("\"\(uv)\" tool install --upgrade mflux", cwd: FileManager.default.temporaryDirectory) { output.append($0) }
-            if status != 0 { installError = "mflux didn't install: " + (output.suffix(3).joined(separator: " ").nilIfEmpty ?? "see the log.") }
-            objectWillChange.send()
-        }
     }
 
     /// Makes one picture. Runs are queued: each loads the whole model, and two at once would double the

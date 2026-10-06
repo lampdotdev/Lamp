@@ -97,7 +97,7 @@ High-risk apps default to **Cancel**. When imported, the shared code is rebuilt 
   - **An API key** for OpenRouter, Anthropic, OpenAI, Google Gemini, DeepSeek, Mistral, xAI, Groq, Cerebras, Together, Fireworks, Hugging Face, Vercel AI Gateway, Moonshot, Z.ai, MiniMax or NVIDIA. Pick any model from that provider's list; it's searchable.
   - **On this Mac (local models).** **Settings → Local Models** lists every model Lamp can run. These include models already in the shared Hugging Face cache (`~/.cache/huggingface/hub`) or in Local's folder, so models downloaded for Local show up without downloading again. Lamp's own downloads (a list sized to your Mac's memory, or any GGUF repo) go into that same cache, in the standard `huggingface_hub` layout.
     - **GGUF models** run on Lamp's bundled llama.cpp server (`127.0.0.1:47812`, router mode, loading models on demand). It reads them through a folder of symlinks (`~/Library/Application Support/Lamp/Router`), so nothing is copied.
-    - **MLX models** (like the ones Local uses) run on `mlx_lm.server` (`127.0.0.1:47813`) if it's installed (`uv tool install mlx-lm`).
+    - **MLX models** (like the ones Local uses) run on `mlx_lm.server` (`127.0.0.1:47813`) once mlx-lm is installed: Lamp installs it from Settings → Providers → Native Mac AI, with its own copy of uv if the Mac has none.
     - Servers start when needed and stop when Lamp quits.
   - **Ollama or LM Studio**, if they're running. Their models appear automatically.
   - **My pi setup:** your own `~/.pi/agent`, including any subscriptions you've signed into with pi's `/login` (Claude Pro/Max, ChatGPT, GitHub Copilot and others).

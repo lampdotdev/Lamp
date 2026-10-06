@@ -154,7 +154,7 @@ enum Builder {
                 let installed = LocalModels.scan()
                 if installed.isEmpty { return "Download a model in Settings → Providers → Native Mac AI." }
                 if let model = installed.first(where: { $0.id == piModel }), model.format == .mlx, LocalModels.mlxServerPath == nil {
-                    return "\(model.name) is an MLX model and needs mlx-lm: run `uv tool install mlx-lm`."
+                    return "\(model.name) needs a one-time install before it can run: click Install beside it in Settings → Providers → Native Mac AI."
                 }
             case myPiProvider:
                 if !FileManager.default.fileExists(atPath: Agent.userConfigDir) { return "No pi setup found in ~/.pi/agent." }

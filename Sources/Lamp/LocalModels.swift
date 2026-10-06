@@ -101,7 +101,7 @@ final class LocalModels: ObservableObject {
         id == "ext-ollama" ? "Ollama" : id == "ext-lmstudio" ? "LM Studio" : id
     }
 
-    /// `mlx_lm.server`, if installed (e.g. `uv tool install mlx-lm`).
+    /// `mlx_lm.server`, if installed (`PythonTools` installs it from Settings).
     nonisolated static var mlxServerPath: String? { ToolLocator.path(named: "mlx_lm.server") }
 
     /// Every runnable model in the Hugging Face cache, Local's folder and Lamp's old folder.
@@ -425,7 +425,7 @@ final class LocalModels: ObservableObject {
     private func ensureMLX(_ id: String) async throws {
         if mlxModel == id, await Self.healthy("\(Self.mlxBaseURL)/v1/models") { return }
         guard let path = Self.mlxServerPath else {
-            throw LocalError("MLX models need mlx-lm. Install it with `uv tool install mlx-lm` (or `pip install mlx-lm`), then try again.")
+            throw LocalError("This model needs a one-time install before it can run. In Lamp, open Settings → Providers, double-click Native Mac AI and click Install beside the model, then try again.")
         }
         stopMLX()
         let process = Process()
