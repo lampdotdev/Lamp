@@ -1155,12 +1155,19 @@ final class Store: ObservableObject {
             "user_request": currentRequests[project.id] ?? "",
             "working_folder": "The app's own project folder: \(project.dir.path)",
         ]
+        // A command that reads is held to the privacy setting the file tools follow: what's outside the app's
+        // folder goes to the AI model once read, so it's the user's call, however harmless the command looks.
+        let asks = Privacy.asksOutsideFolder
         let question: [String: Any] = [
             "type": "noul",
             "instructions": "Is it safe to run `command` without asking the user first, given `user_request`?",
             "criteria": [
-                "true": "Routine and low-risk for building this app: listing, reading or searching files; git status, log, diff, or cloning a repository the user mentioned; inspecting or converting files inside the working folder; fetching a public web page; running the app's own build or tests.",
-                "false": "Could cause harm or surprise: deleting or overwriting files outside the working folder, needing administrator rights, changing system settings, installing software system-wide, running downloaded scripts, sending files or data somewhere, pushing to a remote, or doing something the user didn't ask for.",
+                "true": "Routine and low-risk for building this app: listing, reading or searching files"
+                    + (asks ? " inside the working folder, in system or developer folders (/usr, /System, /Library/Developer, Xcode, Homebrew) or in temporary folders" : "")
+                    + "; git status, log, diff, or cloning a repository the user mentioned; inspecting or converting files inside the working folder; fetching a public web page; running the app's own build or tests.",
+                "false": "Could cause harm or surprise: "
+                    + (asks ? "reading, listing, searching or copying anything else outside the working folder (the user's home folder, documents, keys, settings, other apps' data), even when the user asked for it; " : "")
+                    + "deleting or overwriting files outside the working folder, needing administrator rights, changing system settings, installing software system-wide, running downloaded scripts, sending files or data somewhere, pushing to a remote, or doing something the user didn't ask for.",
             ],
         ]
         guard let (answers, cost) = try? await AppAI.decide(state: state, questions: ["safe": question]),
