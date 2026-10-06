@@ -1203,7 +1203,6 @@ final class Store: ObservableObject {
         guard Self.binary(of: project, contains: "dev.forge.useApp.") else {
             return (200, ["text": "The open app was built before use_app could do this. Call look_at_app to rebuild it, then try again."])
         }
-        log(project, .detail, "Trying the app: " + actions.compactMap { $0["action"] as? String }.joined(separator: ", "))
         let id = UUID().uuidString
         let printed = Runtime.logSize(project)
         DistributedNotificationCenter.default().postNotificationName(

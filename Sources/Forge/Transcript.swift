@@ -3,7 +3,7 @@ import SwiftUI
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, other }
 
     let name: String
     let argument: String
@@ -35,6 +35,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
+        "look_at_app": .look, "use_app": .use,
     ]
 
     var icon: String {
@@ -49,6 +50,8 @@ struct ToolCall {
         case .web: "globe"
         case .plan: "checklist"
         case .delegate: "person.2"
+        case .look: "eye"
+        case .use: "cursorarrow.click.2"
         case .other: "wrench.adjustable"
         }
     }
@@ -65,6 +68,8 @@ struct ToolCall {
         case .web: name.lowercased() == "websearch" ? "Searched the web" : "Fetched"
         case .plan: "Updated the plan"
         case .delegate: "Started a subtask"
+        case .look: "Looked at the app"
+        case .use: "Tried the app"
         case .other: name
         }
     }
@@ -83,6 +88,8 @@ struct ToolCall {
         case .web: "fetched \(n("page", "pages"))"
         case .plan: "updated the plan"
         case .delegate: "started \(n("subtask", "subtasks"))"
+        case .look: "looked at the app" + (count == 1 ? "" : " \(count) times")
+        case .use: "tried the app" + (count == 1 ? "" : " \(count) times")
         case .other: n("step", "steps")
         }
     }
