@@ -17,7 +17,7 @@ struct Composer: NSViewRepresentable {
     var onSubmit: () -> Void
     var onFiles: ([URL]) -> Void
 
-    static let maxLines: CGFloat = 8
+    static let maxLines: CGFloat = 6
     static let inset: CGFloat = 4
     /// Height of a one-line composer; buttons beside it use this so they line up with the text.
     static let lineHeight = NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: NSFont.systemFontSize)) + inset * 2
@@ -50,6 +50,7 @@ struct Composer: NSViewRepresentable {
 
         scroll.documentView = textView
         context.coordinator.textView = textView
+        textView.onWidthChange = { [weak coordinator = context.coordinator] in coordinator?.updateHeight() }
         return scroll
     }
 
@@ -109,6 +110,7 @@ final class ComposerTextView: NSTextView {
     var onDismissSuggestion: (() -> Void)?
     var onSubmit: (() -> Void)?
     var onFiles: (([URL]) -> Void)?
+    var onWidthChange: (() -> Void)?
 
     private var showsSuggestion: Bool { string.isEmpty && suggestion != nil }
 
@@ -131,6 +133,14 @@ final class ComposerTextView: NSTextView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    /// The text rewraps when the width changes (the window is resized, or the chat comes back with a draft
+    /// in it), so the composer's height has to be measured again, not only when the text changes.
+    override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = abs(newSize.width - frame.width) > 0.5
+        super.setFrameSize(newSize)
+        if widthChanged { onWidthChange?() }
     }
 
     override func mouseDown(with event: NSEvent) {
