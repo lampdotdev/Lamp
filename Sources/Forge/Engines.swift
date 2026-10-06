@@ -94,6 +94,29 @@ enum Builder {
         ("haiku", "Haiku"),
     ]
 
+    /// Codex's choices: the models its account can use, from the list Codex itself caches
+    /// (~/.codex/models_cache.json), best first. Just the default when the cache isn't there.
+    static var codexModels: [(id: String, label: String)] {
+        [("", "Codex's default")] + codexCatalog.map { ($0.slug, $0.name) }
+    }
+
+    /// Codex's small, fast model, for quick judgments: the "Luna" line.
+    static var codexFastModel: String? { codexCatalog.first { $0.slug.contains("luna") }?.slug }
+
+    private static var codexCatalog: [(slug: String, name: String)] {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/models_cache.json")
+        guard let data = try? Data(contentsOf: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = json["models"] as? [[String: Any]] else { return [] }
+        return models
+            .filter { $0["visibility"] as? String == "list" }
+            .sorted { ($0["priority"] as? Int ?? 99) < ($1["priority"] as? Int ?? 99) }
+            .compactMap { model in
+                guard let slug = model["slug"] as? String else { return nil }
+                return (slug, model["display_name"] as? String ?? slug)
+            }
+    }
+
     /// The model for the current pi provider; each provider remembers its own.
     static var piModel: String {
         get {
@@ -149,7 +172,8 @@ enum Builder {
         default:
             let model = engineModel(engine)
             guard !model.isEmpty else { return engine.title }
-            return "\(engine.title), \(claudeModels.first { $0.id == model }?.label ?? model)"
+            let names = engine == .claude ? claudeModels : codexModels
+            return "\(engine.title), \(names.first { $0.id == model }?.label ?? model)"
         }
     }
 }

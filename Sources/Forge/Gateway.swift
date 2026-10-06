@@ -83,15 +83,27 @@ final class Gateway: @unchecked Sendable {
 
 /// Runs an in-app AI request with whatever Forge is connected to.
 enum AppAI {
-    static let models: [(id: String, label: String, openRouter: String)] = [
+    /// The in-app text models with an OpenRouter key (or Claude Code answering without one).
+    static let anthropicModels: [(id: String, label: String, openRouter: String)] = [
         ("claude-fable-5-1", "Smartest, priciest (Claude Fable)", "anthropic/claude-fable-5.1"),
         ("opus", "Best at coding (Claude Opus)", "anthropic/claude-opus-5.5"),
         ("sonnet", "Faster & cheaper (Claude Sonnet)", "anthropic/claude-sonnet-5.5"),
         ("haiku", "Fastest, cheapest (Claude Haiku)", "anthropic/claude-haiku-4.5"),
     ]
 
+    /// Without an OpenRouter key, Codex answers for apps with its own models, so those are the choices.
+    static var answersViaCodex: Bool { !Provider.hasKey && Builder.engine == .codex }
+
+    static var models: [(id: String, label: String, openRouter: String)] {
+        guard answersViaCodex else { return anthropicModels }
+        let codex = Builder.codexModels.dropFirst().map { (id: $0.id, label: $0.label, openRouter: "") }
+        return codex.isEmpty ? [("", "Codex's default", "")] : Array(codex)
+    }
+
     /// Sonnet: Haiku is cheaper but noticeably worse, so it's only used when someone picks it.
-    static var defaultModel: (id: String, label: String, openRouter: String) { models.first { $0.id == "sonnet" }! }
+    static var defaultModel: (id: String, label: String, openRouter: String) {
+        answersViaCodex ? models[0] : anthropicModels.first { $0.id == "sonnet" }!
+    }
 
     static var model: (id: String, label: String, openRouter: String) {
         let id = UserDefaults.standard.string(forKey: "appModel") ?? defaultModel.id
@@ -260,9 +272,16 @@ enum AppAI {
             env["FORGE_CODEX_INSTRUCTIONS"] = "developer_instructions="
                 + Agent.tomlString(env["FORGE_SYSTEM"]! + "\n\nAnswer directly. Don't run commands or change files.")
             let imageArgs = files.indices.map { "-i \"$FORGE_FILE_\($0)\"" }.joined(separator: " ")
+            // Only one of Codex's own models is passed on; an Anthropic id (an app built before Codex
+            // answered for it) means Codex's default.
+            var modelArg = ""
+            if Builder.codexModels.contains(where: { $0.id == model && !model.isEmpty }) {
+                env["FORGE_MODEL"] = model
+                modelArg = "-m \"$FORGE_MODEL\" "
+            }
             command = """
             "$FORGE_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
-              -s read-only -c hooks={} -c model_reasoning_effort="low" -c "$FORGE_CODEX_INSTRUCTIONS" \(imageArgs) -- "$FORGE_PROMPT"
+              -s read-only -c hooks={} -c model_reasoning_effort="low" \(modelArg)-c "$FORGE_CODEX_INSTRUCTIONS" \(imageArgs) -- "$FORGE_PROMPT"
             """
         case .pi:
             return try await viaPi(prompt: prompt, images: images, system: system)
@@ -337,6 +356,8 @@ enum AppAI {
                        model appChoice: String? = nil) async throws -> ([String: Any], Double) {
         let choice = decisionModels.first { $0.id == appChoice } ?? decisionModel
         guard let key = KeyStore.key(for: choice.provider) else {
+            // No decision model: a small text model answers the same questions in JSON instead.
+            if canAnswer { return try await decideByText(state: state, questions: questions) }
             let name = choice.provider == "typesafe" ? "a TypeSafe" : "an OpenRouter"
             throw Failure(message: "Decisions need \(name) key. Add one in Forge → Settings (⌘,) → AI.")
         }
@@ -371,6 +392,101 @@ enum AppAI {
             return (answers, cost)
         }
         throw Failure(message: "The decision model is busy. Try again in a moment.")
+    }
+
+    /// The fast model of whatever answers for apps, for decisions made by text: Haiku through Claude Code,
+    /// Luna through Codex, and pi's own model otherwise.
+    static var fastModel: String? {
+        switch Builder.engine {
+        case .claude: "haiku"
+        case .codex: Builder.codexFastModel
+        case .pi: nil
+        }
+    }
+
+    /// What `fastModel` is called in Settings.
+    static var fastModelName: String {
+        switch Builder.engine {
+        case .claude: "Haiku through Claude Code"
+        case .codex: (Builder.codexModels.first { $0.id == Builder.codexFastModel }?.label).map { "\($0) through Codex" } ?? "Codex"
+        case .pi: "the builder's own model"
+        }
+    }
+
+    /// Decisions without a decision model: the questions go to a small text model as JSON, and its answers
+    /// come back in the same shape Jev's would (`noul`, `choice`/`score` with `probabilities` and
+    /// `confidence`), checked against each question so an app can't be handed a made-up option.
+    static func decideByText(state: Any, questions: [String: Any]) async throws -> ([String: Any], Double) {
+        let stateJSON = (try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys, .fragmentsAllowed]))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "\(state)"
+        let questionsJSON = (try? JSONSerialization.data(withJSONObject: questions, options: [.sortedKeys]))
+            .map { String(decoding: $0, as: UTF8.self) } ?? ""
+        // Worded for a small model: Luna got "rm -rf ~" backwards with a terser version of this.
+        let system = """
+        You answer typed questions about some state, like a calibrated classifier. The questions are JSON, keyed \
+        by id; reply with one JSON object with the same keys and nothing else.
+
+        For a question of type "noul", the value is {"noul": p}: p is the probability, from 0 to 1, that the \
+        answer to its instructions is yes, judged against its criteria ("true" describes a yes, "false" a no). \
+        A clear no is 0.0, a clear yes 1.0.
+
+        For a question of type "choice", the criteria are the options (a description of when each applies, or \
+        null). The value is {"choice": option, "probabilities": {option: p, ...}, "confidence": c}: one \
+        probability per option, summing to 1; choice is the most likely option; confidence (0 to 1) is how \
+        concentrated the probabilities are.
+
+        For a question of type "score", the criteria are ordered levels, lowest first, each describing a \
+        situation. The value is {"score": s, "probabilities": {"0": p, "1": p, ...}, "confidence": c}: one \
+        probability per level index, summing to 1; s is the probability-weighted index; confidence (0 to 1) is \
+        how concentrated the probabilities are.
+        """
+        let prompt = "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)"
+        let (text, cost) = try await complete(prompt: prompt, images: [], system: system, json: true, appModel: fastModel)
+        guard let raw = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
+            throw Failure(message: "The model's decision wasn't valid JSON.", cost: cost)
+        }
+        var answers: [String: Any] = [:]
+        for (id, question) in questions {
+            guard let q = question as? [String: Any], let type = q["type"] as? String else { continue }
+            let given = raw[id] as? [String: Any] ?? [:]
+            func clamp(_ value: Any?) -> Double? { (value as? NSNumber).map { min(max($0.doubleValue, 0), 1) } }
+            switch type {
+            case "noul":
+                guard let p = clamp(given["noul"]) else { throw Failure(message: "The model didn't answer \"\(id)\".", cost: cost) }
+                answers[id] = ["noul": p]
+            case "choice":
+                let options = (q["criteria"] as? [String: Any])?.keys.map { $0 } ?? (q["criteria"] as? [String] ?? [])
+                var probabilities = (given["probabilities"] as? [String: Any] ?? [:]).reduce(into: [String: Double]()) {
+                    if options.contains($1.key), let p = clamp($1.value) { $0[$1.key] = p }
+                }
+                var choice = given["choice"] as? String
+                if choice == nil || !options.contains(choice!) { choice = probabilities.max { $0.value < $1.value }?.key }
+                guard let choice else { throw Failure(message: "The model didn't pick an option for \"\(id)\".", cost: cost) }
+                if probabilities.isEmpty { probabilities = [choice: 1] }
+                let total = probabilities.values.reduce(0, +)
+                if total > 0 { probabilities = probabilities.mapValues { $0 / total } }
+                answers[id] = ["choice": choice, "probabilities": probabilities,
+                               "confidence": clamp(given["confidence"]) ?? probabilities[choice] ?? 1]
+            case "score":
+                let levels = (q["criteria"] as? [Any])?.count ?? 0
+                let top = Double(max(levels - 1, 0))
+                var probabilities = (given["probabilities"] as? [String: Any] ?? [:]).reduce(into: [String: Double]()) {
+                    if let index = Int($1.key), index >= 0, Double(index) <= top, let p = clamp($1.value) { $0[$1.key] = p }
+                }
+                var score = (given["score"] as? NSNumber).map { min(max($0.doubleValue, 0), top) }
+                if score == nil, !probabilities.isEmpty {
+                    let total = probabilities.values.reduce(0, +)
+                    score = total > 0 ? probabilities.reduce(0) { $0 + Double($1.key)! * $1.value } / total : nil
+                }
+                guard let score else { throw Failure(message: "The model didn't rate \"\(id)\".", cost: cost) }
+                if probabilities.isEmpty { probabilities = [String(Int(score.rounded())): 1] }
+                answers[id] = ["score": score, "probabilities": probabilities,
+                               "confidence": clamp(given["confidence"]) ?? 0.5]
+            default:
+                throw Failure(message: "Unknown question type \"\(type)\".", cost: cost)
+            }
+        }
+        return (answers, cost)
     }
 
     /// Creates or edits an image with the image model from Settings, via OpenRouter's image API.

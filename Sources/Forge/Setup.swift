@@ -337,7 +337,13 @@ struct BuildingSettings: View {
                             ForEach(Builder.claudeModels, id: \.id) { Text($0.label).tag($0.id) }
                         }
                     } else if selectedEngine == .codex {
-                        TextField("Model", text: engineModel(.codex), prompt: Text("Codex's default"))
+                        if Builder.codexModels.count > 1 {
+                            Picker("Model", selection: engineModel(.codex)) {
+                                ForEach(Builder.codexModels, id: \.id) { Text($0.label).tag($0.id) }
+                            }
+                        } else {
+                            TextField("Model", text: engineModel(.codex), prompt: Text("Codex's default"))
+                        }
                     }
                     Text(selectedEngine == .codex
                          ? "Codex runs commands inside its own sandbox, limited to the app's folder."
@@ -419,7 +425,9 @@ struct AppsSettings: View {
                     ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
                 }
                 let _ = revision   // re-read KeyStore after the TypeSafe key changes
-                Text("Image generation and the in-app models above need an OpenRouter key\(KeyStore.openRouterKey == nil ? ". Add one in Providers." : ".")")
+                Text(KeyStore.openRouterKey == nil
+                     ? "Without an OpenRouter key, your apps' text AI goes through \(Builder.engine == .pi ? "the builder's provider" : Builder.engine.title) with your sign-in, and apps can't make images. Add a key in Providers for images and the models above."
+                     : "Image generation and the in-app models above use your OpenRouter key.")
                     .font(.caption).foregroundStyle(.secondary)
 
                 Picker("Decision model", selection: $decisionModel) {
@@ -430,7 +438,10 @@ struct AppsSettings: View {
                         KeyRow(provider: Provider.typesafe, label: "TypeSafe key") { revision += 1 }
                     }
                 } else if KeyStore.openRouterKey == nil {
-                    Text("Add an OpenRouter key in Providers, or switch to TypeSafe.").font(.caption).foregroundStyle(.orange)
+                    Text(AppAI.canAnswer
+                         ? "No key for this yet, so decisions are made by \(AppAI.fastModelName) instead: slower and less exact than Jev. Add an OpenRouter key in Providers, or switch to TypeSafe."
+                         : "Add an OpenRouter key in Providers, or switch to TypeSafe.")
+                        .font(.caption).foregroundStyle(.orange)
                 }
                 Text("Fast, cheap typed judgments for apps: yes/no probabilities, picking from options, and rating on a scale, each with a calibrated confidence. Text in, decisions out.")
                     .font(.caption).foregroundStyle(.secondary)
