@@ -165,7 +165,7 @@ final class Store: ObservableObject {
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
-        // Finding Claude Code / Codex / opencode means asking the login shell for PATH; do it off the main thread.
+        // Finding Claude Code / Codex means asking the login shell for PATH; do it off the main thread.
         Task.detached(priority: .utility) { _ = ToolLocator.userPath }
         Task {
             LocalModels.shared.refresh()

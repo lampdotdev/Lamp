@@ -329,7 +329,7 @@ struct BuildingSettings: View {
                     } else {
                         LabeledContent("Installed", value: path.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "Not found")
                     }
-                    if path != nil, selectedEngine != .opencode {
+                    if path != nil {
                         EngineSignInRow(engine: selectedEngine)
                     }
                     if selectedEngine == .claude {
@@ -341,9 +341,7 @@ struct BuildingSettings: View {
                     }
                     Text(selectedEngine == .codex
                          ? "Codex runs commands inside its own sandbox, limited to the app's folder."
-                         : selectedEngine == .opencode
-                            ? "opencode can't ask for approval, so it only runs commands when that's set to Never."
-                            : "Uses your Claude Code sign-in, without your personal hooks, plugins or connectors.")
+                         : "Uses your Claude Code sign-in, without your personal hooks, plugins or connectors.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if let problem = Builder.problem() {
