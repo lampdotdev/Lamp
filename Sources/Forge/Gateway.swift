@@ -1,7 +1,6 @@
 import Foundation
 import AppKit
 import Network
-import ImagePlayground
 
 /// A tiny HTTP server on 127.0.0.1 that lets generated apps use Forge's AI
 /// without ever seeing the key. Apps call it through `ForgeAI` (see Template.forgeSupportSwift).
@@ -494,17 +493,17 @@ enum AppAI {
         return (answers, cost)
     }
 
-    /// Where images come from: OpenRouter's image models with a key; otherwise Codex's own image tool,
-    /// with a ChatGPT sign-in; otherwise Apple's on-device Image Playground (Apple Intelligence); otherwise
-    /// nothing, and Forge asks for a key the first time an app wants a picture.
-    enum ImageRoute { case openRouter, codex, apple }
+    /// Where images come from: OpenRouter's image models with a key; otherwise Codex's own image tool, with a
+    /// ChatGPT sign-in; otherwise nothing, and Forge asks for a key the first time an app wants a picture.
+    /// (Apple's on-device Image Playground has no programmatic API any more: ImageCreator stopped working in
+    /// macOS 27, and the replacement is a sheet the person drives.)
+    enum ImageRoute { case openRouter, codex }
 
     /// The route as far as can be told without asking anything: for Settings' text. `imageRoute()` is the
     /// one to act on.
     static var imageRoute: ImageRoute? {
         if Provider.hasKey { return .openRouter }
         if ToolLocator.path(for: .codex) != nil, codexSignedIn != false { return .codex }
-        if #available(macOS 15.4, *), ImagePlaygroundViewController.isAvailable, !appleRefused { return .apple }
         return nil
     }
 
@@ -519,23 +518,17 @@ enum AppAI {
             }
             if codexSignedIn == true { return .codex }
         }
-        if #available(macOS 15.4, *), ImagePlaygroundViewController.isAvailable, !appleRefused { return .apple }
         return nil
     }
 
     private static var codexSignedIn: Bool?
     private static var codexChecked = Date.distantPast
 
-    /// Image Playground said it can't make pictures here (Apple Intelligence off, or not on this Mac), even
-    /// though it reported itself available: from then on the route is as good as absent.
-    private static var appleRefused = false
-
     /// What's making images, for Settings.
     static var imageRouteName: String? {
         switch imageRoute {
         case .openRouter: "OpenRouter"
         case .codex: "Codex, with your ChatGPT sign-in"
-        case .apple: "Apple's Image Playground on this Mac"
         case nil: nil
         }
     }
@@ -544,16 +537,12 @@ enum AppAI {
     static let noImageRoute = "Making images needs an OpenRouter key. Add one in Forge → Settings (⌘,)."
 
     /// Creates or edits an image. `references` are input images to edit or combine. Returns PNG data and
-    /// the cost in USD (0 through Codex and Apple).
+    /// the cost in USD (0 through Codex).
     static func image(prompt: String, references: [Image], aspectRatio: String?,
                       model appChoice: String? = nil) async throws -> (Data, Double) {
         switch await imageRoute() {
         case .openRouter: break
         case .codex: return (try await viaCodexImage(prompt: prompt, references: references, aspectRatio: aspectRatio), 0)
-        case .apple:
-            // Image Playground makes pictures from words; it can't edit the ones an app hands over.
-            guard references.isEmpty else { throw Failure(message: noImageRoute) }
-            return (try await viaApple(prompt: prompt), 0)
         case nil: throw Failure(message: noImageRoute)
         }
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/images")!)
@@ -623,27 +612,6 @@ enum AppAI {
             throw Failure(message: "Codex didn't make the picture. Check it's signed in (Forge → Settings → Building).")
         }
         return data
-    }
-
-    /// Apple's Image Playground, on the Mac itself: free and offline, in its illustration style.
-    private static func viaApple(prompt: String) async throws -> Data {
-        guard #available(macOS 15.4, *) else { throw Failure(message: noImageRoute) }
-        do {
-            let creator = try await ImageCreator()
-            let style = creator.availableStyles.contains(.illustration) ? .illustration : creator.availableStyles.first ?? .illustration
-            for try await image in creator.images(for: [.text(prompt)], style: style, limit: 1) {
-                guard let png = NSBitmapImageRep(cgImage: image.cgImage).representation(using: .png, properties: [:]) else { break }
-                return png
-            }
-            throw Failure(message: "Image Playground didn't make a picture.")
-        } catch let failure as Failure {
-            throw failure
-        } catch ImageCreator.Error.notSupported, ImageCreator.Error.unavailable {
-            appleRefused = true
-            throw Failure(message: noImageRoute)
-        } catch {
-            throw Failure(message: "Image Playground couldn't make that picture: \(error.localizedDescription)")
-        }
     }
 
     private static func viaOpenRouter(prompt: String, images: [Image], system: String,

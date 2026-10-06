@@ -1727,7 +1727,7 @@ final class Store: ObservableObject {
                 try await deploy(project)
                 log(project, .status, "New icon artwork is in. It shows in the Dock after the app restarts.")
             } catch let failure as AppAI.Failure where failure.message == AppAI.noImageRoute {
-                // Image Playground said yes until asked: the key card is still the right answer.
+                // Codex signed out between the check and the pictures: the key card is still the right answer.
                 askForKey(project, because: "Forge can draw a proper icon for \(project.name), and pictures inside your apps, with an OpenRouter key.")
             } catch {
                 log(project, .detail, "Icon artwork failed: \(error.localizedDescription)")
