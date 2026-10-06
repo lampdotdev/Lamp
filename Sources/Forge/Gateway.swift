@@ -174,7 +174,7 @@ enum AppAI {
                 (text, cost) = try await viaPi(prompt: prompt, images: images, system: system)
             }
         } else if ToolLocator.path(for: Builder.engine) != nil {
-            // No OpenRouter key: use the Claude Code, Codex or opencode sign-in that builds apps.
+            // No OpenRouter key: use the Claude Code or Codex sign-in that builds apps.
             (text, cost) = try await viaEngine(Builder.engine, prompt: prompt, images: images, system: system,
                                                model: chosen.id)
         } else {
@@ -264,11 +264,6 @@ enum AppAI {
             "$FORGE_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
               -s read-only -c hooks={} -c model_reasoning_effort="low" -c "$FORGE_CODEX_INSTRUCTIONS" \(imageArgs) -- "$FORGE_PROMPT"
             """
-        case .opencode:
-            env["FORGE_PROMPT"] = "Instructions (follow these):\n\(env["FORGE_SYSTEM"]!)\n\nRequest:\n\(prompt)"
-            env["OPENCODE_CONFIG_CONTENT"] = #"{"permission":{"edit":"deny","bash":"deny","webfetch":"deny"}}"#
-            let fileArgs = files.indices.map { "-f \"$FORGE_FILE_\($0)\"" }.joined(separator: " ")
-            command = "\"$FORGE_TOOL\" run --format json \"$FORGE_PROMPT\" \(fileArgs)"
         case .pi:
             return try await viaPi(prompt: prompt, images: images, system: system)
         }

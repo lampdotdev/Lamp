@@ -2,7 +2,7 @@ import Foundation
 
 /// Which coding agent builds apps.
 enum Engine: String, CaseIterable, Identifiable {
-    case pi, claude, codex, opencode
+    case pi, claude, codex
 
     var id: String { rawValue }
 
@@ -11,7 +11,6 @@ enum Engine: String, CaseIterable, Identifiable {
         case .pi: "Forge's built-in agent"
         case .claude: "Claude Code"
         case .codex: "Codex"
-        case .opencode: "opencode"
         }
     }
 
@@ -21,7 +20,6 @@ enum Engine: String, CaseIterable, Identifiable {
         case .pi: nil
         case .claude: "claude"
         case .codex: "codex"
-        case .opencode: "opencode"
         }
     }
 }
@@ -183,7 +181,7 @@ enum ToolLocator {
             let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             parts = output.split(separator: ":").map(String.init).filter { $0.hasPrefix("/") }
         }
-        parts += ["\(home)/.local/bin", "\(home)/.opencode/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+        parts += ["\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
         var seen = Set<String>()
         let path = parts.filter { seen.insert($0).inserted }.joined(separator: ":")
         resolvedPath = path
@@ -389,20 +387,6 @@ extension Agent {
             let images = files.enumerated().filter { Attachments.isImage(URL(fileURLWithPath: $0.element)) }
                 .map { "-i \"$FORGE_FILE_\($0.offset)\"" }.joined(separator: " ")
             return AgentRun(command: "\"$FORGE_TOOL\" exec \(options) -C \"$FORGE_DIR\" \(images) -- \"$FORGE_PROMPT\"", env: env)
-        case .opencode:
-            env["FORGE_TOOL"] = ToolLocator.path(for: .opencode) ?? "opencode"
-            env["FORGE_PROMPT"] = "Instructions from Forge (follow these):\n\(systemPrompt)\n\nRequest:\n\(prompt)"
-            // Edits allowed, shell and web off: Forge does the building.
-            // opencode has no way to ask for approval when run like this, so its shell is on only when the user
-            // chose to never be asked. Reading the web is allowed.
-            env["OPENCODE_CONFIG_CONTENT"] = CommandApproval.current == .never
-                ? #"{"permission":{"edit":"allow","bash":"allow","webfetch":"allow"}}"#
-                : #"{"permission":{"edit":"allow","bash":"deny","webfetch":"allow"}}"#
-            var command = "\"$FORGE_TOOL\" run --format json --dir \"$FORGE_DIR\""
-            if session != nil { command += " -s \"$FORGE_SESSION\"" }
-            command += " \"$FORGE_PROMPT\""
-            if !fileArgs.isEmpty { command += " " + fileArgs.map { "-f \($0)" }.joined(separator: " ") }
-            return AgentRun(command: command, env: env)
         }
     }
 
@@ -439,7 +423,6 @@ extension Agent {
         case .pi: parse(line)
         case .claude: parseClaude(line)
         case .codex: parseCodex(line)
-        case .opencode: parseOpencode(line)
         }
     }
 
@@ -550,35 +533,12 @@ extension Agent {
         }
     }
 
-    static func parseOpencode(_ line: String) -> [AgentEvent] {
-        guard let obj = json(line), let type = obj["type"] as? String else { return line.trimmed.isEmpty ? [] : [.raw(line)] }
-        var events: [AgentEvent] = []
-        if let id = obj["sessionID"] as? String { events.append(.session(id)) }
-        let part = obj["part"] as? [String: Any] ?? [:]
-        switch type {
-        case "text":
-            if let text = (part["text"] as? String)?.trimmed.nilIfEmpty { events.append(.text(text)) }
-        case "tool_use":
-            let state = part["state"] as? [String: Any] ?? [:]
-            events.append(.tool(tool(part["tool"] as? String ?? "tool", state["input"] as? [String: Any] ?? [:]),
-                                call: callKey(part["tool"] as? String ?? "tool", state["input"] as? [String: Any] ?? [:])))
-        case "step_finish":
-            if let cost = part["cost"] as? Double, cost > 0 { events.append(.cost(cost)) }
-        case "error":
-            let error = obj["error"] as? [String: Any] ?? [:]
-            let message = (error["data"] as? [String: Any])?["message"] as? String ?? error["name"] as? String
-            events.append(.failed(message ?? "opencode failed."))
-        default:
-            break
-        }
-        return events
-    }
 }
 
 /// Whether Claude Code or Codex is signed in, and signing in without Terminal: both tools' login commands
 /// open the browser and finish on their own.
 enum EngineSignIn {
-    /// nil when Forge can't tell (opencode, or the tool didn't answer).
+    /// nil when Forge can't tell (the tool didn't answer).
     static func isSignedIn(_ engine: Engine) async -> Bool? {
         guard let tool = ToolLocator.path(for: engine) else { return nil }
         switch engine {

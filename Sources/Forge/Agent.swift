@@ -32,7 +32,7 @@ enum Agent {
         return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
     }
 
-    /// Rules for the tools every engine but opencode has: pi through Resources/forge-tools.ts, Claude Code and
+    /// Rules for the tools every engine has: pi through Resources/forge-tools.ts, Claude Code and
     /// Codex through Forge's MCP endpoint (Store.mcp). Keep the two in step.
     static let tryRules = """
 
