@@ -1137,10 +1137,6 @@ final class Store: ObservableObject {
             log(project, .status, "Ran: \(command)")
             return true
         case .risky where !escalated, .unusual where !escalated:
-            if Self.isReadOnly(command) {
-                log(project, .status, "Ran: \(command)")
-                return true
-            }
             if await commandLooksSafe(command, for: project) {
                 log(project, .status, "Ran: \(command)")
                 return true
@@ -1154,17 +1150,27 @@ final class Store: ObservableObject {
     /// For agents without their own classifier (pi): obviously risky commands always go to the user; the rest
     /// are judged by the decision model against the user's request. No decision model available → ask.
     private func commandLooksSafe(_ command: String, for project: LampProject) async -> Bool {
+        // What's outside the app's folder goes to the AI model once read, so that's the user's call and not a
+        // model's: a command that names such a place is never routine, however the decision model would score it.
+        if Privacy.reachesOutside(command, project: project) { return false }
         let state: [String: Any] = [
             "command": command,
             "user_request": currentRequests[project.id] ?? "",
             "working_folder": "The app's own project folder: \(project.dir.path)",
         ]
+        // A command that reads is held to the privacy setting the file tools follow: what's outside the app's
+        // folder goes to the AI model once read, so it's the user's call, however harmless the command looks.
+        let asks = Privacy.asksOutsideFolder
         let question: [String: Any] = [
             "type": "noul",
             "instructions": "Is it safe to run `command` without asking the user first, given `user_request`?",
             "criteria": [
-                "true": "Routine and low-risk for building this app: listing, reading or searching files; git status, log, diff, or cloning a repository the user mentioned; inspecting or converting files inside the working folder; fetching a public web page; running the app's own build or tests.",
-                "false": "Could cause harm or surprise: deleting or overwriting files outside the working folder, needing administrator rights, changing system settings, installing software system-wide, running downloaded scripts, sending files or data somewhere, pushing to a remote, or doing something the user didn't ask for.",
+                "true": "Routine and low-risk for building this app: listing, reading or searching files"
+                    + (asks ? " inside the working folder, in system or developer folders (/usr, /System, /Library/Developer, Xcode, Homebrew) or in temporary folders" : "")
+                    + "; git status, log, diff, or cloning a repository the user mentioned; inspecting or converting files inside the working folder; fetching a public web page; running the app's own build or tests.",
+                "false": "Could cause harm or surprise: "
+                    + (asks ? "reading, listing, searching or copying anything else outside the working folder (the user's home folder, documents, keys, settings, other apps' data), even when the user asked for it; " : "")
+                    + "deleting or overwriting files outside the working folder, needing administrator rights, changing system settings, installing software system-wide, running downloaded scripts, sending files or data somewhere, pushing to a remote, or doing something the user didn't ask for.",
             ],
         ]
         guard let (answers, cost) = try? await AppAI.decide(state: state, questions: ["safe": question]),
@@ -1173,54 +1179,20 @@ final class Store: ObservableObject {
         return probability >= 0.85
     }
 
-    /// Commands that only read (Codex explores with its shell): every part of a pipeline or `&&` chain is a known
-    /// read-only program, with no redirection or command substitution. Anything else gets the normal approval.
-    nonisolated static func isReadOnly(_ raw: String) -> Bool {
-        var command = raw.trimmed
-        // Codex wraps commands as /bin/zsh -lc '…'.
-        if let match = command.firstMatch(of: #/^/bin/(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*)\1$/#) { command = String(match.2) }
-        if command.isEmpty || command.contains(">") || command.contains("`") || command.contains("$(") { return false }
-        let readers: Set<String> = ["cat", "ls", "head", "tail", "wc", "pwd", "echo", "rg", "grep", "egrep", "fgrep", "stat",
-                                    "file", "which", "tree", "sort", "uniq", "cut", "tr", "basename", "dirname", "realpath",
-                                    "du", "nl", "diff", "cd", "true", "test", "printf", "find", "sed", "git"]
-        let gitReads: Set<String> = ["status", "log", "diff", "show", "ls-files", "branch", "rev-parse", "blame", "grep"]
-        for part in Self.simpleCommands(in: command) {
-            let words = part.split(separator: " ").map(String.init).drop { $0.contains("=") && !$0.hasPrefix("-") }
-            guard let program = words.first.map({ ($0 as NSString).lastPathComponent }), readers.contains(program) else { return false }
-            let args = Array(words.dropFirst())
-            switch program {
-            case "find": if args.contains(where: { ["-exec", "-execdir", "-delete", "-ok", "-fprint"].contains($0) }) { return false }
-            case "sed": if !args.contains("-n") || args.contains(where: { $0.hasPrefix("-i") }) { return false }
-            case "git": if !gitReads.contains(args.first(where: { !$0.hasPrefix("-") }) ?? "") { return false }
-            default: break
-            }
+    /// Applies Settings → Building → Privacy to one of the agent's file tools, about to touch `path`: pi's own
+    /// tools ask through its extension, Codex's come from Lamp's MCP endpoint. The reason is for the agent.
+    private func fileAccess(tool: String, path: String, for project: LampProject) async -> (allowed: Bool, reason: String?) {
+        switch Privacy.verdict(tool: tool, path: path, project: project) {
+        case .allow: return (true, nil)
+        case .deny(let reason): return (false, reason)
+        case .ask:
+            let card = Privacy.explanation(tool: tool, path: path, project: project)
+            let allowed = await requestApproval(for: project, command: card.command,
+                                                title: "The agent wants a file outside this app's folder",
+                                                explanation: card.explanation)
+            return (allowed, allowed ? "Approved in Lamp."
+                : "The user didn't allow that. It's outside the app's folder; work with what's inside it, or say what you need and why.")
         }
-        return true
-    }
-
-    /// The simple commands of a shell line, split at the pipes, `;`, `&&` and `||` that sit outside quotes:
-    /// a `|` inside a search pattern (`rg 'a|b'`) is part of the pattern, not a pipe.
-    nonisolated static func simpleCommands(in command: String) -> [String] {
-        var parts: [String] = []
-        var current = ""
-        var quote: Character?
-        var escaped = false
-        for character in command {
-            if escaped { current.append(character); escaped = false; continue }
-            if character == "\\", quote != "'" { current.append(character); escaped = true; continue }
-            if let open = quote {
-                current.append(character)
-                if character == open { quote = nil }
-            } else if character == "'" || character == "\"" {
-                current.append(character); quote = character
-            } else if "|;&\n".contains(character) {
-                parts.append(current); current = ""
-            } else {
-                current.append(character)
-            }
-        }
-        parts.append(current)
-        return parts.map { $0.trimmed }.filter { !$0.isEmpty }
     }
 
     /// Asks the in-app AI model to describe a command for a non-technical person: what it does, and its risk.
@@ -1241,6 +1213,11 @@ final class Store: ObservableObject {
               let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
               let summary = (json["summary"] as? String)?.trimmed, !summary.isEmpty else { return nil }
         let risk = (json["risk"] as? String)?.lowercased() ?? "medium"
+        // The model judges what a command changes, and calls reading harmless. Reading outside the app's folder
+        // is at least what the same read through a file tool is: its contents go to the AI model.
+        if risk == "low", Privacy.reachesOutside(command, project: project) {
+            return CommandExplanation(summary: summary, risk: "medium", why: Privacy.outsideRead)
+        }
         return CommandExplanation(summary: summary, risk: ["low", "medium", "high"].contains(risk) ? risk : "medium",
                                   why: (json["why"] as? String)?.trimmed ?? "")
     }
@@ -1391,7 +1368,9 @@ final class Store: ObservableObject {
     /// `look_at_app` and `use_app` for agents that take tools over MCP (Claude Code and Codex): one streamable-HTTP
     /// endpoint speaking JSON-RPC, with no sessions or streams, that answers each request on the spot. Pictures go
     /// back as image content, so the model sees the windows just as pi's version shows them.
-    private func mcp(_ body: Data, for project: LampProject) async -> (Int, [String: Any]) {
+    /// `fileTools` adds `read`, `ls`, `find` and `grep` to the list, for Codex, which has none of its own;
+    /// pi and Claude Code keep theirs.
+    private func mcp(_ body: Data, for project: LampProject, fileTools: Bool) async -> (Int, [String: Any]) {
         guard let message = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let method = message["method"] as? String else {
             return (400, ["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "Not a JSON-RPC request."]])
@@ -1405,11 +1384,12 @@ final class Store: ObservableObject {
         case "ping":
             return reply([:])
         case "tools/list":
-            return reply(["tools": Self.mcpTools])
+            return reply(["tools": Self.mcpTools + (fileTools ? FileTools.definitions : [])])
         case "tools/call":
             let params = message["params"] as? [String: Any] ?? [:]
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
+            if FileTools.names.contains(name) { return reply(await file(name, arguments, for: project)) }
             let (status, answer): (Int, [String: Any])
             switch name {
             case "look_at_app": (status, answer) = await look(at: project)
@@ -1433,6 +1413,36 @@ final class Store: ObservableObject {
             // Notifications (initialized, cancelled) are acknowledged without a body; unknown requests get an error.
             if message["id"] == nil { return (202, [:]) }
             return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Method not found: \(method)"]])
+        }
+    }
+
+    /// One of the file tools, as an MCP tool result. Where it points is checked first, by the rule pi's file
+    /// tools follow; a call that names no path works in the app's own folder.
+    private func file(_ tool: String, _ arguments: [String: Any], for project: LampProject) async -> [String: Any] {
+        func failed(_ message: String) -> [String: Any] { ["content": [["type": "text", "text": message]], "isError": true] }
+        let given = (arguments["path"] as? String)?.nilIfEmpty ?? "."
+        let (allowed, reason) = await fileAccess(tool: tool, path: given, for: project)
+        guard allowed else { return failed(reason ?? "Lamp couldn't do that.") }
+        let path = Privacy.resolved(given, in: project.dir)
+        // Off the main thread: a search can read thousands of files.
+        let result = await Task.detached { () -> Result<FileTools.Reply, FileTools.Failure> in
+            do {
+                return .success(try FileTools.run(tool, path: path, arguments: arguments, folder: project.dir,
+                                                  hidden: { Privacy.hides($0, project: project) }))
+            } catch let failure as FileTools.Failure {
+                return .failure(failure)
+            } catch {
+                return .failure(FileTools.Failure(message: error.localizedDescription))
+            }
+        }.value
+        switch result {
+        case .failure(let failure): return failed(failure.message)
+        case .success(let found):
+            var content: [[String: Any]] = [["type": "text", "text": found.text]]
+            if let image = found.image {
+                content.append(["type": "image", "data": image.data.base64EncodedString(), "mimeType": image.mimeType])
+            }
+            return ["content": content]
         }
     }
 
@@ -1975,7 +1985,7 @@ final class Store: ObservableObject {
             return (401, ["error": "This app isn't registered with Lamp."])
         }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
-        if route == "/mcp" { return await mcp(request.body, for: project) }
+        if route == "/mcp" { return await mcp(request.body, for: project, fileTools: request.path.contains("files=1")) }
         if request.path == "/agent/look" { return await look(at: project) }
         if request.path == "/agent/use" { return await use(project, request: request.body) }
         if request.path.hasPrefix("/agent/versions") { return await versions(request, of: project) }
@@ -1983,17 +1993,8 @@ final class Store: ObservableObject {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             // One of the agent's file tools, about to touch something outside the app's folder or in its runtime folder.
             if let tool = body["file_tool"] as? String, let path = body["path"] as? String {
-                switch Privacy.verdict(tool: tool, path: path, project: project) {
-                case .allow: return (200, ["allow": true])
-                case .deny(let reason): return (200, ["allow": false, "reason": reason])
-                case .ask:
-                    let card = Privacy.explanation(tool: tool, path: path, project: project)
-                    let allowed = await requestApproval(for: project, command: card.command,
-                                                        title: "The agent wants a file outside this app's folder",
-                                                        explanation: card.explanation)
-                    return (200, ["allow": allowed, "reason": allowed ? "Approved in Lamp."
-                        : "The user didn't allow that. It's outside the app's folder; work with what's inside it, or say what you need and why."])
-                }
+                let (allowed, reason) = await fileAccess(tool: tool, path: path, for: project)
+                return (200, reason.map { ["allow": allowed, "reason": $0] } ?? ["allow": allowed])
             }
             // pi's extension sends {"command"}; Claude Code's hook sends {"tool_input": {"command"}}.
             let input = body["tool_input"] as? [String: Any] ?? [:]
@@ -2008,7 +2009,6 @@ final class Store: ObservableObject {
             let escalated = request.path.contains("format=claude-permission")
             if request.path.contains("format=codex") {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.
-                if Self.isReadOnly(command) { return (200, [:]) }
                 let allowed = await approveCommand(command, for: project, escalated: false)
                 return (200, allowed ? [:] : ["hookSpecificOutput": ["hookEventName": "PreToolUse",
                                                                      "permissionDecision": "deny",

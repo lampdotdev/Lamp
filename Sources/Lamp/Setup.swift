@@ -392,7 +392,7 @@ struct BuildingSettings: View {
             Section("Privacy") {
                 Toggle("Ask before the agent opens files outside an app's folder", isOn: $askOutsideFolder)
                 Text("The agent works in the app's own folder. Anything else on your Mac it wants to read or change, it asks for first; system and developer files don't count. Lamp's keys and your other apps are always off limits."
-                     + (selectedEngine == .pi ? "" : " This applies to Lamp's built-in agent; \(selectedEngine.title) follows its own rules."))
+                     + (selectedEngine == .claude ? " This applies to Lamp's built-in agent and Codex; Claude Code follows its own rules." : ""))
                     .font(.caption).foregroundStyle(.secondary)
                 Toggle("Show the agent what an app prints while it runs", isOn: $shareLog)
                 Toggle("Show the agent pictures of an app's windows", isOn: $sharePictures)

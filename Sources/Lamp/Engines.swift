@@ -398,10 +398,15 @@ extension Agent {
             // servers, features and rules), keeping their sign-in. Lamp's rules go in as developer instructions.
             env["LAMP_TOOL"] = ToolLocator.path(for: .codex) ?? "codex"
             env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt + tryRules + Self.codexNote)
-            // Approvals (Settings → Building): a PreToolUse hook sends each shell command to Lamp before it runs.
-            // Lamp lets known read-only commands through (Codex reads with its shell), and otherwise applies the
-            // setting: the decision model then the user (auto), the user (always). "Never" has no hook. In every
-            // mode Codex stays in its sandbox (writes only in the app's folder), with network access.
+            // Approvals (Settings → Building): a PreToolUse hook sends each shell command to Lamp before it runs,
+            // and Lamp applies the setting: the decision model, then the in-app model's risk rating, then the
+            // user (Only when risky, Anything unusual), or the user every time (Always). "Never" has no hook. In
+            // every mode Codex stays in its sandbox (writes only in the app's folder), with network access.
+            // Codex has no file tools of its own, and a shell command can read anything on the Mac without
+            // Lamp knowing what. So it reads with Lamp's `read`, `ls`, `find` and `grep` (FileTools, listed for
+            // it by `files=1`), which are held to the privacy rule pi's file tools follow, and needs no shell
+            // for reading. A read outside the app's folder waits for the user, so those calls may wait as long
+            // as a command does.
             let approval = CommandApproval.current
             env["LAMP_TOKEN"] = Template.token(for: project)
             env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=codex"
@@ -414,8 +419,8 @@ extension Agent {
             --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check \\
               -c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true \\
               -c web_search="live" -c "$LAMP_CODEX_INSTRUCTIONS" -c "$LAMP_CODEX_HOOKS" \\
-              -c mcp_servers.lamp.url="http://127.0.0.1:\(Gateway.port)/mcp" -c mcp_servers.lamp.bearer_token_env_var="LAMP_TOKEN" \\
-              -c mcp_servers.lamp.tool_timeout_sec=600 -c mcp_servers.lamp.default_tools_approval_mode="approve"
+              -c mcp_servers.lamp.url="http://127.0.0.1:\(Gateway.port)/mcp?files=1" -c mcp_servers.lamp.bearer_token_env_var="LAMP_TOKEN" \\
+              -c mcp_servers.lamp.tool_timeout_sec=3600 -c mcp_servers.lamp.default_tools_approval_mode="approve"
             """
             if session != nil {
                 // `exec resume` keeps the conversation; it takes no -C/-i (Lamp already runs in the app's folder).
@@ -427,11 +432,12 @@ extension Agent {
         }
     }
 
-    /// Codex reads and searches with its shell (it has no separate file tools), which is fine inside the sandbox.
+    /// Which tools the "file tools" of the rules above are, for Codex: its own are the shell and apply_patch.
     static let codexNote = """
 
-    - (Codex) Your shell is how you read and search files; reading inside the app's folder needs no approval. \
-    The "never use the shell to read files" rule above is for agents with separate file tools.
+    - (Codex) Your file tools are Lamp's `read`, `ls`, `find` and `grep`. Read, list and search files with \
+    them, never with the shell (no cat, sed, nl, ls, rg, grep or find there): inside the app's folder they need \
+    no approval, while a shell command may wait for the user's OK. Change files with apply_patch.
     """
 
     /// A TOML basic string, for `codex -c key=value`.
