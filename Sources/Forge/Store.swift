@@ -621,12 +621,12 @@ final class Store: ObservableObject {
     /// Where waiting requests' files are kept until their build starts.
     private var waitingFiles: URL { root.deletingLastPathComponent().appendingPathComponent("Waiting") }
 
+    /// Each file gets a folder of its own, so two with the same name (two "Dropped image.png") both keep a copy.
     private func keepForLater(_ files: [URL]) -> [URL] {
-        guard !files.isEmpty else { return [] }
-        let folder = waitingFiles.appendingPathComponent(UUID().uuidString)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        return files.map { file in
+        files.map { file in
+            let folder = waitingFiles.appendingPathComponent(UUID().uuidString)
             let copy = folder.appendingPathComponent(file.lastPathComponent)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             return (try? FileManager.default.copyItem(at: file, to: copy)) != nil ? copy : file
         }
     }
