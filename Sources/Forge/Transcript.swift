@@ -311,6 +311,8 @@ struct LogRow: View, Equatable {
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
                 .lineLimit(12)
+        case .needsKey:
+            KeyCard(reason: line.text)
         }
     }
 
@@ -327,6 +329,64 @@ struct LogRow: View, Equatable {
         for range in code { string[range].backgroundColor = Color.primary.opacity(0.07) }
         proseCache[text] = string
         return string
+    }
+}
+
+/// Asks for an OpenRouter key where it's first needed: in the chat of the app that wanted a picture. Once a
+/// key is saved (here or in Settings) the card just says so.
+struct KeyCard: View {
+    let reason: String
+    @State private var key = ""
+    @State private var checking = false
+    @State private var problem: String?
+    @State private var saved = Provider.hasKey
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label {
+                Text(saved ? "Pictures are on: your OpenRouter key is saved." : reason).lineSpacing(2)
+            } icon: {
+                Image(systemName: saved ? "checkmark.circle.fill" : "photo.on.rectangle.angled")
+                    .foregroundStyle(saved ? .green : .secondary)
+            }
+            if !saved {
+                Text("One key covers pictures, icon artwork and the fast in-app models; you pay OpenRouter only for what you use.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    SecureField("OpenRouter key (sk-or-…)", text: $key)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(save)
+                        .onChange(of: key) { problem = nil }
+                    if checking {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("Save", action: save).disabled(key.trimmed.isEmpty)
+                    }
+                    Link("Get a key", destination: URL(string: "https://openrouter.ai/keys")!)
+                }
+                if let problem {
+                    Label(problem, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .onAppear { saved = Provider.hasKey }
+    }
+
+    private func save() {
+        let candidate = key.trimmed
+        guard !candidate.isEmpty, !checking else { return }
+        checking = true
+        Task {
+            defer { checking = false }
+            if let found = await SetupView.checkOpenRouterKey(candidate) { problem = found; return }
+            KeyStore.setOpenRouterKey(candidate)
+            key = ""
+            saved = true
+            await Store.shared.recheckSetup()
+        }
     }
 }
 

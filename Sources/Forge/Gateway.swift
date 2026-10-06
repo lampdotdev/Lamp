@@ -493,12 +493,57 @@ enum AppAI {
         return (answers, cost)
     }
 
-    /// Creates or edits an image with the image model from Settings, via OpenRouter's image API.
-    /// `references` are input images to edit or combine. Returns PNG data and the cost in USD.
+    /// Where images come from: OpenRouter's image models with a key; otherwise Codex's own image tool, with a
+    /// ChatGPT sign-in; otherwise nothing, and Forge asks for a key the first time an app wants a picture.
+    /// (Apple's on-device Image Playground has no programmatic API any more: ImageCreator stopped working in
+    /// macOS 27, and the replacement is a sheet the person drives.)
+    enum ImageRoute { case openRouter, codex }
+
+    /// The route as far as can be told without asking anything: for Settings' text. `imageRoute()` is the
+    /// one to act on.
+    static var imageRoute: ImageRoute? {
+        if Provider.hasKey { return .openRouter }
+        if ToolLocator.path(for: .codex) != nil, codexSignedIn != false { return .codex }
+        return nil
+    }
+
+    /// The route to use now. Codex counts only when it's signed in (the copy inside the ChatGPT app is there
+    /// whether or not anyone ever logged in); that's checked at most every few minutes.
+    static func imageRoute() async -> ImageRoute? {
+        if Provider.hasKey { return .openRouter }
+        if ToolLocator.path(for: .codex) != nil {
+            if codexSignedIn == nil || Date().timeIntervalSince(codexChecked) > 300 {
+                codexSignedIn = await EngineSignIn.isSignedIn(.codex) ?? true
+                codexChecked = Date()
+            }
+            if codexSignedIn == true { return .codex }
+        }
+        return nil
+    }
+
+    private static var codexSignedIn: Bool?
+    private static var codexChecked = Date.distantPast
+
+    /// What's making images, for Settings.
+    static var imageRouteName: String? {
+        switch imageRoute {
+        case .openRouter: "OpenRouter"
+        case .codex: "Codex, with your ChatGPT sign-in"
+        case nil: nil
+        }
+    }
+
+    /// The failure an app gets when nothing can make images: Forge shows a card asking for a key.
+    static let noImageRoute = "Making images needs an OpenRouter key. Add one in Forge → Settings (⌘,)."
+
+    /// Creates or edits an image. `references` are input images to edit or combine. Returns PNG data and
+    /// the cost in USD (0 through Codex).
     static func image(prompt: String, references: [Image], aspectRatio: String?,
                       model appChoice: String? = nil) async throws -> (Data, Double) {
-        guard Provider.hasKey else {
-            throw Failure(message: "Forge needs an OpenRouter key before apps can use AI. Add one in Forge → Settings (⌘,).")
+        switch await imageRoute() {
+        case .openRouter: break
+        case .codex: return (try await viaCodexImage(prompt: prompt, references: references, aspectRatio: aspectRatio), 0)
+        case nil: throw Failure(message: noImageRoute)
         }
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/images")!)
         request.httpMethod = "POST"
@@ -528,6 +573,45 @@ enum AppAI {
             throw Failure(message: "The image model didn't return a picture.")
         }
         return (decoded, (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0)
+    }
+
+    /// Codex makes the picture with its built-in image tool and saves it in a scratch folder; reference
+    /// images are attached and named in the prompt. Takes about a minute.
+    private static func viaCodexImage(prompt: String, references: [Image], aspectRatio: String?) async throws -> Data {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("forge-image-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var files: [String] = []
+        for (index, image) in references.enumerated() {
+            guard let data = Data(base64Encoded: image.data) else { continue }
+            let name = "reference\(index + 1).\(image.mediaType.hasSuffix("png") ? "png" : "jpg")"
+            try data.write(to: folder.appendingPathComponent(name))
+            files.append(name)
+        }
+        var request = "Create an image and save it as image.png in the current folder, then reply with just: done.\n\n"
+        request += "The image: \(prompt)"
+        if let aspectRatio { request += "\n\nAspect ratio \(aspectRatio)." }
+        if !files.isEmpty {
+            request += "\n\nUse the attached \(files.count == 1 ? "image" : "images") (\(files.joined(separator: ", "))) as "
+                + (files.count == 1 ? "the reference: edit or build on it as the description says." : "references.")
+        }
+        var env: [String: String] = ["PATH": ToolLocator.userPath, "FORGE_TOOL": ToolLocator.path(for: .codex) ?? "codex",
+                                     "FORGE_PROMPT": request]
+        for (index, file) in files.enumerated() { env["FORGE_FILE_\(index)"] = file }
+        let imageArgs = files.indices.map { "-i \"$FORGE_FILE_\($0)\"" }.joined(separator: " ")
+        let command = """
+        "$FORGE_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
+          -c sandbox_mode="workspace-write" -c hooks={} -C "$PWD" \(imageArgs) -- "$FORGE_PROMPT"
+        """
+        var failure: String?
+        _ = await Shell.run(command, cwd: folder, env: env) { line in
+            for case .failed(let message) in Agent.parse(line, engine: .codex) { failure = message }
+        }
+        if let failure { throw Failure(message: Provider.friendlyError(failure)) }
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("image.png")), NSImage(data: data) != nil else {
+            throw Failure(message: "Codex didn't make the picture. Check it's signed in (Forge → Settings → Building).")
+        }
+        return data
     }
 
     private static func viaOpenRouter(prompt: String, images: [Image], system: String,
