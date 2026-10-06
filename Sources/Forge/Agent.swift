@@ -135,8 +135,9 @@ enum Agent {
     write your own check, list of steps, System Settings link, Finder reveal or relaunch for these. Wrap what \
     needs it: `ForgePermissionGate(.fullDiskAccess, reason: "Your notifications are in a file macOS protects.") \
     { SummaryView() }` shows the contents once the permission is on, and until then a screen that takes the \
-    person to the switch in System Settings, gets the app into the list there, notices by itself when it's \
-    switched on, and offers Quit & Reopen when macOS needs that. When only one feature needs it, don't gate the \
+    person to the switch in System Settings, gets the app into the list there, and ends in Quit & Reopen for \
+    Full Disk Access (macOS only gives that to an app when it starts) or notices by itself when the others are \
+    switched on. When only one feature needs it, don't gate the \
     whole app or ask at launch: check `ForgePermissions.has(.screenRecording)` when the feature is used and show \
     `ForgePermissionView(.screenRecording, reason: "…") { /* now on */ }` in a sheet. `@StateObject var access = \
     ForgePermissionState(.accessibility)` gives a live `isOn` for your own controls. Ask for the least that does \

@@ -2853,6 +2853,10 @@ enum Template {
             }
             return URL(string: "x-apple.systempreferences:com.apple.preference.security?" + pane)!
         }
+
+        /// macOS gives Full Disk Access to an app when it starts: one that was already open when the switch
+        /// went on still has none until it's opened again.
+        fileprivate var startsOnReopen: Bool { self == .fullDiskAccess }
     }
 
     /// Full Disk Access, Screen Recording and Accessibility: whether the app has one, and the way to get it.
@@ -2870,9 +2874,10 @@ enum Template {
     ///         ForgePermissionView(.screenRecording, reason: "Capture records your screen.") { askForRecording = false }
     ///     }
     ///
-    /// The screen opens the right page of System Settings, has the app's icon to drag into the list there (macOS
-    /// doesn't always list an app by itself, and its + button starts in the wrong folder), notices by itself
-    /// when the switch goes on, and offers Quit & Reopen when macOS only applies it to a fresh start of the app.
+    /// The screen opens the right page of System Settings and has the app's icon to drag into the list there
+    /// (macOS doesn't always list an app by itself, and its + button starts in the wrong folder). Full Disk
+    /// Access only reaches an app when it starts, so for that one the screen ends in Quit & Reopen; for the
+    /// others it notices by itself when the switch goes on, and offers Quit & Reopen if macOS wants a fresh start.
     /// Forge signs every build of an app the same way, so a permission stays on when the app is changed.
     /// Forge's builder can't turn a permission on: only the person can, so it sees this screen when it looks.
     enum ForgePermissions {
@@ -2923,8 +2928,8 @@ enum Template {
         }
 
         /// For trying the screens from Terminal on a Mac where nobody can flip the switch:
-        /// FORGE_PERMISSIONS=granted, denied or reopen.
-        private static var pretend: String? { ProcessInfo.processInfo.environment["FORGE_PERMISSIONS"] }
+        /// FORGE_PERMISSIONS=granted, denied, asked (denied, after Open System Settings was pressed) or reopen.
+        fileprivate static var pretend: String? { ProcessInfo.processInfo.environment["FORGE_PERMISSIONS"] }
 
         /// Files only Full Disk Access opens. Opening one never prompts; without access it's refused.
         private static var canReadProtectedFiles: Bool {
@@ -3050,7 +3055,7 @@ enum Template {
     private struct ForgePermissionScreen: View {
         @ObservedObject var state: ForgePermissionState
         let reason: String
-        @State private var asked = false
+        @State private var asked = ForgePermissions.pretend == "asked"
 
         private var appName: String {
             Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
@@ -3080,18 +3085,30 @@ enum Template {
                         step(2, "Switch on **\(appName)** in the list.")
                         step(3, "Not in the list? Drag this into it:")
                         appToDrag.padding(.leading, 26)
+                        if state.permission.startsOnReopen { step(4, "Come back here and press **Quit & Reopen**.") }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     HStack {
-                        Button("Open System Settings") {
-                            asked = true
-                            ForgePermissions.request(state.permission)
+                        if state.permission.startsOnReopen {
+                            // Whichever comes next is the one Return presses.
+                            if asked {
+                                settingsButton
+                                reopenButton.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                            } else {
+                                settingsButton.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                                reopenButton
+                            }
+                        } else {
+                            settingsButton.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                            if asked { reopenButton }
                         }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                        if asked { Button("Quit & Reopen") { ForgePermissions.reopen() } }
                     }
-                    if asked {
+                    if state.permission.startsOnReopen {
+                        Text("macOS gives \(appName) \(state.permission.name) the next time it opens, not while it's running.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    } else if asked {
                         Text("This screen goes away when the switch is on. If it's on and this is still here, press Quit & Reopen.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
@@ -3105,6 +3122,17 @@ enum Template {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onAppear { state.watch(true) }
             .onDisappear { state.watch(false) }
+        }
+
+        private var settingsButton: some View {
+            Button("Open System Settings") {
+                asked = true
+                ForgePermissions.request(state.permission)
+            }
+        }
+
+        private var reopenButton: some View {
+            Button("Quit & Reopen") { ForgePermissions.reopen() }
         }
 
         private func step(_ number: Int, _ text: LocalizedStringKey) -> some View {
