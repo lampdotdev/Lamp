@@ -709,7 +709,7 @@ struct AppInfoView: View {
                     ForEach(AppAI.models, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
                 }
                 Picker("Making images", selection: choice(\.image, default: Icons.artModel)) {
-                    ForEach(Icons.artModels, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
+                    ForEach(Icons.imageChoices, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
                 }
                 Picker("Decisions", selection: choice(\.decision, default: AppAI.decisionModel.id)) {
                     ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }

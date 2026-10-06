@@ -493,16 +493,17 @@ enum AppAI {
         return (answers, cost)
     }
 
-    /// Where images come from: OpenRouter's image models with a key; otherwise Codex's own image tool, with a
-    /// ChatGPT sign-in; otherwise nothing, and Forge asks for a key the first time an app wants a picture.
-    /// (Apple's on-device Image Playground has no programmatic API any more: ImageCreator stopped working in
-    /// macOS 27, and the replacement is a sheet the person drives.)
-    enum ImageRoute { case openRouter, codex }
+    /// Where images come from: OpenRouter's image models with a key; otherwise a picture model on this Mac
+    /// (mflux, from Hugging Face), if one was downloaded; otherwise Codex's own image tool, with a ChatGPT
+    /// sign-in; otherwise nothing, and Forge asks the first time an app wants a picture. (Apple's on-device Image Playground has no
+    /// programmatic API any more: ImageCreator stopped working in macOS 27.)
+    enum ImageRoute { case openRouter, codex, local }
 
     /// The route as far as can be told without asking anything: for Settings' text. `imageRoute()` is the
     /// one to act on.
     static var imageRoute: ImageRoute? {
         if Provider.hasKey { return .openRouter }
+        if ImageModels.ready { return .local }
         if ToolLocator.path(for: .codex) != nil, codexSignedIn != false { return .codex }
         return nil
     }
@@ -511,6 +512,7 @@ enum AppAI {
     /// whether or not anyone ever logged in); that's checked at most every few minutes.
     static func imageRoute() async -> ImageRoute? {
         if Provider.hasKey { return .openRouter }
+        if ImageModels.ready { return .local }
         if ToolLocator.path(for: .codex) != nil {
             if codexSignedIn == nil || Date().timeIntervalSince(codexChecked) > 300 {
                 codexSignedIn = await EngineSignIn.isSignedIn(.codex) ?? true
@@ -529,20 +531,28 @@ enum AppAI {
         switch imageRoute {
         case .openRouter: "OpenRouter"
         case .codex: "Codex, with your ChatGPT sign-in"
+        case .local: "\(ImageModels.chosen?.name ?? "a model") on this Mac"
         case nil: nil
         }
     }
 
-    /// The failure an app gets when nothing can make images: Forge shows a card asking for a key.
-    static let noImageRoute = "Making images needs an OpenRouter key. Add one in Forge → Settings (⌘,)."
+    /// The failure an app gets when nothing can make images: Forge shows a card asking for a key or a download.
+    static let noImageRoute = "Making images needs an OpenRouter key, or a picture model on this Mac. Add one in Forge → Settings (⌘,)."
 
     /// Creates or edits an image. `references` are input images to edit or combine. Returns PNG data and
     /// the cost in USD (0 through Codex).
     static func image(prompt: String, references: [Image], aspectRatio: String?,
                       model appChoice: String? = nil) async throws -> (Data, Double) {
-        switch await imageRoute() {
+        // Someone who picked the Mac's own model over the cloud ones gets it, key or no key.
+        let wantsLocal = (appChoice == Icons.localArt || (appChoice == nil && Icons.artModel == Icons.localArt)) && ImageModels.ready
+        switch wantsLocal ? .local : await imageRoute() {
         case .openRouter: break
         case .codex: return (try await viaCodexImage(prompt: prompt, references: references, aspectRatio: aspectRatio), 0)
+        case .local:
+            // A local model makes pictures from words; it can't edit the ones an app hands over.
+            guard references.isEmpty else { throw Failure(message: noImageRoute) }
+            let (width, height) = localSize(aspectRatio)
+            return (try await ImageModels.generate(prompt: prompt, width: width, height: height), 0)
         case nil: throw Failure(message: noImageRoute)
         }
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/images")!)
@@ -573,6 +583,19 @@ enum AppAI {
             throw Failure(message: "The image model didn't return a picture.")
         }
         return (decoded, (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0)
+    }
+
+    /// Pixel sizes for the local models (multiples of 16, about a megapixel).
+    private static func localSize(_ aspectRatio: String?) -> (Int, Int) {
+        switch aspectRatio {
+        case "16:9": (1024, 576)
+        case "9:16": (576, 1024)
+        case "4:3": (1024, 768)
+        case "3:4": (768, 1024)
+        case "3:2": (1024, 688)
+        case "2:3": (688, 1024)
+        default: (1024, 1024)
+        }
     }
 
     /// Codex makes the picture with its built-in image tool and saves it in a scratch folder; reference
