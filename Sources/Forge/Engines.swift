@@ -308,6 +308,7 @@ extension Agent {
             // Shell commands go through a PreToolUse hook that asks Forge and waits for the user's answer; Forge
             // replies in Claude Code's hook format. If Forge can't be reached the hook fails and the command is denied.
             env["FORGE_TOKEN"] = Template.token(for: project)
+            env["FORGE_SYSTEM"] = systemPrompt + tryRules
             // How commands are approved (Settings → Building):
             // - auto: Claude Code's own classifier (--permission-mode auto) runs routine commands; when it would
             //   ask, its PermissionRequest hook sends the request to Forge's approval card.
@@ -319,7 +320,14 @@ extension Agent {
             if approval == .auto && CommandApproval.claudeAutoUnavailable { approval = .always }
             let hook = #"{"type":"command","timeout":3600,"command":"curl -sf --max-time 3600 -X POST -H \"Authorization: Bearer $FORGE_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$FORGE_APPROVE_URL\""}"#
             var permissionMode = "acceptEdits"
-            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch"
+            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__forge__look_at_app,mcp__forge__use_app"
+            // look_at_app and use_app come from Forge's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
+            // it the only server.
+            // A look can build the app, and a use_app batch can wait a minute or more: well past the engines'
+            // default tool timeouts (pi's extension allows ten minutes).
+            env["MCP_TOOL_TIMEOUT"] = "600000"
+            env["FORGE_CLAUDE_MCP"] = #"{"mcpServers":{"forge":{"type":"http","url":"http://127.0.0.1:"# + "\(Gateway.port)" +
+                #"/mcp","headers":{"Authorization":"Bearer "# + Template.token(for: project) + #""}}}}"#
             switch approval {
             case .auto:
                 permissionMode = "auto"
@@ -337,7 +345,7 @@ extension Agent {
             env["FORGE_TOOL"] = ToolLocator.path(for: .claude) ?? "claude"
             var command = """
             "$FORGE_TOOL" -p "$FORGE_PROMPT" --output-format stream-json --verbose --include-partial-messages \\
-              --restricted --strict-mcp-config --disable-slash-commands \\
+              --restricted --strict-mcp-config --mcp-config "$FORGE_CLAUDE_MCP" --disable-slash-commands \\
               --tools 'Read,Edit,Write,Glob,Grep,Bash,WebFetch,WebSearch' \\
               --permission-mode "$FORGE_CLAUDE_MODE" --allowedTools "$FORGE_CLAUDE_ALLOWED" \\
               --settings "$FORGE_CLAUDE_SETTINGS" \\
@@ -354,7 +362,7 @@ extension Agent {
             // Isolated from the user's own Codex setup (--ignore-user-config --ignore-rules: their model, MCP
             // servers, features and rules), keeping their sign-in. Forge's rules go in as developer instructions.
             env["FORGE_TOOL"] = ToolLocator.path(for: .codex) ?? "codex"
-            env["FORGE_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt + Self.codexNote)
+            env["FORGE_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt + tryRules + Self.codexNote)
             // Approvals (Settings → Building): a PreToolUse hook sends each shell command to Forge before it runs.
             // Forge lets known read-only commands through (Codex reads with its shell), and otherwise applies the
             // setting: the decision model then the user (auto), the user (always). "Never" has no hook. In every
@@ -370,7 +378,9 @@ extension Agent {
             let options = (codexModel.isEmpty ? "" : "-m \"$FORGE_MODEL\" ") + """
             --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check \\
               -c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true \\
-              -c web_search="live" -c "$FORGE_CODEX_INSTRUCTIONS" -c "$FORGE_CODEX_HOOKS"
+              -c web_search="live" -c "$FORGE_CODEX_INSTRUCTIONS" -c "$FORGE_CODEX_HOOKS" \\
+              -c mcp_servers.forge.url="http://127.0.0.1:\(Gateway.port)/mcp" -c mcp_servers.forge.bearer_token_env_var="FORGE_TOKEN" \\
+              -c mcp_servers.forge.tool_timeout_sec=600
             """
             if session != nil {
                 // `exec resume` keeps the conversation; it takes no -C/-i (Forge already runs in the app's folder).
@@ -438,6 +448,7 @@ extension Agent {
     }
 
     private static func tool(_ name: String, _ input: [String: Any]) -> String {
+        let name = name.replacingOccurrences(of: "mcp__forge__", with: "")
         if let path = input["file_path"] as? String ?? input["filePath"] as? String ?? input["path"] as? String {
             return "\(name) \((path as NSString).lastPathComponent)"
         }
@@ -445,6 +456,9 @@ extension Agent {
         if let command = input["command"] as? String { return "\(name): \(command)" }
         return name
     }
+
+    /// Claude Code calls Forge's MCP tools `mcp__forge__look_at_app`; Forge knows them by their plain names.
+    private static func plainName(_ tool: String) -> String { tool.replacingOccurrences(of: "mcp__forge__", with: "") }
 
     static func parseClaude(_ line: String) -> [AgentEvent] {
         // Most streamed lines are pieces of text or thinking, which Forge gets whole from the finished message.
@@ -462,7 +476,7 @@ extension Agent {
                 case "text": (block["text"] as? String)?.trimmed.nilIfEmpty.map(AgentEvent.text)
                 case "tool_use":
                     .tool(tool(block["name"] as? String ?? "Tool", block["input"] as? [String: Any] ?? [:]),
-                          call: callKey(block["name"] as? String ?? "Tool", block["input"] as? [String: Any] ?? [:]))
+                          call: callKey(plainName(block["name"] as? String ?? "Tool"), block["input"] as? [String: Any] ?? [:]))
                 default: nil
                 }
             }
@@ -473,7 +487,7 @@ extension Agent {
             switch event["type"] as? String {
             case "content_block_start":
                 let block = event["content_block"] as? [String: Any] ?? [:]
-                return block["type"] as? String == "tool_use" ? [.step(block["name"] as? String ?? "")] : [.step("")]
+                return block["type"] as? String == "tool_use" ? [.step(plainName(block["name"] as? String ?? ""))] : [.step("")]
             case "content_block_delta":
                 let delta = event["delta"] as? [String: Any] ?? [:]
                 if delta["type"] as? String == "input_json_delta", let piece = delta["partial_json"] as? String {
@@ -512,8 +526,11 @@ extension Agent {
         case ("item.completed", "error"):
             guard let message = item["message"] as? String, !message.contains("--dangerously-bypass-hook-trust") else { return [] }
             return [.raw(message)]
-        case ("item.completed", "command_execution"):
+        case ("item.completed", "command_execution"), ("item.completed", "mcp_tool_call"):
             return [.step("")]
+        case ("item.started", "mcp_tool_call"):
+            let name = item["tool"] as? String ?? "tool"
+            return [.tool(name, call: callKey(name, item["arguments"] as? [String: Any] ?? [:]))]
         case ("item.started", "command_execution"):
             let command = "Run: \(item["command"] as? String ?? "")"
             return [.tool(command, call: command)]

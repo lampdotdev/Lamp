@@ -54,7 +54,8 @@ final class Gateway: @unchecked Sendable {
     }
 
     private func respond(_ connection: NWConnection, status: Int, json: [String: Any]) {
-        let body = (try? JSONSerialization.data(withJSONObject: json)) ?? Data("{}".utf8)
+        // 202 is how the MCP endpoint acknowledges a notification: no body.
+        let body = status == 202 ? Data() : (try? JSONSerialization.data(withJSONObject: json)) ?? Data("{}".utf8)
         let reason = HTTPURLResponse.localizedString(forStatusCode: status).capitalized
         var response = Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
         response.append(body)
