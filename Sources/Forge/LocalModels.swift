@@ -245,18 +245,26 @@ final class LocalModels: ObservableObject {
     // MARK: Downloads (into the Hugging Face cache layout)
 
     func download(_ spec: LocalModelSpec) {
-        guard downloads[spec.id] == nil else { return }
-        errors[spec.id] = nil
-        progress[spec.id] = 0
-        downloads[spec.id] = Task {
-            defer { downloads[spec.id] = nil; progress[spec.id] = nil }
+        download(id: spec.id, repo: spec.repo, files: spec.files) { [weak self] in
+            self?.refresh()
+            self?.restartServerIfRunning()
+        }
+    }
+
+    /// Downloads `files` from a repo (every file when nil) into the Hugging Face cache, with progress and
+    /// errors under `id`. Image models use this too; `done` runs after a complete download.
+    func download(id: String, repo: String, files: [String]?, done: @escaping @MainActor () -> Void = {}) {
+        guard downloads[id] == nil else { return }
+        errors[id] = nil
+        progress[id] = 0
+        downloads[id] = Task {
+            defer { downloads[id] = nil; progress[id] = nil }
             do {
-                try await fetch(spec)
-                refresh()
-                restartServerIfRunning()
+                try await fetch(id: id, repo: repo, files: files)
+                done()
             } catch is CancellationError {
             } catch {
-                errors[spec.id] = error.localizedDescription
+                errors[id] = error.localizedDescription
             }
         }
     }
@@ -265,17 +273,18 @@ final class LocalModels: ObservableObject {
 
     /// Writes blobs/<sha256>, snapshots/<commit>/<file> → ../../blobs/<sha256> and refs/main,
     /// exactly as huggingface_hub does, so other tools reuse the download.
-    private func fetch(_ spec: LocalModelSpec) async throws {
+    private func fetch(id: String, repo: String, files wanted: [String]?) async throws {
         let fm = FileManager.default
-        let (commit, tree) = try await Self.repoInfo(spec.repo)
-        let repoDir = Self.hubDir.appendingPathComponent("models--" + spec.repo.replacingOccurrences(of: "/", with: "--"))
+        let (commit, tree) = try await Self.repoInfo(repo)
+        let files = wanted ?? tree.keys.sorted()
+        let repoDir = Self.hubDir.appendingPathComponent("models--" + repo.replacingOccurrences(of: "/", with: "--"))
         let blobs = repoDir.appendingPathComponent("blobs")
         let snapshot = repoDir.appendingPathComponent("snapshots/\(commit)")
         try fm.createDirectory(at: blobs, withIntermediateDirectories: true)
         try fm.createDirectory(at: snapshot, withIntermediateDirectories: true)
         try fm.createDirectory(at: repoDir.appendingPathComponent("refs"), withIntermediateDirectories: true)
 
-        let total = spec.files.reduce(0) { $0 + (tree[$1]?.size ?? 0) }
+        let total = files.reduce(0) { $0 + (tree[$1]?.size ?? 0) }
         let free = (try? Self.hubDir.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
             .volumeAvailableCapacityForImportantUsage ?? .max
         if Int64(total) + 2_000_000_000 > free {
@@ -283,15 +292,15 @@ final class LocalModels: ObservableObject {
         }
 
         var done = 0
-        for file in spec.files {
-            guard let entry = tree[file] else { throw LocalError("\(file) isn't in \(spec.repo).") }
+        for file in files {
+            guard let entry = tree[file] else { throw LocalError("\(file) isn't in \(repo).") }
             let blob = blobs.appendingPathComponent(entry.oid)
             if (try? blob.resourceValues(forKeys: [.fileSizeKey]))?.fileSize != entry.size {
-                let url = URL(string: "https://huggingface.co/\(spec.repo)/resolve/\(commit)/\(file)")!
+                let url = URL(string: "https://huggingface.co/\(repo)/resolve/\(commit)/\(file)")!
                 let base = done
                 let tracker = ProgressTracker { [weak self] written in
                     guard total > 0 else { return }
-                    Task { @MainActor in self?.progress[spec.id] = Double(base + Int(written)) / Double(total) }
+                    Task { @MainActor in self?.progress[id] = Double(base + Int(written)) / Double(total) }
                 }
                 let (temp, response) = try await URLSession.shared.download(from: url, delegate: tracker)
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else {
@@ -341,7 +350,7 @@ final class LocalModels: ObservableObject {
     }
 
     /// The repo's current commit and its files (size, and the blob id the cache stores them under).
-    private static func repoInfo(_ repo: String) async throws -> (String, [String: (size: Int, oid: String)]) {
+    static func repoInfo(_ repo: String) async throws -> (String, [String: (size: Int, oid: String)]) {
         let infoURL = URL(string: "https://huggingface.co/api/models/\(repo)")!
         let treeURL = URL(string: "https://huggingface.co/api/models/\(repo)/tree/main?recursive=true")!
         let (infoData, infoResponse) = try await URLSession.shared.data(from: infoURL)

@@ -340,6 +340,9 @@ struct KeyCard: View {
     @State private var checking = false
     @State private var problem: String?
     @State private var saved = Provider.hasKey
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage("settingsTab") private var settingsTab = "building"
+    @AppStorage("settingsSheet") private var settingsSheet = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -366,6 +369,17 @@ struct KeyCard: View {
                 }
                 if let problem {
                     Label(problem, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
+                }
+                if let first = ImageModels.catalog.first {
+                    HStack(spacing: 4) {
+                        Text("Or make pictures on this Mac, free and private:").font(.caption).foregroundStyle(.secondary)
+                        Button(String(format: "Download %@ (%.1f GB)…", first.name, first.sizeGB)) {
+                            settingsTab = "providers"
+                            settingsSheet = Builder.localProvider
+                            openSettings()
+                        }
+                        .buttonStyle(.link).font(.caption)
+                    }
                 }
             }
         }
