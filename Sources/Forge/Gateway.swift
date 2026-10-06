@@ -470,18 +470,22 @@ enum AppAI {
             case "score":
                 let levels = (q["criteria"] as? [Any])?.count ?? 0
                 let top = Double(max(levels - 1, 0))
+                // One normalised distribution is the truth; the score is derived from it, so the two can't
+                // disagree. The model's own score only stands in when it gave no usable probabilities.
                 var probabilities = (given["probabilities"] as? [String: Any] ?? [:]).reduce(into: [String: Double]()) {
                     if let index = Int($1.key), index >= 0, Double(index) <= top, let p = clamp($1.value) { $0[$1.key] = p }
                 }
-                var score = (given["score"] as? NSNumber).map { min(max($0.doubleValue, 0), top) }
-                if score == nil, !probabilities.isEmpty {
-                    let total = probabilities.values.reduce(0, +)
-                    score = total > 0 ? probabilities.reduce(0) { $0 + Double($1.key)! * $1.value } / total : nil
+                let total = probabilities.values.reduce(0, +)
+                if total > 0 {
+                    probabilities = probabilities.mapValues { $0 / total }
+                } else if let given = (given["score"] as? NSNumber).map({ min(max($0.doubleValue, 0), top) }) {
+                    probabilities = [String(Int(given.rounded())): 1]
+                } else {
+                    throw Failure(message: "The model didn't rate \"\(id)\".", cost: cost)
                 }
-                guard let score else { throw Failure(message: "The model didn't rate \"\(id)\".", cost: cost) }
-                if probabilities.isEmpty { probabilities = [String(Int(score.rounded())): 1] }
+                let score = probabilities.reduce(0) { $0 + Double($1.key)! * $1.value }
                 answers[id] = ["score": score, "probabilities": probabilities,
-                               "confidence": clamp(given["confidence"]) ?? 0.5]
+                               "confidence": clamp(given["confidence"]) ?? probabilities.values.max() ?? 1]
             default:
                 throw Failure(message: "Unknown question type \"\(type)\".", cost: cost)
             }

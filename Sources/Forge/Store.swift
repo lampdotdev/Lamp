@@ -1021,7 +1021,7 @@ final class Store: ObservableObject {
             log(project, .status, "Ran: \(command)")
             return true
         case .auto where !escalated:
-            if Self.isReadOnly(command) || Self.isRoutineBuild(command) {
+            if Self.isReadOnly(command) || Self.isRoutineBuild(command, in: project.dir) {
                 log(project, .status, "Ran: \(command)")
                 return true
             }
@@ -1086,17 +1086,22 @@ final class Store: ObservableObject {
 
     /// Commands that build the app or tidy its own folder, which every build needs and nobody wants to be
     /// asked about: making folders and files, Swift's build and test, the app's build script, and git's
-    /// local bookkeeping. Arguments must stay inside the working folder (no absolute paths, `~` or `..`).
-    nonisolated static func isRoutineBuild(_ raw: String) -> Bool {
+    /// local bookkeeping. Every argument that could be a path is resolved against `folder` and must land
+    /// inside it; anything the shell would expand (variables, globs, substitutions) fails the check, so the
+    /// command gets the normal approval instead.
+    nonisolated static func isRoutineBuild(_ raw: String, in folder: URL) -> Bool {
         var command = raw.trimmed
         if let match = command.firstMatch(of: #/^/bin/(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*)\1$/#) { command = String(match.2) }
-        if command.isEmpty || command.contains(">") || command.contains("`") || command.contains("$(") { return false }
+        if command.isEmpty || command.contains(">") || command.contains("<") { return false }
         let gitLocal: Set<String> = ["init", "add", "commit", "status", "log", "diff", "show", "stash", "checkout", "restore", "tag"]
+        let root = folder.standardizedFileURL.path + "/"
         for part in simpleCommands(in: command) {
-            let words = part.split(separator: " ").map(String.init).drop { $0.contains("=") && !$0.hasPrefix("-") }
-            guard let program = words.first else { return false }
+            guard let words = shellWords(part), let program = words.first else { return false }
             let args = Array(words.dropFirst())
-            if args.contains(where: { $0.hasPrefix("/") || $0.hasPrefix("~") || $0.contains("..") }) { return false }
+            for arg in args where !arg.hasPrefix("-") {
+                let path = (arg.hasPrefix("/") ? URL(fileURLWithPath: arg) : folder.appendingPathComponent(arg)).standardizedFileURL.path
+                guard path == folder.standardizedFileURL.path || path.hasPrefix(root) else { return false }
+            }
             switch program {
             case "mkdir", "touch", "cd", "true": break
             case "swift": guard ["build", "test", "package"].contains(args.first ?? "") else { return false }
@@ -1106,6 +1111,31 @@ final class Store: ObservableObject {
             }
         }
         return true
+    }
+
+    /// A simple command's words, with quotes removed, or nil when the shell would do something this can't
+    /// follow: variables, command substitution, globs, tildes, brace expansion, or an unfinished quote.
+    nonisolated static func shellWords(_ command: String) -> [String]? {
+        if command.contains(where: { "$`*?~{}".contains($0) }) { return nil }
+        var words: [String] = []
+        var current = ""
+        var quote: Character?
+        var hasWord = false
+        for character in command {
+            if let open = quote {
+                if character == open { quote = nil } else { current.append(character) }
+            } else if character == "'" || character == "\"" {
+                quote = character; hasWord = true
+            } else if character == " " || character == "\t" {
+                if hasWord { words.append(current); current = ""; hasWord = false }
+            } else {
+                current.append(character); hasWord = true
+            }
+        }
+        if quote != nil { return nil }
+        if hasWord { words.append(current) }
+        // A leading VAR=value is an assignment, not the program.
+        return Array(words.drop { $0.contains("=") && !$0.hasPrefix("-") })
     }
 
     /// The simple commands of a shell line, split at the pipes, `;`, `&&` and `||` that sit outside quotes:
