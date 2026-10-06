@@ -88,11 +88,11 @@ trigger a signed build. The certificate owner adds the secrets once. Run these y
 for its value or reads the file:
 
 ```bash
-gh secret set MACOS_CERT_P12_BASE64 --env release --repo RooCodeInc/Forge < <(base64 -i ~/Desktop/DeveloperID.p12)
-gh secret set MACOS_CERT_PASSWORD   --env release --repo RooCodeInc/Forge   # the .p12 export password
-gh secret set NOTARY_APPLE_ID       --env release --repo RooCodeInc/Forge
-gh secret set NOTARY_TEAM_ID        --env release --repo RooCodeInc/Forge
-gh secret set NOTARY_PASSWORD       --env release --repo RooCodeInc/Forge   # the app-specific password
+gh secret set MACOS_CERT_P12_BASE64 --env release --repo RooCodeInc/Lamp < <(base64 -i ~/Desktop/DeveloperID.p12)
+gh secret set MACOS_CERT_PASSWORD   --env release --repo RooCodeInc/Lamp   # the .p12 export password
+gh secret set NOTARY_APPLE_ID       --env release --repo RooCodeInc/Lamp
+gh secret set NOTARY_TEAM_ID        --env release --repo RooCodeInc/Lamp
+gh secret set NOTARY_PASSWORD       --env release --repo RooCodeInc/Lamp   # the app-specific password
 ```
 
 Then move `DeveloperID.p12` into 1Password and delete it from the Desktop.
@@ -122,6 +122,6 @@ Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.
 - **The feed:** `updates/` is a small Vercel app (project `forge-updates` on the Roo Code team, served at `updates.lamp.dev`; `lamp.dev` itself is kept for the site) that keeps the repo private:
   - `/appcast.xml` builds the feed from the GitHub releases that have a `sparkle.json`, with each release's notes.
   - `/download/<tag>` redirects to GitHub's short-lived download link for that release's DMG.
-  - It reads the releases with `GITHUB_TOKEN`, a fine-grained token with **Contents: read-only** on `RooCodeInc/Forge` only.
+  - It reads the releases with `GITHUB_TOKEN`, a fine-grained token with **Contents: read-only** on `RooCodeInc/Lamp` only.
   - Deploy with `cd updates && vercel deploy --prod --scope roo-code`.
 - **Only newer releases appear:** releases before the first one with `sparkle.json` aren't in the feed, because Sparkle couldn't verify them. Copies of Lamp from before Sparkle was added need one manual update to a release that includes it.

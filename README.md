@@ -14,7 +14,7 @@ Some things people build with it:
 
 Each one is a real `.app` in `~/Applications/Lamp Apps`, with **Edit with Lamp (⇧⌘E)** in its menu for when you want it to work differently. Its data is kept safe through every change, and you can send it to a coworker, who gets their own copy to adapt.
 
-[Download the latest release](https://github.com/RooCodeInc/Forge/releases/latest) and open it. The welcome asks for your first idea, then has you sign in with Claude or ChatGPT (or add a key for Lamp's own agent), and starts building.
+[Download the latest release](https://github.com/RooCodeInc/Lamp/releases/latest) and open it. The welcome asks for your first idea, then has you sign in with Claude or ChatGPT (or add a key for Lamp's own agent), and starts building.
 
 ## Requirements
 
@@ -30,7 +30,7 @@ Nothing else needs installing. The coding agent ([pi](https://github.com/badlogi
 
 ## Download
 
-Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/Forge/releases): open the DMG and drag Lamp to Applications. To cut a release, see [RELEASING.md](RELEASING.md).
+Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/Lamp/releases): open the DMG and drag Lamp to Applications. To cut a release, see [RELEASING.md](RELEASING.md).
 
 ## Setup
 
@@ -45,7 +45,7 @@ Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/
 2. **Clone and build:**
 
    ```bash
-   git clone https://github.com/RooCodeInc/Forge.git ~/Code/roo/Forge
+   git clone https://github.com/RooCodeInc/Lamp.git ~/Code/roo/Forge
    cd ~/Code/roo/Forge
    ./build.sh
    open build/Lamp.app
