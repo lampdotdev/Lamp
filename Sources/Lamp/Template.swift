@@ -313,8 +313,8 @@ enum Template {
             DistributedNotificationCenter.default().addObserver(
                 forName: Notification.Name("dev.lamp.useApp.{{SLUG}}"), object: nil, queue: .main) { note in
                 let actions = note.userInfo?["actions"] as? String, id = note.userInfo?["id"] as? String
-                let token = note.userInfo?["token"] as? String
-                MainActor.assumeIsolated { LampDriver.perform(actions, id: id, token: token) }
+                let signature = note.userInfo?["lampUseAppSignature"] as? String
+                MainActor.assumeIsolated { LampDriver.perform(actions, id: id, signature: signature) }
             }
             let log = folder.appendingPathComponent("log.txt")
             let previous = folder.appendingPathComponent("previous-log.txt")
@@ -608,14 +608,29 @@ enum Template {
                 _ = depth == 0 ? run("BEGIN", []) { _ in } : run("SAVEPOINT \(savepoint)", []) { _ in }
                 transactionDepth += 1
                 transactionFailed.append(false)
+                afterCommit.append([])
                 body()
                 let failed = transactionFailed.removeLast()
+                // Work waiting on this level's outcome: dropped with a rollback, otherwise handed up a level
+                // (it still depends on the outer commit) or, at the top, run now.
+                let pending = failed ? [] : afterCommit.removeLast()
+                if failed { afterCommit.removeLast() }
                 transactionDepth -= 1
                 if depth == 0 {
-                    _ = run(failed ? "ROLLBACK" : "COMMIT", []) { _ in }
+                    // A commit can still be refused (a deferred constraint, say): then nothing was saved, the
+                    // transaction is rolled back so the connection doesn't stay inside it, and the work waiting
+                    // on the commit is dropped.
+                    if failed {
+                        _ = run("ROLLBACK", []) { _ in }
+                    } else if run("COMMIT", []) { _ in } != nil {
+                        pending.forEach { $0() }
+                    } else {
+                        _ = run("ROLLBACK", []) { _ in }
+                    }
                 } else {
                     if failed { _ = run("ROLLBACK TO \(savepoint)", []) { _ in } }
                     _ = run("RELEASE \(savepoint)", []) { _ in }
+                    afterCommit[afterCommit.count - 1] += pending
                 }
             }
         }
@@ -624,6 +639,7 @@ enum Template {
 
         private static let lock = NSRecursiveLock()
         nonisolated(unsafe) private static var transactionDepth = 0
+        nonisolated(unsafe) private static var afterCommit: [[() -> Void]] = []   // per open transaction: work that waits for its commit
         nonisolated(unsafe) private static var transactionFailed: [Bool] = []
         nonisolated(unsafe) private static var unreadable: Set<String> = []
         nonisolated(unsafe) private static var backedUp = false
@@ -732,8 +748,13 @@ enum Template {
             guard let data = try? Data(contentsOf: file), let json = String(data: data, encoding: .utf8) else { return }
             execute("INSERT OR IGNORE INTO forge_values (name, json, updated) VALUES (?, ?, ?)",
                     name, json, Date().timeIntervalSince1970)
-            try? FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
-            try? FileManager.default.moveItem(at: file, to: backups.appendingPathComponent("\(name)-imported.json"))
+            // Inside a transaction the insert may yet be rolled back, so the file waits for the commit:
+            // moving it now would lose the value if the transaction failed.
+            let archive = {
+                try? FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
+                try? FileManager.default.moveItem(at: file, to: backups.appendingPathComponent("\(name)-imported.json"))
+            }
+            if transactionDepth == 0 { archive() } else { afterCommit[afterCommit.count - 1].append(archive) }
         }
 
         static func problem(_ message: String) {
@@ -768,9 +789,15 @@ enum Template {
             var amount: Double?         // scroll: points, positive is down; wait: seconds
         }
 
-        static func perform(_ json: String?, id: String?, token: String?) {
-            guard token == "{{TOKEN}}", let id, let data = json?.data(using: .utf8),
+        /// Only Lamp knows this app's token, so only Lamp can sign a request (the "lampUseAppSignature" key marks
+        /// builds that check it; notifications reach every process, so the token itself never travels).
+        static func perform(_ json: String?, id: String?, signature: String?) {
+            guard let id, let json, let signature, let data = json.data(using: .utf8),
                   let actions = try? JSONDecoder().decode([Action].self, from: data) else { return }
+            let key = SymmetricKey(data: Data("{{TOKEN}}".utf8))
+            let expected = HMAC<SHA256>.authenticationCode(for: Data("\(id)\n\(json)".utf8), using: key)
+                .map { String(format: "%02x", $0) }.joined()
+            guard signature == expected else { return }
             barPanelUsed = Date()
             keepBarPanel()
             let front = LampRuntime.windowsOnScreen.first

@@ -307,10 +307,26 @@ enum Agent {
             "PI_TELEMETRY": "0",
         ]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
-        if let provider = Provider.apiProvider(Builder.piProvider), let key = KeyStore.key(for: provider.id) {
-            env[provider.envVar] = key
+        // The key goes into pi's own auth file in Lamp's folder (which the agent's tools can't open), not
+        // into the environment every shell command would inherit.
+        if let provider = Provider.apiProvider(Builder.piProvider), Builder.piProvider != Builder.myPiProvider {
+            storeKey(KeyStore.key(for: provider.id), for: provider.id)
         }
         return env
+    }
+
+    /// Writes a provider's key into pi's auth.json under Lamp's config folder, in pi's own shape; nil takes
+    /// it out again. KeyStore calls this whenever a key changes, so the file never outlives the key.
+    static func storeKey(_ key: String?, for provider: String) {
+        let url = URL(fileURLWithPath: configDir).appendingPathComponent("auth.json")
+        var auth = (try? JSONSerialization.jsonObject(with: Data(contentsOf: url))) as? [String: Any] ?? [:]
+        if (auth[provider] as? [String: Any])?["key"] as? String == key { return }
+        auth[provider] = key.map { ["type": "api_key", "key": $0] }
+        try? FileManager.default.createDirectory(atPath: configDir, withIntermediateDirectories: true)
+        if let data = try? JSONSerialization.data(withJSONObject: auth, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: url, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        }
     }
 
     /// "My pi setup" models are stored as "provider/model" (e.g. "anthropic/claude-opus-5-5").

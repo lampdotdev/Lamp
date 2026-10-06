@@ -139,6 +139,7 @@ enum KeyStore {
             all[provider] = key
             KeyFile.write(all)
         }
+        Agent.storeKey(key, for: provider)   // pi's copy of it, for the bundled agent
     }
 
     static func setOpenRouterKey(_ key: String?) { setKey(key, for: "openrouter") }
