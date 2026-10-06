@@ -617,8 +617,16 @@ enum Template {
                 if failed { afterCommit.removeLast() }
                 transactionDepth -= 1
                 if depth == 0 {
-                    _ = run(failed ? "ROLLBACK" : "COMMIT", []) { _ in }
-                    pending.forEach { $0() }
+                    // A commit can still be refused (a deferred constraint, say): then nothing was saved, the
+                    // transaction is rolled back so the connection doesn't stay inside it, and the work waiting
+                    // on the commit is dropped.
+                    if failed {
+                        _ = run("ROLLBACK", []) { _ in }
+                    } else if run("COMMIT", []) { _ in } != nil {
+                        pending.forEach { $0() }
+                    } else {
+                        _ = run("ROLLBACK", []) { _ in }
+                    }
                 } else {
                     if failed { _ = run("ROLLBACK TO \(savepoint)", []) { _ in } }
                     _ = run("RELEASE \(savepoint)", []) { _ in }
