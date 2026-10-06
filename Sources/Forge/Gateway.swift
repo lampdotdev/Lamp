@@ -141,6 +141,8 @@ enum AppAI {
                 reply = stripFences(retry)
             } catch let failure as Failure {
                 throw Failure(message: failure.message, cost: cost)
+            } catch {
+                throw Failure(message: error.localizedDescription, cost: cost)
             }
             if !isJSON(reply) {
                 throw Failure(message: "The AI's reply wasn't valid JSON, even on a second try. Ask for less at once.", cost: cost)
