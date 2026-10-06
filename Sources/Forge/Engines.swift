@@ -323,6 +323,9 @@ extension Agent {
             var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__forge__look_at_app,mcp__forge__use_app"
             // look_at_app and use_app come from Forge's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
             // it the only server.
+            // A look can build the app, and a use_app batch can wait a minute or more: well past the engines'
+            // default tool timeouts (pi's extension allows ten minutes).
+            env["MCP_TOOL_TIMEOUT"] = "600000"
             env["FORGE_CLAUDE_MCP"] = #"{"mcpServers":{"forge":{"type":"http","url":"http://127.0.0.1:"# + "\(Gateway.port)" +
                 #"/mcp","headers":{"Authorization":"Bearer "# + Template.token(for: project) + #""}}}}"#
             switch approval {
@@ -376,7 +379,8 @@ extension Agent {
             --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check \\
               -c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true \\
               -c web_search="live" -c "$FORGE_CODEX_INSTRUCTIONS" -c "$FORGE_CODEX_HOOKS" \\
-              -c mcp_servers.forge.url="http://127.0.0.1:\(Gateway.port)/mcp" -c mcp_servers.forge.bearer_token_env_var="FORGE_TOKEN"
+              -c mcp_servers.forge.url="http://127.0.0.1:\(Gateway.port)/mcp" -c mcp_servers.forge.bearer_token_env_var="FORGE_TOKEN" \\
+              -c mcp_servers.forge.tool_timeout_sec=600
             """
             if session != nil {
                 // `exec resume` keeps the conversation; it takes no -C/-i (Forge already runs in the app's folder).
