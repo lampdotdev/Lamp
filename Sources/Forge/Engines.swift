@@ -437,6 +437,7 @@ extension Agent {
         }
         if let pattern = input["pattern"] as? String { return "\(name) \(pattern)" }
         if let command = input["command"] as? String { return "\(name): \(command)" }
+        if let actions = input["actions"] as? [[String: Any]] { return "\(name) \(Agent.summary(of: actions))" }
         return name
     }
 

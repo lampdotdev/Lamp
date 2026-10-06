@@ -86,8 +86,6 @@ struct TurnProgress {
 
     /// What the agent's tool call amounts to for someone who never sees the code: no file names, no tools.
     static func activity(for call: ToolCall) -> String {
-        if call.name == "look_at_app" { return "Checking how it looks" }
-        if call.name == "use_app" { return "Trying it out" }
         if call.name.hasSuffix("_version") || call.name.hasSuffix("_versions") { return "Looking at earlier versions" }
         switch call.action {
         case .read: return call.argument.hasPrefix("screenshot") ? "Looking at your app" : "Looking things over"
@@ -97,6 +95,8 @@ struct TurnProgress {
         case .search, .list: return "Looking things over"
         case .web: return "Looking something up"
         case .plan: return "Planning your app"
+        case .look: return "Checking how it looks"
+        case .use: return "Trying it out"
         case .delegate, .other: return "Working on your app"
         }
     }

@@ -376,7 +376,13 @@ enum Agent {
             return "\(name) \((path as NSString).lastPathComponent)"
         }
         if let pattern = args["pattern"] as? String { return "\(name) \(pattern)" }
+        if let actions = args["actions"] as? [[String: Any]] { return "\(name) \(summary(of: actions))" }
         return name
+    }
+
+    /// What a use_app call does, for the transcript: "click, type, key".
+    static func summary(of actions: [[String: Any]]) -> String {
+        actions.compactMap { $0["action"] as? String }.joined(separator: ", ")
     }
 }
 
