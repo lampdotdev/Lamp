@@ -35,7 +35,11 @@ struct ContentView: View {
             AppSidebar()
                 .navigationSplitViewColumnWidth(min: 200, ideal: 230)
         } detail: {
-            Group {
+            // The banner sits in a stack rather than a top safe-area inset: an inset, even an empty one, keeps
+            // the chat's scroll view from reaching the toolbar, and macOS then drops the toolbar's background
+            // and divider when the chat scrolls under it.
+            VStack(spacing: 0) {
+                if store.setup.checked && !store.setup.hasBuildTools { BuildToolsBanner() }
                 if let project = store.selected {
                     ProjectView(project: project).id(project.id)
                 } else if store.projects.isEmpty {
@@ -49,9 +53,6 @@ struct ContentView: View {
                 } else {
                     ContentUnavailableView("Select an app", systemImage: "sidebar.left")
                 }
-            }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if store.setup.checked && !store.setup.hasBuildTools { BuildToolsBanner() }
             }
         }
         .alert("Rename “\(store.renaming?.name ?? "")”", isPresented: Binding(
