@@ -1095,7 +1095,6 @@ final class Store: ObservableObject {
         let sessionFile = Self.sessionFile(for: project, engine: engine)
         let agentToken = UUID().uuidString + UUID().uuidString
         agentTokens[agentToken] = project.id
-        defer { agentTokens[agentToken] = nil }
         let run = Agent.run(prompt: prompt, files: files, project: project,
                             session: engine == .pi ? Self.piSession(for: project) : Self.savedSession(sessionFile),
                             token: agentToken)
@@ -1151,6 +1150,7 @@ final class Store: ObservableObject {
             }
         }
         running[project.id] = nil
+        agentTokens[agentToken] = nil   // before any retry below starts a run with a token of its own
         endApprovals(for: project)
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
         showWritten(for: project)
@@ -2211,11 +2211,8 @@ final class Store: ObservableObject {
             return (404, ["error": "Not found"])
         }
         // Only requests addressed to this Mac: a web page that resolved its own name to 127.0.0.1 (DNS
-        // rebinding) arrives with that name as the host, and gets nothing.
-        if let host = request.headers["host"]?.lowercased(),
-           !(host.hasPrefix("127.0.0.1") || host.hasPrefix("localhost") || host.hasPrefix("[::1]")) {
-            return (403, ["error": "Not for this host."])
-        }
+        // rebinding) arrives with that name as the host, and gets nothing. No Host at all gets nothing either.
+        guard Self.isLocalHost(request.headers["host"]) else { return (403, ["error": "Not for this host."]) }
         let token = request.headers["authorization"]?.replacingOccurrences(of: "Bearer ", with: "") ?? ""
         let agentRoute = route == "/mcp" || route.hasPrefix("/agent/")
         if agentRoute {
@@ -2238,6 +2235,23 @@ final class Store: ObservableObject {
         }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
+    }
+
+    /// Whether a Host header names this Mac and nothing else: exactly a loopback name or address, with an
+    /// optional numeric port. "localhost.evil.example" and "127.0.0.1.evil.example" are not.
+    static func isLocalHost(_ header: String?) -> Bool {
+        guard var host = header?.trimmed.lowercased(), !host.isEmpty else { return false }
+        if host.hasPrefix("[") {   // an IPv6 address, [::1] or [::1]:port
+            guard let close = host.firstIndex(of: "]") else { return false }
+            let port = host[host.index(after: close)...]
+            guard port.isEmpty || (port.hasPrefix(":") && port.count > 1 && port.dropFirst().allSatisfy(\.isNumber)) else { return false }
+            host = String(host[...close])
+        } else if let colon = host.firstIndex(of: ":") {
+            let port = host[host.index(after: colon)...]
+            guard !port.isEmpty, port.allSatisfy(\.isNumber) else { return false }
+            host = String(host[..<colon])
+        }
+        return ["127.0.0.1", "localhost", "[::1]"].contains(host)
     }
 
     /// The routes the agent uses mid-turn: build and try the app, approvals, versions, and the MCP tools.
