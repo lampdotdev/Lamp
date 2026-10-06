@@ -316,8 +316,9 @@ extension Agent {
     static let userConfigDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".pi/agent").path
 
     /// Builds the command for one turn with the chosen engine. `files` are attachment paths
-    /// relative to the app folder; `session` is the engine's saved conversation id, if any.
-    static func run(prompt: String, files: [String], project: LampProject, session: String?) -> AgentRun {
+    /// relative to the app folder; `session` is the engine's saved conversation id, if any; `token` is the
+    /// agent's own token for this turn (Store.agentTokens), never the app's.
+    static func run(prompt: String, files: [String], project: LampProject, session: String?, token: String) -> AgentRun {
         var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt, "LAMP_DIR": project.dir.path,
                                      "PATH": ToolLocator.userPath]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
@@ -330,7 +331,7 @@ extension Agent {
             env["LAMP_USE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/use"
             env["LAMP_VERSIONS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/versions"
             env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve"
-            env["LAMP_TOKEN"] = Template.token(for: project)
+            env["LAMP_TOKEN"] = token
             return AgentRun(command: command(fileCount: files.count),
                             env: env.merging(environment(prompt: prompt, files: files, session: session ?? "",
                                                          sessionDir: project.dir.appendingPathComponent(".lamp/pi-sessions").path)) { $1 })
@@ -342,7 +343,7 @@ extension Agent {
             // what the agent gets.
             // Shell commands go through a PreToolUse hook that asks Lamp and waits for the user's answer; Lamp
             // replies in Claude Code's hook format. If Lamp can't be reached the hook fails and the command is denied.
-            env["LAMP_TOKEN"] = Template.token(for: project)
+            env["LAMP_TOKEN"] = token
             env["LAMP_SYSTEM"] = systemPrompt + tryRules
             // How commands are approved (Settings → Building):
             // - auto: Claude Code's own classifier (--permission-mode auto) runs routine commands; when it would
@@ -439,7 +440,7 @@ extension Agent {
             // for reading. A read outside the app's folder waits for the user, so those calls may wait as long
             // as a command does.
             let approval = CommandApproval.current
-            env["LAMP_TOKEN"] = Template.token(for: project)
+            env["LAMP_TOKEN"] = token
             env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=codex"
             let hook = Bundle.main.resourceURL?.appendingPathComponent("lamp-approve.sh").path ?? "lamp-approve.sh"
             env["LAMP_CODEX_HOOKS"] = approval == .never ? "hooks={}"

@@ -178,7 +178,11 @@ final class Store: ObservableObject {
     private var pendingIconArt: Set<String> = []     // artwork finished during a turn, to apply after it
     private var artApplied: [String: IconSpec] = [:] // the spec whose artwork the rendered icon includes
     private var iconDesigns: [String: Task<Void, Never>] = [:]   // icons designed from the first message
-    private var tokens: [String: String] = [:]   // gateway token → project id
+    private var tokens: [String: String] = [:]   // app token → project id, for the app's own routes (/ai…)
+    /// The agent's token for the turn in progress → project id. Minted per turn and gone with it, so the agent's
+    /// routes (/agent/…, /mcp) can't be reached with the app's token, which the app itself holds, nor after the
+    /// turn ends. A leaked app token then buys AI calls as that app, and nothing more.
+    private var agentTokens: [String: String] = [:]
     private var gateway: Gateway?
 
     nonisolated static let installDir = FileManager.default.homeDirectoryForCurrentUser
@@ -1089,8 +1093,12 @@ final class Store: ObservableObject {
         var streamingArguments = ""
         stopped.remove(project.id)
         let sessionFile = Self.sessionFile(for: project, engine: engine)
+        let agentToken = UUID().uuidString + UUID().uuidString
+        agentTokens[agentToken] = project.id
+        defer { agentTokens[agentToken] = nil }
         let run = Agent.run(prompt: prompt, files: files, project: project,
-                            session: engine == .pi ? Self.piSession(for: project) : Self.savedSession(sessionFile))
+                            session: engine == .pi ? Self.piSession(for: project) : Self.savedSession(sessionFile),
+                            token: agentToken)
         let status = await Shell.run(run.command, cwd: project.dir, env: run.env,
                                      started: { [weak self] in self?.running[project.id] = $0 }) { [weak self] line in
             guard let self else { return }
@@ -2202,7 +2210,23 @@ final class Store: ObservableObject {
         guard request.method == "POST", paths.contains(route) else {
             return (404, ["error": "Not found"])
         }
+        // Only requests addressed to this Mac: a web page that resolved its own name to 127.0.0.1 (DNS
+        // rebinding) arrives with that name as the host, and gets nothing.
+        if let host = request.headers["host"]?.lowercased(),
+           !(host.hasPrefix("127.0.0.1") || host.hasPrefix("localhost") || host.hasPrefix("[::1]")) {
+            return (403, ["error": "Not for this host."])
+        }
         let token = request.headers["authorization"]?.replacingOccurrences(of: "Bearer ", with: "") ?? ""
+        let agentRoute = route == "/mcp" || route.hasPrefix("/agent/")
+        if agentRoute {
+            // The agent's routes take only the agent's token for the turn in progress.
+            guard let id = agentTokens[token], let project = projects.first(where: { $0.id == id }) else {
+                return (401, ["error": "Lamp isn't working on this app right now."])
+            }
+            guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
+            guard running[project.id] != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+            return await agentRequest(request, route: route, for: project)
+        }
         // The app may have been created since the last reload. A reload rereads every app, so a stale app
         // polling with an old token can't make Lamp do that on every request.
         if tokens[token] == nil, Date().timeIntervalSince(lastReloadForToken) > 5 {
@@ -2213,10 +2237,11 @@ final class Store: ObservableObject {
             return (401, ["error": "This app isn't registered with Lamp."])
         }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
-        // The app knows the same token as its agent; the agent's own routes only answer while a turn runs.
-        if route == "/mcp" || route == "/agent/approve", running[project.id] == nil {
-            return (409, ["error": "Lamp isn't working on this app right now."])
-        }
+        return await appRequest(request, for: project)
+    }
+
+    /// The routes the agent uses mid-turn: build and try the app, approvals, versions, and the MCP tools.
+    private func agentRequest(_ request: Gateway.Request, route: String, for project: LampProject) async -> (Int, [String: Any]) {
         if route == "/mcp" { return await mcp(request.body, for: project, fileTools: request.path.contains("files=1")) }
         if request.path == "/agent/look" { return await look(at: project) }
         if request.path == "/agent/use" { return await use(project, request: request.body) }
@@ -2276,6 +2301,11 @@ final class Store: ObservableObject {
             }
             return (200, ["allow": allowed, "reason": reason])
         }
+        return (404, ["error": "Not found"])
+    }
+
+    /// The routes a running app uses: text, pictures, decisions, and using the other apps on the Mac.
+    private func appRequest(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
         if request.path == "/ai/computer" { return await useComputer(for: project, request: request.body) }
         if request.path == "/ai/decide" {
             guard let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any],
