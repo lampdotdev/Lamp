@@ -1021,7 +1021,7 @@ final class Store: ObservableObject {
             log(project, .status, "Ran: \(command)")
             return true
         case .auto where !escalated:
-            if Self.isReadOnly(command) || Self.isRoutineBuild(command, in: project.dir) {
+            if Self.isReadOnly(command) {
                 log(project, .status, "Ran: \(command)")
                 return true
             }
@@ -1082,117 +1082,6 @@ final class Store: ObservableObject {
             }
         }
         return true
-    }
-
-    /// Commands that build the app or tidy its own folder, which every build needs and nobody wants to be
-    /// asked about: making folders and files, Swift's build and test, the app's build script, and git's
-    /// local bookkeeping. Only a few known flags are accepted; every other argument is taken as a path,
-    /// resolved against `folder` with symbolic links followed, and must land inside it. Anything the shell
-    /// would expand (variables, globs, substitutions) fails the check, so the command gets the normal approval.
-    nonisolated static func isRoutineBuild(_ raw: String, in folder: URL) -> Bool {
-        var command = raw.trimmed
-        if let match = command.firstMatch(of: #/^/bin/(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*)\1$/#) { command = String(match.2) }
-        if command.isEmpty || command.contains(">") || command.contains("<") { return false }
-        let flags: [String: Set<String>] = [
-            "mkdir": ["-p"], "touch": [], "true": [], "./build.sh": [],
-            "swift": ["-c", "--configuration", "-v", "--verbose", "-q", "--quiet", "--parallel"],
-            "git": ["-A", "--all", "-a", "-m", "-q", "--quiet", "-s", "--short", "--stat", "--oneline", "-n", "-p",
-                    "--cached", "--staged", "--no-pager", "-b", "-u", "--", "-am"],
-        ]
-        let gitLocal: Set<String> = ["init", "add", "commit", "status", "log", "diff", "show", "stash", "checkout", "restore", "tag"]
-        guard let root = Self.realPath(folder.path) else { return false }
-        for part in simpleCommands(in: command) {
-            guard let words = shellWords(part), let program = words.first else { return false }
-            let args = Array(words.dropFirst())
-            guard let allowed = flags[program] ?? (program == "cd" ? [] : nil) else {
-                if isReadOnly(part) { continue }   // `./build.sh | tail -5`
-                return false
-            }
-            switch program {
-            case "cd":
-                // Paths are checked against the app's folder, so the shell has to stay there: the only
-                // directory change allowed is into that very folder (the engines' usual `cd "<app>" &&`).
-                guard args.count == 1, Self.realPath(args[0].hasPrefix("/") ? args[0] : folder.appendingPathComponent(args[0]).path) == root
-                else { return false }
-                continue
-            case "swift": guard ["build", "test", "package"].contains(args.first ?? "") else { return false }
-            case "git": guard gitLocal.contains(args.first(where: { !$0.hasPrefix("-") }) ?? "") else { return false }
-            default: break
-            }
-            for arg in args {
-                if arg.hasPrefix("-") {
-                    guard allowed.contains(arg) else { return false }
-                    continue
-                }
-                if program == "swift" || program == "git", args.first == arg { continue }   // the subcommand
-                guard let path = Self.realPath(arg.hasPrefix("/") ? arg : folder.appendingPathComponent(arg).path),
-                      path == root || path.hasPrefix(root + "/") else { return false }
-            }
-        }
-        return true
-    }
-
-    /// Where a path really leads: walked one component at a time the way the file system would, following
-    /// each symbolic link as it's met (so `..` after a link climbs from the link's target, not its name).
-    /// Components that don't exist yet are kept as given. nil when it can't be established: a dangling link,
-    /// a link loop, or a target that can't be read.
-    nonisolated static func realPath(_ path: String, depth: Int = 0) -> String? {
-        guard depth < 40 else { return nil }
-        let manager = FileManager.default
-        var resolved = "/"
-        var components = (path as NSString).pathComponents.dropFirst()   // "/" first
-        var missing = false
-        while let component = components.first {
-            components = components.dropFirst()
-            if component == "." || component == "/" { continue }
-            if component == ".." {
-                if !missing { resolved = (resolved as NSString).deletingLastPathComponent }
-                else { return nil }   // ".." past a component that doesn't exist: the shell would too, but who knows where
-                continue
-            }
-            let next = (resolved as NSString).appendingPathComponent(component)
-            if missing { resolved = next; continue }
-            guard let attributes = try? manager.attributesOfItem(atPath: next) else {
-                // Not there (lstat failed): the rest is something about to be made.
-                missing = true
-                resolved = next
-                continue
-            }
-            if attributes[.type] as? FileAttributeType == .typeSymbolicLink {
-                guard let target = try? manager.destinationOfSymbolicLink(atPath: next) else { return nil }
-                let absolute = target.hasPrefix("/") ? target : (resolved as NSString).appendingPathComponent(target)
-                guard let followed = realPath(absolute, depth: depth + 1), manager.fileExists(atPath: followed) else { return nil }
-                resolved = followed
-            } else {
-                resolved = next
-            }
-        }
-        return resolved
-    }
-
-    /// A simple command's words, with quotes removed, or nil when the shell would do something this can't
-    /// follow: variables, command substitution, globs, tildes, brace expansion, or an unfinished quote.
-    nonisolated static func shellWords(_ command: String) -> [String]? {
-        if command.contains(where: { "$`*?~{}".contains($0) }) { return nil }
-        var words: [String] = []
-        var current = ""
-        var quote: Character?
-        var hasWord = false
-        for character in command {
-            if let open = quote {
-                if character == open { quote = nil } else { current.append(character) }
-            } else if character == "'" || character == "\"" {
-                quote = character; hasWord = true
-            } else if character == " " || character == "\t" {
-                if hasWord { words.append(current); current = ""; hasWord = false }
-            } else {
-                current.append(character); hasWord = true
-            }
-        }
-        if quote != nil { return nil }
-        if hasWord { words.append(current) }
-        // A leading VAR=value is an assignment, not the program.
-        return Array(words.drop { $0.contains("=") && !$0.hasPrefix("-") })
     }
 
     /// The simple commands of a shell line, split at the pipes, `;`, `&&` and `||` that sit outside quotes:
