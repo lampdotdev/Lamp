@@ -1,13 +1,13 @@
 import SwiftUI
 import AppKit
 
-/// What a fresh Mac is missing before Forge can build apps.
+/// What a fresh Mac is missing before Lamp can build apps.
 struct SetupCheck {
     var checked = false
     var hasBuildTools = true
     var builderProblem: String?
     var hasAgent = true
-    /// Forge has already opened Apple's installer this launch.
+    /// Lamp has already opened Apple's installer this launch.
     var installRequested = false
 
     var hasBuilder: Bool { builderProblem == nil }
@@ -21,7 +21,7 @@ struct SetupCheck {
     }
 
     /// Looks for a Swift compiler without calling /usr/bin/swift or xcrun: on a Mac without the tools,
-    /// those shims pop up Apple's installer, which would happen every time Forge checks.
+    /// those shims pop up Apple's installer, which would happen every time Lamp checks.
     static func buildToolsInstalled() -> Bool {
         let fm = FileManager.default
         if fm.isExecutableFile(atPath: "/Library/Developer/CommandLineTools/usr/bin/swift") { return true }

@@ -7,12 +7,12 @@ import Foundation
 ///
 /// cua-driver works through macOS Accessibility and window captures, in the background, without taking over
 /// the pointer. It runs as CuaDriver.app in /Applications, which holds the Accessibility and Screen Recording
-/// permissions; Forge installs it on demand (a pinned, checksummed and signature-checked release) rather than
-/// shipping it in every download. Forge talks to it over MCP and runs the agent loop itself: a model gets the
+/// permissions; Lamp installs it on demand (a pinned, checksummed and signature-checked release) rather than
+/// shipping it in every download. Lamp talks to it over MCP and runs the agent loop itself: a model gets the
 /// task and a short list of the driver's tools, and works until it can answer.
 ///
 /// Reading is always allowed. Clicking, typing and pressing keys only happen when the app asked to act
-/// (`ForgeComputer.perform`), and each one waits for the person's OK in a Forge dialog.
+/// (`ForgeComputer.perform`), and each one waits for the person's OK in a Lamp dialog.
 enum ComputerUse {
     static let version = "0.32.0"
     private static let teamID = "YCK386LBJ7"   // Cua AI, Inc.
@@ -47,7 +47,7 @@ enum ComputerUse {
 
     static func status() async -> Status {
         guard isInstalled else { return .notInstalled }
-        // The daemon answers with its own permission state (it holds them, not Forge). Right after an install
+        // The daemon answers with its own permission state (it holds them, not Lamp). Right after an install
         // it may not be up yet, and the answer has no permissions in it: ask again shortly.
         for attempt in 0..<4 {
             let output = await capture(executable.path, ["permissions", "status", "--json"])
@@ -112,7 +112,7 @@ enum ComputerUse {
         }
         _ = await run("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
                       ["-f", app.path])
-        // Content-free product telemetry is on by default; Forge turns it off.
+        // Content-free product telemetry is on by default; Lamp turns it off.
         _ = await run(executable.path, ["telemetry", "disable"])
     }
 
@@ -551,7 +551,7 @@ final class MCPClient: @unchecked Sendable {
 /// Lists and switches browser tabs through the browsers' own AppleScript support. Browsers don't expose their
 /// tab strips to Accessibility, so this is how a page that's open but not in front gets read. Switching a tab
 /// changes nothing on the page, so it's allowed even when an app only asked to look. macOS asks the person
-/// once per browser before Forge may do this.
+/// once per browser before Lamp may do this.
 enum BrowserTabs {
     /// Chromium browsers share Chrome's scripting terms; Safari has its own.
     private static let chromium = ["com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.canary",

@@ -2,7 +2,7 @@ import Foundation
 import AppKit
 import Network
 
-/// A tiny HTTP server on 127.0.0.1 that lets generated apps use Forge's AI
+/// A tiny HTTP server on 127.0.0.1 that lets generated apps use Lamp's AI
 /// without ever seeing the key. Apps call it through `ForgeAI` (see Template.forgeSupportSwift).
 final class Gateway: @unchecked Sendable {
     static let port: UInt16 = 47811
@@ -81,7 +81,7 @@ final class Gateway: @unchecked Sendable {
     }
 }
 
-/// Runs an in-app AI request with whatever Forge is connected to.
+/// Runs an in-app AI request with whatever Lamp is connected to.
 enum AppAI {
     /// The in-app text models with an OpenRouter key (or Claude Code answering without one).
     static let anthropicModels: [(id: String, label: String, openRouter: String)] = [
@@ -133,7 +133,7 @@ enum AppAI {
         let data: String
     }
 
-    /// `model` overrides the in-app model (an OpenRouter model ID), e.g. for Forge's own import review.
+    /// `model` overrides the in-app model (an OpenRouter model ID), e.g. for Lamp's own import review.
     /// `appModel` is an app's own text model (an id from `models`), when it has one.
     static func complete(prompt: String, images: [Image], system: String, json: Bool,
                          model: String? = nil, appModel: String? = nil) async throws -> (String, Double) {
@@ -214,12 +214,12 @@ enum AppAI {
             files.append(name)
         }
         var env = Agent.environment(prompt: prompt, files: files, session: "", sessionDir: folder.path)
-        env["FORGE_SYSTEM"] = system.isEmpty ? "You are a helpful assistant inside a Mac app." : system
-        let fileArgs = files.indices.map { "\"@$FORGE_FILE_\($0)\"" }.joined(separator: " ")
+        env["LAMP_SYSTEM"] = system.isEmpty ? "You are a helpful assistant inside a Mac app." : system
+        let fileArgs = files.indices.map { "\"@$LAMP_FILE_\($0)\"" }.joined(separator: " ")
         let command = """
-        "$FORGE_PI" --mode json --provider "$FORGE_PROVIDER" --model "$FORGE_MODEL" --no-tools --no-session \\
+        "$LAMP_PI" --mode json --provider "$LAMP_PROVIDER" --model "$LAMP_MODEL" --no-tools --no-session \\
           --no-extensions --no-skills --no-prompt-templates --no-context-files --no-approve \\
-          --system-prompt "$FORGE_SYSTEM" -- \(fileArgs) "$FORGE_PROMPT"
+          --system-prompt "$LAMP_SYSTEM" -- \(fileArgs) "$LAMP_PROMPT"
         """
         var text = ""
         var cost = 0.0
@@ -253,35 +253,35 @@ enum AppAI {
             try data.write(to: folder.appendingPathComponent(name))
             files.append(name)
         }
-        var env: [String: String] = ["PATH": ToolLocator.userPath, "FORGE_TOOL": ToolLocator.path(for: engine) ?? "",
-                                     "FORGE_SYSTEM": system.isEmpty ? "You are a helpful assistant inside a Mac app." : system,
-                                     "FORGE_PROMPT": prompt]
-        for (index, file) in files.enumerated() { env["FORGE_FILE_\(index)"] = file }
+        var env: [String: String] = ["PATH": ToolLocator.userPath, "LAMP_TOOL": ToolLocator.path(for: engine) ?? "",
+                                     "LAMP_SYSTEM": system.isEmpty ? "You are a helpful assistant inside a Mac app." : system,
+                                     "LAMP_PROMPT": prompt]
+        for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
         let command: String
         switch engine {
         case .claude:
             // Claude Code takes images by reading them, so it gets the Read tool and their names.
-            if !files.isEmpty { env["FORGE_PROMPT"] = prompt + "\n\n(Images: " + files.joined(separator: ", ") + ". Read them.)" }
-            env["FORGE_MODEL"] = model   // "haiku", "sonnet" or "opus": Claude Code's own aliases
+            if !files.isEmpty { env["LAMP_PROMPT"] = prompt + "\n\n(Images: " + files.joined(separator: ", ") + ". Read them.)" }
+            env["LAMP_MODEL"] = model   // "haiku", "sonnet" or "opus": Claude Code's own aliases
             command = """
-            "$FORGE_TOOL" -p "$FORGE_PROMPT" --output-format stream-json --verbose --no-session-persistence \\
+            "$LAMP_TOOL" -p "$LAMP_PROMPT" --output-format stream-json --verbose --no-session-persistence \\
               --restricted --strict-mcp-config --disable-slash-commands \\
-              --tools \(files.isEmpty ? "''" : "Read --allowedTools Read") --model "$FORGE_MODEL" --system-prompt "$FORGE_SYSTEM"
+              --tools \(files.isEmpty ? "''" : "Read --allowedTools Read") --model "$LAMP_MODEL" --system-prompt "$LAMP_SYSTEM"
             """
         case .codex:
-            env["FORGE_CODEX_INSTRUCTIONS"] = "developer_instructions="
-                + Agent.tomlString(env["FORGE_SYSTEM"]! + "\n\nAnswer directly. Don't run commands or change files.")
-            let imageArgs = files.indices.map { "-i \"$FORGE_FILE_\($0)\"" }.joined(separator: " ")
+            env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions="
+                + Agent.tomlString(env["LAMP_SYSTEM"]! + "\n\nAnswer directly. Don't run commands or change files.")
+            let imageArgs = files.indices.map { "-i \"$LAMP_FILE_\($0)\"" }.joined(separator: " ")
             // Only one of Codex's own models is passed on; an Anthropic id (an app built before Codex
             // answered for it) means Codex's default.
             var modelArg = ""
             if Builder.codexModels.contains(where: { $0.id == model && !model.isEmpty }) {
-                env["FORGE_MODEL"] = model
-                modelArg = "-m \"$FORGE_MODEL\" "
+                env["LAMP_MODEL"] = model
+                modelArg = "-m \"$LAMP_MODEL\" "
             }
             command = """
-            "$FORGE_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
-              -s read-only -c hooks={} -c model_reasoning_effort="low" \(modelArg)-c "$FORGE_CODEX_INSTRUCTIONS" \(imageArgs) -- "$FORGE_PROMPT"
+            "$LAMP_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
+              -s read-only -c hooks={} -c model_reasoning_effort="low" \(modelArg)-c "$LAMP_CODEX_INSTRUCTIONS" \(imageArgs) -- "$LAMP_PROMPT"
             """
         case .pi:
             return try await viaPi(prompt: prompt, images: images, system: system)
@@ -495,7 +495,7 @@ enum AppAI {
 
     /// Where images come from: OpenRouter's image models with a key; otherwise a picture model on this Mac
     /// (mflux, from Hugging Face), if one was downloaded; otherwise Codex's own image tool, with a ChatGPT
-    /// sign-in; otherwise nothing, and Forge asks the first time an app wants a picture. (Apple's on-device Image Playground has no
+    /// sign-in; otherwise nothing, and Lamp asks the first time an app wants a picture. (Apple's on-device Image Playground has no
     /// programmatic API any more: ImageCreator stopped working in macOS 27.)
     enum ImageRoute { case openRouter, codex, local }
 
@@ -537,7 +537,7 @@ enum AppAI {
         }
     }
 
-    /// The failure an app gets when nothing can make images: Forge shows a card asking for a key or a download.
+    /// The failure an app gets when nothing can make images: Lamp shows a card asking for a key or a download.
     static let noImageRoute = "Making images needs an OpenRouter key, or a picture model on this Mac. Add one in Lamp → Settings (⌘,)."
 
     /// Creates or edits an image. `references` are input images to edit or combine. Returns PNG data and
@@ -620,13 +620,13 @@ enum AppAI {
             request += "\n\nUse the attached \(files.count == 1 ? "image" : "images") (\(files.joined(separator: ", "))) as "
                 + (files.count == 1 ? "the reference: edit or build on it as the description says." : "references.")
         }
-        var env: [String: String] = ["PATH": ToolLocator.userPath, "FORGE_TOOL": ToolLocator.path(for: .codex) ?? "codex",
-                                     "FORGE_PROMPT": request]
-        for (index, file) in files.enumerated() { env["FORGE_FILE_\(index)"] = file }
-        let imageArgs = files.indices.map { "-i \"$FORGE_FILE_\($0)\"" }.joined(separator: " ")
+        var env: [String: String] = ["PATH": ToolLocator.userPath, "LAMP_TOOL": ToolLocator.path(for: .codex) ?? "codex",
+                                     "LAMP_PROMPT": request]
+        for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
+        let imageArgs = files.indices.map { "-i \"$LAMP_FILE_\($0)\"" }.joined(separator: " ")
         let command = """
-        "$FORGE_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
-          -c sandbox_mode="workspace-write" -c hooks={} -C "$PWD" \(imageArgs) -- "$FORGE_PROMPT"
+        "$LAMP_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
+          -c sandbox_mode="workspace-write" -c hooks={} -C "$PWD" \(imageArgs) -- "$LAMP_PROMPT"
         """
         var failure: String?
         _ = await Shell.run(command, cwd: folder, env: env) { line in

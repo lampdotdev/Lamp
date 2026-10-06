@@ -1,5 +1,5 @@
 // Sends a download to the release's DMG through GitHub's short-lived signed link, so the private repo's
-// files can be fetched without a GitHub account. Only Forge DMGs from published releases are served.
+// files can be fetched without a GitHub account. Only Lamp DMGs from published releases are served.
 import { REPO, dmgAsset, github } from "../lib/github.js";
 
 export async function GET(request) {

@@ -10,7 +10,7 @@ cd "$(dirname "$0")"
 
 # The version. Releases pass APP_VERSION (the tag). A local build takes it from git: "0.3.1" on the
 # release tag itself, "0.3.1+6" six commits after it, so a build from source says which release it's
-# ahead of. APP_BUILD is the all-numeric form macOS compares when two copies of Forge are on disk.
+# ahead of. APP_BUILD is the all-numeric form macOS compares when two copies of Lamp are on disk.
 if [[ -z "${APP_VERSION:-}" ]]; then
   described="$(git describe --tags --match 'v[0-9]*' 2>/dev/null || true)"   # v0.3.1 or v0.3.1-6-g8065f74
   if [[ "$described" =~ '^v([0-9.]+)(-([0-9]+)-g[0-9a-f]+)?$' ]]; then
@@ -56,7 +56,7 @@ fi
 
 # The macOS 27 SDK makes @State a macro, and its compiler plugin only ships with full Xcode.
 # With just the Command Line Tools, build against the newest installed SDK that doesn't need it.
-# (Forge does the same for the apps it builds: Shell.compatibleSDK in Sources/Forge/Agent.swift.)
+# (Lamp does the same for the apps it builds: Shell.compatibleSDK in Sources/Lamp/Agent.swift.)
 dev="$(xcode-select -p 2>/dev/null)"
 if [ -z "${SDKROOT:-}" ] && [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
   for sdk in "$dev"/SDKs/MacOSX*.sdk(/NnOn); do
@@ -67,23 +67,23 @@ if [ -z "${SDKROOT:-}" ] && [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/hos
 fi
 
 swift build -c release
-BIN="$(swift build -c release --show-bin-path)/Forge"
+BIN="$(swift build -c release --show-bin-path)/Lamp"
 APP="${BUILD_DIR:-build}/Lamp.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Lamp"
-# Sparkle (updates for release builds). Forge isn't sandboxed, so Sparkle's XPC services aren't needed.
+# Sparkle (updates for release builds). Lamp isn't sandboxed, so Sparkle's XPC services aren't needed.
 mkdir -p "$APP/Contents/Frameworks"
 ditto "$(dirname "$BIN")/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
 rm -rf "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices" "$APP/Contents/Frameworks/Sparkle.framework/XPCServices"
-# Forge's icon, made with the same pipeline as the apps' icons (see Resources/Icon): the classic .icns,
+# Lamp's icon, made with the same pipeline as the apps' icons (see Resources/Icon): the classic .icns,
 # plus the compiled Icon Composer icon that macOS 26 draws in Liquid Glass.
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp Resources/Assets.car "$APP/Contents/Resources/Assets.car"
 cp Resources/THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
-install -m 755 Resources/forge-approve.sh "$APP/Contents/Resources/forge-approve.sh"
-cp Resources/forge-tools.ts "$APP/Contents/Resources/"   # pi extension: the agent's look_at_app and plan tools
-cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Forge builds a stable signature
+install -m 755 Resources/lamp-approve.sh "$APP/Contents/Resources/lamp-approve.sh"
+cp Resources/lamp-tools.ts "$APP/Contents/Resources/"   # pi extension: the agent's look_at_app and plan tools
+cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Lamp builds a stable signature
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
 # Only the server and its libraries (symlinks kept), not llama.cpp's other tools.
@@ -140,10 +140,10 @@ if [[ "$SIGN_ID" == "Developer ID Application:"* ]]; then
   # Release: hardened runtime + secure timestamp (both required for notarization).
   SIGN=(codesign --force --timestamp --options runtime -s "$SIGN_ID")
   PI_ENTITLEMENTS=(--entitlements Resources/pi.entitlements)
-  APP_ENTITLEMENTS=(--entitlements Resources/Forge.entitlements)
+  APP_ENTITLEMENTS=(--entitlements Resources/Lamp.entitlements)
   QUIET=/dev/stdout
 elif [[ "$SIGN_ID" != "-" ]]; then
-  # Local: Forge's own keychain, which signing-identity.sh unlocks, so codesign never asks.
+  # Local: Lamp's own keychain, which signing-identity.sh unlocks, so codesign never asks.
   SIGN=(codesign --force --keychain "$HOME/Library/Application Support/Forge/Signing/forge-signing.keychain-db" -s "$SIGN_ID")
   PI_ENTITLEMENTS=()
   APP_ENTITLEMENTS=()

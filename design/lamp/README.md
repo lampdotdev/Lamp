@@ -1,6 +1,6 @@
 # Lamp: welcome exploration
 
-An exploration of rebranding Forge as **Lamp** ("wish software into existence"), starting with the welcome.
+An exploration of rebranding Lamp as **Lamp** ("wish software into existence"), starting with the welcome.
 Nothing here is wired into the app yet.
 
 The direction settled on: a detailed white porcelain lamp on a white page, shown only by soft light and

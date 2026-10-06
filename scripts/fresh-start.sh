@@ -1,10 +1,10 @@
 #!/bin/zsh
-# Try Forge's first run on this Mac without losing your setup.
+# Try Lamp's first run on this Mac without losing your setup.
 #
-#   scripts/fresh-start.sh begin     quit Forge, put its state aside, open it as a first-time user would
-#   scripts/fresh-start.sh restore   quit Forge, put your state back
+#   scripts/fresh-start.sh begin     quit Lamp, put its state aside, open it as a first-time user would
+#   scripts/fresh-start.sh restore   quit Lamp, put your state back
 #
-# Forge keeps everything in three places: ~/Library/Application Support/Forge (apps, keys.json, pi's config,
+# Lamp keeps everything in three places: ~/Library/Application Support/Forge (apps, keys.json, pi's config,
 # the signing keychain, downloaded models), the defaults domain dev.forge.host (engine, provider, models,
 # privacy switches, Sparkle's update state) and, for notarized builds, Keychain items with service
 # dev.forge.host (provider keys). `begin` moves the folder, exports the defaults and copies the Keychain
@@ -16,11 +16,11 @@
 set -euo pipefail
 
 support="$HOME/Library/Application Support"
-state="$support/Forge"
-backup="$support/Forge-fresh-start"
+state="$support/Lamp"
+backup="$support/Lamp-fresh-start"
 domain="dev.forge.host"
 
-# The accounts of every Keychain item with Forge's service name, one per line.
+# The accounts of every Keychain item with Lamp's service name, one per line.
 keychain_accounts() {
   security dump-keychain 2>/dev/null | awk -v svc="\"$domain\"" '
     /"acct"<blob>=/ { acct = $0; sub(/.*"acct"<blob>="/, "", acct); sub(/"$/, "", acct) }
@@ -33,7 +33,7 @@ begin() {
     exit 1
   fi
   osascript -e 'quit app "Lamp"' >/dev/null 2>&1 || true
-  osascript -e 'quit app "Forge"' >/dev/null 2>&1 || true   # a copy from before the rename
+  osascript -e 'quit app "Lamp"' >/dev/null 2>&1 || true   # a copy from before the rename
   sleep 1
   mkdir -p "$backup"
   chmod 700 "$backup"
@@ -51,8 +51,8 @@ begin() {
     printf '%s\t%s\n' "$account" "$secret" >> "$backup/keychain.txt"
   done
   [ -d "$backup" ] || exit 1   # the loop runs in a subshell; it removed the backup on failure
-  # A Mac that never ran Forge has no folder: remember that, so restore can take the fresh one away.
-  if [ -e "$state" ]; then mv "$state" "$backup/Forge"; else touch "$backup/no-folder"; fi
+  # A Mac that never ran Lamp has no folder: remember that, so restore can take the fresh one away.
+  if [ -e "$state" ]; then mv "$state" "$backup/Lamp"; else touch "$backup/no-folder"; fi
   defaults export "$domain" "$backup/defaults.plist" 2>/dev/null || true
   defaults delete "$domain" >/dev/null 2>&1 || true
   keychain_accounts | while read -r account; do
@@ -69,7 +69,7 @@ restore() {
     exit 1
   fi
   osascript -e 'quit app "Lamp"' >/dev/null 2>&1 || true
-  osascript -e 'quit app "Forge"' >/dev/null 2>&1 || true   # a copy from before the rename
+  osascript -e 'quit app "Lamp"' >/dev/null 2>&1 || true   # a copy from before the rename
   sleep 1
   # The steps that can fail come first, while the backup is untouched, so a failed restore can simply be
   # run again. Whatever the fresh run saved in the Keychain goes, then the original items come back.
@@ -84,9 +84,9 @@ restore() {
   if [ -s "$backup/defaults.plist" ]; then defaults import "$domain" "$backup/defaults.plist"; fi
   # Whatever the fresh run made is thrown away; your apps come back. Only when the backup still holds
   # them (or says there were none), so running this twice can't remove a folder that was already restored.
-  if [ -e "$backup/Forge" ]; then
+  if [ -e "$backup/Lamp" ]; then
     rm -rf "$state"
-    mv "$backup/Forge" "$state"
+    mv "$backup/Lamp" "$state"
   elif [ -e "$backup/no-folder" ]; then
     rm -rf "$state"
     rm -f "$backup/no-folder"

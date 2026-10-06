@@ -46,11 +46,11 @@ struct IconSpec: Codable, Equatable {
 }
 
 /// Icons follow Apple's layered structure: a calm background fill plus one foreground object.
-/// The AI only picks the object; Forge owns the canvas, so every icon sits on the same grid with
+/// The AI only picks the object; Lamp owns the canvas, so every icon sits on the same grid with
 /// the same margins and lighting. The object starts as an SF Symbol and is upgraded to generated
 /// artwork (best of several candidates, cut out of its background). With Xcode 26 installed the
 /// layers become a real Icon Composer document compiled with actool, so macOS 26 renders it in
-/// Liquid Glass with dark and tinted variants; without Xcode, Forge draws the layers itself.
+/// Liquid Glass with dark and tinted variants; without Xcode, Lamp draws the layers itself.
 /// Generated artwork is cached under .forge/art/, so undoing an icon change is instant and free.
 enum Icons {
     static let artModels: [(id: String, label: String)] = [
@@ -122,15 +122,15 @@ enum Icons {
 
     // MARK: Spec
 
-    static func specURL(_ project: ForgeProject) -> URL { project.dir.appendingPathComponent("icon.json") }
-    static func icnsURL(_ project: ForgeProject) -> URL { project.dir.appendingPathComponent(".forge/AppIcon.icns") }
-    static func carURL(_ project: ForgeProject) -> URL { project.dir.appendingPathComponent(".forge/Assets.car") }
-    static func documentURL(_ project: ForgeProject) -> URL { project.dir.appendingPathComponent(".forge/AppIcon.icon") }
-    static func previewURL(_ project: ForgeProject) -> URL { project.dir.appendingPathComponent(".forge/icon.png") }
+    static func specURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent("icon.json") }
+    static func icnsURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".forge/AppIcon.icns") }
+    static func carURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".forge/Assets.car") }
+    static func documentURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".forge/AppIcon.icon") }
+    static func previewURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".forge/icon.png") }
 
     /// The icon at its largest size (1024px) as a PNG for Quick Look, named after the app so the panel's title reads well.
     /// Falls back to the small sidebar preview when there's no .icns yet.
-    static func largePreview(_ project: ForgeProject) -> URL? {
+    static func largePreview(_ project: LampProject) -> URL? {
         let fm = FileManager.default
         let folder = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Forge/Icons", isDirectory: true)
@@ -144,31 +144,31 @@ enum Icons {
         return fm.fileExists(atPath: previewURL(project).path) ? previewURL(project) : nil
     }
 
-    static func load(_ project: ForgeProject) -> IconSpec? {
+    static func load(_ project: LampProject) -> IconSpec? {
         guard let data = try? Data(contentsOf: specURL(project)) else { return nil }
         return try? JSONDecoder().decode(IconSpec.self, from: data)
     }
 
-    static func save(_ spec: IconSpec, for project: ForgeProject) {
+    static func save(_ spec: IconSpec, for project: LampProject) {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         try? encoder.encode(spec).write(to: specURL(project))
     }
 
     /// Artwork depends on the subject and the colours it was painted to sit on.
-    static func artURL(_ project: ForgeProject, spec: IconSpec) -> URL {
+    static func artURL(_ project: LampProject, spec: IconSpec) -> URL {
         let key = "v2|\(spec.subject.trimmed)|\(background(named: spec.background).name)|\(spec.tint.trimmed.lowercased())"
         let hash = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16)
         return project.dir.appendingPathComponent(".forge/art/\(hash).png")
     }
 
-    static func cachedArt(_ project: ForgeProject, spec: IconSpec) -> NSImage? {
+    static func cachedArt(_ project: LampProject, spec: IconSpec) -> NSImage? {
         NSImage(contentsOf: artURL(project, spec: spec))
     }
 
     /// Asks the in-app AI model to design an icon from the app's name and APP.md, or, for a brand-new app,
     /// from the first thing its user asked for.
-    static func design(for project: ForgeProject, brief: String? = nil, avoiding current: IconSpec? = nil) async -> IconSpec {
+    static func design(for project: LampProject, brief: String? = nil, avoiding current: IconSpec? = nil) async -> IconSpec {
         let about = brief.map { "Its user asked for: \($0)" }
             ?? (try? String(contentsOf: project.dir.appendingPathComponent("APP.md"), encoding: .utf8)) ?? ""
         let names = backgrounds.map(\.name).joined(separator: ", ")
@@ -252,7 +252,7 @@ enum Icons {
         return NSImage(cgImage: drawnTile(spec, foreground: foreground).cgImage!, size: NSSize(width: 1024, height: 1024))
     }
 
-    /// Forge's own rendering of the layers, for Macs without Xcode 26: gradient fill, a soft top highlight,
+    /// Lamp's own rendering of the layers, for Macs without Xcode 26: gradient fill, a soft top highlight,
     /// and the object with a gentle shadow beneath it.
     static func drawnTile(_ spec: IconSpec, foreground: NSBitmapImageRep) -> NSBitmapImageRep {
         let bg = background(named: spec.background)
@@ -297,7 +297,7 @@ enum Icons {
     /// Writes .forge/AppIcon.icns and .forge/icon.png and, with Xcode 26, .forge/AppIcon.icon and
     /// .forge/Assets.car (what macOS 26 uses for Liquid Glass). Returns the preview image.
     @discardableResult
-    static func write(_ spec: IconSpec, art: NSImage?, for project: ForgeProject) async throws -> NSImage {
+    static func write(_ spec: IconSpec, art: NSImage?, for project: LampProject) async throws -> NSImage {
         let fm = FileManager.default
         try fm.createDirectory(at: project.dir.appendingPathComponent(".forge"), withIntermediateDirectories: true)
         let foreground = foregroundLayer(spec, art: art)
@@ -399,7 +399,7 @@ enum Icons {
         return candidates[verdict.best - 1]
     }
 
-    /// Asks the image model for the object alone on a plain background (never a whole icon), so Forge can
+    /// Asks the image model for the object alone on a plain background (never a whole icon), so Lamp can
     /// cut it out and compose the icon itself. Returns PNG/JPEG data.
     static func generateArt(_ spec: IconSpec) async throws -> Data {
         let bg = background(named: spec.background)
@@ -511,7 +511,7 @@ enum Icons {
 }
 
 /// Xcode 26's icon tools: `ictool` (Icon Composer's renderer) and `actool` (compiles .icon documents).
-/// Forge only needs the Command Line Tools, so these are optional: found in a full Xcode 26 install.
+/// Lamp only needs the Command Line Tools, so these are optional: found in a full Xcode 26 install.
 struct IconTools {
     let developer: String
     var ictool: String { developer + "/../Applications/Icon Composer.app/Contents/Executables/ictool" }

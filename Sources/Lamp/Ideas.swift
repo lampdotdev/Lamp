@@ -4,7 +4,7 @@ import AppKit
 import FoundationModels
 #endif
 
-/// An app someone could ask Forge for: shown as a tile, and choosing it fills in the request.
+/// An app someone could ask Lamp for: shown as a tile, and choosing it fills in the request.
 struct Idea: Identifiable, Equatable {
     var title: String
     var symbol: String
@@ -25,7 +25,7 @@ struct Idea: Identifiable, Equatable {
 }
 
 /// Starting points for a first app. Each shows something different a Mac app can do, and every one is
-/// something Forge builds well. The first six are the ones a new app's empty chat shows.
+/// something Lamp builds well. The first six are the ones a new app's empty chat shows.
 enum Ideas {
     static let pool: [Idea] = [
         Idea("Downloads Tidy", "folder.badge.gearshape", 0.58, "Sorts what lands in Downloads, from the menu bar.",
@@ -156,7 +156,7 @@ enum Ideas {
 private enum Inventor {
     /// What the model has to fill in for each idea, and that there are six of them. Described to the
     /// model as data rather than with the framework's macros, whose compiler plugin comes only with
-    /// Xcode: this way Forge builds with just the Command Line Tools.
+    /// Xcode: this way Lamp builds with just the Command Line Tools.
     private static let schema: GenerationSchema? = {
         let text = DynamicGenerationSchema(type: String.self)
         let idea = DynamicGenerationSchema(name: "Invented", properties: [

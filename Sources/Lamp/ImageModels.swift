@@ -52,7 +52,7 @@ final class ImageModels: ObservableObject {
 
     var installed: [ImageModelSpec] { Self.catalog.filter { Self.isInstalled($0) } }
 
-    /// Installed means Forge's own download finished: its marker names the revision refs/main points at.
+    /// Installed means Lamp's own download finished: its marker names the revision refs/main points at.
     /// Judging a snapshot by its files isn't trustworthy (which files a model needs differs per repo, and a
     /// half-finished download can look whole), so a model fetched some other way shows as downloadable:
     /// pressing Download then only verifies what's there, since blobs already present are skipped, and
@@ -79,7 +79,7 @@ final class ImageModels: ObservableObject {
 
     func download(_ spec: ImageModelSpec) {
         LocalModels.shared.download(id: "image:" + spec.id, repo: spec.repo, files: nil) { [weak self] in
-            // Forge's own record that the whole repo arrived, for the revision it fetched.
+            // Lamp's own record that the whole repo arrived, for the revision it fetched.
             let repoDir = LocalModels.hubDir.appendingPathComponent("models--" + spec.repo.replacingOccurrences(of: "/", with: "--"))
             if let ref = try? String(contentsOf: repoDir.appendingPathComponent("refs/main"), encoding: .utf8) {
                 try? ref.write(to: repoDir.appendingPathComponent("forge-complete"), atomically: true, encoding: .utf8)
@@ -116,10 +116,10 @@ final class ImageModels: ObservableObject {
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("forge-flux-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: folder) }
-            let env = ["PATH": ToolLocator.userPath, "HF_HUB_OFFLINE": "1", "FORGE_TOOL": tool, "FORGE_PROMPT": prompt,
-                       "FORGE_MODEL": spec.repo, "FORGE_BASE": spec.baseModel]
+            let env = ["PATH": ToolLocator.userPath, "HF_HUB_OFFLINE": "1", "LAMP_TOOL": tool, "LAMP_PROMPT": prompt,
+                       "LAMP_MODEL": spec.repo, "LAMP_BASE": spec.baseModel]
             let command = """
-            "$FORGE_TOOL" --model "$FORGE_MODEL" --base-model "$FORGE_BASE" --prompt "$FORGE_PROMPT" \\
+            "$LAMP_TOOL" --model "$LAMP_MODEL" --base-model "$LAMP_BASE" --prompt "$LAMP_PROMPT" \\
               --steps \(spec.steps) --width \(width) --height \(height) --seed \(Int.random(in: 1...1_000_000)) --output image.png
             """
             var lines: [String] = []

@@ -5,12 +5,12 @@ struct PlanPart: Identifiable, Equatable {
     let id: Int
     var title: String
     var done: Bool
-    /// The files the agent said it would write for this part. Forge ticks the part when they're written,
+    /// The files the agent said it would write for this part. Lamp ticks the part when they're written,
     /// so progress doesn't depend on the agent stopping to report it.
     var files: [String] = []
 }
 
-/// What Forge knows about the turn in progress, for showing the user something better than a spinner.
+/// What Lamp knows about the turn in progress, for showing the user something better than a spinner.
 struct TurnProgress {
     /// The first turn of a new app gets the build card; later turns get one line.
     let newApp: Bool
@@ -152,7 +152,7 @@ struct TurnProgress {
 /// Shown while a new app's first version is built: an outline of the app that fills in with its name,
 /// its icon, the agent's plan and what it's doing now, and ends on a picture of the real window.
 struct BuildCard: View {
-    let project: ForgeProject
+    let project: LampProject
     let progress: TurnProgress
 
     var body: some View {

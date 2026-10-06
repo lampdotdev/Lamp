@@ -75,8 +75,8 @@ enum Builder {
     }
 
     /// The model Claude Code or Codex builds with; "" leaves it to the tool's own default (for Claude Code,
-    /// the account's default, since Forge runs it without the person's settings). Claude Code starts on
-    /// Opus, like Forge's other builders.
+    /// the account's default, since Lamp runs it without the person's settings). Claude Code starts on
+    /// Opus, like Lamp's other builders.
     static func engineModel(_ engine: Engine) -> String {
         UserDefaults.standard.string(forKey: "engineModel.\(engine.rawValue)") ?? (engine == .claude ? "opus" : "")
     }
@@ -304,113 +304,113 @@ extension Agent {
 
     /// Builds the command for one turn with the chosen engine. `files` are attachment paths
     /// relative to the app folder; `session` is the engine's saved conversation id, if any.
-    static func run(prompt: String, files: [String], project: ForgeProject, session: String?) -> AgentRun {
-        var env: [String: String] = ["FORGE_PROMPT": prompt, "FORGE_SYSTEM": systemPrompt, "FORGE_DIR": project.dir.path,
+    static func run(prompt: String, files: [String], project: LampProject, session: String?) -> AgentRun {
+        var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt, "LAMP_DIR": project.dir.path,
                                      "PATH": ToolLocator.userPath]
-        for (index, file) in files.enumerated() { env["FORGE_FILE_\(index)"] = file }
-        let fileArgs = (0..<files.count).map { "\"$FORGE_FILE_\($0)\"" }
-        if let session { env["FORGE_SESSION"] = session }
+        for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
+        let fileArgs = (0..<files.count).map { "\"$LAMP_FILE_\($0)\"" }
+        if let session { env["LAMP_SESSION"] = session }
 
         switch Builder.engine {
         case .pi:
-            env["FORGE_LOOK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/look"
-            env["FORGE_USE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/use"
-            env["FORGE_VERSIONS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/versions"
-            env["FORGE_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve"
-            env["FORGE_TOKEN"] = Template.token(for: project)
+            env["LAMP_LOOK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/look"
+            env["LAMP_USE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/use"
+            env["LAMP_VERSIONS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/versions"
+            env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve"
+            env["LAMP_TOKEN"] = Template.token(for: project)
             return AgentRun(command: command(fileCount: files.count),
                             env: env.merging(environment(prompt: prompt, files: files, session: session ?? "",
                                                          sessionDir: project.dir.appendingPathComponent(".forge/pi-sessions").path)) { $1 })
         case .claude:
-            // Forge builds the app itself. Attachments are listed in the prompt; Claude reads them.
+            // Lamp builds the app itself. Attachments are listed in the prompt; Claude reads them.
             // Isolated from the user's own Claude Code setup: --restricted ignores their settings files (hooks,
-            // permission rules, plugins) while keeping their sign-in and Forge's --settings; --strict-mcp-config
+            // permission rules, plugins) while keeping their sign-in and Lamp's --settings; --strict-mcp-config
             // skips their MCP servers and --disable-slash-commands their skills. --tools then lists exactly
             // what the agent gets.
-            // Shell commands go through a PreToolUse hook that asks Forge and waits for the user's answer; Forge
-            // replies in Claude Code's hook format. If Forge can't be reached the hook fails and the command is denied.
-            env["FORGE_TOKEN"] = Template.token(for: project)
-            env["FORGE_SYSTEM"] = systemPrompt + tryRules
+            // Shell commands go through a PreToolUse hook that asks Lamp and waits for the user's answer; Lamp
+            // replies in Claude Code's hook format. If Lamp can't be reached the hook fails and the command is denied.
+            env["LAMP_TOKEN"] = Template.token(for: project)
+            env["LAMP_SYSTEM"] = systemPrompt + tryRules
             // How commands are approved (Settings → Building):
             // - auto: Claude Code's own classifier (--permission-mode auto) runs routine commands; when it would
-            //   ask, its PermissionRequest hook sends the request to Forge's approval card.
-            // - always: a PreToolUse hook sends every shell command to Forge first.
+            //   ask, its PermissionRequest hook sends the request to Lamp's approval card.
+            // - always: a PreToolUse hook sends every shell command to Lamp first.
             // - never: the shell is allowed outright.
-            // Hooks call Forge's gateway and wait for the user; if Forge can't be reached the hook fails and the
+            // Hooks call Lamp's gateway and wait for the user; if Lamp can't be reached the hook fails and the
             // command is denied.
             var approval = CommandApproval.current
             if approval == .auto && CommandApproval.claudeAutoUnavailable { approval = .always }
-            let hook = #"{"type":"command","timeout":3600,"command":"curl -sf --max-time 3600 -X POST -H \"Authorization: Bearer $FORGE_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$FORGE_APPROVE_URL\""}"#
+            let hook = #"{"type":"command","timeout":3600,"command":"curl -sf --max-time 3600 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$LAMP_APPROVE_URL\""}"#
             var permissionMode = "acceptEdits"
             var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__forge__look_at_app,mcp__forge__use_app"
-            // look_at_app and use_app come from Forge's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
+            // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
             // it the only server.
             // A look can build the app, and a use_app batch can wait a minute or more: well past the engines'
             // default tool timeouts (pi's extension allows ten minutes).
             env["MCP_TOOL_TIMEOUT"] = "600000"
-            env["FORGE_CLAUDE_MCP"] = #"{"mcpServers":{"forge":{"type":"http","url":"http://127.0.0.1:"# + "\(Gateway.port)" +
+            env["LAMP_CLAUDE_MCP"] = #"{"mcpServers":{"forge":{"type":"http","url":"http://127.0.0.1:"# + "\(Gateway.port)" +
                 #"/mcp","headers":{"Authorization":"Bearer "# + Template.token(for: project) + #""}}}}"#
             switch approval {
             case .auto:
                 permissionMode = "auto"
-                env["FORGE_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-permission"
-                env["FORGE_CLAUDE_SETTINGS"] = #"{"hooks":{"PermissionRequest":[{"matcher":"*","hooks":["# + hook + "]}]}}"
+                env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-permission"
+                env["LAMP_CLAUDE_SETTINGS"] = #"{"hooks":{"PermissionRequest":[{"matcher":"*","hooks":["# + hook + "]}]}}"
             case .always:
-                env["FORGE_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude"
-                env["FORGE_CLAUDE_SETTINGS"] = #"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":["# + hook + "]}]}}"
+                env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude"
+                env["LAMP_CLAUDE_SETTINGS"] = #"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":["# + hook + "]}]}}"
             case .never:
                 allowed += ",Bash"
-                env["FORGE_CLAUDE_SETTINGS"] = "{}"
+                env["LAMP_CLAUDE_SETTINGS"] = "{}"
             }
-            env["FORGE_CLAUDE_MODE"] = permissionMode
-            env["FORGE_CLAUDE_ALLOWED"] = allowed
-            env["FORGE_TOOL"] = ToolLocator.path(for: .claude) ?? "claude"
+            env["LAMP_CLAUDE_MODE"] = permissionMode
+            env["LAMP_CLAUDE_ALLOWED"] = allowed
+            env["LAMP_TOOL"] = ToolLocator.path(for: .claude) ?? "claude"
             var command = """
-            "$FORGE_TOOL" -p "$FORGE_PROMPT" --output-format stream-json --verbose --include-partial-messages \\
-              --restricted --strict-mcp-config --mcp-config "$FORGE_CLAUDE_MCP" --disable-slash-commands \\
+            "$LAMP_TOOL" -p "$LAMP_PROMPT" --output-format stream-json --verbose --include-partial-messages \\
+              --restricted --strict-mcp-config --mcp-config "$LAMP_CLAUDE_MCP" --disable-slash-commands \\
               --tools 'Read,Edit,Write,Glob,Grep,Bash,WebFetch,WebSearch' \\
-              --permission-mode "$FORGE_CLAUDE_MODE" --allowedTools "$FORGE_CLAUDE_ALLOWED" \\
-              --settings "$FORGE_CLAUDE_SETTINGS" \\
-              --append-system-prompt "$FORGE_SYSTEM"
+              --permission-mode "$LAMP_CLAUDE_MODE" --allowedTools "$LAMP_CLAUDE_ALLOWED" \\
+              --settings "$LAMP_CLAUDE_SETTINGS" \\
+              --append-system-prompt "$LAMP_SYSTEM"
             """
-            if session != nil { command += " --resume \"$FORGE_SESSION\"" }
+            if session != nil { command += " --resume \"$LAMP_SESSION\"" }
             let model = Builder.engineModel(.claude)
             if !model.isEmpty {
-                env["FORGE_MODEL"] = model
-                command += " --model \"$FORGE_MODEL\""
+                env["LAMP_MODEL"] = model
+                command += " --model \"$LAMP_MODEL\""
             }
             return AgentRun(command: command, env: env)
         case .codex:
             // Isolated from the user's own Codex setup (--ignore-user-config --ignore-rules: their model, MCP
-            // servers, features and rules), keeping their sign-in. Forge's rules go in as developer instructions.
-            env["FORGE_TOOL"] = ToolLocator.path(for: .codex) ?? "codex"
-            env["FORGE_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt + tryRules + Self.codexNote)
-            // Approvals (Settings → Building): a PreToolUse hook sends each shell command to Forge before it runs.
-            // Forge lets known read-only commands through (Codex reads with its shell), and otherwise applies the
+            // servers, features and rules), keeping their sign-in. Lamp's rules go in as developer instructions.
+            env["LAMP_TOOL"] = ToolLocator.path(for: .codex) ?? "codex"
+            env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt + tryRules + Self.codexNote)
+            // Approvals (Settings → Building): a PreToolUse hook sends each shell command to Lamp before it runs.
+            // Lamp lets known read-only commands through (Codex reads with its shell), and otherwise applies the
             // setting: the decision model then the user (auto), the user (always). "Never" has no hook. In every
             // mode Codex stays in its sandbox (writes only in the app's folder), with network access.
             let approval = CommandApproval.current
-            env["FORGE_TOKEN"] = Template.token(for: project)
-            env["FORGE_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=codex"
-            let hook = Bundle.main.resourceURL?.appendingPathComponent("forge-approve.sh").path ?? "forge-approve.sh"
-            env["FORGE_CODEX_HOOKS"] = approval == .never ? "hooks={}"
+            env["LAMP_TOKEN"] = Template.token(for: project)
+            env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=codex"
+            let hook = Bundle.main.resourceURL?.appendingPathComponent("lamp-approve.sh").path ?? "lamp-approve.sh"
+            env["LAMP_CODEX_HOOKS"] = approval == .never ? "hooks={}"
                 : #"hooks.PreToolUse=[{matcher="^Bash$",hooks=[{type="command",timeout=3600,command="'"# + hook + #"'"}]}]"#
             let codexModel = Builder.engineModel(.codex)
-            if !codexModel.isEmpty { env["FORGE_MODEL"] = codexModel }
-            let options = (codexModel.isEmpty ? "" : "-m \"$FORGE_MODEL\" ") + """
+            if !codexModel.isEmpty { env["LAMP_MODEL"] = codexModel }
+            let options = (codexModel.isEmpty ? "" : "-m \"$LAMP_MODEL\" ") + """
             --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check \\
               -c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true \\
-              -c web_search="live" -c "$FORGE_CODEX_INSTRUCTIONS" -c "$FORGE_CODEX_HOOKS" \\
-              -c mcp_servers.forge.url="http://127.0.0.1:\(Gateway.port)/mcp" -c mcp_servers.forge.bearer_token_env_var="FORGE_TOKEN" \\
+              -c web_search="live" -c "$LAMP_CODEX_INSTRUCTIONS" -c "$LAMP_CODEX_HOOKS" \\
+              -c mcp_servers.forge.url="http://127.0.0.1:\(Gateway.port)/mcp" -c mcp_servers.forge.bearer_token_env_var="LAMP_TOKEN" \\
               -c mcp_servers.forge.tool_timeout_sec=600 -c mcp_servers.forge.default_tools_approval_mode="approve"
             """
             if session != nil {
-                // `exec resume` keeps the conversation; it takes no -C/-i (Forge already runs in the app's folder).
-                return AgentRun(command: "\"$FORGE_TOOL\" exec resume \(options) \"$FORGE_SESSION\" -- \"$FORGE_PROMPT\"", env: env)
+                // `exec resume` keeps the conversation; it takes no -C/-i (Lamp already runs in the app's folder).
+                return AgentRun(command: "\"$LAMP_TOOL\" exec resume \(options) \"$LAMP_SESSION\" -- \"$LAMP_PROMPT\"", env: env)
             }
             let images = files.enumerated().filter { Attachments.isImage(URL(fileURLWithPath: $0.element)) }
-                .map { "-i \"$FORGE_FILE_\($0.offset)\"" }.joined(separator: " ")
-            return AgentRun(command: "\"$FORGE_TOOL\" exec \(options) -C \"$FORGE_DIR\" \(images) -- \"$FORGE_PROMPT\"", env: env)
+                .map { "-i \"$LAMP_FILE_\($0.offset)\"" }.joined(separator: " ")
+            return AgentRun(command: "\"$LAMP_TOOL\" exec \(options) -C \"$LAMP_DIR\" \(images) -- \"$LAMP_PROMPT\"", env: env)
         }
     }
 
@@ -465,11 +465,11 @@ extension Agent {
         return name
     }
 
-    /// Claude Code calls Forge's MCP tools `mcp__forge__look_at_app`; Forge knows them by their plain names.
+    /// Claude Code calls Lamp's MCP tools `mcp__forge__look_at_app`; Lamp knows them by their plain names.
     private static func plainName(_ tool: String) -> String { tool.replacingOccurrences(of: "mcp__forge__", with: "") }
 
     static func parseClaude(_ line: String) -> [AgentEvent] {
-        // Most streamed lines are pieces of text or thinking, which Forge gets whole from the finished message.
+        // Most streamed lines are pieces of text or thinking, which Lamp gets whole from the finished message.
         // Skip them before parsing: there can be thousands per turn, all handled on the main thread.
         if line.hasPrefix(#"{"type":"stream_event""#), line.contains(#""type":"content_block_delta""#),
            !line.contains("input_json_delta") { return [] }
@@ -489,7 +489,7 @@ extension Agent {
                 }
             }
         case "stream_event":
-            // The message as it's written, so Forge can say what the model has started on: a long file
+            // The message as it's written, so Lamp can say what the model has started on: a long file
             // takes minutes to write, and the finished message only arrives at the end.
             let event = obj["event"] as? [String: Any] ?? [:]
             switch event["type"] as? String {
@@ -519,7 +519,7 @@ extension Agent {
 
     static func parseCodex(_ line: String) -> [AgentEvent] {
         guard let obj = json(line), let type = obj["type"] as? String else {
-            // Notices Codex prints for the flags Forge chose on purpose.
+            // Notices Codex prints for the flags Lamp chose on purpose.
             if line.contains("--dangerously-bypass-hook-trust") || line.hasPrefix("Reading additional input") { return [] }
             return line.trimmed.isEmpty ? [] : [.raw(line)]
         }
@@ -564,7 +564,7 @@ extension Agent {
 /// Whether Claude Code or Codex is signed in, and signing in without Terminal: both tools' login commands
 /// open the browser and finish on their own.
 enum EngineSignIn {
-    /// nil when Forge can't tell (the tool didn't answer).
+    /// nil when Lamp can't tell (the tool didn't answer).
     static func isSignedIn(_ engine: Engine) async -> Bool? {
         guard let tool = ToolLocator.path(for: engine) else { return nil }
         switch engine {

@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-/// The chat input: a native text view so Forge controls the keys and the clipboard.
+/// The chat input: a native text view so Lamp controls the keys and the clipboard.
 /// Return sends, Shift/Option/Control-Return insert a new line, and pasting or dropping
 /// files or images (e.g. a screenshot) attaches them instead of inserting text.
 /// A `suggestion` replaces the placeholder while the composer is empty: Tab accepts it, Escape dismisses it.
@@ -342,7 +342,7 @@ enum Attachments {
     static func isImage(_ url: URL) -> Bool { imageTypes.contains(url.pathExtension.lowercased()) }
 
     /// Copies files into <app>/Attachments with unique names. Returns the saved names.
-    static func save(_ files: [URL], to project: ForgeProject) -> [String] {
+    static func save(_ files: [URL], to project: LampProject) -> [String] {
         let fm = FileManager.default
         let dir = project.dir.appendingPathComponent(folder, isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -364,7 +364,7 @@ enum Attachments {
     }
 
     /// Files the agent should see directly (pi's `@file`): images, and small text files.
-    static func inline(_ names: [String], in project: ForgeProject) -> [String] {
+    static func inline(_ names: [String], in project: LampProject) -> [String] {
         names.filter { name in
             let url = project.dir.appendingPathComponent(folder).appendingPathComponent(name)
             if isImage(url) { return true }

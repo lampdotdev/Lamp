@@ -1,13 +1,13 @@
 import SwiftUI
 import AppKit
 
-/// The first-launch welcome: what Forge is, the user's first idea, getting set up, then straight into
+/// The first-launch welcome: what Lamp is, the user's first idea, getting set up, then straight into
 /// building it. It lives in the main window, dressed up without the usual window chrome, and the window
-/// grows into Forge itself at the end.
+/// grows into Lamp itself at the end.
 enum Onboarding {
     static let key = "onboarded"
 
-    /// People who used Forge before the welcome existed have apps already: they skip it.
+    /// People who used Lamp before the welcome existed have apps already: they skip it.
     static func settle(hasApps: Bool) {
         if UserDefaults.standard.object(forKey: key) == nil && hasApps {
             UserDefaults.standard.set(true, forKey: key)
@@ -19,7 +19,7 @@ enum Onboarding {
     static let size = CGSize(width: 1080, height: 760)
     /// The smallest the welcome's window gets; everything still fits.
     static let minimumSize = CGSize(width: 900, height: 660)
-    /// The window Forge opens into after the welcome.
+    /// The window Lamp opens into after the welcome.
     static let appSize = CGSize(width: 1180, height: 800)
 }
 
@@ -99,7 +99,7 @@ struct OnboardingView: View {
         withAnimation(.spring(response: 0.6, dampingFraction: 0.88)) { step = next }
     }
 
-    /// Fades the welcome out, grows the window into Forge's, and starts the first app on the user's idea.
+    /// Fades the welcome out, grows the window into Lamp's, and starts the first app on the user's idea.
     private func finish() {
         withAnimation(.easeIn(duration: 0.3)) { leaving = true }
         Task {
@@ -111,7 +111,7 @@ struct OnboardingView: View {
                 store.welcomeFinished = true
             }
             SettingsMenu.enable(true)
-            // Once Forge's own view is in, so the welcome's fixed size doesn't hold the window back.
+            // Once Lamp's own view is in, so the welcome's fixed size doesn't hold the window back.
             try? await Task.sleep(for: .seconds(0.05))
             if let window { Chrome.restore(window, to: Onboarding.appSize) }
             guard !idea.isEmpty else { return }
@@ -343,11 +343,11 @@ private struct SetupStep: View {
     @State private var choice: Builder.Choice?
     @State private var signedIn: [Engine: Bool] = [:]
     @State private var signingIn: Engine?
-    /// Whether the Forge Agent option on screen (that provider, that model) is the one set up to build.
+    /// Whether the Lamp Agent option on screen (that provider, that model) is the one set up to build.
     @State private var forgeReady = false
 
     var body: some View {
-        // Centered like the other steps. The Forge Agent options can make it taller than a small window,
+        // Centered like the other steps. The Lamp Agent options can make it taller than a small window,
         // so it scrolls rather than running into the buttons.
         GeometryReader { proxy in
             ScrollView {
@@ -593,7 +593,7 @@ private struct BuilderCard: View {
     }
 }
 
-/// Forge's own agent: OpenRouter, another provider, or a model on this Mac, each set up right here.
+/// Lamp's own agent: OpenRouter, another provider, or a model on this Mac, each set up right here.
 private struct ForgeAgentOptions: View {
     @EnvironmentObject private var store: Store
     @ObservedObject private var local = LocalModels.shared
@@ -721,7 +721,7 @@ private struct ForgeAgentOptions: View {
 
     // MARK: Another provider
 
-    /// Cloud providers and the model apps on this Mac Forge can talk to, in one alphabetical list.
+    /// Cloud providers and the model apps on this Mac Lamp can talk to, in one alphabetical list.
     private var others: [(id: String, name: String)] {
         (Provider.apiProviders.filter { $0.id != "openrouter" }.map { ($0.id, $0.name) }
             + LocalModels.externalIDs.map { ($0, LocalModels.externalName($0)) })
@@ -1141,7 +1141,7 @@ private struct WindowReader: NSViewRepresentable {
 }
 
 /// The welcome has no window chrome: no title, no buttons, and the whole window drags. At the end
-/// the window gets its chrome back and grows into Forge's, around the same center.
+/// the window gets its chrome back and grows into Lamp's, around the same center.
 private enum Chrome {
     private static var saved: (mask: NSWindow.StyleMask, transparent: Bool, title: NSWindow.TitleVisibility, movable: Bool,
                                name: String, minSize: NSSize)?

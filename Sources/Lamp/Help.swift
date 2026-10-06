@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Replace macOS's help-book command: Forge's guide is part of the app and works offline.
+/// Replace macOS's help-book command: Lamp's guide is part of the app and works offline.
 struct ForgeHelpCommands: Commands {
     @Environment(\.openWindow) private var openWindow
 

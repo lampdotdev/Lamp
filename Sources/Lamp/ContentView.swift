@@ -14,7 +14,7 @@ struct ContentView: View {
                 OnboardingView().ignoresSafeArea()
             } else {
                 Group {
-                    // Only Apple's tools missing (say, still installing after the welcome): Forge stays usable,
+                    // Only Apple's tools missing (say, still installing after the welcome): Lamp stays usable,
                     // and anything asked for waits in its chat until they're in.
                     if store.setup.checked && !store.setup.ready && !(store.setup.hasBuilder && store.setup.hasAgent) {
                         SetupView()
@@ -98,7 +98,7 @@ struct ContentView: View {
     }
 
     /// The app's own icon, or its blueprint stand-in if it doesn't have one yet.
-    private func dialogIcon(for project: ForgeProject) -> NSImage {
+    private func dialogIcon(for project: LampProject) -> NSImage {
         if let icon = store.icons[project.id] { return icon }
         let renderer = ImageRenderer(content: BlueprintIcon(letter: project.untitled ? nil : project.name.first, size: 128))
         renderer.scale = 2
@@ -216,7 +216,7 @@ struct AppSidebar: View {
 
 struct AppTile: View {
     @EnvironmentObject private var store: Store
-    let project: ForgeProject
+    let project: LampProject
     let selected: Bool
 
     var body: some View {
@@ -255,7 +255,7 @@ struct AppTile: View {
 
 struct AppIcon: View {
     @EnvironmentObject private var store: Store
-    let project: ForgeProject
+    let project: LampProject
     let size: CGFloat
 
     var body: some View {
@@ -325,7 +325,7 @@ struct ReadyDot: View {
 
 struct AppMenu: View {
     @EnvironmentObject private var store: Store
-    let project: ForgeProject
+    let project: LampProject
 
     var body: some View {
         let busy = store.busy.contains(project.id)
@@ -366,7 +366,7 @@ struct SidebarMaterial: NSViewRepresentable {
 
 struct ProjectView: View {
     @EnvironmentObject private var store: Store
-    let project: ForgeProject
+    let project: LampProject
     @State private var draft = ""
     @State private var attachments: [URL] = []
     @State private var composerHeight = Composer.lineHeight
@@ -687,11 +687,11 @@ struct ProjectView: View {
 /// The info panel: what an app has cost, which models it uses, and where it lives.
 struct AppInfoView: View {
     @EnvironmentObject private var store: Store
-    let project: ForgeProject
+    let project: LampProject
     /// This app's own model choices; nil fields follow Settings.
     @State private var models: AppModels
 
-    init(project: ForgeProject) {
+    init(project: LampProject) {
         self.project = project
         _models = State(initialValue: AppModels.load(project))
     }
@@ -883,7 +883,7 @@ struct QueuedRow: View {
 /// An app's empty chat: its icon, its name (editable), and what to do next.
 struct NewAppIntro: View {
     @EnvironmentObject private var store: Store
-    let project: ForgeProject
+    let project: LampProject
     @Binding var draft: String
     @State private var name = ""
     @State private var fresh = false   // nothing built yet (not, say, an imported app)
@@ -1135,7 +1135,7 @@ struct StarterIdeas: View {
     let choose: (String) -> Void
     @State private var hovered: String?
 
-    /// The first of Forge's ideas. Choosing one fills in the first request for the user to edit and send.
+    /// The first of Lamp's ideas. Choosing one fills in the first request for the user to edit and send.
     static let examples = Ideas.pool.prefix(6)
 
     var body: some View {

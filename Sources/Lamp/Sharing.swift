@@ -3,15 +3,15 @@ import AppKit
 import UniformTypeIdentifiers
 
 extension UTType {
-    /// A shared Forge app: a zip with the app's Swift sources, APP.md, icon.json and icon artwork.
-    /// Declared in Forge's Info.plist (see build.sh) so double-clicking one opens Forge.
-    static let forgeApp = UTType(exportedAs: "dev.forge.forgeapp", conformingTo: .data)
+    /// A shared Lamp app: a zip with the app's Swift sources, APP.md, icon.json and icon artwork.
+    /// Declared in Lamp's Info.plist (see build.sh) so double-clicking one opens Lamp.
+    static let lampApp = UTType(exportedAs: "dev.forge.forgeapp", conformingTo: .data)
 }
 
 /// Exporting and importing `.forgeapp` files.
 ///
 /// A shared app carries only what's needed to rebuild it: Swift sources, APP.md, icon.json, the
-/// icon artwork, and the attached files the code uses. Never the sender's chat, tokens, agent sessions or git history. On import, Forge
+/// icon artwork, and the attached files the code uses. Never the sender's chat, tokens, agent sessions or git history. On import, Lamp
 /// writes its own Package.swift, build.sh and ForgeSupport.swift, so nothing in the file runs at
 /// build time; the code only runs when the app is opened, after the recipient agrees.
 enum Sharing {
@@ -24,7 +24,7 @@ enum Sharing {
     }
 
     /// Writes `<Name>.forgeapp` to a temporary folder and returns its URL.
-    static func export(_ project: ForgeProject) throws -> URL {
+    static func export(_ project: LampProject) throws -> URL {
         let fm = FileManager.default
         let work = fm.temporaryDirectory.appendingPathComponent("forge-share-\(UUID().uuidString)")
         let stage = work.appendingPathComponent("app")
@@ -67,7 +67,7 @@ enum Sharing {
     }
 
     /// Attached files the app's code uses: those it names, or all of them if it lists them with `ForgeAssets.names`.
-    static func usedAttachments(of project: ForgeProject) -> [URL] {
+    static func usedAttachments(of project: LampProject) -> [URL] {
         let code = swiftSources(in: project.dir.appendingPathComponent("Sources"))
             .filter { $0.lastPathComponent != "ForgeSupport.swift" }
             .compactMap { try? String(contentsOf: $0, encoding: .utf8) }
@@ -82,7 +82,7 @@ enum Sharing {
         let name: String
         let folder: URL          // unpacked, temporary
         let sources: [URL]       // .swift files only
-        let attachments: [URL]   // files attached in the sender's chat; bundled as data, never run by Forge
+        let attachments: [URL]   // files attached in the sender's chat; bundled as data, never run by Lamp
         let fileCount: Int
     }
 
@@ -148,7 +148,7 @@ enum Sharing {
 
 // MARK: - Import review
 
-/// What Forge tells someone before they build an app another person shared.
+/// What Lamp tells someone before they build an app another person shared.
 struct ImportReview {
     var summary: String
     var capabilities: [String]
@@ -237,10 +237,10 @@ extension Sharing {
 
 /// Lets SwiftUI's ShareLink export a project lazily, only when someone actually shares it.
 struct SharedApp: Transferable {
-    let project: ForgeProject
+    let project: LampProject
 
     static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(exportedContentType: .forgeApp) { shared in
+        FileRepresentation(exportedContentType: .lampApp) { shared in
             SentTransferredFile(try Sharing.export(shared.project))
         }
         .suggestedFileName { "\($0.project.name).forgeapp" }

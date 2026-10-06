@@ -23,12 +23,12 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// One notification per app: a newer one replaces the last. The subtitle says what happened.
-    func post(for project: ForgeProject, subtitle: String, body: String) {
+    func post(for project: LampProject, subtitle: String, body: String) {
         guard Self.enabled, let center else { return }
         Task {
             guard await allowed(center) else { return }
             let content = UNMutableNotificationContent()
-            // From Forge about the app, not from the app itself.
+            // From Lamp about the app, not from the app itself.
             content.title = "Lamp on \(project.name)"
             content.subtitle = subtitle
             content.body = body
@@ -53,7 +53,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         NSApp?.dockTile.badgeLabel = count > 0 && Self.enabled ? "\(count)" : nil
     }
 
-    /// True when macOS has notifications turned off for Forge.
+    /// True when macOS has notifications turned off for Lamp.
     func isDenied() async -> Bool {
         guard let center else { return false }
         return await center.notificationSettings().authorizationStatus == .denied
@@ -75,7 +75,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// The system moves attachments into its own store, so it gets a copy of the icon.
-    private static func iconCopy(for project: ForgeProject) -> URL? {
+    private static func iconCopy(for project: LampProject) -> URL? {
         let icon = Icons.previewURL(project)
         guard FileManager.default.fileExists(atPath: icon.path) else { return nil }
         let copy = FileManager.default.temporaryDirectory
@@ -85,7 +85,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: - UNUserNotificationCenterDelegate
 
-    /// Shown while Forge is in front too, unless that app's chat is already on screen.
+    /// Shown while Lamp is in front too, unless that app's chat is already on screen.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         let id = notification.request.content.userInfo["app"] as? String

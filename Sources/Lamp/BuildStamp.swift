@@ -1,20 +1,20 @@
 import SwiftUI
 import CryptoKit
 
-/// Which Forge built an app. Forge writes it into the app's Info.plist after every build, so an app
-/// built by an older Forge can be told apart and rebuilt when it's next opened from Forge.
+/// Which Lamp built an app. Lamp writes it into the app's Info.plist after every build, so an app
+/// built by an older Lamp can be told apart and rebuilt when it's next opened from Lamp.
 struct BuildStamp: Equatable {
-    /// Forge's version, e.g. "0.2.0". Nil for apps built before stamps existed.
+    /// Lamp's version, e.g. "0.2.0". Nil for apps built before stamps existed.
     var forge: String?
-    /// A fingerprint of the ForgeSupport.swift template the app was compiled with. Two builds of Forge
-    /// can share a version number (every local build is 0.1); this is what says whether the code Forge
+    /// A fingerprint of the ForgeSupport.swift template the app was compiled with. Two builds of Lamp
+    /// can share a version number (every local build is 0.1); this is what says whether the code Lamp
     /// puts in each app has changed.
     var support: String?
 
     private static let forgeKey = "ForgeVersion"
     private static let supportKey = "ForgeSupportVersion"
 
-    /// What this Forge stamps on the apps it builds.
+    /// What this Lamp stamps on the apps it builds.
     static let current = BuildStamp(
         forge: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1",
         support: SHA256.hash(data: Data(Template.forgeSupportSwift.utf8)).prefix(6).map { String(format: "%02x", $0) }.joined())
@@ -34,10 +34,10 @@ struct BuildStamp: Equatable {
         info.write(to: url, atomically: true)
     }
 
-    /// Built by a Forge whose app code differs from this one's.
+    /// Built by a Lamp whose app code differs from this one's.
     var isOutdated: Bool { support != Self.current.support }
 
-    /// What built the app, to follow "built with": "Forge 0.2.0", "an older version of Forge".
+    /// What built the app, to follow "built with": "Lamp 0.2.0", "an older version of Lamp".
     var builder: String {
         guard let forge else { return "an older version of Lamp" }
         return isOutdated && forge == Self.current.forge ? "an earlier build of Lamp \(forge)" : "Lamp \(forge)"

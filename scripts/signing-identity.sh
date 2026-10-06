@@ -1,9 +1,9 @@
 #!/bin/zsh
-# Prints the name of a code-signing identity for local Forge builds, creating it the first time.
+# Prints the name of a code-signing identity for local Lamp builds, creating it the first time.
 #
-# It lives in Forge's own keychain (~/Library/Application Support/Forge/Signing), not the login keychain:
+# It lives in Lamp's own keychain (~/Library/Application Support/Forge/Signing), not the login keychain:
 # the login keychain asks the person every time codesign uses a private key, and "Always Allow" doesn't
-# reliably stick. Forge's keychain has a password Forge generated and keeps beside it, so Forge can unlock
+# reliably stick. Lamp's keychain has a password Lamp generated and keeps beside it, so Lamp can unlock
 # it and let codesign use the key without asking anyone. The certificate is self-signed, never leaves this
 # Mac and isn't trusted for anything else: it only gives builds a stable signature, so macOS keeps an app's
 # permissions across rebuilds. Sign with `codesign --keychain "$KEYCHAIN" -s "<printed name>"`.
@@ -44,8 +44,8 @@ CNF
   /usr/bin/openssl pkcs12 -export -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -name "$NAME" \
     -passout "pass:$P12PASS" -out "$TMP/identity.p12" >/dev/null 2>&1
   security import "$TMP/identity.p12" -k "$KEYCHAIN" -P "$P12PASS" -T /usr/bin/codesign >/dev/null
-  # Lets codesign use the key without a prompt (needs the keychain's password, which Forge has).
+  # Lets codesign use the key without a prompt (needs the keychain's password, which Lamp has).
   security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$(cat "$PASSFILE")" "$KEYCHAIN" >/dev/null
-  echo "Created the \"$NAME\" certificate in Forge's keychain." >&2
+  echo "Created the \"$NAME\" certificate in Lamp's keychain." >&2
 fi
 echo "$NAME"

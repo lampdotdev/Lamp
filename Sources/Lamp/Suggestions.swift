@@ -39,7 +39,7 @@ enum NextStep {
         return last.id
     }
 
-    static func suggest(for project: ForgeProject, lines: [LogLine]) async -> String? {
+    static func suggest(for project: LampProject, lines: [LogLine]) async -> String? {
         guard let turn = turn(in: lines) else { return nil }
         if let cached = cache[turn] { return cached }
 
@@ -107,7 +107,7 @@ enum AppName {
               let raw = object["name"] as? String else { return nil }
         let name = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
             .trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”‘’."))
-        // The user's own name gets more room than one Forge makes up.
+        // The user's own name gets more room than one Lamp makes up.
         let named = object["named_by_user"] as? Bool ?? false
         guard !name.isEmpty, name.split(separator: " ").count <= (named ? 5 : 3), name.count <= (named ? 40 : 24)
         else { return nil }

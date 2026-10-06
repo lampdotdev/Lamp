@@ -41,7 +41,7 @@ enum Provider {
     static let typesafe = PiProvider(id: "typesafe", name: "TypeSafe", envVar: "TYPESAFE_API_KEY",
                                      keyURL: "https://typesafe.ai")
 
-    /// Every provider Forge keeps an API key for, as listed in Settings → Providers.
+    /// Every provider Lamp keeps an API key for, as listed in Settings → Providers.
     static let keyProviders = (apiProviders + [typesafe])
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
@@ -95,7 +95,7 @@ enum KeyStore {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var cache: [String: String?] = [:]
 
-    /// True when this copy of Forge is signed with an Apple Team ID.
+    /// True when this copy of Lamp is signed with an Apple Team ID.
     static let usesKeychain: Bool = {
         var code: SecCode?
         var info: CFDictionary?

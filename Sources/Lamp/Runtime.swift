@@ -1,16 +1,16 @@
 import AppKit
 
-/// What Forge can see of a generated app while it runs. The app saves what it prints to
+/// What Lamp can see of a generated app while it runs. The app saves what it prints to
 /// `.forge/runtime/log.txt` and pictures of its windows next to it (see `ForgeRuntime` in
 /// Template.forgeSupportSwift), and macOS writes a report when it crashes. All of it goes to the
 /// agent, which otherwise only sees the code.
 enum Runtime {
-    static func folder(_ project: ForgeProject) -> URL { project.dir.appendingPathComponent(".forge/runtime") }
-    static func logURL(_ project: ForgeProject) -> URL { folder(project).appendingPathComponent("log.txt") }
-    private static func builtURL(_ project: ForgeProject) -> URL { folder(project).appendingPathComponent("built") }
+    static func folder(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".forge/runtime") }
+    static func logURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("log.txt") }
+    private static func builtURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("built") }
 
     /// Remembers when the current build was made, so crashes of older builds aren't blamed on it.
-    static func markBuilt(_ project: ForgeProject) {
+    static func markBuilt(_ project: LampProject) {
         try? FileManager.default.createDirectory(at: folder(project), withIntermediateDirectories: true)
         try? Data().write(to: builtURL(project))
     }
@@ -28,7 +28,7 @@ enum Runtime {
 
     /// What's known about an app that died on launch: the crash report and the last lines it printed.
     /// macOS can take a while to write the report, so this waits for it.
-    static func launchReport(_ project: ForgeProject) async -> String {
+    static func launchReport(_ project: LampProject) async -> String {
         var crash = crash(of: project)
         for _ in 0..<40 where crash == nil {
             try? await Task.sleep(for: .milliseconds(500))
@@ -41,7 +41,7 @@ enum Runtime {
     }
 
     /// Added to a request when the current build has crashed, so the agent knows without being told.
-    static func crashNote(for project: ForgeProject) -> String {
+    static func crashNote(for project: LampProject) -> String {
         guard let crash = crash(of: project) else { return "" }
         return """
 
@@ -57,7 +57,7 @@ enum Runtime {
 
     /// Added to a request when there's a picture of the current build's window, so the agent can look
     /// at what the user sees. It isn't attached: not every model can read images.
-    static func screenshotNote(for project: ForgeProject) -> String {
+    static func screenshotNote(for project: LampProject) -> String {
         func modified(_ url: URL) -> Date? {
             (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
         }
@@ -77,7 +77,7 @@ enum Runtime {
     }
 
     /// The picture of the app's front window, if it was taken of the current build.
-    static func currentScreenshot(of project: ForgeProject) -> URL? {
+    static func currentScreenshot(of project: LampProject) -> URL? {
         func modified(_ url: URL) -> Date? {
             (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
         }
@@ -87,14 +87,14 @@ enum Runtime {
     }
 
     /// Asks the running app to save fresh pictures of its windows now (see `ForgeRuntime` in the app).
-    static func requestScreenshots(of project: ForgeProject) {
+    static func requestScreenshots(of project: LampProject) {
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name("dev.forge.snapshot.\(project.id)"), object: nil, userInfo: nil, deliverImmediately: true)
     }
 
     /// Pictures the app has saved since `date`, frontmost window first. Waits up to `seconds` for the
     /// first one: the app takes it shortly after it opens.
-    static func screenshots(of project: ForgeProject, since date: Date, waiting seconds: Double = 6) async -> [URL] {
+    static func screenshots(of project: LampProject, since date: Date, waiting seconds: Double = 6) async -> [URL] {
         func fresh() -> [URL] {
             ["screenshot.png", "screenshot-2.png", "screenshot-3.png"].map { folder(project).appendingPathComponent($0) }
                 .filter { (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast > date }
@@ -109,7 +109,7 @@ enum Runtime {
     /// writes this after its fresh pictures, so once it's here they're ready too. nil if it never answers,
     /// or `running` turns false: the app is gone.
     @MainActor
-    static func useReport(of project: ForgeProject, id: String, waiting seconds: Double,
+    static func useReport(of project: LampProject, id: String, waiting seconds: Double,
                           while running: () -> Bool) async -> String? {
         let url = folder(project).appendingPathComponent("use.json")
         for _ in 0..<Int(seconds * 4) where running() {
@@ -123,14 +123,14 @@ enum Runtime {
     }
 
     /// The pictures the app last saved of its windows, frontmost first.
-    static func pictures(of project: ForgeProject) -> [URL] {
+    static func pictures(of project: LampProject) -> [URL] {
         ["screenshot.png", "screenshot-2.png", "screenshot-3.png"].map { folder(project).appendingPathComponent($0) }
             .filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
     /// Whether the app needs building: its code or bundled files changed after the current build was made,
     /// or there's no build at all.
-    static func sourcesChanged(_ project: ForgeProject) -> Bool {
+    static func sourcesChanged(_ project: LampProject) -> Bool {
         guard FileManager.default.fileExists(atPath: project.builtURL.path),
               let built = (try? builtURL(project).resourceValues(forKeys: [.contentModificationDateKey]))?
             .contentModificationDate else { return true }
@@ -150,7 +150,7 @@ enum Runtime {
     // MARK: - Log
 
     /// The last lines of the latest launch's output.
-    static func logTail(_ project: ForgeProject, lines: Int = 30) -> String? {
+    static func logTail(_ project: LampProject, lines: Int = 30) -> String? {
         guard let data = try? Data(contentsOf: logURL(project)) else { return nil }
         let tail = String(decoding: data.suffix(8_000), as: UTF8.self)
             .split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).joined(separator: "\n").trimmed
@@ -158,12 +158,12 @@ enum Runtime {
     }
 
     /// How much the app has printed so far, to tell later what's new.
-    static func logSize(_ project: ForgeProject) -> Int {
+    static func logSize(_ project: LampProject) -> Int {
         ((try? logURL(project).resourceValues(forKeys: [.fileSizeKey]))?.fileSize) ?? 0
     }
 
     /// What the app has printed since its log was `offset` bytes long, at most the last 30 lines. nil if nothing.
-    static func log(of project: ForgeProject, from offset: Int) -> String? {
+    static func log(of project: LampProject, from offset: Int) -> String? {
         guard let data = try? Data(contentsOf: logURL(project)), data.count > offset else { return nil }
         let lines = String(decoding: data.dropFirst(offset).suffix(8_000), as: UTF8.self)
             .split(separator: "\n", omittingEmptySubsequences: false).suffix(30).joined(separator: "\n").trimmed
@@ -176,7 +176,7 @@ enum Runtime {
         .appendingPathComponent("Library/Logs/DiagnosticReports")
 
     /// The newest crash of the current build, summarised: what killed the app and the calls that led there.
-    static func crash(of project: ForgeProject) -> String? {
+    static func crash(of project: LampProject) -> String? {
         guard let built = (try? builtURL(project).resourceValues(forKeys: [.contentModificationDateKey]))?
             .contentModificationDate else { return nil }
         let files = (try? FileManager.default.contentsOfDirectory(at: reports, includingPropertiesForKeys: nil)) ?? []

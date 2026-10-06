@@ -14,7 +14,7 @@ Some things people build with it:
 
 Each one is a real `.app` in `~/Applications/Forge Apps`, with **Edit with Lamp (⇧⌘E)** in its menu for when you want it to work differently. Its data is kept safe through every change, and you can send it to a coworker, who gets their own copy to adapt.
 
-[Download the latest release](https://github.com/RooCodeInc/Forge/releases/latest) and open it. The welcome asks for your first idea, then has you sign in with Claude or ChatGPT (or add a key for Lamp's own agent), and starts building.
+[Download the latest release](https://github.com/RooCodeInc/Lamp/releases/latest) and open it. The welcome asks for your first idea, then has you sign in with Claude or ChatGPT (or add a key for Lamp's own agent), and starts building.
 
 ## Requirements
 
@@ -30,7 +30,7 @@ Nothing else needs installing. The coding agent ([pi](https://github.com/badlogi
 
 ## Download
 
-Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/Forge/releases): open the DMG and drag Lamp to Applications. To cut a release, see [RELEASING.md](RELEASING.md).
+Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/Lamp/releases): open the DMG and drag Lamp to Applications. To cut a release, see [RELEASING.md](RELEASING.md).
 
 ## Setup
 
@@ -45,13 +45,13 @@ Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/
 2. **Clone and build:**
 
    ```bash
-   git clone https://github.com/RooCodeInc/Forge.git ~/Code/roo/Forge
-   cd ~/Code/roo/Forge
+   git clone https://github.com/RooCodeInc/Lamp.git ~/Code/roo/Lamp
+   cd ~/Code/roo/Lamp
    ./build.sh
    open build/Lamp.app
    ```
 
-   The first build takes about a minute. It also creates a self-signed **Forge App Signing** certificate in Forge's own keychain, `~/Library/Application Support/Forge/Signing` (see `scripts/signing-identity.sh`). That gives every build the same signature. Lamp's keychain has a password Lamp generated and keeps beside it, so signing never asks for keychain access the way the login keychain does. It's only used to sign Lamp on your Mac. It produces `build/Lamp.app`, which you can drag into `/Applications` if you like.
+   The first build takes about a minute. It also creates a self-signed **Forge App Signing** certificate in Lamp's own keychain, `~/Library/Application Support/Forge/Signing` (see `scripts/signing-identity.sh`). That gives every build the same signature. Lamp's keychain has a password Lamp generated and keeps beside it, so signing never asks for keychain access the way the login keychain does. It's only used to sign Lamp on your Mac. It produces `build/Lamp.app`, which you can drag into `/Applications` if you like.
 
 3. **Finish setup in the app.** On first launch, Lamp checks for anything missing:
    - **App-building tools:** if the Command Line Tools are missing, Lamp opens Apple's installer right away (click **Install**, then **Agree**). It then checks every few seconds and carries on by itself when they're installed, so there's no button to press afterwards.
@@ -72,7 +72,7 @@ Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/
 - In any generated app, press **⇧⌘E** to jump back to its chat in Lamp.
 - While an app is open, the toolbar's Play button becomes a Stop button that quits it (**Quit** is also in the app's right-click menu). That's the way to stop a menu bar app, which has no Dock icon to quit from. To bring an open app to the front instead, double-click it in the sidebar.
 - Every app records which Lamp built it. When an app was built by an older Lamp, it gets an orange badge in the sidebar and a banner above the message box with a **Rebuild** button. The app's info panel shows the version under **Built with**.
-- Apps are signed with Lamp's local certificate ("Forge App Signing", made in Forge's own keychain the first time and never shared, so building never asks for keychain access), so permissions you grant an app, such as Files and Folders or Screen Recording, survive rebuilds instead of being asked for again after every change. When an app's signature does change (an app built before Lamp signed this way, or a lost signing keychain), Lamp clears that app's old entries in System Settings ▸ Privacy & Security, which would otherwise stay switched on while doing nothing, and says in the chat that macOS needs the permission once more.
+- Apps are signed with Lamp's local certificate ("Forge App Signing", made in Lamp's own keychain the first time and never shared, so building never asks for keychain access), so permissions you grant an app, such as Files and Folders or Screen Recording, survive rebuilds instead of being asked for again after every change. When an app's signature does change (an app built before Lamp signed this way, or a lost signing keychain), Lamp clears that app's old entries in System Settings ▸ Privacy & Security, which would otherwise stay switched on while doing nothing, and says in the chat that macOS needs the permission once more.
 - Generated apps are installed to `~/Applications/Forge Apps/`, so they show up in Spotlight and Launchpad.
 - If you're in another app when Lamp finishes, it sends a notification saying the app is ready, has a reply, or needs your attention. Click it to jump to that chat. macOS asks for permission the first time one is sent. Turn notifications off in **Settings → Building**. The Dock icon shows how many chats you haven't seen.
 - Double-click an app in the sidebar to build and open it. A blue dot means its chat has a reply you haven't seen. The buttons at the bottom of the sidebar switch between a list and icon tiles.
@@ -128,7 +128,7 @@ Local models are slower and much less capable than the best cloud models for who
   - **Always**: every command asks first.
   - **Never**: commands run without asking.
 
-  Approvals show in the app's chat as a plain-English summary of what the command does and how risky it is (written by the in-app AI model), with the command itself under **Show command**, and **Allow**, **Allow All This Turn** and **Deny**. High-risk commands default to Deny and can't be allowed for the whole turn. Nothing runs until you answer, and **Stop** denies it. pi asks through Lamp's extension (`Resources/forge-tools.ts`), and Claude Code through a `PreToolUse` hook. Claude Code runs isolated from your own setup (`--restricted --strict-mcp-config --disable-slash-commands`): it uses your sign-in, but none of your hooks, permission rules, plugins, MCP servers or skills. Codex sends each shell command to Lamp through a `PreToolUse` hook (read-only commands go straight through) and stays in its sandbox, writing only in the app's folder. Codex also runs isolated from your own setup (`--ignore-user-config --ignore-rules`), with Lamp's instructions as developer instructions, live web search and resumed conversations. Claude Code and Codex don't need a command-line install: Lamp also finds the copies bundled with the Claude app (in `~/Library/Application Support/Claude/claude-code`) and the ChatGPT app (inside `ChatGPT.app`), and Settings → Building says which app it's using. When several copies of a tool are installed, Lamp uses the newest. Settings → Building picks the model: Opus, Sonnet, Haiku or Fable for Claude Code (Opus unless changed; Lamp passes `--model`, since it runs Claude Code without your personal settings), and any model ID for Codex (`-m`). Settings shows whether the tool is signed in, and **Sign In…** runs its own login (`claude auth login`, `codex login`), which finishes in the browser; picking one of them on the welcome screen signs in the same way when needed. To read a GitHub repo, the agent clones it into `.forge/reference/` (with `gh` when installed, so private repos work). Lamp then runs `./build.sh` itself and sends any compiler errors back, up to three times. After that it commits to the app's git repo, installs the app and relaunches it. Each app keeps one agent conversation, so the agent remembers earlier requests. **Undo** is `git reset` and starts a fresh conversation.
+  Approvals show in the app's chat as a plain-English summary of what the command does and how risky it is (written by the in-app AI model), with the command itself under **Show command**, and **Allow**, **Allow All This Turn** and **Deny**. High-risk commands default to Deny and can't be allowed for the whole turn. Nothing runs until you answer, and **Stop** denies it. pi asks through Lamp's extension (`Resources/lamp-tools.ts`), and Claude Code through a `PreToolUse` hook. Claude Code runs isolated from your own setup (`--restricted --strict-mcp-config --disable-slash-commands`): it uses your sign-in, but none of your hooks, permission rules, plugins, MCP servers or skills. Codex sends each shell command to Lamp through a `PreToolUse` hook (read-only commands go straight through) and stays in its sandbox, writing only in the app's folder. Codex also runs isolated from your own setup (`--ignore-user-config --ignore-rules`), with Lamp's instructions as developer instructions, live web search and resumed conversations. Claude Code and Codex don't need a command-line install: Lamp also finds the copies bundled with the Claude app (in `~/Library/Application Support/Claude/claude-code`) and the ChatGPT app (inside `ChatGPT.app`), and Settings → Building says which app it's using. When several copies of a tool are installed, Lamp uses the newest. Settings → Building picks the model: Opus, Sonnet, Haiku or Fable for Claude Code (Opus unless changed; Lamp passes `--model`, since it runs Claude Code without your personal settings), and any model ID for Codex (`-m`). Settings shows whether the tool is signed in, and **Sign In…** runs its own login (`claude auth login`, `codex login`), which finishes in the browser; picking one of them on the welcome screen signs in the same way when needed. To read a GitHub repo, the agent clones it into `.forge/reference/` (with `gh` when installed, so private repos work). Lamp then runs `./build.sh` itself and sends any compiler errors back, up to three times. After that it commits to the app's git repo, installs the app and relaunches it. Each app keeps one agent conversation, so the agent remembers earlier requests. **Undo** is `git reset` and starts a fresh conversation.
 - **Privacy** (Settings → Building): the built-in agent's file tools work in the app's own folder. To read or change anything else on your Mac it asks first, with the same card as shell commands; system and developer files and temporary folders need no asking, and Lamp's keys, its agent's sign-ins and your other apps are never opened whatever the setting. Links inside the app's folder that lead outside it count as outside. Two more switches decide whether the agent sees what an app prints while it runs and pictures of its windows, both of which go to the AI model you chose. The folder rule covers the built-in agent's file tools; shell commands go through the approvals above, and Claude Code and Codex follow their own rules.
 - **Seeing the app run:** the agent can't run anything, so Lamp shows it what happened. Every app saves what it prints (`print`, `NSLog`, SwiftUI runtime warnings, fatal errors, failed AI calls) to `.forge/runtime/log.txt` in its project, and the agent reads that when you say something doesn't work. If an app quits within a few seconds of opening, Lamp sends the macOS crash report and the last lines it printed back to the agent, up to twice, the same way it does with compiler errors. A crash later on is mentioned to the agent with your next message. Apps also save a picture of their own windows (`.forge/runtime/screenshot.png`) shortly after opening and whenever you switch away from them, so an agent that can view images sees what you were looking at. An app may picture its own windows, so there's no screen recording permission. The built-in agent can also check its own work mid-turn: its `look_at_app` tool has Lamp build the app with the changes so far, open it behind your windows, and hand back the pictures, what the app printed and any build errors or crash. It can also try the app with `use_app`: click at points in the latest picture, type, press keys and scroll, then see the result. Lamp tells it what each click landed on (a button, row 3 of a list, a text field), whether the window changed at all, what the app printed meanwhile, and whether the code has changed since the app was built, so a click that missed isn't mistaken for a bug. It can pick from pop-up, pull-down, right-click and menu bar menus by name (they're read out to it, never opened on your screen), answer dialogs and sheets, accept or cancel a save panel, and open the panel behind a menu bar app's icon. The app performs all of this on its own windows, so no Accessibility permission is needed; it can't drag. The pictures are the windows as the system shows them, so video, maps and web content are included, still without screen recording permission. Claude Code and Codex get the same two tools from Lamp's own MCP endpoint (`/mcp` on the gateway), and every agent is asked to try what it built with `use_app` before saying it works, and to say in a sentence what it tried.
 - **Live editing:** every generated app has an **Edit with Lamp** command (⇧⌘E) that jumps back to its chat.
@@ -148,23 +148,23 @@ Local models are slower and much less capable than the best cloud models for who
 
 | Path | What |
 |---|---|
-| `Sources/Forge/Store.swift` | App state and the build / install / undo loop |
-| `Sources/Forge/Agent.swift` | pi invocation, system prompt, JSON event parsing, shell helper |
-| `Sources/Forge/Engines.swift` | Engine choice (pi, Claude Code, Codex), commands and parsers, finding installed tools |
-| `Sources/Forge/LocalModels.swift` | Hugging Face downloads, the bundled llama.cpp server, Ollama / LM Studio detection |
-| `Sources/Forge/Composer.swift` | Chat input (Return / Shift-Return, paste and drop) and attachments |
-| `Sources/Forge/Template.swift` | Scaffold for new apps, including the generated `ForgeSupport.swift` |
-| `Sources/Forge/AppSigning.swift` | The stable signature on built apps, so macOS permissions survive rebuilds |
-| `Sources/Forge/BuildStamp.swift` | The Lamp version stamped on each built app, and the warning for apps built by an older one |
-| `Sources/Forge/Runtime.swift` | What Lamp sees of a running app: its log and its crash reports |
-| `Sources/Forge/Gateway.swift` | Local AI gateway and provider calls |
-| `Sources/Forge/Icons.swift` | Icon design, rendering and artwork generation |
-| `Sources/Forge/Provider.swift` | Provider catalog, friendly errors, per-provider key storage (Keychain or private file) |
-| `Sources/Forge/Setup.swift` | First-run setup and Settings |
-| `Sources/Forge/ComputerUse.swift` | Using other apps: installing CuaDriver, an MCP client, and the agent loop behind `ForgeComputer` |
-| `Sources/Forge/Sharing.swift` | `.forgeapp` export and import, and the import review (checklist + AI) |
-| `Resources/forge-tools.ts` | The agent's `look_at_app`, `use_app`, `plan` and `delete_file` tools (a pi extension) |
-| `Sources/Forge/Updater.swift` | Updates for release builds (Sparkle); the feed is served by `updates/` (see RELEASING.md) |
+| `Sources/Lamp/Store.swift` | App state and the build / install / undo loop |
+| `Sources/Lamp/Agent.swift` | pi invocation, system prompt, JSON event parsing, shell helper |
+| `Sources/Lamp/Engines.swift` | Engine choice (pi, Claude Code, Codex), commands and parsers, finding installed tools |
+| `Sources/Lamp/LocalModels.swift` | Hugging Face downloads, the bundled llama.cpp server, Ollama / LM Studio detection |
+| `Sources/Lamp/Composer.swift` | Chat input (Return / Shift-Return, paste and drop) and attachments |
+| `Sources/Lamp/Template.swift` | Scaffold for new apps, including the generated `ForgeSupport.swift` |
+| `Sources/Lamp/AppSigning.swift` | The stable signature on built apps, so macOS permissions survive rebuilds |
+| `Sources/Lamp/BuildStamp.swift` | The Lamp version stamped on each built app, and the warning for apps built by an older one |
+| `Sources/Lamp/Runtime.swift` | What Lamp sees of a running app: its log and its crash reports |
+| `Sources/Lamp/Gateway.swift` | Local AI gateway and provider calls |
+| `Sources/Lamp/Icons.swift` | Icon design, rendering and artwork generation |
+| `Sources/Lamp/Provider.swift` | Provider catalog, friendly errors, per-provider key storage (Keychain or private file) |
+| `Sources/Lamp/Setup.swift` | First-run setup and Settings |
+| `Sources/Lamp/ComputerUse.swift` | Using other apps: installing CuaDriver, an MCP client, and the agent loop behind `ForgeComputer` |
+| `Sources/Lamp/Sharing.swift` | `.forgeapp` export and import, and the import review (checklist + AI) |
+| `Resources/lamp-tools.ts` | The agent's `look_at_app`, `use_app`, `plan` and `delete_file` tools (a pi extension) |
+| `Sources/Lamp/Updater.swift` | Updates for release builds (Sparkle); the feed is served by `updates/` (see RELEASING.md) |
 | `updates/` | The Vercel app that serves the update feed and downloads from the private GitHub releases |
 | `Resources/Icon/` | Lamp's own icon as an Icon Composer document: the porcelain lamp from the welcome and its golden smoke, as separate layers. `design/lamp/LampLab` renders it (`LampLab icon out Resources`), along with `Resources/AppIcon.icns`, `Resources/Assets.car` (Liquid Glass on macOS 26) and `Resources/AppIcon.png` |
 | `Resources/THIRD_PARTY_NOTICES.md` | Licences for the bundled pi agent and llama.cpp (both MIT) |

@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 @main
-struct ForgeApp: App {
+struct LampApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
     @StateObject private var store = Store.shared
 
@@ -38,7 +38,7 @@ struct ForgeApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Before launch finishes, so clicking a notification that launched Forge still opens its chat.
+    /// Before launch finishes, so clicking a notification that launched Lamp still opens its chat.
     func applicationWillFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated { Notifier.shared.start() }
     }

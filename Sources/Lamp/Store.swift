@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-struct ForgeProject: Identifiable, Hashable {
+struct LampProject: Identifiable, Hashable {
     let id: String      // folder name; also used in forge:// links
     let name: String    // display name
     let exe: String     // Swift target / executable name
@@ -73,7 +73,7 @@ struct QueuedMessage: Identifiable {
 final class Store: ObservableObject {
     static let shared = Store()
 
-    @Published var projects: [ForgeProject] = []
+    @Published var projects: [LampProject] = []
     @Published var selection: String? {
         didSet {
             markRead()
@@ -93,14 +93,14 @@ final class Store: ObservableObject {
     /// The turn in progress for each app. A new app's first turn stays here after it finishes, so its
     /// build card can show the result until the next message.
     @Published var progress: [String: TurnProgress] = [:]
-    /// Apps that are open right now, however they were started, so Forge can offer to quit them.
+    /// Apps that are open right now, however they were started, so Lamp can offer to quit them.
     @Published var openApps: Set<String> = []
-    /// Which Forge built each installed app (see BuildStamp). Missing for apps that aren't built yet.
+    /// Which Lamp built each installed app (see BuildStamp). Missing for apps that aren't built yet.
     @Published var stamps: [String: BuildStamp] = [:]
     @Published var chatFocusRequest = 0
     @Published var setup = SetupCheck()
     /// The welcome finished this run. Normally the saved setting says so too, but `-onboarded NO` on the
-    /// command line (for checking the welcome) keeps that setting from changing until Forge quits.
+    /// command line (for checking the welcome) keeps that setting from changing until Lamp quits.
     @Published var welcomeFinished = false
     @Published var usage: [String: AppUsage] = [:]
     @Published var icons: [String: NSImage] = [:]
@@ -125,9 +125,9 @@ final class Store: ObservableObject {
     @Published var approvals: [String: PendingApproval] = [:]   // project id → the command waiting
     private var allowAllThisTurn: Set<String> = []
     /// The app whose Rename… alert is showing.
-    @Published var renaming: ForgeProject?
+    @Published var renaming: LampProject?
     /// The app whose Delete confirmation is showing.
-    @Published var deleting: ForgeProject?
+    @Published var deleting: LampProject?
     /// The version whose Name… alert is showing.
     @Published var naming: VersionNaming?
     /// Bumped when a version is named, so open version lists reload.
@@ -218,14 +218,14 @@ final class Store: ObservableObject {
         }
     }
 
-    var selected: ForgeProject? { projects.first { $0.id == selection } }
+    var selected: LampProject? { projects.first { $0.id == selection } }
 
-    /// Clears the "ready" dot for the app on screen. Also called when Forge comes back to the front.
+    /// Clears the "ready" dot for the app on screen. Also called when Lamp comes back to the front.
     func markRead() {
         if let selection, NSApp?.isActive ?? true { unread.remove(selection) }
     }
 
-    /// Forge is in front with this app's chat on screen.
+    /// Lamp is in front with this app's chat on screen.
     func isWatching(_ id: String?) -> Bool {
         id != nil && selection == id && NSApp.isActive
     }
@@ -235,7 +235,7 @@ final class Store: ObservableObject {
         projects = dirs.compactMap { dir in
             guard let data = try? Data(contentsOf: dir.appendingPathComponent(".forge/meta.json")),
                   let meta = try? JSONDecoder().decode(ProjectMeta.self, from: data) else { return nil }
-            return ForgeProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
+            return LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
                                 untitled: meta.untitled ?? false)
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -260,13 +260,13 @@ final class Store: ObservableObject {
         }
     }
 
-    func log(_ project: ForgeProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil) {
+    func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil) {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
         saveChat(project)
     }
 
-    private func saveChat(_ project: ForgeProject) {
+    private func saveChat(_ project: LampProject) {
         if let data = try? JSONEncoder().encode(logs[project.id]) {
             try? data.write(to: project.dir.appendingPathComponent(".forge/chat.json"))
         }
@@ -274,13 +274,13 @@ final class Store: ObservableObject {
 
     /// Updates what the app's turn is doing right now, for the build card and the activity line.
     /// `file` is the file being written or edited, when that's the step.
-    private func note(_ activity: String, file: String? = nil, for project: ForgeProject) {
+    private func note(_ activity: String, file: String? = nil, for project: LampProject) {
         guard let current = progress[project.id], current.activity != activity || current.currentFile != file else { return }
         progress[project.id]?.activity = activity
         progress[project.id]?.currentFile = file
     }
 
-    /// The installed app was built by an older Forge and hasn't been rebuilt since.
+    /// The installed app was built by an older Lamp and hasn't been rebuilt since.
 
     // MARK: - Drafts
 
@@ -293,14 +293,14 @@ final class Store: ObservableObject {
     private var drafts: [String: Draft] = [:]
 
     /// Each app keeps its own draft, so it's still there after switching apps. The text also survives a
-    /// restart (.forge/draft.txt); attached files are only remembered while Forge runs.
-    func draft(for project: ForgeProject) -> Draft {
+    /// restart (.forge/draft.txt); attached files are only remembered while Lamp runs.
+    func draft(for project: LampProject) -> Draft {
         if let draft = drafts[project.id] { return draft }
         let text = try? String(contentsOf: project.dir.appendingPathComponent(".forge/draft.txt"), encoding: .utf8)
         return Draft(text: text ?? "")
     }
 
-    func saveDraft(_ draft: Draft, for project: ForgeProject) {
+    func saveDraft(_ draft: Draft, for project: LampProject) {
         drafts[project.id] = draft
         let file = project.dir.appendingPathComponent(".forge/draft.txt")
         if draft.text.isEmpty {
@@ -321,7 +321,7 @@ final class Store: ObservableObject {
         showChat(slug)
     }
 
-    /// Brings Forge to the front on an app's chat, ready to type.
+    /// Brings Lamp to the front on an app's chat, ready to type.
     func showChat(_ id: String) {
         reload()
         selection = id
@@ -333,7 +333,7 @@ final class Store: ObservableObject {
 
     /// New App: an untitled app, straight into its chat. Its first message names it and designs its icon.
     func create() {
-        let project: ForgeProject
+        let project: LampProject
         do {
             project = try Template.scaffold(name: uniqueName("Untitled"), untitled: true, in: root)
         } catch {
@@ -346,9 +346,9 @@ final class Store: ObservableObject {
         Task { await initRepo(project, message: "Scaffold") }
     }
 
-    private func initRepo(_ project: ForgeProject, message: String) async {
-        _ = await Shell.run("git init -q && git add -A && \(Self.commit) -qm \"$FORGE_MESSAGE\"", cwd: project.dir,
-                            env: ["FORGE_MESSAGE": message]) { _ in }
+    private func initRepo(_ project: LampProject, message: String) async {
+        _ = await Shell.run("git init -q && git add -A && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: project.dir,
+                            env: ["LAMP_MESSAGE": message]) { _ in }
     }
 
     /// An untitled app you left without ever using is deleted, so trying New App leaves nothing behind.
@@ -361,7 +361,7 @@ final class Store: ObservableObject {
     }
 
     /// Nothing has happened in the app but its scaffold, so it can still change its folder and executable name.
-    private func isPristine(_ project: ForgeProject) async -> Bool {
+    private func isPristine(_ project: LampProject) async -> Bool {
         var output: [String] = []
         let status = await Shell.run("test $(git rev-list --count HEAD) -eq 1 && git status --porcelain -- . ':!\(Attachments.folder)'",
                                      cwd: project.dir) { output.append($0) }
@@ -371,13 +371,13 @@ final class Store: ObservableObject {
     /// Renames an app. Before any work happens it is scaffolded afresh under the new name, so its folder,
     /// executable and bundle ID match. After that only the display name changes: the bundle ID stays,
     /// so the app keeps its settings and data. Returns the app as it is now.
-    func rename(_ project: ForgeProject, to name: String) async {
+    func rename(_ project: LampProject, to name: String) async {
         guard busy.insert(project.id).inserted else { return }
         finish(await performRename(project, to: name))
     }
 
     /// Renames while the app is marked busy, so nothing else starts on it meanwhile.
-    private func performRename(_ project: ForgeProject, to rawName: String) async -> ForgeProject {
+    private func performRename(_ project: LampProject, to rawName: String) async -> LampProject {
         let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
         guard !name.isEmpty, name != project.name || project.untitled,
               let current = projects.first(where: { $0.id == project.id }) else { return project }
@@ -387,13 +387,13 @@ final class Store: ObservableObject {
         }
 
         let fm = FileManager.default
-        let renamed = ForgeProject(id: current.id, name: unique, exe: current.exe, dir: current.dir)
+        let renamed = LampProject(id: current.id, name: unique, exe: current.exe, dir: current.dir)
         try? JSONEncoder().encode(ProjectMeta(name: unique, exe: current.exe))
             .write(to: current.dir.appendingPathComponent(".forge/meta.json"))
         if fm.fileExists(atPath: current.installedURL.path) {
             try? fm.moveItem(at: current.installedURL, to: renamed.installedURL)
-            _ = await Shell.run(Self.lsregister + " -f \"$FORGE_APP\"", cwd: current.dir,
-                                env: ["FORGE_APP": renamed.installedURL.path]) { _ in }
+            _ = await Shell.run(Self.lsregister + " -f \"$LAMP_APP\"", cwd: current.dir,
+                                env: ["LAMP_APP": renamed.installedURL.path]) { _ in }
         }
         // The old name in window titles and APP.md. Anything subtler is left for the agent.
         let sources = current.dir.appendingPathComponent("Sources")
@@ -408,17 +408,17 @@ final class Store: ObservableObject {
         if let text = try? String(contentsOf: appMd, encoding: .utf8), text.hasPrefix("# \(current.name)\n") {
             try? ("# \(unique)\n" + text.dropFirst(current.name.count + 3)).write(to: appMd, atomically: true, encoding: .utf8)
         }
-        _ = await Shell.run("git add -A && \(Self.commit) -qm \"$FORGE_MESSAGE\"", cwd: current.dir,
-                            env: ["FORGE_MESSAGE": "Rename to \(unique)"]) { _ in }
+        _ = await Shell.run("git add -A && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: current.dir,
+                            env: ["LAMP_MESSAGE": "Rename to \(unique)"]) { _ in }
         reload()
         log(renamed, .status, "Renamed to \(unique)")
         return renamed
     }
 
     /// Replaces an untouched app with a fresh scaffold under its new name, carrying over its chat and queue.
-    private func rescaffold(_ old: ForgeProject, as name: String) async -> ForgeProject {
+    private func rescaffold(_ old: LampProject, as name: String) async -> LampProject {
         let fm = FileManager.default
-        let project: ForgeProject
+        let project: LampProject
         do {
             project = try Template.scaffold(name: name, in: root)
         } catch {
@@ -464,14 +464,14 @@ final class Store: ObservableObject {
 
     func chooseImport() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.forgeApp]
+        panel.allowedContentTypes = [.lampApp]
         panel.message = "Choose a Lamp app someone shared with you"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         importApp(from: url)
     }
 
     /// Puts the app's .forgeapp file on the clipboard, ready to paste into Slack, Messages, Mail or Finder.
-    func copyAppFile(_ project: ForgeProject) {
+    func copyAppFile(_ project: LampProject) {
         do {
             let exported = try Sharing.export(project)
             let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -488,9 +488,9 @@ final class Store: ObservableObject {
         }
     }
 
-    func chooseExport(_ project: ForgeProject) {
+    func chooseExport(_ project: LampProject) {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.forgeApp]
+        panel.allowedContentTypes = [.lampApp]
         panel.nameFieldStringValue = "\(project.name).forgeapp"
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         do {
@@ -548,10 +548,10 @@ final class Store: ObservableObject {
     private func finishImport(_ package: Sharing.Package) {
         defer { try? FileManager.default.removeItem(at: package.folder) }
         let fm = FileManager.default
-        let project: ForgeProject
+        let project: LampProject
         do {
             project = try Template.scaffold(name: uniqueName(package.name), in: root)
-            // Swap the scaffold's code for the shared code; keep Forge's own ForgeSupport.swift.
+            // Swap the scaffold's code for the shared code; keep Lamp's own ForgeSupport.swift.
             let sources = project.dir.appendingPathComponent("Sources")
             for item in try fm.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)
             where item.lastPathComponent != "ForgeSupport.swift" {
@@ -580,7 +580,7 @@ final class Store: ObservableObject {
             if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
                let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
                 Icons.save(spec, for: project)
-                // Files from older Forge versions carry full-square artwork; only cut-out objects fit the new icons.
+                // Files from older Lamp versions carry full-square artwork; only cut-out objects fit the new icons.
                 if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
                    Icons.isCutOut(art) {
                     let url = Icons.artURL(project, spec: spec)
@@ -605,7 +605,7 @@ final class Store: ObservableObject {
 
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
     /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
-    func send(_ prompt: String, attachments: [URL] = [], to project: ForgeProject) {
+    func send(_ prompt: String, attachments: [URL] = [], to project: LampProject) {
         // Waiting for setup can outlast this run, and the files may be temporary (a pasted screenshot):
         // keep copies, so the request still has them after a relaunch.
         let files = setup.ready ? attachments : keepForLater(attachments)
@@ -642,7 +642,7 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Brings back requests that were waiting for setup when Forge last quit. Kept files no waiting request
+    /// Brings back requests that were waiting for setup when Lamp last quit. Kept files no waiting request
     /// needs any more (its build has started, or it was taken back) are cleared out.
     private func restoreWaiting() {
         var kept = Set<String>()
@@ -670,7 +670,7 @@ final class Store: ObservableObject {
 
     /// The first message bootstraps the app: it names an untitled app, then designs the icon
     /// while the agent builds the first version. Returns the app as it is now.
-    private func bootstrap(_ project: ForgeProject, brief: String) async -> ForgeProject {
+    private func bootstrap(_ project: LampProject, brief: String) async -> LampProject {
         var project = project
         if project.untitled, let name = await AppName.suggest(for: brief) {
             project = await performRename(project, to: name)
@@ -689,12 +689,12 @@ final class Store: ObservableObject {
         return project
     }
 
-    func unqueue(_ message: QueuedMessage, from project: ForgeProject) {
+    func unqueue(_ message: QueuedMessage, from project: LampProject) {
         queued[project.id]?.removeAll { $0.id == message.id }
         saveWaiting()
     }
 
-    private func startQueued(_ project: ForgeProject) {
+    private func startQueued(_ project: LampProject) {
         guard setup.ready, let messages = queued[project.id], !messages.isEmpty,
               busy.insert(project.id).inserted else { return }
         queued[project.id] = nil
@@ -738,7 +738,7 @@ final class Store: ObservableObject {
     }
 
     /// Puts the app's real window on its build card, once it has opened and saved a picture of itself.
-    private func showResult(of project: ForgeProject) async {
+    private func showResult(of project: LampProject) async {
         guard let started = progress[project.id]?.started,
               NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first != nil,
               let picture = await Runtime.screenshots(of: project, since: started, waiting: 4).first,
@@ -748,7 +748,7 @@ final class Store: ObservableObject {
 
     /// Posts a notification for a turn that ended while the user was looking elsewhere.
     /// Nothing for a turn the user stopped: it ends without an error.
-    private func notify(_ project: ForgeProject, after end: TurnEnd) {
+    private func notify(_ project: LampProject, after end: TurnEnd) {
         let turnLines = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }
         // An error wins: even a turn that otherwise worked (say, the app couldn't be installed) needs the user.
         if let error = turnLines.first(where: { $0.kind == .error }) {
@@ -777,13 +777,13 @@ final class Store: ObservableObject {
     }
 
     /// Marks the app idle again, then starts anything queued while it was busy.
-    private func finish(_ project: ForgeProject) {
+    private func finish(_ project: LampProject) {
         busy.remove(project.id)
         startQueued(project)
     }
 
     /// Puts the messages in the chat and their files in Attachments/. Returns the saved file names.
-    private func post(_ messages: [QueuedMessage], to project: ForgeProject) -> [String] {
+    private func post(_ messages: [QueuedMessage], to project: LampProject) -> [String] {
         var saved: [String] = []
         for message in messages {
             let names = Attachments.save(message.attachments, to: project)
@@ -806,7 +806,7 @@ final class Store: ObservableObject {
     /// One turn of the loop: agent edits → build (agent fixes failures) → commit → relaunch.
     /// `asked` are the chat lines of the requests, which are linked to the version the turn makes.
     private func turn(_ messages: [QueuedMessage], attachments saved: [String], asked: [UUID],
-                      on project: ForgeProject) async -> TurnResult {
+                      on project: LampProject) async -> TurnResult {
         var prompt = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
         // Attachments with no words: usually a screenshot or mockup meaning "like this", or a file to use.
         if prompt.isEmpty {
@@ -840,13 +840,13 @@ final class Store: ObservableObject {
         if changed {
             guard await buildFixingErrors(project) else { return TurnResult(end: .failed, watched: isWatching(project.id)) }
         }
-        // Opening the app brings it in front of Forge, so whether the user was watching is decided first.
+        // Opening the app brings it in front of Lamp, so whether the user was watching is decided first.
         let watched = isWatching(project.id)
         // Nothing is committed when the agent changed no files.
         let label = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n").nilIfEmpty
             ?? Self.label(attachments: saved)
-        var committed = await Shell.run("git add -A && \(Self.commit) -qm \"$FORGE_PROMPT\"", cwd: project.dir,
-                                        env: ["FORGE_PROMPT": label]) { _ in } == 0
+        var committed = await Shell.run("git add -A && \(Self.commit) -qm \"$LAMP_PROMPT\"", cwd: project.dir,
+                                        env: ["LAMP_PROMPT": label]) { _ in } == 0
         let edited = changed || committed
         var crash: String?
         if changed {
@@ -894,14 +894,14 @@ final class Store: ObservableObject {
     }
 
     /// Whether any request has made a version of this app yet (its messages are linked to the versions they made).
-    private func hasVersions(_ project: ForgeProject) -> Bool {
+    private func hasVersions(_ project: LampProject) -> Bool {
         (logs[project.id] ?? []).contains { $0.kind == .user && $0.version != nil }
     }
 
-    /// Whether the agent changed any of the app's files this turn. Forge's own writes don't count: it
+    /// Whether the agent changed any of the app's files this turn. Lamp's own writes don't count: it
     /// regenerates ForgeSupport.swift, designs the icon (icon.json) while the agent works, and saves the
     /// request's attachments before the agent starts.
-    private func agentChangedFiles(_ project: ForgeProject) async -> Bool {
+    private func agentChangedFiles(_ project: LampProject) async -> Bool {
         var output = ""
         let ignored = "':!Sources/ForgeSupport.swift' ':!icon.json' ':!\(Attachments.folder)'"
         _ = await Shell.run("git status --porcelain -- . \(ignored)", cwd: project.dir) {
@@ -911,7 +911,7 @@ final class Store: ObservableObject {
     }
 
     /// Builds the app, sending compiler errors back to the agent up to three times. False when it still doesn't build.
-    private func buildFixingErrors(_ project: ForgeProject) async -> Bool {
+    private func buildFixingErrors(_ project: LampProject) async -> Bool {
         var errors = await build(project)
         for _ in 0..<3 where errors != nil {
             log(project, .status, "Fixing a problem…")
@@ -926,7 +926,7 @@ final class Store: ObservableObject {
     }
 
     /// Returns false when the agent couldn't run at all (bad key, no credit, …), after telling the user why.
-    private func runAgent(_ prompt: String, files: [String] = [], on project: ForgeProject) async -> Bool {
+    private func runAgent(_ prompt: String, files: [String] = [], on project: LampProject) async -> Bool {
         try? Template.writeSupport(for: project)
         if let problem = Builder.problem() {
             log(project, .error, "\(problem) Open Lamp → Settings (⌘,) to fix it.")
@@ -1027,7 +1027,7 @@ final class Store: ObservableObject {
     }
 
     /// One pi conversation per app, so the agent remembers earlier requests, including ones that were undone.
-    private static func piSession(for project: ForgeProject) -> String {
+    private static func piSession(for project: LampProject) -> String {
         let url = project.dir.appendingPathComponent(".forge/pi-session")
         if let id = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !id.isEmpty { return id }
         let id = "forge-" + UUID().uuidString.lowercased()
@@ -1035,8 +1035,8 @@ final class Store: ObservableObject {
         return id
     }
 
-    /// External engines report their own conversation ids; Forge keeps one per engine per app.
-    private static func sessionFile(for project: ForgeProject, engine: Engine) -> URL {
+    /// External engines report their own conversation ids; Lamp keeps one per engine per app.
+    private static func sessionFile(for project: LampProject, engine: Engine) -> URL {
         project.dir.appendingPathComponent(".forge/session-\(engine.rawValue)")
     }
 
@@ -1045,7 +1045,7 @@ final class Store: ObservableObject {
     }
 
     /// Deletes an app: quits it, stops its agent, and moves its source and built app to the Trash.
-    func delete(_ project: ForgeProject) async {
+    func delete(_ project: LampProject) async {
         stop(project)
         iconDesigns.removeValue(forKey: project.id)?.cancel()
         await quit(project)
@@ -1079,7 +1079,7 @@ final class Store: ObservableObject {
     private var currentRequests: [String: String] = [:]
 
     /// Applies Settings → Building → "Ask before running commands" to one command.
-    private func approveCommand(_ command: String, for project: ForgeProject, escalated: Bool) async -> Bool {
+    private func approveCommand(_ command: String, for project: LampProject, escalated: Bool) async -> Bool {
         switch CommandApproval.current {
         case .never:
             log(project, .status, "Ran: \(command)")
@@ -1101,7 +1101,7 @@ final class Store: ObservableObject {
 
     /// For agents without their own classifier (pi): obviously risky commands always go to the user; the rest
     /// are judged by the decision model against the user's request. No decision model available → ask.
-    private func commandLooksSafe(_ command: String, for project: ForgeProject) async -> Bool {
+    private func commandLooksSafe(_ command: String, for project: LampProject) async -> Bool {
         let risky = #"\bsudo\b|\|\s*(ba|z)?sh\b|\brm\s+-[a-zA-Z]*[rf][a-zA-Z]*\s+[~/]|\bgit\s+push\b|\bchmod\s+-R\b|\bkillall\b|\blaunchctl\b|\bdefaults\s+write\b|\bcurl\b[^|]*\|"#
         if command.range(of: risky, options: .regularExpression) != nil { return false }
         let state: [String: Any] = [
@@ -1174,7 +1174,7 @@ final class Store: ObservableObject {
     }
 
     /// Asks the in-app AI model to describe a command for a non-technical person: what it does, and its risk.
-    private func explain(_ command: String, for project: ForgeProject) async -> CommandExplanation? {
+    private func explain(_ command: String, for project: LampProject) async -> CommandExplanation? {
         let system = """
         You explain shell commands to people who don't use the command line. An AI agent building a Mac app \
         called "\(project.name)" wants to run a command, and the user has to decide whether to allow it.
@@ -1197,7 +1197,7 @@ final class Store: ObservableObject {
 
     /// Waits for the user to allow or deny a shell command. One request per app at a time; others queue.
     /// There's no timeout: commands wait until the user answers, stops the turn, or the turn ends.
-    func requestApproval(for project: ForgeProject, command: String, title: String? = nil,
+    func requestApproval(for project: LampProject, command: String, title: String? = nil,
                          explanation given: CommandExplanation? = nil) async -> Bool {
         guard !command.trimmed.isEmpty else { return false }
         if allowAllThisTurn.contains(project.id) {
@@ -1221,7 +1221,7 @@ final class Store: ObservableObject {
         }
     }
 
-    func answerApproval(for project: ForgeProject, allow: Bool, allowAll: Bool = false) {
+    func answerApproval(for project: LampProject, allow: Bool, allowAll: Bool = false) {
         guard let pending = approvals.removeValue(forKey: project.id) else { return }
         if allowAll { allowAllThisTurn.insert(project.id) }
         log(project, .detail, (allow ? "Allowed: " : "Denied: ") + pending.command)
@@ -1230,13 +1230,13 @@ final class Store: ObservableObject {
     }
 
     /// Ends approvals with the turn: anything still waiting is denied, and "allow all" resets.
-    private func endApprovals(for project: ForgeProject) {
+    private func endApprovals(for project: LampProject) {
         answerApproval(for: project, allow: false)
         allowAllThisTurn.remove(project.id)
     }
 
     /// Stops the agent working on an app.
-    func stop(_ project: ForgeProject) {
+    func stop(_ project: LampProject) {
         guard let process = running[project.id] else { return }
         stopped.insert(project.id)
         endApprovals(for: project)   // a command waiting for approval counts as denied
@@ -1245,8 +1245,8 @@ final class Store: ObservableObject {
 
     /// Opens the installed app, or brings it to the front if it's running. Only builds when there's
     /// nothing installed yet (or the installed copy was deleted).
-    func open(_ project: ForgeProject) async {
-        // Built by an older Forge: rebuild it first, so it gets this Forge's fixes and building blocks.
+    func open(_ project: LampProject) async {
+        // Built by an older Lamp: rebuild it first, so it gets this Lamp's fixes and building blocks.
         // Not while it's running (that would quit it under the user); if the build fails, the old one opens.
         if stamps[project.id]?.isOutdated == true, !busy.contains(project.id),
            NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).isEmpty {
@@ -1282,7 +1282,7 @@ final class Store: ObservableObject {
 
     /// The agent's `use_app` tool: hands its clicks, typing and keys to the open app, which performs them on its
     /// own front window (ForgeDriver in ForgeSupport), then reports what happened with a fresh picture.
-    private func use(_ project: ForgeProject, request body: Data) async -> (Int, [String: Any]) {
+    private func use(_ project: LampProject, request body: Data) async -> (Int, [String: Any]) {
         guard running[project.id] != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         guard let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let actions = request["actions"] as? [[String: Any]], !actions.isEmpty,
@@ -1325,7 +1325,7 @@ final class Store: ObservableObject {
     /// `look_at_app` and `use_app` for agents that take tools over MCP (Claude Code and Codex): one streamable-HTTP
     /// endpoint speaking JSON-RPC, with no sessions or streams, that answers each request on the spot. Pictures go
     /// back as image content, so the model sees the windows just as pi's version shows them.
-    private func mcp(_ body: Data, for project: ForgeProject) async -> (Int, [String: Any]) {
+    private func mcp(_ body: Data, for project: LampProject) async -> (Int, [String: Any]) {
         guard let message = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let method = message["method"] as? String else {
             return (400, ["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "Not a JSON-RPC request."]])
@@ -1370,7 +1370,7 @@ final class Store: ObservableObject {
         }
     }
 
-    /// The tools' descriptions match Forge's pi extension (Resources/forge-tools.ts).
+    /// The tools' descriptions match Lamp's pi extension (Resources/lamp-tools.ts).
     private static let mcpTools: [[String: Any]] = [
         ["name": "look_at_app",
          "description": "Builds the app with your changes, opens it, and shows you the result: a picture of its windows, " +
@@ -1412,15 +1412,15 @@ final class Store: ObservableObject {
                 ]]]]]],
     ]
 
-    /// Whether the installed app's binary contains a string, which says which Forge features it was built with.
-    private static func binary(of project: ForgeProject, contains marker: String) -> Bool {
+    /// Whether the installed app's binary contains a string, which says which Lamp features it was built with.
+    private static func binary(of project: LampProject, contains marker: String) -> Bool {
         let binary = project.installedURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
         guard let data = try? Data(contentsOf: binary, options: .alwaysMapped) else { return false }
         return data.range(of: Data(marker.utf8)) != nil
     }
 
     /// Whether the installed app was built with ForgeWindows (its binary contains the message name).
-    private static func listensForShowWindow(_ project: ForgeProject) -> Bool {
+    private static func listensForShowWindow(_ project: LampProject) -> Bool {
         let binary = project.installedURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
         guard let data = try? Data(contentsOf: binary, options: .alwaysMapped) else { return false }
         return data.range(of: Data("dev.forge.showWindow".utf8)) != nil
@@ -1433,8 +1433,8 @@ final class Store: ObservableObject {
     }
 
     /// Rebuilds the app from its code, reinstalls it and relaunches it.
-    /// Rebuilds an app made by an older Forge and opens it. False if it didn't build, leaving the old one in place.
-    private func updateForThisForge(_ project: ForgeProject) async -> Bool {
+    /// Rebuilds an app made by an older Lamp and opens it. False if it didn't build, leaving the old one in place.
+    private func updateForThisForge(_ project: LampProject) async -> Bool {
         guard busy.insert(project.id).inserted else { return false }
         defer { finish(project) }
         log(project, .status, "Updating \(project.name) for this version of Lamp…")
@@ -1446,7 +1446,7 @@ final class Store: ObservableObject {
         return true
     }
 
-    func run(_ project: ForgeProject) async {
+    func run(_ project: LampProject) async {
         guard busy.insert(project.id).inserted else { return }
         defer { finish(project) }
         if await build(project) == nil {
@@ -1457,7 +1457,7 @@ final class Store: ObservableObject {
     }
 
     /// Goes back to the version before the current one. Like any restore, this is itself a new version.
-    func undo(_ project: ForgeProject) async {
+    func undo(_ project: LampProject) async {
         guard busy.insert(project.id).inserted else { return }
         defer { finish(project) }
         let versions = await Versions.list(project)
@@ -1480,7 +1480,7 @@ final class Store: ObservableObject {
     }
 
     /// Brings back an earlier version's files as a new version, so the restore can be undone too.
-    func restore(_ project: ForgeProject, to version: AppVersion) async {
+    func restore(_ project: LampProject, to version: AppVersion) async {
         guard busy.insert(project.id).inserted else { return }
         defer { finish(project) }
         guard await Versions.restore(project, to: version, message: "Restored to “\(version.label)”") else {
@@ -1493,7 +1493,7 @@ final class Store: ObservableObject {
     }
 
     /// Goes back to the version a request in the chat made, or to the one before it.
-    func restore(_ project: ForgeProject, toVersionOf line: LogLine, before: Bool) async {
+    func restore(_ project: LampProject, toVersionOf line: LogLine, before: Bool) async {
         let versions = await Versions.list(project)
         guard let made = line.version.flatMap({ id in versions.first { $0.id == id } }),
               let target = before ? made.parent.flatMap({ id in versions.first { $0.id == id } }) : made else { return }
@@ -1502,7 +1502,7 @@ final class Store: ObservableObject {
 
     /// After a restore: the new version looks like the old one, so it starts with its picture until the app
     /// takes a fresh one.
-    private func rebuild(_ project: ForgeProject, restoredFrom version: AppVersion) async {
+    private func rebuild(_ project: LampProject, restoredFrom version: AppVersion) async {
         guard let head = await Versions.head(project) else { return }
         Versions.copyPicture(in: project, from: version.id, to: head)
         versionsRevision += 1
@@ -1514,7 +1514,7 @@ final class Store: ObservableObject {
 
     /// Chats from before requests were linked to versions: matches each request to the version whose
     /// message is its text, in order. Requests that made no change, or went out together, stay unlinked.
-    func linkOldRequests(_ project: ForgeProject) async {
+    func linkOldRequests(_ project: LampProject) async {
         guard var chat = logs[project.id], chat.contains(where: { $0.kind == .user && $0.version == nil }) else { return }
         func plain(_ text: String) -> String { text.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
         let versions = await Versions.list(project).reversed()
@@ -1537,7 +1537,7 @@ final class Store: ObservableObject {
 
     /// Gives the newest versions without one a short title from what changed, one at a time. Runs on its
     /// own, so the Versions panel reloading as titles arrive doesn't cancel it.
-    func titleVersions(_ project: ForgeProject, limit: Int = 40) {
+    func titleVersions(_ project: LampProject, limit: Int = 40) {
         guard titling.insert(project.id).inserted else { return }
         Task {
             defer { titling.remove(project.id) }
@@ -1550,7 +1550,7 @@ final class Store: ObservableObject {
     }
 
     /// Apps from before pictures were kept: the current version gets the picture of the current build.
-    func fillCurrentPicture(_ project: ForgeProject, current: AppVersion) async {
+    func fillCurrentPicture(_ project: LampProject, current: AppVersion) async {
         guard !FileManager.default.fileExists(atPath: Versions.pictureURL(in: project, for: current.id).path),
               let screenshot = Runtime.currentScreenshot(of: project), !busy.contains(project.id),
               await !Versions.hasUnsavedChanges(project) else { return }
@@ -1559,7 +1559,7 @@ final class Store: ObservableObject {
     }
 
     /// Links requests in the chat to the version they made.
-    private func link(_ lines: [UUID], to version: String, in project: ForgeProject) {
+    private func link(_ lines: [UUID], to version: String, in project: LampProject) {
         guard var chat = logs[project.id] else { return }
         for index in chat.indices where lines.contains(chat[index].id) { chat[index].version = version }
         logs[project.id] = chat
@@ -1567,7 +1567,7 @@ final class Store: ObservableObject {
     }
 
     /// Keeps the picture the app takes of itself shortly after opening, to show with its version.
-    private func keepPicture(of project: ForgeProject, version: String) {
+    private func keepPicture(of project: LampProject, version: String) {
         Task {
             for _ in 0..<40 {
                 if let screenshot = Runtime.currentScreenshot(of: project) {
@@ -1581,18 +1581,18 @@ final class Store: ObservableObject {
     }
 
     /// Shows the Name… alert for the version the app is at now.
-    func nameCurrentVersion(of project: ForgeProject) async {
+    func nameCurrentVersion(of project: LampProject) async {
         guard let current = await Versions.list(project).first else { return }
         naming = VersionNaming(project: project, version: current)
     }
 
-    func name(_ version: AppVersion, of project: ForgeProject, as name: String) async {
+    func name(_ version: AppVersion, of project: LampProject, as name: String) async {
         await Versions.name(project, version.id, name)
         versionsRevision += 1
     }
 
     /// Returns nil on success, or the tail of the compiler output on failure.
-    private func build(_ project: ForgeProject) async -> String? {
+    private func build(_ project: LampProject) async -> String? {
         log(project, .status, "Building…")
         try? Template.writeSupport(for: project)
         Template.upgradeBuildScript(for: project)
@@ -1610,7 +1610,7 @@ final class Store: ObservableObject {
 
     /// Installs and opens the app. Returns what's known about the failure if it died straight away.
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
-    private func install(_ project: ForgeProject, inFront: Bool = true) async -> String? {
+    private func install(_ project: LampProject, inFront: Bool = true) async -> String? {
         await prepareIcon(project)
         await quit(project)
         do {
@@ -1644,7 +1644,7 @@ final class Store: ObservableObject {
     }
 
     /// For Open App and Undo, where no agent is running to fix a crash.
-    private func installReportingCrash(_ project: ForgeProject) async {
+    private func installReportingCrash(_ project: LampProject) async {
         if await install(project) != nil {
             log(project, .error, "\(project.name) crashes when it opens. Ask me to fix the crash, or press Undo.")
         }
@@ -1652,24 +1652,24 @@ final class Store: ObservableObject {
 
     /// Puts the icon into the freshly built bundle, re-signs it, and swaps it into ~/Applications/Forge Apps.
     /// The swap is atomic, so it's safe even while the app is running.
-    private func deploy(_ project: ForgeProject) async throws {
+    private func deploy(_ project: LampProject) async throws {
         let fm = FileManager.default
         let resources = project.builtURL.appendingPathComponent("Contents/Resources")
         try fm.createDirectory(at: resources, withIntermediateDirectories: true)
         // Without these, macOS kills the app the moment it uses the mic, speech recognition or camera.
         // Added here rather than in build.sh so apps made before this change get them too.
         _ = await Shell.run("""
-            P="$FORGE_APP/Contents/Info.plist"
-            plutil -replace CFBundleName -string "$FORGE_NAME" "$P" && \
-            plutil -replace CFBundleDisplayName -string "$FORGE_NAME" "$P" && \
-            plutil -replace NSMicrophoneUsageDescription -string "$FORGE_NAME listens to your microphone." "$P" && \
-            plutil -replace NSSpeechRecognitionUsageDescription -string "$FORGE_NAME turns your speech into text." "$P" && \
-            plutil -replace NSCameraUsageDescription -string "$FORGE_NAME uses your camera." "$P" && \
-            plutil -replace NSCalendarsFullAccessUsageDescription -string "$FORGE_NAME reads and adds calendar events." "$P" && \
-            plutil -replace NSRemindersFullAccessUsageDescription -string "$FORGE_NAME reads and adds reminders." "$P" && \
-            plutil -replace NSContactsUsageDescription -string "$FORGE_NAME looks up people in your contacts." "$P" && \
-            plutil -replace NSAppleEventsUsageDescription -string "$FORGE_NAME reads your email and drafts replies through Mail." "$P"
-            """, cwd: project.dir, env: ["FORGE_APP": project.builtURL.path, "FORGE_NAME": project.name]) { _ in }
+            P="$LAMP_APP/Contents/Info.plist"
+            plutil -replace CFBundleName -string "$LAMP_NAME" "$P" && \
+            plutil -replace CFBundleDisplayName -string "$LAMP_NAME" "$P" && \
+            plutil -replace NSMicrophoneUsageDescription -string "$LAMP_NAME listens to your microphone." "$P" && \
+            plutil -replace NSSpeechRecognitionUsageDescription -string "$LAMP_NAME turns your speech into text." "$P" && \
+            plutil -replace NSCameraUsageDescription -string "$LAMP_NAME uses your camera." "$P" && \
+            plutil -replace NSCalendarsFullAccessUsageDescription -string "$LAMP_NAME reads and adds calendar events." "$P" && \
+            plutil -replace NSRemindersFullAccessUsageDescription -string "$LAMP_NAME reads and adds reminders." "$P" && \
+            plutil -replace NSContactsUsageDescription -string "$LAMP_NAME looks up people in your contacts." "$P" && \
+            plutil -replace NSAppleEventsUsageDescription -string "$LAMP_NAME reads your email and drafts replies through Mail." "$P"
+            """, cwd: project.dir, env: ["LAMP_APP": project.builtURL.path, "LAMP_NAME": project.name]) { _ in }
         if fm.fileExists(atPath: Icons.icnsURL(project).path) {
             try? fm.removeItem(at: resources.appendingPathComponent("AppIcon.icns"))
             try fm.copyItem(at: Icons.icnsURL(project), to: resources.appendingPathComponent("AppIcon.icns"))
@@ -1678,32 +1678,32 @@ final class Store: ObservableObject {
             let hasCar = fm.fileExists(atPath: Icons.carURL(project).path)
             if hasCar { try fm.copyItem(at: Icons.carURL(project), to: resources.appendingPathComponent("Assets.car")) }
             let iconName = hasCar
-                ? "plutil -replace CFBundleIconName -string AppIcon \"$FORGE_APP/Contents/Info.plist\""
-                : "{ plutil -remove CFBundleIconName \"$FORGE_APP/Contents/Info.plist\" 2>/dev/null || true; }"
+                ? "plutil -replace CFBundleIconName -string AppIcon \"$LAMP_APP/Contents/Info.plist\""
+                : "{ plutil -remove CFBundleIconName \"$LAMP_APP/Contents/Info.plist\" 2>/dev/null || true; }"
             _ = await Shell.run("""
-                plutil -replace CFBundleIconFile -string AppIcon "$FORGE_APP/Contents/Info.plist" && \(iconName)
-                """, cwd: project.dir, env: ["FORGE_APP": project.builtURL.path]) { _ in }
+                plutil -replace CFBundleIconFile -string AppIcon "$LAMP_APP/Contents/Info.plist" && \(iconName)
+                """, cwd: project.dir, env: ["LAMP_APP": project.builtURL.path]) { _ in }
         }
-        // Files attached in Forge's chat ship inside the app, where ForgeAssets finds them.
+        // Files attached in Lamp's chat ship inside the app, where ForgeAssets finds them.
         let attachments = project.dir.appendingPathComponent(Attachments.folder)
         try? fm.removeItem(at: resources.appendingPathComponent(Attachments.folder))
         if fm.fileExists(atPath: attachments.path) {
             try fm.copyItem(at: attachments, to: resources.appendingPathComponent(Attachments.folder))
         }
-        // Signed from Forge's own keychain, which the script unlocks, so nobody is asked for keychain access.
+        // Signed from Lamp's own keychain, which the script unlocks, so nobody is asked for keychain access.
         // Files copied into the bundle (attachments, icon artwork, an edited Info.plist) can carry Finder
         // metadata and resource forks. codesign accepts those for an ad hoc signature but refuses them for a
         // certificate one ("resource fork, Finder information, or similar detritus not allowed"), which is
         // how apps silently ended up ad hoc. Strip them first.
-        _ = await Shell.run("xattr -cr \"$FORGE_APP\"", cwd: project.dir, env: ["FORGE_APP": project.builtURL.path]) { _ in }
+        _ = await Shell.run("xattr -cr \"$LAMP_APP\"", cwd: project.dir, env: ["LAMP_APP": project.builtURL.path]) { _ in }
         let identity = await AppSigning.identity()
         var signed = false
         if identity != "-" {
             var output: [String] = []
-            signed = await Shell.run("codesign --force --keychain \"$FORGE_KEYCHAIN\" -s \"$FORGE_IDENTITY\" \"$FORGE_APP\" 2>&1",
+            signed = await Shell.run("codesign --force --keychain \"$LAMP_KEYCHAIN\" -s \"$LAMP_IDENTITY\" \"$LAMP_APP\" 2>&1",
                                      cwd: project.dir,
-                                     env: ["FORGE_APP": project.builtURL.path, "FORGE_IDENTITY": identity,
-                                           "FORGE_KEYCHAIN": AppSigning.keychain]) { output.append($0) } == 0
+                                     env: ["LAMP_APP": project.builtURL.path, "LAMP_IDENTITY": identity,
+                                           "LAMP_KEYCHAIN": AppSigning.keychain]) { output.append($0) } == 0
             // Trust the result, not the exit status: check the app really carries the certificate.
             if signed && !AppSigning.isCertificateSigned(project.builtURL) {
                 signed = false
@@ -1715,8 +1715,8 @@ final class Store: ObservableObject {
         if !signed {
             // Ad hoc keeps the app installable, but macOS won't remember its permissions across rebuilds and
             // won't ask for Location Services at all, so this is logged rather than silent.
-            _ = await Shell.run("codesign --force -s - \"$FORGE_APP\"", cwd: project.dir,
-                                env: ["FORGE_APP": project.builtURL.path]) { _ in }
+            _ = await Shell.run("codesign --force -s - \"$LAMP_APP\"", cwd: project.dir,
+                                env: ["LAMP_APP": project.builtURL.path]) { _ in }
         }
 
         // What the copy being replaced was signed as, to notice when this build is signed differently.
@@ -1733,8 +1733,8 @@ final class Store: ObservableObject {
         // Nudge Finder, the Dock and Launchpad to pick up the new icon.
         try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: project.installedURL.path)
         _ = await Shell.run(
-            Self.lsregister + " -f \"$FORGE_APP\"",
-            cwd: project.dir, env: ["FORGE_APP": project.installedURL.path]) { _ in }
+            Self.lsregister + " -f \"$LAMP_APP\"",
+            cwd: project.dir, env: ["LAMP_APP": project.installedURL.path]) { _ in }
         // macOS keeps a permission with the signature it was given to. Signed differently, the app has lost
         // what it had, but System Settings still shows the old entries switched on, and they do nothing.
         if let replaced, let requirement = await AppSigning.requirement(of: project.installedURL), replaced != requirement,
@@ -1750,7 +1750,7 @@ final class Store: ObservableObject {
     // MARK: - Icons
 
     /// Makes sure icon.json exists, then renders it (with cached artwork if there is any).
-    private func prepareIcon(_ project: ForgeProject) async {
+    private func prepareIcon(_ project: LampProject) async {
         await iconDesigns[project.id]?.value
         var spec = Icons.load(project)
         if spec == nil && project.untitled { return }   // keeps its placeholder until the first message
@@ -1762,7 +1762,7 @@ final class Store: ObservableObject {
         await renderIcon(project, spec: spec!)
     }
 
-    private func renderIcon(_ project: ForgeProject, spec: IconSpec) async {
+    private func renderIcon(_ project: LampProject, spec: IconSpec) async {
         do {
             icons[project.id] = try await Icons.write(spec, art: Icons.cachedArt(project, spec: spec), for: project)
         } catch {
@@ -1772,14 +1772,14 @@ final class Store: ObservableObject {
 
     /// Asks for an OpenRouter key in the app's chat, once per app: the moment an app first wants a picture is
     /// when a key is worth explaining, not the welcome screen.
-    private func askForKey(_ project: ForgeProject, because reason: String) {
+    private func askForKey(_ project: LampProject, because reason: String) {
         guard !(logs[project.id] ?? []).contains(where: { $0.kind == .needsKey }) else { return }
         log(project, .needsKey, reason)
     }
 
     /// Generates artwork for the icon's object in the background (best of a few candidates) and swaps it in
     /// when ready, with whatever can make pictures. With nothing, the first app asks for a key instead.
-    private func upgradeIconArt(_ project: ForgeProject) {
+    private func upgradeIconArt(_ project: LampProject) {
         guard let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
               Icons.cachedArt(project, spec: spec) == nil else { return }
         guard artInProgress.insert(project.id).inserted else { return }
@@ -1813,7 +1813,7 @@ final class Store: ObservableObject {
     }
 
     /// Designs a fresh icon (different from the current one) and applies it without restarting the app.
-    func newIcon(_ project: ForgeProject) async {
+    func newIcon(_ project: LampProject) async {
         guard busy.insert(project.id).inserted else { return }
         defer { finish(project) }
         log(project, .status, "Designing a new icon…")
@@ -1839,7 +1839,7 @@ final class Store: ObservableObject {
     }
 
     /// Keeps `openApps` current as apps launch and quit. Menu bar apps don't always announce themselves,
-    /// so it's also checked whenever Forge comes to the front and after Forge opens or quits one.
+    /// so it's also checked whenever Lamp comes to the front and after Lamp opens or quits one.
     private func watchOpenApps() {
         refreshOpenApps()
         let workspace = NSWorkspace.shared.notificationCenter
@@ -1862,12 +1862,12 @@ final class Store: ObservableObject {
     }
 
     /// Quits the app, for the Stop button. Asks it nicely first, then insists.
-    func quitApp(_ project: ForgeProject) async {
+    func quitApp(_ project: LampProject) async {
         await quit(project)
         refreshOpenApps()
     }
 
-    private func quit(_ project: ForgeProject) async {
+    private func quit(_ project: LampProject) async {
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID) {
             app.terminate()
             for _ in 0..<30 where !app.isTerminated {
@@ -2008,7 +2008,7 @@ final class Store: ObservableObject {
     }
 
     /// `ForgeComputer.ask` / `.perform` from an app: a task done with the other apps on the Mac (see ComputerUse).
-    private func useComputer(for project: ForgeProject, request body: Data) async -> (Int, [String: Any]) {
+    private func useComputer(for project: LampProject, request body: Data) async -> (Int, [String: Any]) {
         guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let task = (json["task"] as? String)?.trimmed, !task.isEmpty else { return (400, ["error": "Missing task."]) }
         let allowActions = json["act"] as? Bool ?? false
@@ -2047,7 +2047,7 @@ final class Store: ObservableObject {
     private enum ActionAnswer { case allow, allowAll, deny }
 
     /// Asks the person before an app clicks, types or presses keys in another app.
-    private func confirm(_ action: ComputerUse.Action, for project: ForgeProject) async -> ActionAnswer {
+    private func confirm(_ action: ComputerUse.Action, for project: LampProject) async -> ActionAnswer {
         NSApp.activate()
         let alert = NSAlert()
         alert.messageText = "\(project.name) wants to use \(action.target)"
@@ -2065,8 +2065,8 @@ final class Store: ObservableObject {
     }
 
     /// The agent's version tools: `list_versions`, `name_version` and `restore_version`.
-    private func versions(_ request: Gateway.Request, of project: ForgeProject) async -> (Int, [String: Any]) {
-        // Only for the agent Forge is running right now: the app knows the same token, and must not be
+    private func versions(_ request: Gateway.Request, of project: LampProject) async -> (Int, [String: Any]) {
+        // Only for the agent Lamp is running right now: the app knows the same token, and must not be
         // able to change its own history.
         guard running[project.id] != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
@@ -2103,8 +2103,8 @@ final class Store: ObservableObject {
 
     /// The agent's `look_at_app` tool: builds what it has written so far, opens the app behind the
     /// user's windows, and reports what happened. The pictures are sent as file paths for pi to read.
-    private func look(at project: ForgeProject) async -> (Int, [String: Any]) {
-        // Only for the agent Forge is running right now. The app knows the same token and must not
+    private func look(at project: LampProject) async -> (Int, [String: Any]) {
+        // Only for the agent Lamp is running right now. The app knows the same token and must not
         // be able to rebuild itself.
         guard running[project.id] != nil, var look = looks[project.id] else {
             return (409, ["error": "Lamp isn't working on this app right now."])
@@ -2150,13 +2150,13 @@ final class Store: ObservableObject {
         return (200, ["text": text, "screenshots": Privacy.sharesPictures ? screenshots.map(\.path) : []])
     }
 
-    private func record(_ project: ForgeProject, cost: Double) {
+    private func record(_ project: LampProject, cost: Double) {
         usage[project.id, default: AppUsage()].calls += 1
         usage[project.id, default: AppUsage()].cost += cost
         saveUsage(project)
     }
 
-    private func recordAgent(_ project: ForgeProject, cost: Double) {
+    private func recordAgent(_ project: LampProject, cost: Double) {
         var current = usage[project.id] ?? AppUsage()
         current.agentRuns = (current.agentRuns ?? 0) + 1
         current.agentCost = (current.agentCost ?? 0) + cost
@@ -2164,7 +2164,7 @@ final class Store: ObservableObject {
         saveUsage(project)
     }
 
-    private func saveUsage(_ project: ForgeProject) {
+    private func saveUsage(_ project: LampProject) {
         if let data = try? JSONEncoder().encode(usage[project.id]) {
             try? data.write(to: project.dir.appendingPathComponent(".forge/usage.json"))
         }
@@ -2179,20 +2179,20 @@ extension String {
     var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
 }
 
-/// One app's own choice of models for its AI features, in .forge/models.json. nil uses Forge's default
+/// One app's own choice of models for its AI features, in .forge/models.json. nil uses Lamp's default
 /// from Settings → Apps.
 struct AppModels: Codable, Equatable {
     var text: String?       // an id from AppAI.models
     var image: String?      // an id from Icons.artModels
     var decision: String?   // an id from AppAI.decisionModels
 
-    private static func url(_ project: ForgeProject) -> URL { project.dir.appendingPathComponent(".forge/models.json") }
+    private static func url(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".forge/models.json") }
 
-    static func load(_ project: ForgeProject) -> AppModels {
+    static func load(_ project: LampProject) -> AppModels {
         (try? Data(contentsOf: url(project))).flatMap { try? JSONDecoder().decode(AppModels.self, from: $0) } ?? AppModels()
     }
 
-    func save(_ project: ForgeProject) {
+    func save(_ project: LampProject) {
         let url = Self.url(project)
         if self == AppModels() { try? FileManager.default.removeItem(at: url); return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

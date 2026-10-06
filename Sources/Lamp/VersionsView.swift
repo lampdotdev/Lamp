@@ -4,7 +4,7 @@ import SwiftUI
 /// Any of them can be named or brought back.
 struct VersionsView: View {
     @EnvironmentObject private var store: Store
-    let project: ForgeProject
+    let project: LampProject
     @State private var versions: [AppVersion] = []
     @State private var loaded = false
     @State private var selected: String?
@@ -71,7 +71,7 @@ struct VersionsView: View {
 
 private struct VersionRow: View {
     @EnvironmentObject private var store: Store
-    let project: ForgeProject
+    let project: LampProject
     let version: AppVersion
     let current: Bool
     let expanded: Bool

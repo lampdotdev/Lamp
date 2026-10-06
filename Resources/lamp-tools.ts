@@ -1,24 +1,24 @@
 /**
- * Forge's tools for the bundled pi agent, loaded with `pi -e` (see Agent.command).
+ * Lamp's tools for the bundled pi agent, loaded with `pi -e` (see Agent.command).
  *
- * - `look_at_app`: the agent can't run anything itself. This asks Forge (over its local gateway) to build
+ * - `look_at_app`: the agent can't run anything itself. This asks Lamp (over its local gateway) to build
  *   the app with the agent's changes, open it, and report back: a picture of each window, what the app
  *   printed, and any build errors or crash.
  * - `use_app`: clicks, types and presses keys in the open app's front window, at points in its latest picture.
- *   Forge passes the actions to the app, which performs them on itself (ForgeDriver in ForgeSupport), so no
+ *   Lamp passes the actions to the app, which performs them on itself (ForgeDriver in ForgeSupport), so no
  *   Accessibility permission is needed. The reply is what happened and a fresh picture.
  * - `delete_file`: pi's own tools can write and edit files but not remove one. This deletes a single file
- *   inside the app's folder, leaving alone the files Forge owns. The app's git history can bring it back
+ *   inside the app's folder, leaving alone the files Lamp owns. The app's git history can bring it back
  *   (Undo).
- * - `list_versions`, `name_version`, `restore_version`: Forge saves a version of the app after every request.
- *   These let the agent see them, name one, and bring one back when the user asks. Forge does the work.
+ * - `list_versions`, `name_version`, `restore_version`: Lamp saves a version of the app after every request.
+ *   These let the agent see them, name one, and bring one back when the user asks. Lamp does the work.
  * - `web_fetch`: reads a web page (or any URL) as text. Reading needs no approval.
  * - pi's file tools (read, edit, write, grep, find, ls) are checked before they run: inside the app's folder
- *   they need nothing, outside it Forge decides (system files are fine, Forge's own keys never, the rest asks
+ *   they need nothing, outside it Lamp decides (system files are fine, Lamp's own keys never, the rest asks
  *   the user), and the running app's log and pictures follow the user's privacy settings.
- * - Shell commands (pi's `bash` tool) need the user's approval: before each one runs, this asks Forge, which
+ * - Shell commands (pi's `bash` tool) need the user's approval: before each one runs, this asks Lamp, which
  *   shows the command in the app's chat with Allow / Allow All This Turn / Deny, and blocks it if denied.
- * - `plan`: the agent's checklist of what it's building, with the files behind each part. Forge reads the
+ * - `plan`: the agent's checklist of what it's building, with the files behind each part. Lamp reads the
  *   list from pi's event stream, shows it on the build card, and ticks parts as their files are written,
  *   so the tool itself has nothing to do.
  */
@@ -39,11 +39,11 @@ const lookAtApp = defineTool({
 	parameters: Type.Object({}),
 
 	async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
-		const url = process.env.FORGE_LOOK_URL;
+		const url = process.env.LAMP_LOOK_URL;
 		if (!url) throw new Error("Lamp isn't available to look at the app.");
 		const response = await fetch(url, {
 			method: "POST",
-			headers: { Authorization: `Bearer ${process.env.FORGE_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
 			body: "{}",
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(600_000)]) : AbortSignal.timeout(600_000),
 		});
@@ -51,7 +51,7 @@ const lookAtApp = defineTool({
 	},
 });
 
-/** Forge's answer to look_at_app or use_app: its text, then the pictures it names (if the model can see them). */
+/** Lamp's answer to look_at_app or use_app: its text, then the pictures it names (if the model can see them). */
 async function pictureReply(response: Response, model: { input: string[] } | undefined, failure: string) {
 	const reply = (await response.json()) as { text?: string; error?: string; screenshots?: string[] };
 	if (!response.ok) throw new Error(reply.error ?? failure);
@@ -113,11 +113,11 @@ const useApp = defineTool({
 	}),
 
 	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-		const url = process.env.FORGE_USE_URL;
+		const url = process.env.LAMP_USE_URL;
 		if (!url) throw new Error("Lamp isn't available to use the app.");
 		const response = await fetch(url, {
 			method: "POST",
-			headers: { Authorization: `Bearer ${process.env.FORGE_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
 			body: JSON.stringify({ actions: params.actions }),
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
 		});
@@ -187,16 +187,16 @@ const webFetch = defineTool({
 	},
 });
 
-/** Asks Forge to approve a shell command; resolves to an error message when it isn't approved. */
+/** Asks Lamp to approve a shell command; resolves to an error message when it isn't approved. */
 async function askForge(command: string, signal?: AbortSignal): Promise<string | undefined> {
-	const url = process.env.FORGE_APPROVE_URL;
+	const url = process.env.LAMP_APPROVE_URL;
 	if (!url) return "Shell commands need approval in Lamp, and Lamp isn't available.";
 	try {
 		const response = await fetch(url, {
 			method: "POST",
-			headers: { Authorization: `Bearer ${process.env.FORGE_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
 			body: JSON.stringify({ command }),
-			// The user may take a while to answer; Forge itself never times out on their behalf.
+			// The user may take a while to answer; Lamp itself never times out on their behalf.
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(3_600_000)]) : AbortSignal.timeout(3_600_000),
 		});
 		const reply = (await response.json()) as { allow?: boolean; reason?: string };
@@ -228,20 +228,20 @@ async function resolved(given: string): Promise<string> {
 }
 
 /**
- * Asks Forge whether a file tool may touch a path; resolves to an error message when it may not. Paths inside the
+ * Asks Lamp whether a file tool may touch a path; resolves to an error message when it may not. Paths inside the
  * app's folder need no asking, except what the running app saves there (its log and pictures), which the user
- * can keep from the agent in Forge's settings.
+ * can keep from the agent in Lamp's settings.
  */
 async function checkFile(tool: string, given: string, signal?: AbortSignal): Promise<string | undefined> {
 	const [target, home] = await Promise.all([resolved(given), resolved(".")]);
 	const inside = target === home || target.startsWith(home + path.sep);
 	if (inside && !target.startsWith(path.join(home, ".forge", "runtime") + path.sep)) return undefined;
-	const url = process.env.FORGE_APPROVE_URL;
+	const url = process.env.LAMP_APPROVE_URL;
 	if (!url) return inside ? undefined : "Files outside the app's folder need approval in Lamp, and Lamp isn't available.";
 	try {
 		const response = await fetch(url, {
 			method: "POST",
-			headers: { Authorization: `Bearer ${process.env.FORGE_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
 			body: JSON.stringify({ file_tool: tool, path: given }),
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(3_600_000)]) : AbortSignal.timeout(3_600_000),
 		});
@@ -252,7 +252,7 @@ async function checkFile(tool: string, given: string, signal?: AbortSignal): Pro
 	}
 }
 
-/** Files and folders Forge generates or depends on: never the agent's to delete. */
+/** Files and folders Lamp generates or depends on: never the agent's to delete. */
 const protectedPaths = [".forge", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/ForgeSupport.swift"];
 
 const deleteFile = defineTool({
@@ -289,13 +289,13 @@ const deleteFile = defineTool({
 	},
 });
 
-/** Calls one of Forge's version endpoints and returns its reply as the tool's text. */
+/** Calls one of Lamp's version endpoints and returns its reply as the tool's text. */
 async function versions(endpoint: string, body: object, signal?: AbortSignal) {
-	const url = process.env.FORGE_VERSIONS_URL;
+	const url = process.env.LAMP_VERSIONS_URL;
 	if (!url) throw new Error("Lamp isn't available to manage versions.");
 	const response = await fetch(url + endpoint, {
 		method: "POST",
-		headers: { Authorization: `Bearer ${process.env.FORGE_TOKEN ?? ""}`, "Content-Type": "application/json" },
+		headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
 		body: JSON.stringify(body),
 		signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
 	});

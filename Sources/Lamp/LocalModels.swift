@@ -12,7 +12,7 @@ struct LocalModelSpec: Identifiable, Hashable {
     let blurb: String
 }
 
-/// A model on disk that Forge can run.
+/// A model on disk that Lamp can run.
 struct InstalledModel: Identifiable, Hashable {
     enum Format: String { case gguf, mlx }
 
@@ -20,20 +20,20 @@ struct InstalledModel: Identifiable, Hashable {
     let name: String
     let repo: String        // "org/name", or "" if unknown
     let format: Format
-    let source: String      // "Hugging Face cache", "Local", "Forge"
+    let source: String      // "Hugging Face cache", "Local", "Lamp"
     let files: [URL]        // GGUF: model file(s) + optional mmproj. MLX: the model folder.
     let bytes: Int64
     let vision: Bool
-    let deletable: Bool     // Forge only deletes GGUF models it can see in the shared cache
+    let deletable: Bool     // Lamp only deletes GGUF models it can see in the shared cache
 }
 
 /// Models that run on this Mac. Downloads go into the shared Hugging Face cache
-/// (~/.cache/huggingface/hub, the same layout the `hf` CLI and Local use), and Forge also picks up models
+/// (~/.cache/huggingface/hub, the same layout the `hf` CLI and Local use), and Lamp also picks up models
 /// already there or in Local's folder:
 /// - GGUF models run on the bundled llama.cpp server (router mode on 127.0.0.1:47812), which gets a folder
 ///   of symlinks into the cache, so nothing is copied.
 /// - MLX models (e.g. ones downloaded for Local) run on `mlx_lm.server` (127.0.0.1:47813) when it's installed.
-/// pi reaches both, plus any running Ollama / LM Studio, through providers Forge writes into its `models.json`.
+/// pi reaches both, plus any running Ollama / LM Studio, through providers Lamp writes into its `models.json`.
 @MainActor
 final class LocalModels: ObservableObject {
     static let shared = LocalModels()
@@ -46,7 +46,7 @@ final class LocalModels: ObservableObject {
     nonisolated static let hubDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface/hub")
     nonisolated static let localAppDir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/LocalAssistant/Models")
-    /// Older Forge builds downloaded here; still read.
+    /// Older Lamp builds downloaded here; still read.
     nonisolated static let legacyDir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Forge/Models")
     /// Symlinks for llama-server's router: one folder per GGUF model.
@@ -94,7 +94,7 @@ final class LocalModels: ObservableObject {
         model(id)?.format == .mlx ? mlxProvider : Builder.localProvider
     }
 
-    /// Model servers Forge looks for: Ollama and LM Studio.
+    /// Model servers Lamp looks for: Ollama and LM Studio.
     nonisolated static let externalIDs = ["ext-lmstudio", "ext-ollama"]   // alphabetical by name
 
     nonisolated static func externalName(_ id: String) -> String {
@@ -104,7 +104,7 @@ final class LocalModels: ObservableObject {
     /// `mlx_lm.server`, if installed (e.g. `uv tool install mlx-lm`).
     nonisolated static var mlxServerPath: String? { ToolLocator.path(named: "mlx_lm.server") }
 
-    /// Every runnable model in the Hugging Face cache, Local's folder and Forge's old folder.
+    /// Every runnable model in the Hugging Face cache, Local's folder and Lamp's old folder.
     nonisolated static func scan() -> [InstalledModel] {
         let fm = FileManager.default
         var models: [InstalledModel] = []
@@ -129,7 +129,7 @@ final class LocalModels: ObservableObject {
             let repo = dir.lastPathComponent.replacingOccurrences(of: "--", with: "/")
             for model in runnable(in: dir, repo: repo, source: "Local", deletable: false) { add(model) }
         }
-        // Forge's older download folder.
+        // Lamp's older download folder.
         for dir in (try? fm.contentsOfDirectory(at: legacyDir, includingPropertiesForKeys: nil)) ?? []
         where fm.fileExists(atPath: dir.appendingPathComponent(".complete").path) {
             for model in runnable(in: dir, repo: "", source: "Lamp", deletable: false, preferredID: dir.lastPathComponent) { add(model) }
@@ -230,7 +230,7 @@ final class LocalModels: ObservableObject {
         restartServerIfRunning()
     }
 
-    /// Whether a catalog entry is already on disk (in any of the places Forge looks).
+    /// Whether a catalog entry is already on disk (in any of the places Lamp looks).
     func isInstalled(_ spec: LocalModelSpec) -> Bool {
         guard let file = spec.files.first else { return false }
         return installed.contains { model in model.repo == spec.repo && model.files.contains { $0.lastPathComponent == file } }
@@ -463,7 +463,7 @@ final class LocalModels: ObservableObject {
     }
 
     private func restartServerIfRunning() {
-        guard server != nil else { return }   // only restart one Forge started; it rescans the router folder
+        guard server != nil else { return }   // only restart one Lamp started; it rescans the router folder
         server?.terminate()
         server = nil
         serverRunning = false
@@ -495,7 +495,7 @@ final class LocalModels: ObservableObject {
         writePiModels()
     }
 
-    /// Registers local models with Forge's pi through `models.json` (OpenAI-compatible endpoints).
+    /// Registers local models with Lamp's pi through `models.json` (OpenAI-compatible endpoints).
     func writePiModels() {
         var providers: [String: Any] = [:]
         let gguf = installed.filter { $0.format == .gguf }

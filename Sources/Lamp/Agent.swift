@@ -15,25 +15,25 @@ enum AgentEvent {
 }
 
 /// Drives the bundled pi coding agent (github.com/badlogic/pi-mono, MIT) in JSON mode.
-/// pi only gets file tools: Forge does the building and feeds compiler errors back.
+/// pi only gets file tools: Lamp does the building and feeds compiler errors back.
 enum Agent {
-    /// `bash` only with Forge's extension, which routes every command through the user's approval.
+    /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (forgeTools == nil ? "" :
             ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version")
     }
 
-    /// Forge's own tools for pi (Resources/forge-tools.ts): `look_at_app` has Forge build and open the app
+    /// Lamp's own tools for pi (Resources/lamp-tools.ts): `look_at_app` has Lamp build and open the app
     /// mid-turn and shows the agent the result; `plan` is the checklist on the build card; `delete_file`
     /// removes a file, which pi's own tools can't; the version tools list, name and restore the app's saved
     /// versions. Other engines don't have them.
     static var forgeTools: URL? {
-        let url = Bundle.main.resourceURL?.appendingPathComponent("forge-tools.ts")
+        let url = Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.ts")
         return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
     }
 
-    /// Rules for the tools every engine has: pi through Resources/forge-tools.ts, Claude Code and
-    /// Codex through Forge's MCP endpoint (Store.mcp). Keep the two in step.
+    /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
+    /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
     static let tryRules = """
 
     - `look_at_app` builds the app with your changes, opens it, and shows you its windows, what it printed \
@@ -75,7 +75,7 @@ enum Agent {
         return url.flatMap { FileManager.default.isExecutableFile(atPath: $0.path) ? $0 : nil }
     }
 
-    /// Forge's own pi settings and caches, separate from any pi the user runs themselves.
+    /// Lamp's own pi settings and caches, separate from any pi the user runs themselves.
     static let configDir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Forge/pi").path
 
@@ -270,36 +270,36 @@ enum Agent {
     Your Mac can do that on its own, offline." At most one suggestion, not every turn, and never build it unasked.
     """
 
-    /// The shell command for one agent turn. Values come from FORGE_* environment variables;
+    /// The shell command for one agent turn. Values come from LAMP_* environment variables;
     /// attached files are passed as pi `@file` arguments (images and text go straight to the model).
     static func command(fileCount: Int) -> String {
-        let files = (0..<fileCount).map { "\"@$FORGE_FILE_\($0)\"" }.joined(separator: " ")
+        let files = (0..<fileCount).map { "\"@$LAMP_FILE_\($0)\"" }.joined(separator: " ")
         return """
-        "$FORGE_PI" --mode json --provider "$FORGE_PROVIDER" --model "$FORGE_MODEL" --tools \(tools) \\
-          --no-extensions\(forgeTools == nil ? "" : " -e \"$FORGE_TOOLS\"") --no-skills --no-prompt-templates --no-context-files --no-approve \\
-          --session-dir "$FORGE_SESSION_DIR" --session-id "$FORGE_SESSION" \\
-          --append-system-prompt "$FORGE_SYSTEM" -- \(files) "$FORGE_PROMPT"
+        "$LAMP_PI" --mode json --provider "$LAMP_PROVIDER" --model "$LAMP_MODEL" --tools \(tools) \\
+          --no-extensions\(forgeTools == nil ? "" : " -e \"$LAMP_TOOLS\"") --no-skills --no-prompt-templates --no-context-files --no-approve \\
+          --session-dir "$LAMP_SESSION_DIR" --session-id "$LAMP_SESSION" \\
+          --append-system-prompt "$LAMP_SYSTEM" -- \(files) "$LAMP_PROMPT"
         """
     }
 
     static func environment(prompt: String, files: [String] = [], session: String, sessionDir: String) -> [String: String] {
         var env = [
-            "FORGE_PI": executable?.path ?? "pi",
-            "FORGE_PROVIDER": Builder.piProvider == Builder.myPiProvider ? myPiProvider
+            "LAMP_PI": executable?.path ?? "pi",
+            "LAMP_PROVIDER": Builder.piProvider == Builder.myPiProvider ? myPiProvider
                 : Builder.piProvider == Builder.localProvider ? LocalModels.piProvider(for: Builder.piModel)
                 : Builder.piProvider,
-            "FORGE_MODEL": Builder.piProvider == Builder.myPiProvider ? myPiModel : Builder.piModel,
-            "FORGE_SESSION": session,
-            "FORGE_SESSION_DIR": sessionDir,
-            "FORGE_SYSTEM": systemPrompt + toolRules,
-            "FORGE_PROMPT": prompt,
-            "FORGE_TOOLS": forgeTools?.path ?? "",
-            // "My pi setup" uses the user's own pi config (their logins); everything else uses Forge's.
+            "LAMP_MODEL": Builder.piProvider == Builder.myPiProvider ? myPiModel : Builder.piModel,
+            "LAMP_SESSION": session,
+            "LAMP_SESSION_DIR": sessionDir,
+            "LAMP_SYSTEM": systemPrompt + toolRules,
+            "LAMP_PROMPT": prompt,
+            "LAMP_TOOLS": forgeTools?.path ?? "",
+            // "My pi setup" uses the user's own pi config (their logins); everything else uses Lamp's.
             "PI_CODING_AGENT_DIR": Builder.piProvider == Builder.myPiProvider ? userConfigDir : configDir,
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_TELEMETRY": "0",
         ]
-        for (index, file) in files.enumerated() { env["FORGE_FILE_\(index)"] = file }
+        for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
         if let provider = Provider.apiProvider(Builder.piProvider), let key = KeyStore.key(for: provider.id) {
             env[provider.envVar] = key
         }
@@ -321,8 +321,8 @@ enum Agent {
                    "PI_CODING_AGENT_DIR": provider == Builder.myPiProvider ? userConfigDir : configDir]
         if let api = Provider.apiProvider(provider) { env[api.envVar] = KeyStore.key(for: api.id) ?? "placeholder" }
         var rows: [String] = []
-        _ = await Shell.run("\"$FORGE_PI\" --list-models", cwd: URL(fileURLWithPath: NSTemporaryDirectory()),
-                            env: env.merging(["FORGE_PI": pi.path]) { $1 }) { line in
+        _ = await Shell.run("\"$LAMP_PI\" --list-models", cwd: URL(fileURLWithPath: NSTemporaryDirectory()),
+                            env: env.merging(["LAMP_PI": pi.path]) { $1 }) { line in
             let columns = line.split(separator: " ", omittingEmptySubsequences: true)
             guard columns.count >= 2, columns[0] != "provider" else { return }
             if provider == Builder.myPiProvider {
@@ -412,7 +412,7 @@ enum Shell {
 
     /// Put this before a build command. The macOS 27 SDK makes `@State` a macro, and its compiler plugin
     /// only ships with full Xcode. With just the Command Line Tools, this builds against the newest
-    /// installed SDK that doesn't need the plugin. The same lines are in Forge's own build.sh.
+    /// installed SDK that doesn't need the plugin. The same lines are in Lamp's own build.sh.
     static let compatibleSDK = #"""
     dev="$(xcode-select -p 2>/dev/null)"
     if [ -z "${SDKROOT:-}" ] && [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then

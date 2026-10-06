@@ -1,4 +1,4 @@
-# Builds, signs, notarizes, and publishes Forge when a tag like v0.2.0 is pushed.
+# Builds, signs, notarizes, and publishes Lamp when a tag like v0.2.0 is pushed.
 #
 # Secrets live in the "release" environment, which only v* tags can use; only repo
 # admins can create v* tags (ruleset "Protect release tags"). See RELEASING.md:

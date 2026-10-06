@@ -26,7 +26,7 @@ enum Privacy {
     private static let scratchRoots = ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"]
 
     /// Whether one of the agent's file tools may touch `path` (as the agent gave it, relative to the app's folder).
-    static func verdict(tool: String, path raw: String, project: ForgeProject) -> Verdict {
+    static func verdict(tool: String, path raw: String, project: LampProject) -> Verdict {
         let path = resolved(raw, in: project.dir)
         let home = resolved(project.dir.path, in: project.dir)
         if path == home || path.hasPrefix(home + "/") {
@@ -38,7 +38,7 @@ enum Privacy {
             }
             return .allow
         }
-        // Forge's keys, its agent's sign-ins and the user's other apps: never, whatever the settings say.
+        // Lamp's keys, its agent's sign-ins and the user's other apps: never, whatever the settings say.
         let forge = resolved(Agent.configDir, in: project.dir).deletingLastComponent
         if path == forge || path.hasPrefix(forge + "/") {
             return .deny("That belongs to Lamp or to another of the user's apps, and isn't yours to open.")
@@ -50,7 +50,7 @@ enum Privacy {
     }
 
     /// What the approval card says for a file request.
-    static func explanation(tool: String, path raw: String, project: ForgeProject) -> (command: String, explanation: Store.CommandExplanation) {
+    static func explanation(tool: String, path raw: String, project: LampProject) -> (command: String, explanation: Store.CommandExplanation) {
         let shown = (resolved(raw, in: project.dir) as NSString).abbreviatingWithTildeInPath
         let reads = readers.contains(tool)
         let verb: String

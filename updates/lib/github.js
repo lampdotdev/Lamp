@@ -1,6 +1,6 @@
-// Reads Forge's releases from the private GitHub repo with a read-only token kept on the server
-// (GITHUB_TOKEN: a fine-grained token with Contents: read on RooCodeInc/Forge only).
-export const REPO = process.env.FORGE_REPO || "RooCodeInc/Forge";
+// Reads Lamp's releases from the private GitHub repo with a read-only token kept on the server
+// (GITHUB_TOKEN: a fine-grained token with Contents: read on RooCodeInc/Lamp only).
+export const REPO = process.env.LAMP_REPO || "RooCodeInc/Lamp";
 
 export async function github(path, accept = "application/vnd.github+json", redirect = "follow") {
   const token = process.env.GITHUB_TOKEN;
@@ -25,7 +25,7 @@ export async function releases() {
  */
 export function dmgAsset(release) {
   const named = (prefix) => release.assets.find((asset) => new RegExp(`^${prefix}-[0-9][0-9A-Za-z.+-]*\\.dmg$`).test(asset.name));
-  return named("Lamp") ?? named("Forge");
+  return named("Lamp") ?? named("Lamp");
 }
 
 /** The release's sparkle.json (version, signature, length), written by the release workflow. */

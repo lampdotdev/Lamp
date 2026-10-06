@@ -1,10 +1,10 @@
 import Sparkle
 import SwiftUI
 
-/// Updates Forge with Sparkle: once a day it reads the update feed (SUFeedURL in Info.plist, served by
+/// Updates Lamp with Sparkle: once a day it reads the update feed (SUFeedURL in Info.plist, served by
 /// updates/ on Vercel from the GitHub releases), and when there's a newer version it shows Sparkle's
 /// standard window with the release notes and an Install button. Every update must be signed with
-/// Forge's update key (SUPublicEDKey) and by the same Developer ID team, or Sparkle refuses it.
+/// Lamp's update key (SUPublicEDKey) and by the same Developer ID team, or Sparkle refuses it.
 ///
 /// Only release builds update: a build from source (no Apple Team ID) has nothing to update from, and
 /// would otherwise offer to replace itself with the latest release.
@@ -29,7 +29,7 @@ final class Updater: ObservableObject {
     func checkForUpdates() { controller?.checkForUpdates(nil) }
 }
 
-/// Forge → Check for Updates…, in release builds.
+/// Lamp → Check for Updates…, in release builds.
 struct CheckForUpdatesCommand: Commands {
     @ObservedObject private var updater = Updater.shared
 

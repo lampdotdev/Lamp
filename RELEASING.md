@@ -12,7 +12,7 @@ a secure timestamp. Nested code is signed first:
 - llama.cpp's server and libraries (`Resources/llama/`)
 - pi's native module and the pi executable, with `Resources/pi.entitlements`: pi is Bun-compiled, and Bun's
   JIT needs `allow-jit` and friends under hardened runtime
-- `Lamp.app`, with `Resources/Forge.entitlements` (microphone, for dictation)
+- `Lamp.app`, with `Resources/Lamp.entitlements` (microphone, for dictation)
 
 Releases build into `dist/`, so they never replace the `build/Lamp.app` you run day to day. Release builds
 have a Team ID, so they keep API keys in the login Keychain; local builds use `keys.json`.
@@ -82,11 +82,11 @@ trigger a signed build. The certificate owner adds the secrets once. Run these y
 for its value or reads the file:
 
 ```bash
-gh secret set MACOS_CERT_P12_BASE64 --env release --repo RooCodeInc/Forge < <(base64 -i ~/Desktop/DeveloperID.p12)
-gh secret set MACOS_CERT_PASSWORD   --env release --repo RooCodeInc/Forge   # the .p12 export password
-gh secret set NOTARY_APPLE_ID       --env release --repo RooCodeInc/Forge
-gh secret set NOTARY_TEAM_ID        --env release --repo RooCodeInc/Forge
-gh secret set NOTARY_PASSWORD       --env release --repo RooCodeInc/Forge   # the app-specific password
+gh secret set MACOS_CERT_P12_BASE64 --env release --repo RooCodeInc/Lamp < <(base64 -i ~/Desktop/DeveloperID.p12)
+gh secret set MACOS_CERT_PASSWORD   --env release --repo RooCodeInc/Lamp   # the .p12 export password
+gh secret set NOTARY_APPLE_ID       --env release --repo RooCodeInc/Lamp
+gh secret set NOTARY_TEAM_ID        --env release --repo RooCodeInc/Lamp
+gh secret set NOTARY_PASSWORD       --env release --repo RooCodeInc/Lamp   # the app-specific password
 ```
 
 Then move `DeveloperID.p12` into 1Password and delete it from the Desktop.
@@ -99,7 +99,7 @@ gh workflow run mac-release.yml --ref v0.2.0 -f version=0.2.0
 
 ## Trying the first run
 
-`scripts/fresh-start.sh begin` quits Lamp, puts your whole setup aside (the Forge folder in Application
+`scripts/fresh-start.sh begin` quits Lamp, puts your whole setup aside (the Lamp folder in Application
 Support, the `dev.forge.host` defaults and any Keychain items) and opens Lamp as a first-time user would
 see it: the welcome screen, the key check, picking an engine, making the first app. `scripts/fresh-start.sh
 restore` throws away what the fresh run made and puts your setup back. Nothing is deleted until you restore.
@@ -116,6 +116,6 @@ Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.
 - **The feed:** `updates/` is a small Vercel app (project `forge-updates` on the Roo Code team) that keeps the repo private:
   - `/appcast.xml` builds the feed from the GitHub releases that have a `sparkle.json`, with each release's notes.
   - `/download/<tag>` redirects to GitHub's short-lived download link for that release's DMG.
-  - It reads the releases with `GITHUB_TOKEN`, a fine-grained token with **Contents: read-only** on `RooCodeInc/Forge` only.
+  - It reads the releases with `GITHUB_TOKEN`, a fine-grained token with **Contents: read-only** on `RooCodeInc/Lamp` only.
   - Deploy with `cd updates && vercel deploy --prod --scope roo-code`.
 - **Only newer releases appear:** releases before the first one with `sparkle.json` aren't in the feed, because Sparkle couldn't verify them. Copies of Lamp from before Sparkle was added need one manual update to a release that includes it.
