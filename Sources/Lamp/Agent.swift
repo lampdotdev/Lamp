@@ -469,6 +469,12 @@ enum Shell {
     /// Processes told to stop whose two seconds aren't up yet. A Stop followed by Quit has to wait for these
     /// too: the shell may have gone while a child that ignored the signal is still to be killed.
     static var stopping: [pid_t] { shuttingDown.withLock { Array(shuttingDownPids) } }
+
+    /// Kills those outright, for when Lamp is about to exit and can't wait the two seconds for them.
+    static func killStopping() {
+        let pids = shuttingDown.withLock { let p = shuttingDownPids; shuttingDownPids = []; return p }
+        for pid in pids where kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+    }
     private static let shuttingDown = NSLock()
     nonisolated(unsafe) private static var shuttingDownPids = Set<pid_t>()
 

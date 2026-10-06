@@ -58,6 +58,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// agent is talking to gone: ask first, and stop them if the user quits anyway.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         MainActor.assumeIsolated {
+            // A Stop a moment ago may still have processes on their two seconds' notice; they go now.
+            Shell.killStopping()
             guard Store.shared.isWorking else { return .terminateNow }
             let alert = NSAlert()
             alert.messageText = "An app is still being worked on. Quit anyway?"
@@ -70,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let pids = Store.shared.stopAll()
             Task { @MainActor in
                 for _ in 0..<40 where Shell.alive(pids) { try? await Task.sleep(for: .milliseconds(100)) }
+                Shell.killStopping()
                 sender.reply(toApplicationShouldTerminate: true)
             }
             return .terminateLater
@@ -79,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated {
             _ = Store.shared.stopAll()   // for a quit that didn't go through the question above
+            Shell.killStopping()
             LocalModels.shared.stopServer()
         }
     }
