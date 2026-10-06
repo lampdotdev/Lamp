@@ -112,8 +112,12 @@ final class PythonTools: ObservableObject {
         init(downloading error: Error) {
             if let failure = error as? Failure { self = failure; return }
             let code = (error as? URLError)?.code
-            if Self.outOfSpace([error.localizedDescription]) || code == .cannotWriteToFile || code == .cannotCreateFile {
+            if Self.outOfSpace(error) {
                 self = .diskFull
+            } else if code == .cannotWriteToFile || code == .cannotCreateFile {
+                // It arrived and couldn't be written, with room on the disk: a folder Lamp can't write to, say.
+                // Freeing space wouldn't help.
+                self = .saving
             } else if [.badServerResponse, .cannotParseResponse, .resourceUnavailable, .fileDoesNotExist].contains(code) {
                 self = .unavailable
             } else {
@@ -126,16 +130,36 @@ final class PythonTools: ObservableObject {
             self = Self.outOfSpace(output) ? .diskFull : .saving
         }
 
-        /// uv's own failure, with its output: the disk, the connection, or its last words when it's neither.
+        /// uv's own failure, with its output: the disk, the far end, the connection, or its last words when
+        /// it's none of those.
         init(installing output: [String]) {
             let said = output.joined(separator: " ").lowercased()
+            let detail = output.suffix(3).joined(separator: " ")
             if Self.outOfSpace(output) {
                 self = .diskFull
-            } else if ["dns error", "error sending request", "failed to fetch", "connection refused", "timed out", "network"].contains(where: said.contains) {
+            } else if said.contains("http status") {
+                // An answer came back, so the connection is fine: the far end is having trouble (or is turning
+                // requests away for now), or it's something only uv's own words explain.
+                self = said.contains("http status server error") || said.contains("429 too many requests") ? .unavailable : .installing(detail)
+            } else if ["dns error", "error sending request", "failed to lookup address", "connection refused", "connection reset",
+                       "network is unreachable", "timed out"].contains(where: said.contains) {
                 self = .offline
             } else {
-                self = .installing(output.suffix(3).joined(separator: " "))
+                self = .installing(detail)
             }
+        }
+
+        /// A failed download or write whose own error, or one beneath it, says the disk is full.
+        private static func outOfSpace(_ error: Error) -> Bool {
+            var said: [String] = []
+            var next: NSError? = error as NSError
+            while let current = next {
+                if current.domain == NSPOSIXErrorDomain, [Int(ENOSPC), Int(EDQUOT)].contains(current.code) { return true }
+                if current.domain == NSCocoaErrorDomain, current.code == NSFileWriteOutOfSpaceError { return true }
+                said.append(current.localizedDescription)
+                next = current.userInfo[NSUnderlyingErrorKey] as? NSError
+            }
+            return outOfSpace(said)
         }
 
         /// The disk is full: something said so, or there's next to nothing left on it.
