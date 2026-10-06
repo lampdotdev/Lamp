@@ -45,7 +45,7 @@ enum Versions {
         }
         let titles = VersionTitles.saved(in: project)
         var versions: [AppVersion] = []
-        _ = await Shell.run("git log --first-parent --format='%H%x1f%P%x1f%ct%x1f%(trailers:key=Lamp-Undid,valueonly,separator=%x2C)%x1f%s'",
+        _ = await Shell.run("git log --first-parent --format='%H%x1f%P%x1f%ct%x1f%(trailers:key=Lamp-Undid,valueonly,separator=%x2C)%(trailers:key=Forge-Undid,valueonly,separator=%x2C)%x1f%s'",   // Undos from before the rename keep the old trailer
                             cwd: project.dir) { line in
             let parts = line.split(separator: "\u{1f}", maxSplits: 4, omittingEmptySubsequences: false).map(String.init)
             guard parts.count == 5, let seconds = TimeInterval(parts[2]) else { return }
@@ -68,11 +68,18 @@ enum Versions {
     /// Returns the version being undone too, for the message.
     static func undoTarget(in versions: [AppVersion]) -> (undoing: AppVersion, target: AppVersion)? {
         let byID = Dictionary(versions.map { ($0.id, $0) }) { first, _ in first }
-        guard var current = versions.first else { return nil }
-        while let undid = current.undid.flatMap({ byID[$0] }), let before = undid.parent.flatMap({ byID[$0] }) {
-            current = before
+        // The rename's own commits aren't anything the person did: Undo looks straight past them.
+        func pastRenames(_ version: AppVersion) -> AppVersion {
+            var version = version
+            while version.message == "Rename to Lamp", let parent = version.parent.flatMap({ byID[$0] }) { version = parent }
+            return version
         }
-        guard let target = current.parent.flatMap({ byID[$0] }) else { return nil }
+        guard let first = versions.first else { return nil }
+        var current = pastRenames(first)
+        while let undid = current.undid.flatMap({ byID[$0] }), let before = undid.parent.flatMap({ byID[$0] }) {
+            current = pastRenames(before)
+        }
+        guard let target = current.parent.flatMap({ byID[$0] }).map(pastRenames) else { return nil }
         return (current, target)
     }
 
@@ -88,8 +95,10 @@ enum Versions {
     /// Puts the app's files back as they were in a version, without committing. Attachments stay:
     /// they're what people gave Lamp, and the chat still shows them.
     static func restoreFiles(_ project: LampProject, to version: AppVersion) async -> Bool {
-        let keep = "':!\(Attachments.folder)'"
-        let ok = await Shell.run("git restore --source=\"$LAMP_VERSION\" --staged --worktree -- . \(keep) && git clean -fdq -- . \(keep)",
+        // Attachments and Lamp's own folder are left alone: a version from before the rename ignores .forge/,
+        // not .lamp/, and clean would otherwise take the chat, token and sessions with it.
+        let keep = "':!\(Attachments.folder)' ':!.lamp'"
+        let ok = await Shell.run("git restore --source=\"$LAMP_VERSION\" --staged --worktree -- . \(keep) && git clean -fdq -e .lamp -- . \(keep)",
                                  cwd: project.dir, env: ["LAMP_VERSION": version.id]) { _ in } == 0
         // A version from before the rename calls the support library by its old names.
         if ok { Migration.normalize(project.dir, commit: false) }

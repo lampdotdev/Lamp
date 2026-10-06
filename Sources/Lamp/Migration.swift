@@ -37,6 +37,21 @@ enum Migration {
         let apps = home.appendingPathComponent("Library/Application Support/Lamp/Apps")
         for dir in (try? fm.contentsOfDirectory(at: apps, includingPropertiesForKeys: nil)) ?? [] {
             normalize(dir)
+            appData(dir.lastPathComponent)
+        }
+    }
+
+    /// An app keeps its database, files and settings under its bundle id, which changes with the rename.
+    private static func appData(_ id: String) {
+        let fm = FileManager.default
+        let support = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        let old = support.appendingPathComponent("dev.forge.app.\(id)"), new = support.appendingPathComponent("dev.lamp.app.\(id)")
+        if fm.fileExists(atPath: old.path), !fm.fileExists(atPath: new.path) { try? fm.moveItem(at: old, to: new) }
+        if let defaults = UserDefaults.standard.persistentDomain(forName: "dev.forge.app.\(id)"), !defaults.isEmpty {
+            var merged = UserDefaults.standard.persistentDomain(forName: "dev.lamp.app.\(id)") ?? [:]
+            for (key, value) in defaults where merged[key] == nil { merged[key] = value }
+            UserDefaults.standard.setPersistentDomain(merged, forName: "dev.lamp.app.\(id)")
+            UserDefaults.standard.removePersistentDomain(forName: "dev.forge.app.\(id)")
         }
     }
 
