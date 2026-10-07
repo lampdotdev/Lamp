@@ -16,7 +16,7 @@ function request(text = "A reviewed report", ip = "192.0.2.1", headers = {}) {
 test("HTTP stand-in gets exactly the reviewed Unicode text, without mention parsing or unfurls", async () => {
   const receiver = await standIn();
   try {
-    const report = "  My edited report → café 🪔\n<!channel> <@U123> https://example.com\n";
+    const report = "\uFEFF  My edited report → café 🪔\n<!channel> <@U123> https://example.com\n";
     const response = await fetch(`${receiver.url}/api/bug-report`, {
       method: "POST", headers: { "content-type": "text/plain; charset=utf-8" }, body: report,
     });

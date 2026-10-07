@@ -56,7 +56,6 @@ struct BugReportView: View {
                     NSPasteboard.general.clearContents()
                     copied = NSPasteboard.general.setString(report, forType: .string)
                 }
-                .keyboardShortcut(.defaultAction)
                 .disabled(report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button(delivery.isSending ? "Sending…" : "Send") {
                     let reviewed = report
@@ -68,6 +67,7 @@ struct BugReportView: View {
                         } catch { delivery = .failed(error.localizedDescription) }
                     }
                 }
+                .buttonStyle(.borderedProminent)
                 .disabled(delivery.isSending || delivery == .sent || report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || report.utf8.count > BugReportDelivery.maxBytes)
             }
         }

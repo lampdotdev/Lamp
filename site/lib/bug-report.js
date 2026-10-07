@@ -23,7 +23,7 @@ async function readReport(request) {
       chunks.push(value);
     }
   } finally { reader.releaseLock(); }
-  return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
+  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks));
 }
 
 export function createReportHandler({ env = process.env, fetcher = fetch } = {}) {
