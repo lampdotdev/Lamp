@@ -24,6 +24,9 @@ enum Privacy {
     /// Places that hold nothing personal: the system, developer tools and installed packages.
     private static let publicRoots = ["/System", "/usr", "/Library/Developer", "/Applications/Xcode.app", "/opt/homebrew"]
     private static let scratchRoots = ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"]
+    /// `2>/dev/null` in a command names the one device with nothing in it. Other devices (terminals, disks)
+    /// are files like any other to this rule.
+    private static let nothing = "/dev/null"
 
     /// Whether one of the agent's file tools may touch `path` (as the agent gave it, relative to the app's folder).
     static func verdict(tool: String, path raw: String, project: LampProject) -> Verdict {
@@ -44,6 +47,7 @@ enum Privacy {
             return .deny("That belongs to Lamp or to another of the user's apps, and isn't yours to open.")
         }
         guard asksOutsideFolder else { return .allow }
+        if path == nothing { return .allow }
         if scratchRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) { return .allow }
         if readers.contains(tool), publicRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) { return .allow }
         return .ask
