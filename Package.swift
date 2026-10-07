@@ -15,5 +15,6 @@ let package = Package(
             path: "Sources/Lamp",
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
         ),
+        .testTarget(name: "LampTests", dependencies: ["Lamp"], path: "Tests/Regression"),
     ]
 )

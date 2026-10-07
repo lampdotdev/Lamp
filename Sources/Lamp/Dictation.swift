@@ -26,10 +26,13 @@ final class Dictation: ObservableObject {
     /// Starts listening; `onText` receives the full transcription so far, every time it changes.
     func start(onText: @escaping (String) -> Void) async {
         guard !isListening else { return }
+        let startingSession = session
         if let denied = await Self.authorize() {
-            problem = denied
+            if session == startingSession { problem = denied }
             return
         }
+        // Send or leaving the chat can cancel dictation while macOS is still asking for permission.
+        guard session == startingSession else { return }
         guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
             problem = Problem(title: "Dictation Isn't Available", message: "Speech recognition isn't available right now. Try again in a moment.")
             return

@@ -1,89 +1,193 @@
 import SwiftUI
 import AppKit
 
-/// A handoff can take a while (Xcode's download or a phone update). Keep a small window open and recheck
-/// when the person returns; don't hold a build or a chat message open while they finish Apple's setup.
+/// Setup can outlast a download or phone update. Keep each requested action until its own checks pass
+/// or the person closes setup, and resolve the app again before applying a deferred change.
 @MainActor
 final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
     static let shared = PhoneSetup()
+    struct Context: Equatable {
+        var family: DeviceFamily = .iphone
+        var phone: String?
+        var eitherSimulator = false
+    }
+    private struct Request {
+        let id = UUID()
+        let resolve: () -> Context?
+        let then: () -> Void
+        let cancelled: () -> Void
+        let isReady: () -> Bool
+        var waiting = false
+    }
+
     @Published private(set) var checking = false
     @Published private(set) var report: PhoneTools.Report?
     @Published var actionProblem: String?
-    private var family: DeviceFamily = .iphone
-    private var phone: String?
-    private var continuation: (() -> Void)?
+    private var active: Request?
+    private var pending: [Request] = []
+    private var inspection = Context()
+    private var checkedContext: Context?
+    private var generation = UUID()
+    private var presented = false
+    private var closingInternally = false
+    private let presentsWindow: Bool
+    private let inspect: (Context) async -> PhoneTools.Report
     private var window: NSWindow?
-    private var request = UUID()
+
+    init(presentsWindow: Bool = true, inspect: @escaping (Context) async -> PhoneTools.Report = PhoneSetup.inspect) {
+        self.presentsWindow = presentsWindow
+        self.inspect = inspect
+        super.init()
+    }
+
+    nonisolated private static func inspect(_ context: Context) async -> PhoneTools.Report {
+        await Task.detached {
+            let preferred = PhoneTools.checked(family: context.family, phone: context.phone)
+            if context.eitherSimulator, preferred.issue?.step == .simulator {
+                let other = PhoneTools.checked(family: context.family == .iphone ? .ipad : .iphone, phone: context.phone)
+                if other.ready { return other }
+            }
+            return preferred
+        }.value
+    }
 
     func show(family: DeviceFamily = .iphone, phone: String? = nil) {
-        guard !checking else { window?.makeKeyAndOrderFront(nil); return }
-        self.family = family
-        self.phone = phone
-        continuation = nil
+        if active == nil && pending.isEmpty { inspection = Context(family: family, phone: phone) }
         present()
         refresh()
     }
 
-    func perform(family: DeviceFamily = .iphone, phone: String? = nil, eitherSimulator: Bool = false, then: @escaping () -> Void) {
-        guard !checking else { window?.makeKeyAndOrderFront(nil); return }
-        self.family = family
-        self.phone = phone
-        continuation = then
-        let request = UUID()
-        self.request = request
-        check(eitherSimulator: eitherSimulator) { [weak self] in
-            guard let self, self.request == request else { return }
-            if report?.ready == true {
-                continuation = nil
-                window?.close()
-                then()
-            } else {
-                present()
-            }
+    func perform(family: DeviceFamily = .iphone, phone: String? = nil, eitherSimulator: Bool = false,
+                 cancelled: @escaping () -> Void = {}, then: @escaping () -> Void) {
+        perform(resolve: { Context(family: family, phone: phone, eitherSimulator: eitherSimulator) }, cancelled: cancelled, then: then)
+    }
+
+    func perform(resolve: @escaping () -> Context?, cancelled: @escaping () -> Void = {},
+                 isReady: @escaping () -> Bool = { true }, then: @escaping () -> Void) {
+        pending.append(Request(resolve: resolve, then: then, cancelled: cancelled, isReady: isReady))
+        startNext()
+    }
+
+    func perform(for project: LampProject, in store: Store, cancelled: @escaping () -> Void = {},
+                 then: @escaping (LampProject) -> Void) {
+        guard let current = store.current(project) else { cancelled(); return }
+        guard current.platform == .iphone else { then(current); return }
+        perform(resolve: {
+            guard let current = store.current(project) else { return nil }
+            return Context(family: current.family, phone: Experiments.devices ? current.device : nil)
+        }, cancelled: cancelled) {
+            if let current = store.current(project) { then(current) }
+            else { cancelled() }
         }
-        Task {
-            try? await Task.sleep(for: .milliseconds(500))
-            if self.request == request, checking { present() }
-        }
     }
 
-    func perform(for project: LampProject, then: @escaping () -> Void) {
-        guard project.platform == .iphone else { then(); return }
-        perform(family: project.family, phone: Experiments.devices ? project.device : nil, then: then)
+    private func startNext() {
+        guard !checking, active == nil, !pending.isEmpty else { return }
+        active = pending.removeFirst()
+        refresh()
     }
 
-    func refresh() { check {} }
-
-    func refreshIfVisible() {
-        if window?.isVisible == true { refresh() }
-    }
-
-    private func check(eitherSimulator: Bool = false, completed: @escaping () -> Void) {
+    func refresh() {
         guard !checking else { return }
+        let request = active
+        let context: Context
+        if let request {
+            guard let resolved = request.resolve() else { cancelActive(); return }
+            context = resolved
+        } else {
+            context = inspection
+        }
         checking = true
         actionProblem = nil
-        let family = family, phone = phone
+        checkedContext = context
+        let ticket = generation
         Task {
-            let result = await Task.detached {
-                let preferred = PhoneTools.checked(family: family, phone: phone)
-                if eitherSimulator, preferred.issue?.step == .simulator {
-                    let other = PhoneTools.checked(family: family == .iphone ? .ipad : .iphone, phone: phone)
-                    if other.ready { return other }
-                }
-                return preferred
-            }.value
-            report = result
+            let result = await inspect(context)
             checking = false
-            completed()
+            guard generation == ticket else { startNext(); if active == nil && presented { refresh() }; return }
+            if let request {
+                guard active?.id == request.id else { startNext(); return }
+                guard let current = request.resolve() else { cancelActive(); return }
+                guard current == context else { refresh(); return }
+                report = result
+                if result.ready && !request.waiting { completeActive() }
+                else { active?.waiting = true; present() }
+            } else {
+                // An action submitted during an automatic recheck still gets its own context and result.
+                if !pending.isEmpty { startNext(); return }
+                guard context == inspection else { refresh(); return }
+                report = result
+            }
         }
+        if request != nil {
+            Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                if generation == ticket, active?.id == request?.id, checking { present() }
+            }
+        }
+    }
+
+    func refreshIfVisible() { if presented { refresh() } }
+
+    func finish() {
+        guard !checking, report?.ready == true else { return }
+        guard let active else { closeWindow(); return }
+        guard let current = active.resolve() else { cancelActive(); return }
+        guard current == checkedContext else { refresh(); return }
+        completeActive()
+    }
+
+    private func completeActive() {
+        guard let request = active else { return }
+        guard request.isReady() else {
+            active?.waiting = true
+            actionProblem = "This app is still changing. Wait for it to finish, then press Continue."
+            present()
+            return
+        }
+        active = nil
+        if pending.isEmpty { closeWindow() }
+        request.then()
+        startNext()
+    }
+
+    private func cancelActive() {
+        let request = active
+        active = nil
+        if pending.isEmpty { closeWindow() }
+        request?.cancelled()
+        startNext()
+    }
+
+    func finishWithoutContinuing() {
+        cancelAll()
+        closeWindow()
+    }
+
+    private func cancelAll() {
+        generation = UUID()
+        let requests = active.map { [$0] } ?? []
+        active = nil
+        let waiting = pending
+        pending.removeAll()
+        for request in requests + waiting { request.cancelled() }
     }
 
     func windowWillClose(_ notification: Notification) {
-        continuation = nil
-        request = UUID()
+        presented = false
+        if !closingInternally { cancelAll() }
+    }
+
+    private func closeWindow() {
+        presented = false
+        closingInternally = true
+        window?.close()
+        closingInternally = false
     }
 
     private func present() {
+        presented = true
+        guard presentsWindow else { return }
         if window == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 640),
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -96,13 +200,6 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate()
-    }
-
-    func finish() {
-        let next = continuation
-        continuation = nil
-        window?.close()
-        next?()
     }
 
     func act() {
@@ -199,20 +296,25 @@ struct PhoneSetupView: View {
     }
 }
 
-extension PhoneSetup {
-    func finishWithoutContinuing() {
-        continuation = nil
-        window?.close()
-    }
-}
-
 @MainActor
 extension Store {
     func createPhoneApp() { PhoneSetup.shared.perform(eitherSimulator: true) { self.create(platform: .iphone) } }
     func openPrepared(_ project: LampProject) {
-        PhoneSetup.shared.perform(for: project) { Task { await self.open(project) } }
+        PhoneSetup.shared.perform(for: project, in: self) { current in Task { await self.open(current) } }
     }
+    func choosePreparedDevice(_ project: LampProject, _ phone: String?) {
+        PhoneSetup.shared.perform(resolve: {
+            guard let current = self.current(project) else { return nil }
+            return PhoneSetup.Context(family: current.family, phone: phone)
+        }, isReady: {
+            guard let current = self.current(project) else { return false }
+            return !self.busy.contains(current.id)
+        }) {
+            if let current = self.current(project) { self.setDevice(current, phone) }
+        }
+    }
+
     func runPrepared(_ project: LampProject) {
-        PhoneSetup.shared.perform(for: project) { Task { await self.run(project) } }
+        PhoneSetup.shared.perform(for: project, in: self) { current in Task { await self.run(current) } }
     }
 }

@@ -849,7 +849,7 @@ final class Store: ObservableObject {
 
     /// The app as it is now, following any rescaffold since `project` was taken (one step: `moved` always
     /// points straight at the latest id).
-    private func current(_ project: LampProject) -> LampProject? {
+    func current(_ project: LampProject) -> LampProject? {
         projects.first { $0.id == moved[project.id] ?? project.id }
     }
 
