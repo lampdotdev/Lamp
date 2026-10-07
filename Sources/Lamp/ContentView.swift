@@ -1493,7 +1493,7 @@ private struct TryOnChoices: View {
 
     var body: some View {
         Picker("Simulator", selection: Binding(get: { project.device == nil ? project.family : nil },
-                                               set: { if let family = $0 { store.setDevice(project, nil); store.setFamily(project, family) } })) {
+                                               set: { if let family = $0 { store.setSimulator(project, family) } })) {
             Label("iPhone", systemImage: "iphone").tag(Optional(DeviceFamily.iphone))
             Label("iPad", systemImage: "ipad").tag(Optional(DeviceFamily.ipad))
         }

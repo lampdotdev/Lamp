@@ -582,6 +582,13 @@ final class Store: ObservableObject {
         finish(changed)
     }
 
+    /// Back to a simulator from a phone, as one change: the family is set on the project as it is after
+    /// the phone is forgotten, not on the copy the menu held.
+    func setSimulator(_ project: LampProject, _ family: DeviceFamily) {
+        setDevice(project, nil)
+        if let current = projects.first(where: { $0.id == project.id }) { setFamily(current, family) }
+    }
+
     /// The person's paired iPhones and iPads, for Try On. Looked up when the list is wanted (opening the
     /// menu) and at startup; a phone that's gone stays chosen, and Play says so.
     @Published var devices: [Devices.Device] = []
@@ -1587,7 +1594,8 @@ final class Store: ObservableObject {
     func open(_ project: LampProject) async {
         if project.platform == .iphone {
             // Running already: bring the simulator forward. Otherwise build (if needed) and launch.
-            if let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id { await Simulator.show(); return }
+            let toSimulator = !(Experiments.devices && project.device != nil)
+            if toSimulator, let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id { await Simulator.show(); return }
             if FileManager.default.fileExists(atPath: project.builtURL.path), stamps[project.id]?.isOutdated != true {
                 guard begin(project) != nil else { return }
                 defer { finish(project) }
@@ -2331,8 +2339,11 @@ final class Store: ObservableObject {
         var output: [String] = []
         let app: URL
         do {
-            app = try await Devices.build(project, team: team, udid: udid) { output.append($0) }
+            // The turn's build while it runs, like the simulator's: Stop ends it, and quitting Lamp asks first.
+            app = try await Devices.build(project, team: team, udid: udid, started: { owner.build = $0 }) { output.append($0) }
+            owner.build = nil
         } catch {
+            owner.build = nil
             // Xcode's own error lines when there are any; the end of its output when not.
             let errors = output.filter { $0.contains("error: ") }.map { $0.replacingOccurrences(of: project.dir.path + "/", with: "") }
             let tail = errors.isEmpty ? Devices.tail(output.joined(separator: "\n")) : errors.joined(separator: "\n")
@@ -2350,11 +2361,15 @@ final class Store: ObservableObject {
             guard stillOwns() else { return "The app was stopped before it opened." }
             deviceApps[project.id]?.terminate()
             Runtime.startLog(project)
-            deviceApps[project.id] = try Devices.launch(project.deviceBundleID(team: team), on: udid, log: Runtime.logURL(project))
+            let attached = try Devices.launch(project.deviceBundleID(team: team), on: udid, log: Runtime.logURL(project))
+            deviceApps[project.id] = attached
+            // Open while attached: when the app quits on the phone, devicectl ends, and the list follows.
+            attached.terminationHandler = { _ in Task { @MainActor in Store.shared.refreshOpenApps() } }
             log(project, .status, "\(project.name) is ready on \(name)")
         } catch {
             log(project, .error, error.localizedDescription)
         }
+        refreshOpenApps()
         return nil
     }
 
@@ -2637,6 +2652,8 @@ final class Store: ObservableObject {
             .filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
         simulatorApps = simulatorApps.filter { Simulator.isRunning(pid: $0.value.pid) }
         ids += simulatorApps.keys
+        deviceApps = deviceApps.filter { $0.value.isRunning }
+        ids += deviceApps.keys
         if Set(ids) != openApps { openApps = Set(ids) }
     }
 

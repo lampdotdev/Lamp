@@ -89,7 +89,8 @@ enum Devices {
 
     /// Builds the app for the phone with Xcode, signed for the team, and gives back the bundle. Automatic
     /// signing may register the phone and make a certificate and profile, which is slow the first time.
-    static func build(_ project: LampProject, team: String, udid: String, onLine: @escaping @MainActor (String) -> Void) async throws -> URL {
+    static func build(_ project: LampProject, team: String, udid: String, started: (@MainActor (Process) -> Void)? = nil,
+                      onLine: @escaping @MainActor (String) -> Void) async throws -> URL {
         let dir = project.dir.appendingPathComponent(".lamp/device")
         let app = dir.appendingPathComponent("DerivedData/Build/Products/Release-iphoneos/\(project.exe).app")
         let status = await Shell.run("""
@@ -98,7 +99,7 @@ enum Devices {
               DEVELOPMENT_TEAM="$LAMP_TEAM" build 2>&1
             """, cwd: dir, env: ["LAMP_PROJECT": dir.appendingPathComponent("\(project.exe).xcodeproj").path, "LAMP_SCHEME": project.exe,
                                  "LAMP_UDID": udid, "LAMP_DERIVED": dir.appendingPathComponent("DerivedData").path, "LAMP_TEAM": team],
-            onLine: onLine)
+            started: started, onLine: onLine)
         guard status == 0, FileManager.default.fileExists(atPath: app.path) else { throw Failure(message: "Xcode couldn't build the app for the phone.") }
         return app
     }

@@ -482,13 +482,12 @@ struct ExperimentalSettings: View {
     var body: some View {
         Section {
             Toggle("iPhone and iPad apps", isOn: $iosApps)
+                .onChange(of: iosApps) { store.setLocalNetwork(Experiments.devices) }
             Text("Adds New iPhone & iPad App. Lamp builds the app and tries it in the iPhone or iPad simulator on this Mac (Try On, beside the Play button): that needs Xcode (free on the Mac App Store) and, the first time it tries an app, permission to control this computer.")
                 .font(.caption).foregroundStyle(.secondary)
             if iosApps {
-                Toggle("Put apps on your own iPhone or iPad", isOn: Binding(get: { devices }, set: { on in
-                    devices = on
-                    store.setLocalNetwork(on && iosApps)
-                }))
+                Toggle("Put apps on your own iPhone or iPad", isOn: $devices)
+                    .onChange(of: devices) { store.setLocalNetwork(Experiments.devices) }
                 if devices {
                     if teams.isEmpty {
                         TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
