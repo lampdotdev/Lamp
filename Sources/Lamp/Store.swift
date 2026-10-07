@@ -608,7 +608,7 @@ final class Store: ObservableObject {
         Task {
             defer { pairing.remove(device.udid) }
             // The chat may have moved meanwhile: a first message renames a new app under a new id.
-            func tell(_ kind: LogLine.Kind, _ text: String) { if let now = current(project) { log(now, kind, text) } }
+            @MainActor func tell(_ kind: LogLine.Kind, _ text: String) { if let now = current(project) { log(now, kind, text) } }
             do {
                 try await Devices.pair(device.udid)
                 devices = await Devices.list()
