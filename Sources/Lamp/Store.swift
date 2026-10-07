@@ -3063,14 +3063,22 @@ final class Store: ObservableObject {
         guard let key = KeyStore.openRouterKey else { return (404, ["error": "There's no OpenRouter key to keep."]) }
         let models = AppModels.load(project)
         let decision = AppAI.decisionModels.first { $0.id == models.decision } ?? AppAI.decisionModel
-        var reply: [String: Any] = [
+        var keys: [String: Any] = [
             "openrouter": key,
             "text_model": AppAI.model(for: models.text).openRouter,
-            "image_model": Icons.artModels.contains { $0.id == models.image } ? models.image! : Icons.artModels[0].id,
             "decision_model": decision.model, "decision_provider": decision.provider,
         ]
-        if decision.provider == "typesafe", let typesafe = KeyStore.key(for: "typesafe") { reply["typesafe"] = typesafe }
-        return (200, reply)
+        // The image model the gateway itself would use for this app; none when that's the Mac's own model,
+        // which the phone can't run, so it says so rather than quietly paying for another.
+        let image = Icons.artModels.contains { $0.id == models.image } ? models.image! : (models.image == Icons.localArt ? Icons.localArt : Icons.artModel)
+        if image != Icons.localArt { keys["image_model"] = image }
+        if decision.provider == "typesafe", let typesafe = KeyStore.key(for: "typesafe") { keys["typesafe"] = typesafe }
+        // Sealed with the secret that went to the phone inside its build, never over the network: the token
+        // in the request is on the air too, so it can't be what protects the key.
+        guard let json = try? JSONSerialization.data(withJSONObject: keys),
+              let box = try? AES.GCM.seal(json, using: SymmetricKey(data: SHA256.hash(data: Data(Template.phoneSecret(for: project).utf8)))),
+              let sealed = box.combined else { return (500, ["error": "Couldn't prepare the keys."]) }
+        return (200, ["sealed": sealed.base64EncodedString()])
     }
 
     /// `LampComputer.ask` / `.perform` from an app: a task done with the other apps on the Mac (see ComputerUse).

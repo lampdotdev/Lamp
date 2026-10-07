@@ -60,6 +60,17 @@ enum Template {
         return token
     }
 
+    /// A second secret for iPhone apps, which only ever reaches the phone inside the build (over the cable
+    /// or Xcode's install), never over the network: what the keys an app keeps are sealed with, so a copy of
+    /// the Wi‑Fi traffic, token and all, gives nobody the key.
+    static func phoneSecret(for project: LampProject) -> String {
+        let url = project.dir.appendingPathComponent(".lamp/phone-secret")
+        if let secret = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !secret.isEmpty { return secret }
+        let secret = UUID().uuidString + UUID().uuidString
+        try? secret.write(to: url, atomically: true, encoding: .utf8)
+        return secret
+    }
+
     /// The three files Lamp owns in every app, written afresh before every build: LampSupport.swift, build.sh
     /// and Package.swift. The last two are what the build runs (the shell runs build.sh, and SwiftPM compiles
     /// and executes Package.swift as a program before building anything), so nothing the agent, or something
@@ -100,6 +111,7 @@ enum Template {
             .replacingOccurrences(of: "{{HOST}}", with: Edition.bundleID)
             .replacingOccurrences(of: "{{APPS}}", with: Edition.supportFolder.appendingPathComponent("Apps").path)
             .replacingOccurrences(of: "{{MACHOST}}", with: Devices.macHost)
+            .replacingOccurrences(of: "{{PHONE_SECRET}}", with: project.platform == .iphone ? phoneSecret(for: project) : "")
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         let url = project.dir.appendingPathComponent("Sources/LampSupport.swift")
         if (try? String(contentsOf: url, encoding: .utf8)) != contents {
@@ -538,15 +550,48 @@ enum Template {
     /// prompt is the same either way: the fencing and the dates are made here. What's spent this way doesn't
     /// show in Lamp, and using the Mac's other apps still needs the Mac.
     enum LampDirect {
-        private static var lastProbe = Date.distantPast
-        private static var macReachable = true
         private static let keychainAccount = "lamp-ai-keys"
+
+        /// Whether the Mac answered lately, shared by every call so two at once don't each decide for
+        /// themselves: one probe at a time, and all callers wait for its answer.
+        private actor Reach {
+            private var lastProbe = Date.distantPast
+            private var reachable = true
+            private var probe: Task<Bool, Never>?
+
+            func useMac(token: String) async -> Bool {
+                if let probe { return await probe.value }
+                if Date().timeIntervalSince(lastProbe) < 30 { return reachable }
+                let task = Task<Bool, Never> { await LampDirect.probe(token: token) }
+                probe = task
+                let answer = await task.value
+                probe = nil
+                lastProbe = Date()
+                reachable = answer
+                return answer
+            }
+
+            /// A call to the Mac just failed to connect: the next caller checks again rather than trusting
+            /// the last answer.
+            func lost() { lastProbe = .distantPast; reachable = false }
+        }
+        private static let reach = Reach()
 
         /// Whether to go through Lamp now: looked up at most every half minute with a quick call that also
         /// refreshes the keys while the Mac is there.
-        static func useMac(token: String) async -> Bool {
-            if Date().timeIntervalSince(lastProbe) < 30 { return macReachable }
-            lastProbe = Date()
+        static func useMac(token: String) async -> Bool { await reach.useMac(token: token) }
+
+        /// Whether an error from the Mac means the Mac couldn't be reached at all (as opposed to answering
+        /// with a failure), so the phone should answer for itself.
+        static func unreachable(_ error: Error) -> Bool {
+            guard let error = error as? URLError else { return false }
+            return [.cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .notConnectedToInternet, .networkConnectionLost,
+                    .timedOut, .internationalRoamingOff, .dataNotAllowed].contains(error.code)
+        }
+
+        static func lost() async { await reach.lost() }
+
+        private static func probe(token: String) async -> Bool {
             var request = URLRequest(url: URL(string: lampGateway + "/ai/keys")!)
             request.httpMethod = "POST"
             request.timeoutInterval = 4
@@ -555,17 +600,29 @@ enum Template {
             request.httpBody = Data("{}".utf8)
             do {
                 let (data, response) = try await URLSession.shared.data(for: request)
-                macReachable = true
-                if (response as? HTTPURLResponse)?.statusCode == 200, let keys = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    save(keys)
-                } else if (response as? HTTPURLResponse)?.statusCode == 403 {
-                    save(nil)   // the person turned keeping a key off: it goes
+                switch (response as? HTTPURLResponse)?.statusCode {
+                case 200:
+                    // Sealed with the secret that came with the build, never over the air: a copy of this
+                    // traffic gives nobody the key.
+                    if let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let sealed = (reply["sealed"] as? String).flatMap({ Data(base64Encoded: $0) }),
+                       let box = try? AES.GCM.SealedBox(combined: sealed),
+                       let opened = try? AES.GCM.open(box, using: sealingKey),
+                       let keys = try? JSONSerialization.jsonObject(with: opened) as? [String: Any] {
+                        save(keys)
+                    }
+                case 403, 404:
+                    save(nil)   // the person turned keeping a key off, or there's no key any more: it goes
+                default:
+                    break   // a passing failure: the copy stays
                 }
+                return true
             } catch {
-                macReachable = false
+                return false
             }
-            return macReachable
         }
+
+        private static var sealingKey: SymmetricKey { SymmetricKey(data: SHA256.hash(data: Data("{{PHONE_SECRET}}".utf8))) }
 
         /// The keys and model choices the phone keeps, or nil when it has none.
         static var keys: [String: Any]? {
@@ -600,8 +657,10 @@ enum Template {
             case "/ai/decide":
                 return ["answers": try await decide(body, keys: keys)]
             case "/ai/image":
-                return ["image": try await image(body, key: key, model: keys["image_model"] as? String ?? "google/gemini-2.5-flash-image"),
-                        "media_type": "image/png"]
+                guard let model = keys["image_model"] as? String else {
+                    throw LampAI.Failure(message: "Pictures are made by a model on your Mac, so this needs the phone to reach Lamp.")
+                }
+                return ["image": try await image(body, key: key, model: model), "media_type": "image/png"]
             default:
                 throw LampAI.Failure(message: "Using the Mac's other apps needs this phone to reach Lamp. Try again on the same Wi‑Fi as the Mac.")
             }
@@ -2780,11 +2839,24 @@ enum Template {
 
         private static func post(_ path: String, body: Data, timeout: TimeInterval = 240) async throws -> [String: Any] {
             #if os(iOS) && !targetEnvironment(simulator)
-            // Away from the Mac, the phone answers for itself when it has a key.
-            if await !LampDirect.useMac(token: "{{TOKEN}}"), LampDirect.keys != nil {
-                return try await LampDirect.handle(path, (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:])
+            // Away from the Mac, the phone answers for itself when it has a key: when the Mac didn't answer
+            // the last check, and when a call to it fails to connect meanwhile.
+            func direct() async throws -> [String: Any] {
+                try await LampDirect.handle(path, (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:])
             }
+            if await !LampDirect.useMac(token: "{{TOKEN}}"), LampDirect.keys != nil { return try await direct() }
+            do {
+                return try await postToLamp(path, body: body, timeout: timeout)
+            } catch where LampDirect.unreachable(error) && LampDirect.keys != nil {
+                await LampDirect.lost()
+                return try await direct()
+            }
+            #else
+            return try await postToLamp(path, body: body, timeout: timeout)
             #endif
+        }
+
+        private static func postToLamp(_ path: String, body: Data, timeout: TimeInterval) async throws -> [String: Any] {
             var request = URLRequest(url: URL(string: lampGateway + path)!)
             request.httpMethod = "POST"
             request.timeoutInterval = timeout
@@ -2814,7 +2886,11 @@ enum Template {
                 }
             }
             fputs("LampAI \(path) failed: couldn't reach Lamp\n", stderr)
+            #if os(iOS) && !targetEnvironment(simulator)
+            throw URLError(.cannotConnectToHost)   // so the phone can answer for itself
+            #else
             throw Failure(message: "Couldn't reach Lamp. Open Lamp and try again.")
+            #endif
         }
 
         /// Downscales to at most 1568px on the long side (the most the model uses) and JPEG-encodes.
