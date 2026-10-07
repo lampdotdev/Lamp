@@ -5,7 +5,13 @@ import AppKit
 /// What an app is for: a Mac app that installs beside the user's others, or an iPhone app that runs in the
 /// iOS Simulator on this Mac (putting one on a real iPhone needs Apple's developer program; not yet).
 enum Platform: String, Codable {
-    case mac, iphone
+    case mac, iphone   // "iphone" is the iOS kind: iPhone and iPad apps alike (see DeviceFamily)
+}
+
+/// Which simulator an iOS app opens on. The app itself is built for both.
+enum DeviceFamily: String, Codable {
+    case iphone, ipad
+    var name: String { self == .ipad ? "iPad" : "iPhone" }
 }
 
 struct LampProject: Identifiable, Hashable {
@@ -16,6 +22,7 @@ struct LampProject: Identifiable, Hashable {
     /// Made with New App and not named yet. The first message names it.
     var untitled = false
     var platform: Platform = .mac
+    var family: DeviceFamily = .iphone
 
     var bundleID: String { Edition.appBundlePrefix + id }
     var builtURL: URL { dir.appendingPathComponent("build/\(exe).app") }
@@ -28,6 +35,7 @@ struct ProjectMeta: Codable {
     var exe: String
     var untitled: Bool?
     var platform: Platform?   // nil in apps made before iPhone apps existed: a Mac app
+    var family: DeviceFamily?  // iOS apps: which simulator they open on; nil means iPhone
 }
 
 struct AppUsage: Codable {
@@ -331,7 +339,7 @@ final class Store: ObservableObject {
             guard let data = try? Data(contentsOf: dir.appendingPathComponent(".lamp/meta.json")),
                   let meta = try? JSONDecoder().decode(ProjectMeta.self, from: data) else { return nil }
             return LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
-                                untitled: meta.untitled ?? false, platform: meta.platform ?? .mac)
+                                untitled: meta.untitled ?? false, platform: meta.platform ?? .mac, family: meta.family ?? .iphone)
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
@@ -513,17 +521,18 @@ final class Store: ObservableObject {
     // MARK: - Actions
 
     /// New App: an untitled app, straight into its chat. Its first message names it and designs its icon.
-    func create(platform: Platform = .mac) {
-        if platform == .iphone, let problem = Simulator.problem() {
+    func create(platform: Platform = .mac, family: DeviceFamily = .iphone) {
+        guard platform == .mac || Experiments.iosApps else { return }   // Settings → Building → Experimental
+        if platform == .iphone, let problem = Simulator.problem(family) {
             let alert = NSAlert()
-            alert.messageText = "Lamp can't build iPhone apps on this Mac yet"
+            alert.messageText = "Lamp can't build \(family.name) apps on this Mac yet"
             alert.informativeText = problem
             alert.runModal()
             return
         }
         let project: LampProject
         do {
-            project = try Template.scaffold(name: uniqueName("Untitled"), untitled: true, platform: platform, in: root)
+            project = try Template.scaffold(name: uniqueName("Untitled"), untitled: true, platform: platform, family: family, in: root)
         } catch {
             NSAlert(error: error).runModal()
             return
@@ -575,8 +584,8 @@ final class Store: ObservableObject {
         }
 
         let fm = FileManager.default
-        let renamed = LampProject(id: current.id, name: unique, exe: current.exe, dir: current.dir, platform: current.platform)
-        try? JSONEncoder().encode(ProjectMeta(name: unique, exe: current.exe, platform: current.platform))
+        let renamed = LampProject(id: current.id, name: unique, exe: current.exe, dir: current.dir, platform: current.platform, family: current.family)
+        try? JSONEncoder().encode(ProjectMeta(name: unique, exe: current.exe, platform: current.platform, family: current.family))
             .write(to: current.dir.appendingPathComponent(".lamp/meta.json"))
         if fm.fileExists(atPath: current.installedURL.path) {
             try? fm.moveItem(at: current.installedURL, to: renamed.installedURL)
@@ -608,7 +617,7 @@ final class Store: ObservableObject {
         let fm = FileManager.default
         let project: LampProject
         do {
-            project = try Template.scaffold(name: name, platform: old.platform, in: root)
+            project = try Template.scaffold(name: name, platform: old.platform, family: old.family, in: root)
         } catch {
             NSAlert(error: error).runModal()
             return old
@@ -2135,8 +2144,8 @@ final class Store: ObservableObject {
     /// The iPhone counterpart of `install`: the built app goes into the booted simulator and is launched there,
     /// with what it prints going to the same log the Mac apps use. Returns what's known if it died at once.
     private func installOnSimulator(_ project: LampProject, inFront: Bool) async -> String? {
-        guard let udid = Simulator.device() else {
-            let problem = "No iPhone simulator with iOS \(Simulator.minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components."
+        guard let udid = Simulator.device(project.family) else {
+            let problem = "No \(project.family.name) simulator with iOS \(Simulator.minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components."
             log(project, .error, problem)
             return problem
         }
@@ -2170,7 +2179,7 @@ final class Store: ObservableObject {
             if simulatorLeases[udid] == project.id { simulatorLeases[udid] = before.flatMap { simulatorApps[$0] != nil ? $0 : nil } }
             return message
         }
-        note("Opening \(project.name) on the iPhone simulator…", for: project)
+        note("Opening \(project.name) on the \(project.family.name) simulator…", for: project)
         do {
             try await Simulator.boot(udid, show: inFront)
             await Simulator.terminate(project.bundleID, on: udid)
@@ -2203,7 +2212,7 @@ final class Store: ObservableObject {
                 refreshOpenApps()
                 return crash
             }
-            if inFront { log(project, .status, "\(project.name) is ready on the iPhone simulator") }
+            if inFront { log(project, .status, "\(project.name) is ready on the \(project.family.name) simulator") }
         } catch {
             // A failure to boot, install or launch is reported like a crash: the agent must hear about it.
             log(project, .error, "Couldn't open the app: \(error.localizedDescription)")

@@ -464,9 +464,23 @@ struct AppsSettings: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             ComputerUseSettings()
+            ExperimentalSettings()
         }
         .settingsPane()
         .onAppear { revision += 1 }   // keys may have changed in the Providers tab
+    }
+}
+
+/// What's in Lamp but not yet for everyone: each switch here brings a feature into the interface.
+struct ExperimentalSettings: View {
+    @AppStorage("experimentIOSApps") private var iosApps = false
+
+    var body: some View {
+        Section {
+            Toggle("iPhone and iPad apps (simulator only)", isOn: $iosApps)
+            Text("Adds New iPhone App and New iPad App. Lamp builds the app and tries it in the iPhone or iPad simulator on this Mac: that needs Xcode (free on the Mac App Store) and, the first time it tries an app, permission to control this computer. The apps run in the simulator only; putting one on a real iPhone or iPad isn't possible yet.")
+                .font(.caption).foregroundStyle(.secondary)
+        } header: { Text("Experimental") }
     }
 }
 

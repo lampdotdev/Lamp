@@ -49,7 +49,7 @@ installed Lamp into Lamp Dev, so the development build has something to work on.
 
 ## iPhone apps
 
-**New iPhone App** makes an app for the iPhone simulator on this Mac (`LampProject.platform == .iphone`,
+**New iPhone App** and **New iPad App** (behind Settings → Building → Experimental, `Experiments.iosApps`) make an app for the iPhone or iPad simulator on this Mac (`LampProject.platform == .iphone`,
 kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools: `Simulator`
 (`Sources/Lamp/Simulator.swift`) picks a booted or available iPhone with `simctl`, installs the built bundle,
 launches it with its output going to the app's log, and photographs the screen for `look_at_app`. The

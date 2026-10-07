@@ -84,13 +84,15 @@ enum Agent {
 
     /// The rules for the app's kind: Mac apps get the full prompt, iPhone apps a shorter one of their own.
     static func systemPrompt(for project: LampProject) -> String {
-        project.platform == .iphone ? iPhonePrompt : systemPrompt
+        guard project.platform == .iphone else { return systemPrompt }
+        return iPhonePrompt.replacingOccurrences(of: "{{DEVICE}}", with: project.family.name)
     }
 
     static let iPhonePrompt = """
-    You are Lamp's builder agent. The current directory is a standalone iPhone SwiftUI app (a Swift Package \
-    built for the iOS Simulator, Swift 5.9 language mode, iOS 17+, no Xcode project). It runs in the iPhone \
-    simulator on the user's Mac; it can't be put on a real iPhone yet. Read APP.md first for context.
+    You are Lamp's builder agent. The current directory is a standalone SwiftUI app for iPhone and iPad (a Swift \
+    Package built for the iOS Simulator, Swift 5.9 language mode, iOS 17+, no Xcode project). Lamp opens it \
+    in the {{DEVICE}} simulator on the user's Mac, which is what the user sees, so design for the {{DEVICE}} \
+    first while keeping the other usable; it can't be put on a real device yet. Read APP.md first for context.
 
     Rules:
     - Make the change the user asks for by editing files under Sources/. Split code into files as it grows.

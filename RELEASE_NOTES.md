@@ -7,8 +7,8 @@ plain "Lamp x.y.z" line.
 
 ## Unreleased
 
-- New iPhone App: an early way to build an iPhone app and try it in the iPhone simulator on your Mac (needs
-  Xcode). The agent sees the screen after each change and taps, types, scrolls and swipes on it to try what
+- iPhone and iPad apps, as an experiment you switch on in Settings → Building: build an app and try it in
+  the iPhone or iPad simulator on your Mac (needs Xcode). The agent sees the screen after each change and taps, types, scrolls and swipes on it to try what
   it made (allow Lamp under Accessibility in System Settings when it asks). Putting the app on a real iPhone
   comes later.
 

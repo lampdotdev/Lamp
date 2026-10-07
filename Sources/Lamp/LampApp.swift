@@ -4,6 +4,7 @@ import AppKit
 @main
 struct LampApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
+    @AppStorage("experimentIOSApps") private var iosApps = false
     @StateObject private var store = Store.shared
 
     var body: some Scene {
@@ -18,8 +19,12 @@ struct LampApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("New App") { store.create() }
                     .keyboardShortcut("n")
-                Button("New iPhone App") { store.create(platform: .iphone) }
-                    .keyboardShortcut("n", modifiers: [.command, .option])
+                if iosApps {   // Settings → Building → Experimental
+                    Button("New iPhone App") { store.create(platform: .iphone) }
+                        .keyboardShortcut("n", modifiers: [.command, .option])
+                    Button("New iPad App") { store.create(platform: .iphone, family: .ipad) }
+                        .keyboardShortcut("n", modifiers: [.command, .option, .shift])
+                }
             }
             CommandGroup(after: .newItem) {
                 Button("Import Shared App…") { store.chooseImport() }

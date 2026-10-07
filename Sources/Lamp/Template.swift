@@ -2,7 +2,7 @@ import Foundation
 
 /// The scaffold every generated app starts from.
 enum Template {
-    static func scaffold(name rawName: String, untitled: Bool = false, platform: Platform = .mac, in root: URL) throws -> LampProject {
+    static func scaffold(name rawName: String, untitled: Bool = false, platform: Platform = .mac, family: DeviceFamily = .iphone, in root: URL) throws -> LampProject {
         let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
         let exe = identifier(from: name)
         var slug = exe.lowercased()
@@ -12,7 +12,7 @@ enum Template {
             n += 1
         }
         let project = LampProject(id: slug, name: name.isEmpty ? exe : name, exe: exe,
-                                   dir: root.appendingPathComponent(slug), untitled: untitled, platform: platform)
+                                   dir: root.appendingPathComponent(slug), untitled: untitled, platform: platform, family: family)
 
         let iphone = platform == .iphone
         let files: [String: String] = [
@@ -38,7 +38,8 @@ enum Template {
 
         let lampDir = project.dir.appendingPathComponent(".lamp")
         try FileManager.default.createDirectory(at: lampDir, withIntermediateDirectories: true)
-        try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: untitled ? true : nil, platform: platform))
+        try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: untitled ? true : nil, platform: platform,
+                                             family: platform == .iphone ? family : nil))
             .write(to: lampDir.appendingPathComponent("meta.json"))
         try writeSupport(for: project)
         return project
@@ -183,7 +184,7 @@ enum Template {
     static let iPhoneAppMd = """
     # {{NAME}}
 
-    An iPhone SwiftUI app built and live-edited with Lamp. It runs in the iOS Simulator on this Mac.
+    A SwiftUI app for iPhone and iPad, built and live-edited with Lamp. It runs in the iOS Simulator on this Mac.
 
     ## What it does
     Nothing yet: fresh scaffold.

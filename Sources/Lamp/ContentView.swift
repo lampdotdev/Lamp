@@ -113,6 +113,7 @@ struct AppSidebar: View {
     enum Layout: String { case list, tiles }
 
     @EnvironmentObject private var store: Store
+    @AppStorage("experimentIOSApps") private var iosApps = false
     @AppStorage("sidebarLayout") private var layout = Layout.list
 
     var body: some View {
@@ -173,16 +174,28 @@ struct AppSidebar: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .padding(.top, store.projects.isEmpty ? 0 : 12)
-            Button { store.create(platform: .iphone) } label: {
-                Label {
-                    Text("New iPhone App")
-                } icon: {
-                    Image(systemName: "iphone").frame(width: 24, height: 24)
+            if iosApps {   // Settings → Building → Experimental
+                Button { store.create(platform: .iphone) } label: {
+                    Label {
+                        Text("New iPhone App")
+                    } icon: {
+                        Image(systemName: "iphone").frame(width: 24, height: 24)
+                    }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                Button { store.create(platform: .iphone, family: .ipad) } label: {
+                    Label {
+                        Text("New iPad App")
+                    } icon: {
+                        Image(systemName: "ipad").frame(width: 24, height: 24)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
         }
         .listStyle(.sidebar)
         .environment(\.sidebarRowSize, .large)

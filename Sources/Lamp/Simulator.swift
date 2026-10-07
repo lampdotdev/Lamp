@@ -9,21 +9,21 @@ enum Simulator {
         var errorDescription: String? { message }
     }
 
-    /// Whether Xcode and an iPhone simulator are on this Mac, with a plain message when not.
-    static func problem() -> String? {
+    /// Whether Xcode and a simulator of the kind are on this Mac, with a plain message when not.
+    static func problem(_ family: DeviceFamily = .iphone) -> String? {
         let developer = Subprocess.runBlocking("/usr/bin/xcode-select", ["-p"], mergeErrors: false, timeout: 10).output.trimmed
         guard developer.hasSuffix("Xcode.app/Contents/Developer") || developer.contains("/Xcode") else {
             return "iPhone apps need Xcode (free on the Mac App Store), which brings the iPhone simulator."
         }
-        return device() == nil ? "No iPhone simulator with iOS \(minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components." : nil
+        return device(family) == nil ? "No \(family.name) simulator with iOS \(minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components." : nil
     }
 
     /// The apps Lamp makes need this iOS (the scaffold's deployment target), so only simulators that run it count.
     static let minimumIOS = 17
 
-    /// The iPhone to use: one that's already booted, else the newest available, among those on a runtime
-    /// the apps can run on. Sorted by name after the runtime, so the choice is the same every time.
-    static func device() -> String? {
+    /// The iPhone (or iPad) to use: one that's already booted, else the newest available, among those on a
+    /// runtime the apps can run on. Sorted by name after the runtime, so the choice is the same every time.
+    static func device(_ family: DeviceFamily = .iphone) -> String? {
         let listing = Subprocess.runBlocking("/usr/bin/xcrun", ["simctl", "list", "devices", "available", "-j"], mergeErrors: false, timeout: 30).output
         guard let data = listing.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -35,7 +35,7 @@ enum Simulator {
             guard let range = runtime.range(of: "SimRuntime.iOS-"),
                   let major = Int(runtime[range.upperBound...].split(separator: "-").first ?? ""), major >= minimumIOS else { continue }
             for device in list {
-                guard let name = device["name"] as? String, name.hasPrefix("iPhone"), let udid = device["udid"] as? String else { continue }
+                guard let name = device["name"] as? String, name.hasPrefix(family.name), let udid = device["udid"] as? String else { continue }
                 candidates.append((major, name, device["state"] as? String == "Booted", udid))
             }
         }
@@ -130,11 +130,13 @@ extension Simulator {
             let rect: CGRect            // the device's screen on the Mac's display
             let udid: String
             let owner: String           // the project and launch these actions are for; remembered fields are theirs
-            let scale: Double
+            let scale: Double           // the device's pixels per point
+            let zoom: Double            // how big the Simulator draws a point on the Mac's display (its window scale)
             let pid: pid_t
             var origin: CGPoint { rect.origin }
-            /// Pictures are made at point size (`screenshot`), so a pixel in them is a point on the screen.
-            func point(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: origin.x + x, y: origin.y + y) }
+            /// Pictures are made at point size (`screenshot`), so a pixel in them is a point on the device, which
+            /// the Simulator shows `zoom` times as large.
+            func point(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: origin.x + x * zoom, y: origin.y + y * zoom) }
         }
 
         static func screen(of udid: String, owner: String) async -> Screen? {
@@ -150,15 +152,16 @@ extension Simulator {
             let windows = (attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? [])
                 .filter { attribute($0, kAXTitleAttribute) as? String == title }
             guard windows.count == 1, let window = windows.first else { return nil }
-            // The screen is the group whose size is the device's size in points, give or take a pixel.
+            // The screen is the group shaped like the device's screen (the Simulator may draw it smaller or
+            // larger than its size in points: its window can be zoomed), the largest such if several.
             let points = CGSize(width: width / scale, height: height / scale)
-            for group in children(window) where attribute(group, kAXRoleAttribute) as? String == kAXGroupRole {
-                let frame = frame(of: group)
-                if abs(frame.width - points.width) <= 2, abs(frame.height - points.height) <= 2 {
-                    return Screen(app: app, window: window, rect: frame, udid: udid, owner: owner, scale: scale, pid: simulator.processIdentifier)
-                }
-            }
-            return nil
+            let ratio = points.width / points.height
+            let groups = children(window).filter { attribute($0, kAXRoleAttribute) as? String == kAXGroupRole }
+                .map { frame(of: $0) }
+                .filter { $0.width > 50 && $0.height > 50 && abs($0.width / $0.height - ratio) < 0.02 }
+            guard let frame = groups.max(by: { $0.width < $1.width }) else { return nil }
+            return Screen(app: app, window: window, rect: frame, udid: udid, owner: owner, scale: scale,
+                          zoom: frame.width / points.width, pid: simulator.processIdentifier)
         }
 
         /// Carries out the actions in order and says what each one did, like the Mac apps' driver. `live` is
@@ -190,7 +193,7 @@ extension Simulator {
                 guard let hit = element(at: point, in: screen) else { return "\(action.action) at \(at): nothing there" }
                 // A tap that lands beside a control (on its label, say) is meant for the control.
                 let element = isInteractive(hit) ? hit : (nearestInteractive(to: point, in: screen) ?? hit)
-                lastFields[screen.owner] = attribute(element, kAXRoleAttribute) as? String == kAXTextFieldRole ? element : nil
+                lastFields[screen.owner] = isTextInput(element) ? element : nil
                 let name = describe(element) + (element == hit ? "" : " (the nearest thing to tap; the point itself was \(describe(hit)))")
                 if action.action == "right_click" {
                     // A long press: the finger held down, which opens context menus and the like.
@@ -234,11 +237,11 @@ extension Simulator {
                 return "pressed \(key.hasPrefix("ret") || key == "enter" ? "return" : "escape")"
             case "scroll":
                 let amount = action.amount ?? 300
-                swipe(from: point, by: CGVector(dx: 0, dy: -amount), pid: screen.pid)
+                swipe(from: point, by: CGVector(dx: 0, dy: -amount * screen.zoom), pid: screen.pid)
                 return "scrolled \(amount >= 0 ? "down" : "up") at \(at)"
             case "swipe":
                 let direction = action.direction ?? "left"
-                let distance = 220.0
+                let distance = 220.0 * screen.zoom
                 let delta: CGVector = switch direction {
                 case "left": CGVector(dx: -distance, dy: 0)
                 case "right": CGVector(dx: distance, dy: 0)
@@ -275,7 +278,7 @@ extension Simulator {
         private static func rememberedField(in screen: Screen) -> AXUIElement? {
             guard let field = lastFields[screen.owner] else { return nil }
             let rect = frame(of: field)
-            guard attribute(field, kAXRoleAttribute) as? String == kAXTextFieldRole, screen.rect.intersects(rect) else {
+            guard isTextInput(field), screen.rect.intersects(rect) else {
                 lastFields[screen.owner] = nil
                 return nil
             }
@@ -289,7 +292,7 @@ extension Simulator {
         }
 
         private static let interactiveRoles: Set<String> = [kAXButtonRole, kAXRadioButtonRole, kAXTextFieldRole, kAXTextAreaRole, kAXCheckBoxRole,
-                                                             kAXSliderRole, "AXLink", kAXMenuItemRole, kAXPopUpButtonRole, kAXIncrementorRole, "AXCell"]
+                                                             kAXSliderRole, "AXLink", kAXMenuItemRole, kAXPopUpButtonRole, kAXIncrementorRole, "AXCell", "AXSearchField"]
 
         private static func isInteractive(_ element: AXUIElement) -> Bool {
             interactiveRoles.contains(attribute(element, kAXRoleAttribute) as? String ?? "")
@@ -310,12 +313,12 @@ extension Simulator {
         /// The control closest to a point, when it's within a finger's reach (about 44 points).
         private static func nearestInteractive(to point: CGPoint, in screen: Screen) -> AXUIElement? {
             let candidates = interactiveElements(in: screen).map { ($0, distance(from: point, to: frame(of: $0))) }
-            guard let best = candidates.min(by: { $0.1 < $1.1 }), best.1 <= 44 else { return nil }
+            guard let best = candidates.min(by: { $0.1 < $1.1 }), best.1 <= 44 * screen.zoom else { return nil }
             return best.0
         }
 
         private static func onlyTextField(in screen: Screen) -> AXUIElement? {
-            let fields = interactiveElements(in: screen).filter { attribute($0, kAXRoleAttribute) as? String == kAXTextFieldRole }
+            let fields = interactiveElements(in: screen).filter(isTextInput)
             return fields.count == 1 ? fields[0] : nil
         }
 
@@ -324,9 +327,15 @@ extension Simulator {
             return hypot(dx, dy)
         }
 
+        /// A field, a text area (a note's body) or a search field: anything typed into.
+        private static func isTextInput(_ element: AXUIElement) -> Bool {
+            let role = attribute(element, kAXRoleAttribute) as? String ?? ""
+            return role == kAXTextFieldRole || role == kAXTextAreaRole || role == "AXSearchField"
+        }
+
         private static func textField(near point: CGPoint, in screen: Screen) -> AXUIElement? {
             guard let element = element(at: point, in: screen) else { return nil }
-            return attribute(element, kAXRoleAttribute) as? String == kAXTextFieldRole ? element : nil
+            return isTextInput(element) ? element : nil
         }
 
         private static func button(named name: String, in screen: Screen) -> AXUIElement? {
