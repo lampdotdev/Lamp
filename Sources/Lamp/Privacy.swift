@@ -93,8 +93,9 @@ enum Privacy {
                 // A search pattern like /api/ looks like a path: only something whose top folder exists is one.
                 guard let top = path.split(separator: "/").first,
                       FileManager.default.fileExists(atPath: "/" + top) else { return false }
-            } else if path == "~" || path.hasPrefix("~/") || path == ".." || path.hasPrefix("../") || path.contains("/../") {
-                // The home folder, or a step up out of the app's folder: a path wherever it leads.
+            } else if isHomePath(path) || path == ".." || path.hasPrefix("../") || path.contains("/../") {
+                // A home folder (the user's or a named user's), or a step up out of the app's folder: a path
+                // wherever it leads.
             } else {
                 // Any other word is a path only if something by that name is in the app's folder. That includes
                 // a bare name: it can be a link that leads out, which the rule works out below. Code written
@@ -106,6 +107,14 @@ enum Privacy {
             // either way the command isn't routine and needs the user's say-so.
             return verdict(tool: "read", path: path, project: project) != .allow
         }
+    }
+
+    /// `~`, `~/Documents`, `~matt` or `~matt/Documents`: the shell's home-folder shorthand. Not `~=` or other
+    /// code that happens to start with a tilde.
+    private static func isHomePath(_ word: String) -> Bool {
+        guard word.hasPrefix("~") else { return false }
+        let user = word.dropFirst().prefix { $0 != "/" }
+        return user.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" || $0 == "." }
     }
 
     /// The words of a shell line, with quotes and escapes worked out, so a quoted path with a space in it
