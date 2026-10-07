@@ -2440,16 +2440,23 @@ final class Store: ObservableObject {
         var script = """
             P="$LAMP_APP/Info.plist"
             plutil -replace CFBundleName -string "$LAMP_NAME" "$P" && \\
-            plutil -replace CFBundleDisplayName -string "$LAMP_NAME" "$P" && \\
-            plutil -replace NSMicrophoneUsageDescription -string "$LAMP_NAME listens to your microphone." "$P" && \\
-            plutil -replace NSSpeechRecognitionUsageDescription -string "$LAMP_NAME turns your speech into text." "$P" && \\
-            plutil -replace NSCameraUsageDescription -string "$LAMP_NAME uses your camera." "$P" && \\
-            plutil -replace NSPhotoLibraryUsageDescription -string "$LAMP_NAME uses your photos." "$P" && \\
-            plutil -replace NSCalendarsFullAccessUsageDescription -string "$LAMP_NAME reads and adds calendar events." "$P" && \\
-            plutil -replace NSRemindersFullAccessUsageDescription -string "$LAMP_NAME reads and adds reminders." "$P" && \\
-            plutil -replace NSContactsUsageDescription -string "$LAMP_NAME looks up people in your contacts." "$P"
+            plutil -replace CFBundleDisplayName -string "$LAMP_NAME" "$P"
 
             """
+        // Every usage description, from the one list, so apps made before a reason was added get it too.
+        for (key, text) in Template.iosUsageDescriptions {
+            let reason = text.replacingOccurrences(of: "{{NAME}}", with: project.name).replacingOccurrences(of: "'", with: "'\\''")
+            script += "plutil -replace \(key) -string '\(reason)' \"$P\"\n"
+        }
+        // What the agent declared in capabilities.json: background work in Info.plist, the rest as
+        // entitlements the ad hoc signature carries (the simulator checks them for Health and the like).
+        let capabilities = Template.Capabilities.load(project)
+        if !capabilities.modes.isEmpty, let json = try? JSONSerialization.data(withJSONObject: capabilities.modes),
+           let text = String(data: json, encoding: .utf8) {
+            script += "plutil -replace UIBackgroundModes -json '\(text)' \"$P\"\n"
+        }
+        let entitlements = project.dir.appendingPathComponent(".lamp/entitlements.plist")
+        try? capabilities.entitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8)
         // iOS reads icons by name and scale from the bundle itself when told to in Info.plist: the home screen
         // sizes for iPhone (60pt at 2x and 3x) and iPad (76pt and 83.5pt at 2x), all cut from the one square.
         if fm.fileExists(atPath: Icons.squareURL(project).path) {
@@ -2470,8 +2477,8 @@ final class Store: ObservableObject {
         if fm.fileExists(atPath: attachments.path) {
             try? fm.copyItem(at: attachments, to: app.appendingPathComponent(Attachments.folder))
         }
-        _ = await Shell.run("xattr -cr \"$LAMP_APP\" && codesign --force -s - \"$LAMP_APP\"", cwd: project.dir,
-                            env: ["LAMP_APP": app.path]) { _ in }
+        _ = await Shell.run("xattr -cr \"$LAMP_APP\" && codesign --force -s - --entitlements \"$LAMP_ENTITLEMENTS\" \"$LAMP_APP\"", cwd: project.dir,
+                            env: ["LAMP_APP": app.path, "LAMP_ENTITLEMENTS": entitlements.path]) { _ in }
     }
 
     /// iPhone apps running in the simulator: which simulator each was launched on, and its process id.
