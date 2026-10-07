@@ -15,18 +15,32 @@ enum Simulator {
         guard developer.hasSuffix("Xcode.app/Contents/Developer") || developer.contains("/Xcode") else {
             return "iPhone apps need Xcode (free on the Mac App Store), which brings the iPhone simulator."
         }
-        return device() == nil ? "No iPhone simulator is installed. Open Xcode once and add an iOS simulator in Settings → Components." : nil
+        return device() == nil ? "No iPhone simulator with iOS \(minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components." : nil
     }
 
-    /// The iPhone to use: one that's already booted, else the first available iPhone.
+    /// The apps Lamp makes need this iOS (the scaffold's deployment target), so only simulators that run it count.
+    static let minimumIOS = 17
+
+    /// The iPhone to use: one that's already booted, else the newest available, among those on a runtime
+    /// the apps can run on. Sorted by name after the runtime, so the choice is the same every time.
     static func device() -> String? {
         let listing = Subprocess.runBlocking("/usr/bin/xcrun", ["simctl", "list", "devices", "available", "-j"], mergeErrors: false, timeout: 30).output
         guard let data = listing.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let devices = json["devices"] as? [String: [[String: Any]]] else { return nil }
-        let iphones = devices.values.flatMap { $0 }.filter { ($0["name"] as? String ?? "").hasPrefix("iPhone") }
-        let booted = iphones.first { $0["state"] as? String == "Booted" }
-        return (booted ?? iphones.first)?["udid"] as? String
+        // Runtime keys look like com.apple.CoreSimulator.SimRuntime.iOS-18-6.
+        typealias Candidate = (version: Int, name: String, booted: Bool, udid: String)
+        var candidates: [Candidate] = []
+        for (runtime, list) in devices {
+            guard let range = runtime.range(of: "SimRuntime.iOS-"),
+                  let major = Int(runtime[range.upperBound...].split(separator: "-").first ?? ""), major >= minimumIOS else { continue }
+            for device in list {
+                guard let name = device["name"] as? String, name.hasPrefix("iPhone"), let udid = device["udid"] as? String else { continue }
+                candidates.append((major, name, device["state"] as? String == "Booted", udid))
+            }
+        }
+        let ordered = candidates.sorted { ($0.booted ? 1 : 0, $0.version, $0.name) > ($1.booted ? 1 : 0, $1.version, $1.name) }
+        return ordered.first?.udid
     }
 
     /// Boots the iPhone (a no-op when it already is) and opens the Simulator app so the user can see it.

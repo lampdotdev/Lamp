@@ -360,11 +360,13 @@ struct AppMenu: View {
             NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
         }
         Divider()
-        Button("Copy App File") { store.copyAppFile(project) }
-        ShareLink("Share…", item: SharedApp(project: project),
-                  preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
-        Button("Export…") { store.chooseExport(project) }
-        Divider()
+        if store.canShare(project) {
+            Button("Copy App File") { store.copyAppFile(project) }
+            ShareLink("Share…", item: SharedApp(project: project),
+                      preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
+            Button("Export…") { store.chooseExport(project) }
+            Divider()
+        }
         Button("Delete…", role: .destructive) { store.deleting = project }
     }
 }
@@ -707,15 +709,17 @@ struct ProjectView: View {
                 Label("Delete App", systemImage: "trash")
             }
             .help("Delete this app")
-            Menu {
-                Button("Copy App File") { store.copyAppFile(project) }
-                ShareLink("Share…", item: SharedApp(project: project),
-                          preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
-                Button("Export…") { store.chooseExport(project) }
-            } label: {
-                Label("Share App", systemImage: "square.and.arrow.up")
+            if store.canShare(project) {
+                Menu {
+                    Button("Copy App File") { store.copyAppFile(project) }
+                    ShareLink("Share…", item: SharedApp(project: project),
+                              preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
+                    Button("Export…") { store.chooseExport(project) }
+                } label: {
+                    Label("Share App", systemImage: "square.and.arrow.up")
+                }
+                .help("Send this app to someone with Lamp")
             }
-            .help("Send this app to someone with Lamp")
         }
         gap
         ToolbarItemGroup {

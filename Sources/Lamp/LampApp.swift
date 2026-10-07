@@ -29,7 +29,7 @@ struct LampApp: App {
                 // The same as Share ▸ Copy App File in the toolbar; here so the shortcut the Help lists exists.
                 Button("Copy App File") { if let project = store.selected { store.copyAppFile(project) } }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
-                    .disabled(store.selected == nil)
+                    .disabled(store.selected.map { !store.canShare($0) } ?? true)
             }
             CommandGroup(replacing: .saveItem) {
                 Button("Name This Version…") {

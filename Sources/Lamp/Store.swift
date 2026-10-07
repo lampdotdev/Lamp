@@ -664,7 +664,11 @@ final class Store: ObservableObject {
     }
 
     /// Puts the app's .lampapp file on the clipboard, ready to paste into Slack, Messages, Mail or Finder.
+    /// Sharing is for Mac apps: an iPhone app's file would be opened as a Mac app by another Lamp.
+    func canShare(_ project: LampProject) -> Bool { project.platform == .mac }
+
     func copyAppFile(_ project: LampProject) {
+        guard canShare(project) else { return }
         do {
             let exported = try Sharing.export(project)
             let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -1503,7 +1507,7 @@ final class Store: ObservableObject {
     func open(_ project: LampProject) async {
         if project.platform == .iphone {
             // Running already: bring the simulator forward. Otherwise build (if needed) and launch.
-            if let pid = simulatorApps[project.id], Simulator.isRunning(pid: pid) { await Simulator.show(); return }
+            if let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid) { await Simulator.show(); return }
             if FileManager.default.fileExists(atPath: project.builtURL.path), stamps[project.id]?.isOutdated != true {
                 guard begin(project) != nil else { return }
                 defer { finish(project) }
@@ -2078,37 +2082,44 @@ final class Store: ObservableObject {
     /// with what it prints going to the same log the Mac apps use. Returns what's known if it died at once.
     private func installOnSimulator(_ project: LampProject, inFront: Bool) async -> String? {
         guard let udid = Simulator.device() else {
-            log(project, .error, "No iPhone simulator is installed. Open Xcode once and add one in Settings → Components.")
-            return nil
+            let problem = "No iPhone simulator with iOS \(Simulator.minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components."
+            log(project, .error, problem)
+            return problem
         }
         note("Opening \(project.name) on the iPhone simulator…", for: project)
         do {
             try await Simulator.boot(udid, show: inFront)
             await Simulator.terminate(project.bundleID, on: udid)
             try await Simulator.install(project.builtURL, on: udid)
+            // Delete or Stop may have come while the simulator was busy: nothing more is written or launched.
+            guard exists(project), turns[project.id]?.stopped != true else { return "The app was deleted or stopped before it opened." }
             Runtime.startLog(project)
             let pid = try await Simulator.launch(project.bundleID, on: udid, log: Runtime.logURL(project))
-            simulatorApps[project.id] = pid
+            simulatorApps[project.id] = (udid, pid)
             try? await Task.sleep(for: .seconds(3))
             if !Simulator.isRunning(pid: pid) {
                 simulatorApps[project.id] = nil
                 log(project, .status, "\(project.name) quit right after opening. Looking at why…")
-                let crash = "The app quit right after launching." + (Runtime.logTail(project).map { "\n\nLast lines it printed:\n" + $0 } ?? "")
+                var crash = "The app quit right after launching."
+                if Privacy.sharesLog, let tail = Runtime.logTail(project) { crash += "\n\nLast lines it printed:\n" + tail }
                 log(project, .detail, crash)
                 refreshOpenApps()
                 return crash
             }
             if inFront { log(project, .status, "\(project.name) is ready on the iPhone simulator") }
         } catch {
+            // A failure to boot, install or launch is reported like a crash: the agent must hear about it.
             log(project, .error, "Couldn't open the app: \(error.localizedDescription)")
+            refreshOpenApps()
+            return "Couldn't open the app in the simulator: \(error.localizedDescription)"
         }
         refreshOpenApps()
         stamps[project.id] = BuildStamp.read(project.builtURL)
         return nil
     }
 
-    /// iPhone apps running in the simulator, by the process id their launch gave.
-    private var simulatorApps: [String: Int32] = [:]
+    /// iPhone apps running in the simulator: which simulator each was launched on, and its process id.
+    private var simulatorApps: [String: (udid: String, pid: Int32)] = [:]
 
     /// For Open App and Undo, where no agent is running to fix a crash.
     private func installReportingCrash(_ project: LampProject) async {
@@ -2334,7 +2345,7 @@ final class Store: ObservableObject {
         var ids = NSWorkspace.shared.runningApplications
             .compactMap { $0.isTerminated ? nil : $0.bundleIdentifier }
             .filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
-        simulatorApps = simulatorApps.filter { Simulator.isRunning(pid: $0.value) }
+        simulatorApps = simulatorApps.filter { Simulator.isRunning(pid: $0.value.pid) }
         ids += simulatorApps.keys
         if Set(ids) != openApps { openApps = Set(ids) }
     }
@@ -2347,7 +2358,8 @@ final class Store: ObservableObject {
 
     private func quit(_ project: LampProject) async {
         if project.platform == .iphone {
-            if let udid = Simulator.device() { await Simulator.terminate(project.bundleID, on: udid) }
+            // On the simulator it was launched on, not whichever one would be picked now.
+            if let running = simulatorApps[project.id] { await Simulator.terminate(project.bundleID, on: running.udid) }
             simulatorApps[project.id] = nil
             refreshOpenApps()
             return
@@ -2672,19 +2684,19 @@ final class Store: ObservableObject {
         var screenshots: [URL] = []
         if project.platform == .iphone {
             // The simulator photographs the screen; nothing in the app has to cooperate.
-            let running = simulatorApps[project.id].map { Simulator.isRunning(pid: $0) } ?? false
+            let running = simulatorApps[project.id].map { Simulator.isRunning(pid: $0.pid) } ?? false
             if changed || !running {
                 let crash = await install(project, inFront: false)
                 turn.look.installed = true
                 turn.look.crash = crash
-                if let crash { return (200, ["text": "The app \(changed ? "built" : "is built"), but it quit right after launching.\n\n\(crash)"]) }
+                if let crash { return (200, ["text": "The app \(changed ? "built" : "is built"), but it didn't stay open.\n\n\(crash)"]) }
                 if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
             } else {
                 note = "The app is running your latest code; nothing needed rebuilding."
             }
             try? await Task.sleep(for: .seconds(1))
             let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
-            if let udid = Simulator.device(), await Simulator.screenshot(on: udid, to: picture) { screenshots = [picture] }
+            if let udid = simulatorApps[project.id]?.udid, await Simulator.screenshot(on: udid, to: picture) { screenshots = [picture] }
             var text = note + " " + (screenshots.isEmpty ? "No picture of the iPhone could be taken."
                 : Privacy.sharesPictures ? "A picture of the iPhone's screen follows. use_app can't tap it yet." : Privacy.picturesOff)
             if !Privacy.sharesLog { text += " " + Privacy.logOff }
