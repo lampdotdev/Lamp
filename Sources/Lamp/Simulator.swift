@@ -129,6 +129,7 @@ extension Simulator {
             let window: AXUIElement     // the one Simulator window showing this device: lookups stay inside it
             let rect: CGRect            // the device's screen on the Mac's display
             let udid: String
+            let owner: String           // the project and launch these actions are for; remembered fields are theirs
             let scale: Double
             let pid: pid_t
             var origin: CGPoint { rect.origin }
@@ -136,25 +137,25 @@ extension Simulator {
             func point(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: origin.x + x, y: origin.y + y) }
         }
 
-        static func screen(of udid: String) async -> Screen? {
+        static func screen(of udid: String, owner: String) async -> Screen? {
             guard let simulator = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.iphonesimulator").first else { return nil }
             let width = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_WIDTH"], timeout: 20)).output.trimmed) ?? 0
             let height = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_HEIGHT"], timeout: 20)).output.trimmed) ?? 0
             let scale = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_SCALE"], timeout: 20)).output.trimmed) ?? 0
             guard width > 0, height > 0, scale > 0 else { return nil }
             let app = AXUIElementCreateApplication(simulator.processIdentifier)
-            // Only the window titled with this device's name: never another device's, however alike.
-            guard let name = deviceName(udid) else { return nil }
+            // The Simulator titles each window "<device> – <runtime>", which is the whole identity it shows:
+            // the one window with exactly this device's title, and none when two devices share it.
+            guard let title = deviceTitle(udid) else { return nil }
             let windows = (attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? [])
-                .filter { (attribute($0, kAXTitleAttribute) as? String ?? "").hasPrefix(name + " ") }
+                .filter { attribute($0, kAXTitleAttribute) as? String == title }
+            guard windows.count == 1, let window = windows.first else { return nil }
             // The screen is the group whose size is the device's size in points, give or take a pixel.
             let points = CGSize(width: width / scale, height: height / scale)
-            for window in windows {
-                for group in children(window) where attribute(group, kAXRoleAttribute) as? String == kAXGroupRole {
-                    let frame = frame(of: group)
-                    if abs(frame.width - points.width) <= 2, abs(frame.height - points.height) <= 2 {
-                        return Screen(app: app, window: window, rect: frame, udid: udid, scale: scale, pid: simulator.processIdentifier)
-                    }
+            for group in children(window) where attribute(group, kAXRoleAttribute) as? String == kAXGroupRole {
+                let frame = frame(of: group)
+                if abs(frame.width - points.width) <= 2, abs(frame.height - points.height) <= 2 {
+                    return Screen(app: app, window: window, rect: frame, udid: udid, owner: owner, scale: scale, pid: simulator.processIdentifier)
                 }
             }
             return nil
@@ -168,7 +169,7 @@ extension Simulator {
             var before = try? Data(contentsOf: picture)
             for action in actions {
                 guard live() else { lines.append("stopped before the rest: the app was stopped, deleted or closed"); break }
-                lines.append(await carryOut(action, on: screen))
+                lines.append(await carryOut(action, on: screen, live: live))
                 try? await Task.sleep(for: .milliseconds(350))
                 _ = await Simulator.screenshot(on: screen.udid, to: picture)
                 let after = try? Data(contentsOf: picture)
@@ -178,10 +179,10 @@ extension Simulator {
             return lines.joined(separator: "\n")
         }
 
-        /// The app was relaunched: whatever field was remembered for it is gone.
-        static func forget(_ udid: String) { lastFields[udid] = nil }
+        /// The app was relaunched: whatever field was remembered for the project is gone.
+        static func forget(_ projectID: String) { lastFields = lastFields.filter { !$0.key.hasPrefix(projectID + ":") } }
 
-        private static func carryOut(_ action: Action, on screen: Screen) async -> String {
+        private static func carryOut(_ action: Action, on screen: Screen, live: () -> Bool) async -> String {
             let at = "\(Int(action.x ?? 0)), \(Int(action.y ?? 0))"
             let point = screen.point(action.x ?? 0, action.y ?? 0)
             switch action.action {
@@ -189,13 +190,13 @@ extension Simulator {
                 guard let hit = element(at: point, in: screen) else { return "\(action.action) at \(at): nothing there" }
                 // A tap that lands beside a control (on its label, say) is meant for the control.
                 let element = isInteractive(hit) ? hit : (nearestInteractive(to: point, in: screen) ?? hit)
-                lastFields[screen.udid] = attribute(element, kAXRoleAttribute) as? String == kAXTextFieldRole ? element : nil
+                lastFields[screen.owner] = attribute(element, kAXRoleAttribute) as? String == kAXTextFieldRole ? element : nil
                 let name = describe(element) + (element == hit ? "" : " (the nearest thing to tap; the point itself was \(describe(hit)))")
                 if action.action == "right_click" {
                     // A long press: the finger held down, which opens context menus and the like.
                     mouse(.leftMouseDown, at: point, pid: screen.pid)
                     try? await Task.sleep(for: .milliseconds(800))
-                    mouse(.leftMouseUp, at: point, pid: screen.pid)
+                    mouse(.leftMouseUp, at: point, pid: screen.pid)   // the finger comes up whatever happened meanwhile
                     return "long press at \(at): \(name)"
                 }
                 var pressed = AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
@@ -204,7 +205,7 @@ extension Simulator {
                 }
                 if action.action == "double_click" {
                     try? await Task.sleep(for: .milliseconds(80))
-                    _ = AXUIElementPerformAction(element, kAXPressAction as CFString)
+                    if live() { _ = AXUIElementPerformAction(element, kAXPressAction as CFString) }
                 }
                 return "\(action.action == "double_click" ? "double tap" : "tap") at \(at): \(name)"
             case "type":
@@ -226,6 +227,7 @@ extension Simulator {
                 // Keys reach the simulated iPhone only while the Simulator is the active app.
                 NSRunningApplication(processIdentifier: screen.pid)?.activate()
                 try? await Task.sleep(for: .milliseconds(300))
+                guard live() else { return "stopped before pressing \(key)" }
                 let code: CGKeyCode = key.hasPrefix("ret") || key == "enter" ? 36 : 53
                 CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true)?.postToPid(screen.pid)
                 CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false)?.postToPid(screen.pid)
@@ -246,6 +248,7 @@ extension Simulator {
                 swipe(from: point, by: delta, pid: screen.pid)
                 if let item = action.item {
                     try? await Task.sleep(for: .milliseconds(500))
+                    guard live() else { return "swiped \(direction) at \(at), then stopped before tapping \"\(item)\"" }
                     // What the swipe uncovered (a row's actions, say): tap the one named.
                     if let button = button(named: item, in: screen) {
                         _ = AXUIElementPerformAction(button, kAXPressAction as CFString)
@@ -265,15 +268,15 @@ extension Simulator {
 
         // MARK: Finding and naming things
 
-        /// The text field last tapped on each device, so `type` knows where the keyboard is.
+        /// The text field last tapped by each project's launch of its app, so `type` knows where the keyboard is.
         private static var lastFields: [String: AXUIElement] = [:]
 
         /// That field, if it's still on this device's screen (not a stale one from before a relaunch).
         private static func rememberedField(in screen: Screen) -> AXUIElement? {
-            guard let field = lastFields[screen.udid] else { return nil }
+            guard let field = lastFields[screen.owner] else { return nil }
             let rect = frame(of: field)
             guard attribute(field, kAXRoleAttribute) as? String == kAXTextFieldRole, screen.rect.intersects(rect) else {
-                lastFields[screen.udid] = nil
+                lastFields[screen.owner] = nil
                 return nil
             }
             return field
@@ -377,12 +380,20 @@ extension Simulator {
             return CGRect(origin: origin, size: size)
         }
 
-        private static func deviceName(_ udid: String) -> String? {
+        /// The Simulator window's title for a device: "iPhone 16 – iOS 18.6", from its name and runtime.
+        private static func deviceTitle(_ udid: String) -> String? {
             let listing = Subprocess.runBlocking("/usr/bin/xcrun", ["simctl", "list", "devices", "-j"], mergeErrors: false, timeout: 30).output
             guard let data = listing.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let devices = json["devices"] as? [String: [[String: Any]]] else { return nil }
-            return devices.values.flatMap { $0 }.first { $0["udid"] as? String == udid }?["name"] as? String
+            for (runtime, list) in devices {
+                guard let device = list.first(where: { $0["udid"] as? String == udid }), let name = device["name"] as? String else { continue }
+                // com.apple.CoreSimulator.SimRuntime.iOS-18-6 → iOS 18.6
+                let version = runtime.components(separatedBy: "SimRuntime.").last?.replacingOccurrences(of: "-", with: " ")
+                    .replacingOccurrences(of: #"^(\S+) (\d+) (\d+)$"#, with: "$1 $2.$3", options: .regularExpression) ?? ""
+                return "\(name) – \(version)"
+            }
+            return nil
         }
 
         // MARK: Touches

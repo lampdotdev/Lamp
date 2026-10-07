@@ -1608,13 +1608,19 @@ final class Store: ObservableObject {
         guard let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid) else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it in the simulator."])
         }
+        // The owner, before any wait; and one Lamp app per simulator, so actions can't land on another's screen.
+        guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        if let other = simulatorApps.first(where: { $0.key != project.id && $0.value.udid == running.udid && Simulator.isRunning(pid: $0.value.pid) }),
+           let name = projects.first(where: { $0.id == other.key })?.name {
+            return (200, ["text": "Another of the user's apps, \(name), is open on the same simulator, so the screen may not be this app's. Ask the user to quit it, or wait and try again."])
+        }
         guard Simulator.Driver.isAllowed else {
             Simulator.Driver.ask()
             log(project, .status, "To try iPhone apps for you, Lamp needs to be allowed to control this computer: System Settings → Privacy & Security → Accessibility, then turn on Lamp.")
             return (200, ["text": "Lamp isn't allowed to control the simulator yet. The user has just been asked to allow it (System Settings → " +
                           "Privacy & Security → Accessibility). Say so to the user in plain words, and try again on their next request."])
         }
-        guard let screen = await Simulator.Driver.screen(of: running.udid) else {
+        guard let screen = await Simulator.Driver.screen(of: running.udid, owner: "\(project.id):\(running.pid)") else {
             return (200, ["text": "Lamp can't find the iPhone's screen in the Simulator window. Make sure the Simulator is open and showing the iPhone, then try again."])
         }
         guard let data = json.data(using: .utf8), let decoded = try? JSONDecoder().decode([Simulator.Driver.Action].self, from: data) else {
@@ -1622,9 +1628,8 @@ final class Store: ObservableObject {
         }
         let printed = Runtime.logSize(project)
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
-        let turn = turns[project.id]
         let report = await Simulator.Driver.perform(decoded, on: screen, picture: picture) { [weak self] in
-            guard let self, exists(project), turns[project.id] === turn, turn?.stopped != true else { return false }
+            guard let self, exists(project), turns[project.id] === owner, !owner.stopped else { return false }
             return Simulator.isRunning(pid: running.pid)
         }
         if let data = try? JSONSerialization.data(withJSONObject: ["id": UUID().uuidString, "report": report]) {
@@ -2129,20 +2134,22 @@ final class Store: ObservableObject {
             log(project, .error, problem)
             return problem
         }
+        // The turn that owns the app now, taken before anything waits: Delete or Stop can come during any of
+        // the waits below, and then nothing more is written or launched for it.
+        guard let owner = turns[project.id] else { return "Lamp isn't working on this app." }
+        func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
         note("Opening \(project.name) on the iPhone simulator…", for: project)
         do {
             try await Simulator.boot(udid, show: inFront)
             await Simulator.terminate(project.bundleID, on: udid)
             try await Simulator.install(project.builtURL, on: udid)
-            // Delete or Stop may have come while the simulator was busy: nothing more is written or launched.
-            let turn = turns[project.id]
-            guard exists(project), turn?.stopped != true else { return "The app was deleted or stopped before it opened." }
+            guard stillOwns() else { return "The app was deleted or stopped before it opened." }
             Runtime.startLog(project)
-            Simulator.Driver.forget(udid)
+            Simulator.Driver.forget(project.id)
             let pid = try await Simulator.launch(project.bundleID, on: udid, log: Runtime.logURL(project))
             // The same could have happened during the launch itself: then the app just started belongs to
             // nobody, and is stopped before anything records it.
-            guard exists(project), turns[project.id] === turn, turn?.stopped != true else {
+            guard stillOwns() else {
                 await Simulator.terminate(project.bundleID, on: udid)
                 return "The app was deleted or stopped before it opened."
             }
