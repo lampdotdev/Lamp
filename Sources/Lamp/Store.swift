@@ -187,7 +187,10 @@ final class Store: ObservableObject {
         /// The agent's token for this turn (Store.agentTokens): the only way to its routes.
         let agentToken = UUID().uuidString + UUID().uuidString
 
-        var isWorking: Bool { agent != nil || build != nil }
+        var cutting = false                 // the engine is cutting its conversation, before the agent starts (`Cut`)
+        var cutTool: LineTool?              // …and the tool doing it, once it has started
+
+        var isWorking: Bool { agent != nil || build != nil || cutting }
 
         /// Stops what's running. Returns the processes signalled, for a caller that waits for them (quit).
         @discardableResult func cancel() -> [pid_t] {
@@ -196,6 +199,7 @@ final class Store: ObservableObject {
             var pids: [pid_t] = []
             if let agent { pids += Subprocess.terminateTree(agent) }
             if let build { pids += Subprocess.terminateTree(build) }
+            cutTool?.close()
             return pids
         }
     }
@@ -1107,6 +1111,13 @@ final class Store: ObservableObject {
         // can't, the agent is told about it instead.
         let engine = Builder.engine
         let back = Versions.note(for: project) + (await cutConversation(of: project, for: engine))
+        // Stopped while the conversation was being cut: the agent doesn't start. The cut is still waiting,
+        // so whatever is sent next makes it.
+        if let turn = turns[project.id], turn.stopped {
+            turn.stopped = false
+            log(project, .status, "Stopped.")
+            return TurnResult(end: .failed, watched: isWatching(project.id))
+        }
         mark(asked, carried: back, in: project)
         let notes = Attachments.note(for: saved) + back
             + (sentAgain ? "" : Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project))
@@ -1115,9 +1126,13 @@ final class Store: ObservableObject {
         // The note about going back is the agent's only word of it, so it's kept until the agent has had it:
         // a turn that failed before reaching the agent leaves it for the next one. So is a cut in its
         // conversation, which is made again then (and finds nothing more to leave out, if it was made).
+        // Claude Code's is different: its cut is only made once Lamp has taken up the copy (`runAgent`, which
+        // forgets it then). A turn stopped after its first words but before that still has the cut to make.
         if let last = asked.last, Self.reachedAgent(last, in: logs[project.id] ?? []) {
             Versions.forgetNote(for: project)
-            Cut.forget(for: project, engine: engine)
+            if engine != .claude || Cut.pending(for: project, engine: .claude)?.canCut(.claude) != true {
+                Cut.forget(for: project, engine: engine)
+            }
         }
         guard ran else {
             return TurnResult(end: .failed, watched: isWatching(project.id))
@@ -1323,6 +1338,8 @@ final class Store: ObservableObject {
                     if let id = copy {
                         try? id.write(to: sessionFile, atomically: true, encoding: .utf8)
                         copy = nil
+                        // From here Lamp carries on from the copy, so the cut is made.
+                        if cut != nil { Cut.forget(for: project, engine: .claude) }
                     }
                     copied = true
                     try? message.write(to: Self.claudeEndFile(for: project), atomically: true, encoding: .utf8)
@@ -1406,18 +1423,29 @@ final class Store: ObservableObject {
     private func cutConversation(of project: LampProject, for engine: Engine) async -> String {
         guard let cut = Cut.pending(for: project, engine: engine) else { return "" }
         guard cut.canCut(engine) else { return cut.note ?? "" }
+        // Stop reaches the tool making the cut, as it does the agent.
+        let turn = turns[project.id]
+        turn?.cutting = engine != .claude
+        defer {
+            turn?.cutting = false
+            turn?.cutTool = nil
+        }
+        let started: @MainActor @Sendable (LineTool) -> Void = { tool in
+            turn?.cutTool = tool
+            if turn?.stopped == true { tool.close() }
+        }
         switch engine {
         case .claude:
             break   // made by the turn itself (`runAgent`)
         case .pi:
             let file = Self.conversationFile(for: project, engine: .pi)
             guard let session = Self.savedSession(file), let sent = cut.sent else { break }
-            guard let copy = await Cut.pi(session, in: project, from: sent) else { return cut.note ?? "" }
+            guard let copy = await Cut.pi(session, in: project, from: sent, started: started) else { return cut.note ?? "" }
             if copy != session { try? copy.write(to: file, atomically: true, encoding: .utf8) }
         case .codex:
             let file = Self.conversationFile(for: project, engine: .codex)
             guard let thread = Self.savedSession(file), let sent = cut.sent else { break }
-            switch await Cut.codex(thread, in: project, from: sent) {
+            switch await Cut.codex(thread, in: project, from: sent, started: started) {
             case nil: return cut.note ?? ""
             case .unchanged: break
             case .copy(let copy): try? copy.write(to: file, atomically: true, encoding: .utf8)

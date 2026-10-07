@@ -69,7 +69,9 @@ struct Cut: Codable {
 
     /// Has pi copy its conversation up to the first request sent at or after `sent`. Returns the copy's id,
     /// `session` itself when the conversation already ends before then, or nil when pi couldn't do it.
-    static func pi(_ session: String, in project: LampProject, from sent: Date) async -> String? {
+    /// `started` is handed the tool doing it, so the turn can stop it.
+    static func pi(_ session: String, in project: LampProject, from sent: Date,
+                   started: @escaping @MainActor @Sendable (LineTool) -> Void = { _ in }) async -> String? {
         guard let pi = Agent.executable else { return nil }
         var env = Agent.environment(prompt: "", session: session,
                                     sessionDir: project.dir.appendingPathComponent(".lamp/pi-sessions").path)
@@ -80,6 +82,7 @@ struct Cut: Codable {
         return await Task.detached { () -> String? in
             guard let tool = LineTool(pi.path, arguments, cwd: project.dir, env: env) else { return nil }
             defer { tool.close() }
+            await started(tool)
             func ask(_ command: [String: Any]) -> [String: Any]? {
                 let id = UUID().uuidString
                 tool.send(command.merging(["id": id]) { $1 })
@@ -117,11 +120,13 @@ struct Cut: Codable {
 
     /// Has Codex copy a conversation through its last turn before `sent`. `.unchanged` when the conversation
     /// already ends before then, `.empty` when nothing of it is from before, nil when Codex couldn't do it.
-    static func codex(_ thread: String, in project: LampProject, from sent: Date) async -> CodexCut? {
+    static func codex(_ thread: String, in project: LampProject, from sent: Date,
+                      started: @escaping @MainActor @Sendable (LineTool) -> Void = { _ in }) async -> CodexCut? {
         guard let codex = ToolLocator.path(for: .codex) else { return nil }
         return await Task.detached { () -> CodexCut? in
             guard let tool = LineTool(codex, ["app-server"], cwd: project.dir, env: ["PATH": ToolLocator.userPath]) else { return nil }
             defer { tool.close() }
+            await started(tool)
             var count = 0
             func ask(_ method: String, _ params: [String: Any]) -> [String: Any]? {
                 count += 1
