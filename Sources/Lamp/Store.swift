@@ -607,17 +607,24 @@ final class Store: ObservableObject {
         log(project, .status, "Look at \(device.name): tap Trust when it asks, and enter its passcode.")
         Task {
             defer { pairing.remove(device.udid) }
+            // The chat may have moved meanwhile: a first message renames a new app under a new id.
+            func tell(_ kind: LogLine.Kind, _ text: String) { if let now = current(project) { log(now, kind, text) } }
             do {
                 try await Devices.pair(device.udid)
                 devices = await Devices.list()
-                let paired = devices.first { $0.udid == device.udid }
-                if paired?.developerMode == true {
-                    log(project, .status, "\(device.name) is paired with this Mac. Choose it under Try On and press Play.")
+                guard let paired = devices.first(where: { $0.udid == device.udid }), paired.paired else {
+                    // Paired, as far as devicectl said, but not in the list now: unplugged, or the listing
+                    // failed. Not a word about Developer Mode until the phone is seen again.
+                    tell(.status, "\(device.name) said yes, but it isn't in the list now. Plug it in, unlock it and choose Look for Devices Again under Try On.")
+                    return
+                }
+                if paired.developerMode {
+                    tell(.status, "\(device.name) is paired with this Mac. Choose it under Try On and press Play.")
                 } else {
-                    log(project, .status, "\(device.name) is paired with this Mac. Now turn on Developer Mode on it (Settings → Privacy & Security → Developer Mode; the phone restarts), then choose it under Try On.")
+                    tell(.status, "\(device.name) is paired with this Mac. Now turn on Developer Mode on it (Settings → Privacy & Security → Developer Mode; the phone restarts), then choose it under Try On.")
                 }
             } catch {
-                log(project, .error, error.localizedDescription)
+                tell(.error, error.localizedDescription)
                 devices = await Devices.list()
             }
         }
@@ -737,6 +744,12 @@ final class Store: ObservableObject {
         try? fm.removeItem(at: old.installedURL)
         try? fm.removeItem(at: old.dir)
 
+        if let device = old.device {   // the phone chosen before the first message stays chosen
+            try? JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, platform: project.platform,
+                                                  family: project.family, device: device))
+                .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
+        }
+        moved[old.id] = project.id
         logs[project.id] = logs.removeValue(forKey: old.id)
         usage[project.id] = usage.removeValue(forKey: old.id)
         queued[project.id] = queued.removeValue(forKey: old.id)
@@ -751,6 +764,17 @@ final class Store: ObservableObject {
         reload()
         if selection == old.id { selection = project.id }
         return project
+    }
+
+    /// Where an app's chat went when its first message rescaffolded it under a new id, so something started
+    /// on the old app (pairing a phone, say) can still speak in the right chat.
+    private var moved: [String: String] = [:]
+
+    /// The app as it is now, following any rescaffold since `project` was taken.
+    private func current(_ project: LampProject) -> LampProject? {
+        var id = project.id
+        while let next = moved[id] { id = next }
+        return projects.first { $0.id == id }
     }
 
     /// Display names must be unique: each app installs as "<name>.app" in the apps folder (Edition.appsFolder).
