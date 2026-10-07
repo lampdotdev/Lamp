@@ -995,7 +995,7 @@ private struct LocalAISheet: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("mflux").font(.headline)
-                                Text("Runs picture models. A one-time install of about 500 MB.")
+                                Text("Runs picture models. A one-time install of about 1.3 GB.")
                                     .font(.caption).foregroundStyle(.secondary)
                                 if let error = tools.errors[.mflux] { Text(error).font(.caption).foregroundStyle(.red) }
                             }
