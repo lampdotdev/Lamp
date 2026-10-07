@@ -481,12 +481,10 @@ struct ExperimentalSettings: View {
 
     var body: some View {
         Section {
-            Toggle("iPhone and iPad apps", isOn: $iosApps)
+            Toggle("Build iOS apps", isOn: $iosApps)
                 .onChange(of: iosApps) { store.setLocalNetwork(Experiments.devices) }
-            Text("Adds New iPhone & iPad App. Lamp builds the app and tries it in the iPhone or iPad simulator on this Mac (Try On, beside the Play button): that needs Xcode (free on the Mac App Store) and, the first time it tries an app, permission to control this computer.")
-                .font(.caption).foregroundStyle(.secondary)
             if iosApps {
-                Toggle("Put apps on your own iPhone or iPad", isOn: $devices)
+                Toggle("Load iOS apps onto my device", isOn: $devices)
                     .onChange(of: devices) { store.setLocalNetwork(Experiments.devices) }
                 if devices {
                     if teams.isEmpty {
@@ -498,7 +496,7 @@ struct ExperimentalSettings: View {
                         }
                     }
                 }
-                Text("Sign in to your Apple account in Xcode → Settings → Accounts (a free account will do: its apps last a week on the phone, a paid one's a year). Then plug the phone in with a cable: Try On, beside the Play button, offers to pair it (tap Trust on the phone), and tells you when to turn on Developer Mode there. Choose the phone under Try On and press Play. The app's AI goes through Lamp over your Wi‑Fi, so the phone and this Mac must be on the same network and Lamp must be open. The agent still tries the app on the simulator: it can't see the phone's screen.")
+                Text("Requires an Apple Developer account")
                     .font(.caption).foregroundStyle(.secondary)
             }
         } header: { Text("Experimental") }

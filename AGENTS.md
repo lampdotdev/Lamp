@@ -49,7 +49,9 @@ installed Lamp into Lamp Dev, so the development build has something to work on.
 
 ## iPhone apps
 
-**New iPhone & iPad App** (behind Settings → Building → Experimental, `Experiments.iosApps`) makes one app for both devices, as Apple has it; the app's right-click menu's **Try On** picks which simulator it opens in (`LampProject.family`). It runs in the iPhone or iPad simulator on this Mac (`LampProject.platform == .iphone`,
+**Build iOS apps** (Settings → Building → Experimental, `Experiments.iosApps`) puts Mac / iPhone / iPad radio buttons in a new app's intro (`NewAppIntro`, `Store.setKind`). New App makes a draft, a folder with only `.lamp/meta.json`
+(`Template.draft`), so its kind and name are just that file; the scaffold is written and committed when it first
+builds (`Store.materialize`, in the first turn after naming and in `run`), and `LampProject.scaffolded` tells the two apart. An iOS app is one app for both devices, as Apple has it; the radio buttons and the app's right-click menu's **Try On** pick which simulator it opens in (`LampProject.family`). It runs in the iPhone or iPad simulator on this Mac (`LampProject.platform == .iphone`,
 kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools: `Simulator`
 (`Sources/Lamp/Simulator.swift`) picks a booted or available iPhone with `simctl`, installs the built bundle,
 launches it with its output going to the app's log, and photographs the screen for `look_at_app`. The
@@ -77,7 +79,7 @@ field's text, and sends real mouse events for swipes, scrolls and long presses. 
 size, so a pixel in them is a point on the screen. That needs Lamp to be allowed in System Settings →
 Privacy & Security → Accessibility; the first `use_app` asks.
 
-**On the person's own phone** (Settings → Experimental → Put apps on your own iPhone or iPad,
+**On the person's own phone** (Settings → Experimental → Load iOS apps onto my device,
 `Experiments.devices`): Try On also lists the iPhones and iPads the Mac can see (`Devices.list`, through
 `devicectl`): paired ones to choose, and plugged-in ones that haven't trusted the Mac yet, which it offers
 to pair (`Devices.pair`, `devicectl manage pair`, which puts the Trust prompt on the phone) before telling
