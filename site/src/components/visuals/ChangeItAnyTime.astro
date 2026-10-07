@@ -1,0 +1,73 @@
+---
+// For "Change it any time", as an idea rather than a screen: four small versions of one app on a timeline, each
+// a step further along (an empty window, then a list, then a heat map, then a chart), and an arrow from the
+// newest back to the second, which is ringed: the one you'd go back to. The windows are drawn in greys, so the
+// blue of going back is the only colour. Positions are on a 435×280 canvas, the tile's size on a laptop,
+// starting 40px in to line up with the words; 280 high, like the illustration beside it.
+const step = 90;
+const versions = ["empty", "list", "map", "chart"].map((kind, index) => ({ kind, x: 40 + index * step }));
+const width = 76;
+const top = 128;
+const line = top + 92;
+const centre = (index: number) => versions[index].x + width / 2;
+const arrow = `M${centre(3)} ${top - 8} C ${centre(3)} ${top - 82}, ${centre(1)} ${top - 82}, ${centre(1)} ${top - 14}`;
+const shades = [0.08, 0.26, 0.15, 0.32, 0.11, 0.21];
+---
+
+<div aria-hidden="true" class="relative h-[221px] overflow-hidden select-none sm:h-[280px]">
+  <!-- On a phone the scene is drawn at the desktop tile's size and shrunk, keeping the same arrangement. -->
+  <div class="absolute inset-0 h-[127%] w-[127%] origin-top-left scale-[0.79] sm:h-full sm:w-full sm:scale-100">
+    <svg viewBox="0 0 435 280" class="absolute inset-0 h-[280px] w-[435px] overflow-visible">
+      <!-- The timeline, with a dot under each version; the newest is filled. -->
+      <line x1={centre(0)} y1={line} x2={centre(3)} y2={line} stroke="rgba(0,0,0,0.12)" stroke-width="2" />
+      {
+        versions.map((_, index) => (
+          <circle cx={centre(index)} cy={line} r={index === 3 ? 6 : 4.5} fill={index === 3 ? "#1d1d1f" : index === 1 ? "#0a84ff" : "#c7c7cc"} />
+        ))
+      }
+      <!-- Going back -->
+      <path d={arrow} fill="none" stroke="#0a84ff" stroke-width="2.5" stroke-linecap="round" />
+      <path d={`M${centre(1) - 7} ${top - 22} L${centre(1)} ${top - 12} L${centre(1) + 7} ${top - 22}`} fill="none" stroke="#0a84ff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+
+    {
+      versions.map((version, index) => (
+        <div
+          class:list={[
+            "absolute h-14 overflow-hidden rounded-lg bg-white shadow-[0_8px_20px_rgba(0,0,0,0.1)] ring-1",
+            index === 1 ? "ring-2 ring-[#0a84ff]" : "ring-black/5",
+          ]}
+          style={`left: ${version.x}px; top: ${top}px; width: ${width}px`}
+        >
+          <div class="flex gap-0.5 px-1.5 pt-1.5">
+            {[0, 1, 2].map(() => <span class="size-1 rounded-full bg-black/15" />)}
+          </div>
+          <div class="absolute inset-x-1.5 top-4 bottom-1.5 flex gap-1">
+            <div class="w-4 rounded-sm bg-black/5" />
+            <div class="flex flex-1 flex-col gap-0.5">
+              {version.kind === "list" && [0, 1, 2].map(() => <div class="h-1 rounded-full bg-black/10" />)}
+              {
+                (version.kind === "map" || version.kind === "chart") && (
+                  <div class="grid grid-cols-6 gap-px">
+                    {Array.from({ length: version.kind === "map" ? 18 : 12 }, (_, i) => (
+                      <span class="aspect-square rounded-[1px]" style={`background: rgba(0,0,0,${shades[i % 6]})`} />
+                    ))}
+                  </div>
+                )
+              }
+              {
+                version.kind === "chart" && (
+                  <div class="mt-auto flex h-3.5 items-end gap-px">
+                    {[0.5, 0.8, 0.6, 1, 0.7, 0.9].map((h, i) => (
+                      <span class="flex-1 rounded-t-[1px]" style={`height: ${h * 100}%; background: rgba(0,0,0,${[0.18, 0.3, 0.24][i % 3]})`} />
+                    ))}
+                  </div>
+                )
+              }
+            </div>
+          </div>
+        </div>
+      ))
+    }
+  </div>
+</div>
