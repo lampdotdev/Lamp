@@ -286,11 +286,11 @@ struct BuildingSettings: View {
 
     private var selectedEngine: Engine { Engine(rawValue: engine) ?? .pi }
 
-    // Claude Code's or Codex's sign-in, checked whenever the agent or where its tool was found changes. Kept
-    // with the engine it's about, so a check that finishes after the agent changed is never taken for this one's.
-    @State private var signIn: (engine: Engine, signedIn: Bool)?
-    @State private var signingIn = false
-    private var signedIn: Bool? { signIn?.engine == selectedEngine ? signIn?.signedIn : nil }
+    // Claude Code's and Codex's sign-ins, checked whenever the agent or where its tool was found changes. Kept
+    // per engine, so a check or browser sign-in that finishes after the agent changed only updates its own.
+    @State private var signIns: [Engine: Bool] = [:]
+    @State private var signingIn: Engine?
+    private var signedIn: Bool? { signIns[selectedEngine] }
     /// Changes when the tool turns up (installed while Settings is open) or moves, as well as with the agent.
     private var signInCheck: String { _ = revision; return "\(engine) \(ToolLocator.path(for: selectedEngine) ?? "")" }
 
@@ -333,7 +333,7 @@ struct BuildingSettings: View {
             }
         case .signedOut:
             LabeledContent("Sign in to \(selectedEngine.title) to build with it.") {
-                if signingIn {
+                if signingIn == selectedEngine {
                     HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Finish in your browser…").foregroundStyle(.secondary) }
                 } else {
                     Button("Sign In…") { Task { await startSignIn() } }
@@ -349,19 +349,19 @@ struct BuildingSettings: View {
     private func checkSignIn() async {
         let engine = selectedEngine
         guard engine != .pi, ToolLocator.path(for: engine) != nil else { return }
-        signIn = nil
+        signIns[engine] = nil
         let signedIn = await EngineSignIn.isSignedIn(engine) ?? true   // can't tell: don't hold it up
-        // The check's process outlives a cancelled task, so a late answer may belong to an agent no longer chosen.
+        // The check's process outlives a cancelled task; a newer check of this engine has the say.
         guard !Task.isCancelled else { return }
-        signIn = (engine, signedIn)
+        signIns[engine] = signedIn
     }
 
     private func startSignIn() async {
         let engine = selectedEngine
-        signingIn = true
-        defer { signingIn = false }
+        signingIn = engine
+        defer { if signingIn == engine { signingIn = nil } }
         _ = await EngineSignIn.signIn(engine)
-        signIn = (engine, await EngineSignIn.isSignedIn(engine) ?? true)
+        signIns[engine] = await EngineSignIn.isSignedIn(engine) ?? true
     }
 
     /// The model Claude Code or Codex builds with ("" for the tool's default).
