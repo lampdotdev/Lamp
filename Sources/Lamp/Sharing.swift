@@ -287,10 +287,14 @@ extension Sharing {
         from documents and pictures, on the Mac), LampCalendar, LampReminders, LampContacts and LampMail (the \
         reader's accounts, each asked for by macOS), LampNotifications, LampAssets (files sent with the app), \
         LampFolders, LampFolderWatcher, LampClipboardWatcher, LampHotKey, LampLoginItem, LampPermissions, \
-        LampMenuBar, LampDrop and LampWindows. Using these is normal and expected: they are not external \
-        services, not hidden code, and not a concern in themselves. Lamp lists them to the reader separately. \
-        Judge what the app's own code does with them and beyond them: where it sends data, what it deletes or \
-        changes, whether it does more than its description says, and whether anything is obscured.
+        LampMenuBar, LampDrop and LampWindows. Using these is normal and expected: they are Lamp's code, not the \
+        sender's, not hidden, and not a concern in themselves, and Lamp lists them to the reader separately. One \
+        thing about them does matter: what goes to LampAI (its prompts, data and pictures) and what LampComputer \
+        reads from other apps is sent to the AI provider the reader has set up in Lamp, which may be a service on \
+        the internet. So judge what the app's own code does with the blocks and beyond them: which of the reader's \
+        data it hands to the AI (a mention of their own notes is ordinary; their mail, documents, passwords or \
+        other people's data deserve a word), where else it sends data, what it deletes or changes, whether it \
+        does more than its description says, and whether anything is obscured.
 
         Reply as JSON: {"summary": "<1-2 plain sentences: what the app does for the user>", \
         "capabilities": ["<what it accesses or does on the Mac, in plain words>"], \
