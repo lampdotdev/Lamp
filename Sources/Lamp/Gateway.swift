@@ -634,26 +634,43 @@ enum AppAI {
             let detail = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
             throw Failure(message: Provider.friendlyError("\(status) \(detail)"))
         }
+        // Each answer is checked against its question: the API can refuse one (type "refusal", in a 200),
+        // and an app must never be handed a choice outside the options it gave, so anything that doesn't
+        // match is an error rather than an empty answer.
         var answers: [String: Any] = [:]
         for answer in given {
-            guard let id = answer["name"] as? String else { continue }
-            switch answer["type"] as? String {
-            case "predicate":
-                answers[id] = ["noul": answer["probability"] as? Double ?? 0.5]
-            case "score":
+            guard let id = answer["name"] as? String, let question = questions[id] as? [String: Any] else { continue }
+            let wanted = question["type"] as? String ?? "choice"
+            let type = answer["type"] as? String ?? ""
+            if type == "refusal" {
+                throw Failure(message: "The decision model declined the question \"\(id)\"" + ((answer["reason"] as? String).map { ": \($0)" } ?? "."))
+            }
+            switch (wanted, type) {
+            case ("noul", "predicate"):
+                guard let p = answer["probability"] as? Double, (0...1).contains(p) else { throw Failure(message: "The decision model's answer to \"\(id)\" had no probability.") }
+                answers[id] = ["noul": p]
+            case ("score", "score"):
                 var probabilities: [String: Double] = [:]
                 for entry in answer["probabilities"] as? [[String: Any]] ?? [] {
                     if let index = entry["value"] as? Int, let p = entry["probability"] as? Double { probabilities[String(index)] = p }
                 }
-                answers[id] = ["score": answer["score"] as? Double ?? 0, "probabilities": probabilities, "confidence": answer["confidence"] as? Double ?? 0]
-            default:
+                guard let score = answer["score"] as? Double, !probabilities.isEmpty else { throw Failure(message: "The decision model's answer to \"\(id)\" had no score.") }
+                answers[id] = ["score": score, "probabilities": probabilities, "confidence": answer["confidence"] as? Double ?? 0]
+            case ("choice", "choice"):
                 var probabilities: [String: Double] = [:]
                 for entry in answer["probabilities"] as? [[String: Any]] ?? [] {
                     if let value = entry["value"] as? String, let p = entry["probability"] as? Double { probabilities[value] = p }
                 }
-                answers[id] = ["choice": answer["choice"] as? String ?? "", "probabilities": probabilities, "confidence": answer["confidence"] as? Double ?? 0]
+                let names = options(of: question).map(\.name)
+                guard let choice = answer["choice"] as? String, names.contains(choice) else {
+                    throw Failure(message: "The decision model's answer to \"\(id)\" wasn't one of its options.")
+                }
+                answers[id] = ["choice": choice, "probabilities": probabilities, "confidence": answer["confidence"] as? Double ?? 0]
+            default:
+                throw Failure(message: "The decision model answered \"\(id)\" with a \(type.isEmpty ? "different" : type) answer, not a \(wanted) one.")
             }
         }
+        for id in questions.keys where answers[id] == nil { throw Failure(message: "The decision model didn't answer \"\(id)\".") }
         // $0.10 per million input tokens, nothing for output.
         let cost = Double((obj["usage"] as? [String: Any])?["input_tokens"] as? Int ?? 0) * 0.10 / 1_000_000
         return (answers, cost)
@@ -734,20 +751,22 @@ enum AppAI {
 
     /// The fast model of whatever answers for apps, for decisions made by text: Haiku through Claude Code,
     /// Luna through Codex, and pi's own model otherwise.
-    static var fastModel: String? {
-        switch Builder.engine {
-        case .claude: "haiku"
-        case .codex: Builder.codexFastModel
-        case .pi: nil
+    /// The small model for quick judgments on the route that will run them: Haiku when Claude Code answers,
+    /// Luna when Codex does; any other route uses its own model.
+    static func fastModel(for route: TextRoute) -> String? {
+        switch route.kind {
+        case .engine(.claude, _): "haiku"
+        case .engine(.codex, _): Builder.codexFastModel
+        default: nil
         }
     }
 
-    /// What `fastModel` is called in Settings.
-    static var fastModelName: String {
-        switch Builder.engine {
-        case .claude: "Haiku through Claude Code"
-        case .codex: (Builder.codexModels.first { $0.id == Builder.codexFastModel }?.label).map { "\($0) through ChatGPT Codex" } ?? "ChatGPT Codex"
-        case .pi: "the builder's own model"
+    /// What the fallback for decisions is called in Settings: the fast model on the apps' text route.
+    @MainActor static var fastModelName: String {
+        switch model.kind {
+        case .engine(.claude, _): "Haiku through Claude Code"
+        case .engine(.codex, _): (Builder.codexModels.first { $0.id == Builder.codexFastModel }?.label).map { "\($0) through ChatGPT Codex" } ?? "ChatGPT Codex"
+        default: model.label.replacingOccurrences(of: "Your ", with: "your ")
         }
     }
 
@@ -779,7 +798,8 @@ enum AppAI {
         how concentrated the probabilities are.
         """
         let prompt = "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)"
-        let (text, cost) = try await complete(prompt: prompt, images: [], system: system, json: true, engineModel: fastModel)
+        let fast = await fastModel(for: model)
+        let (text, cost) = try await complete(prompt: prompt, images: [], system: system, json: true, engineModel: fast)
         guard let raw = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
             throw Failure(message: "The model's decision wasn't valid JSON.", cost: cost)
         }

@@ -481,9 +481,12 @@ enum ComputerUse {
             try JSONSerialization.data(withJSONObject: task.mcpTools).write(to: toolsFile)
             env.merge(Agent.environment(prompt: task.taskText, files: [], session: "", sessionDir: folder.path)) { $1 }
             // The route's own provider and model when it's a model on this Mac rather than the builder's.
+            // Those providers are registered in Lamp's own pi configuration, so pi reads that even when
+            // building goes through the person's own setup.
             if case .localModel(let provider, let model)? = piRoute?.kind {
                 env["LAMP_PROVIDER"] = provider == Builder.localProvider ? LocalModels.piProvider(for: model) : provider
                 env["LAMP_MODEL"] = model
+                env["PI_CODING_AGENT_DIR"] = Agent.configDir
             }
             env["LAMP_COMPUTER_TOOLS_JSON"] = toolsFile.path
             env["LAMP_COMPUTER_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/computer"

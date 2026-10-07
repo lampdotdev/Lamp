@@ -567,7 +567,7 @@ struct AppsSettings: View {
             if iosApps {
                 // An app on the person's phone can only reach OpenRouter when it can't reach this Mac, so the
                 // choice here is among OpenRouter's models, and it's the one thing a phone needs a key for.
-                Section("Away from this Mac") {
+                Section("Away from this Mac (through OpenRouter)") {
                     Picker("Text in apps on your iPhone or iPad", selection: Binding(get: { AppAI.awayModel.id }, set: { awayModel = $0 })) {
                         ForEach(AppAI.anthropicModels, id: \.id) { Text($0.label).tag($0.id) }
                     }
