@@ -319,7 +319,7 @@ enum Agent {
             // this provider (a sign-in of pi's, or a key that couldn't be taken out yet), or if Lamp was
             // started with the provider's key in its own environment, which pi inherits.
             if KeyStore.key(for: provider.id) != nil, asksLampForKey(provider.id),
-               ProcessInfo.processInfo.environment[provider.envVar] == nil {
+               (ProcessInfo.processInfo.environment[provider.envVar] ?? "").isEmpty {
                 env["LAMP_KEY_TICKET"] = KeyTicket.issue(for: provider.id)
                 env["LAMP_KEY_URL"] = "http://127.0.0.1:\(Gateway.port)/pi/key"
             }
