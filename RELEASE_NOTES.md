@@ -5,6 +5,11 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## Unreleased
+
+- Apps can use your other apps whatever builds them: with a local model or your Claude Code or Codex
+  sign-in as well as with an OpenRouter key. The person still approves every click and keystroke.
+
 ## 0.9.1
 
 - iPhone and iPad apps use more of the phone: the agent knows about the motion sensors, the camera and
