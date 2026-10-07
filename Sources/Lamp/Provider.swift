@@ -138,9 +138,10 @@ enum KeyStore {
         let key = key?.trimmed.nilIfEmpty
         cache[provider] = .some(key)
         if usesKeychain {
-            _ = movedFileToKeychain   // or a key removed here would come back from the file
+            _ = movedFileToKeychain
             KeychainItem.delete(provider)
-            if let key { KeychainItem.write(key, provider) }
+            // Unless the new key couldn't be saved: then the file's is the only one there is.
+            if key.map({ KeychainItem.write($0, provider) }) ?? true { KeyFile.forget(provider) }
         } else {
             var all = KeyFile.read()
             all[provider] = key
@@ -200,24 +201,48 @@ enum KeyStore {
         }
 
         /// What a signed build does with the file. Each key goes into the Keychain, unless that provider
-        /// already has one there (the one Lamp has been using wins). The file is removed only once every
-        /// key is safely over: if the Keychain is locked or the person declines, it stays for the next launch.
+        /// already has one there (the one Lamp has been using wins), and leaves the file as soon as it's
+        /// over; the file goes with its last key. A key that couldn't be moved (the Keychain is locked, or
+        /// the person declined) stays in the file for the next launch. A file that's there but can't be read
+        /// is left alone: removing it would lose keys that could still be recovered.
         static func moveToKeychain() {
-            var keys = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
-            if keys["openrouter"] == nil, let old = (try? String(contentsOf: legacy, encoding: .utf8))?.trimmed.nilIfEmpty {
-                keys["openrouter"] = old
+            let fm = FileManager.default
+            var keys: [String: String] = [:]
+            if fm.fileExists(atPath: url.path) {
+                guard let data = try? Data(contentsOf: url),
+                      let stored = try? JSONDecoder().decode([String: String].self, from: data) else { return }
+                keys = stored
+                let left = keys.filter { !moved($0.value, to: $0.key) }
+                if left.isEmpty { try? fm.removeItem(at: url) } else if left.count < keys.count { write(left) }
             }
-            var allOver = true
-            for (provider, key) in keys {
-                switch KeychainItem.read(provider).0 {
-                case errSecSuccess: continue
-                case errSecItemNotFound: if !KeychainItem.write(key, provider) { allOver = false }
-                default: allOver = false
-                }
+            // The single-key file is older than keys.json: its key matters only if keys.json has none for
+            // OpenRouter, and it goes once OpenRouter's key is in the Keychain either way.
+            if fm.fileExists(atPath: legacy.path) {
+                guard let text = try? String(contentsOf: legacy, encoding: .utf8) else { return }
+                let key = keys["openrouter"] ?? text.trimmed.nilIfEmpty
+                if key.map({ moved($0, to: "openrouter") }) ?? true { try? fm.removeItem(at: legacy) }
             }
-            guard allOver else { return }
-            try? FileManager.default.removeItem(at: url)
-            try? FileManager.default.removeItem(at: legacy)
+        }
+
+        /// True once the Keychain holds a key for the provider: its own, or this one.
+        private static func moved(_ key: String, to provider: String) -> Bool {
+            switch KeychainItem.read(provider).0 {
+            case errSecSuccess: return true
+            case errSecItemNotFound: return KeychainItem.write(key, provider)
+            default: return false
+            }
+        }
+
+        /// A key set or removed in a signed build is the last word on that provider: whatever the file
+        /// still holds for it (a key that couldn't be moved yet) goes, so it can't come back at the next launch.
+        static func forget(_ provider: String) {
+            let fm = FileManager.default
+            if let data = try? Data(contentsOf: url),
+               var keys = try? JSONDecoder().decode([String: String].self, from: data), keys[provider] != nil {
+                keys[provider] = nil
+                if keys.isEmpty { try? fm.removeItem(at: url) } else { write(keys) }
+            }
+            if provider == "openrouter" { try? fm.removeItem(at: legacy) }
         }
 
         static func write(_ keys: [String: String]) {
