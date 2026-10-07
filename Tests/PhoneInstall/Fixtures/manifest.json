@@ -94,5 +94,13 @@
     "provenance": "documentation-derived",
     "source": "https://support.apple.com/en-us/118254",
     "note": "Synthetic input based on Apple trust instructions; actual launch output is ambiguous, covered by launch-security."
+  },
+  {
+    "file": "destination-missing.txt",
+    "stage": "build",
+    "cause": "unreachable",
+    "provenance": "local-real-output",
+    "source": "Captured through Lamp on 2026-10-07 with Xcode 27, cable disconnected and phone Wi-Fi off.",
+    "note": "Exact diagnostic wording retained; the phone identifier is redacted and unrelated destinations omitted."
   }
 ]

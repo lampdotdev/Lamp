@@ -45,7 +45,7 @@ struct PhoneFailure: LocalizedError {
             cause = .certificate
         } else if has("developer mode is disabled", "developer mode is not enabled") {
             cause = .developerMode
-        } else if has("device was not found", "device is not connected", "device is disconnected", "unable to find a device matching", "failed to establish a connection", "operation timed out", "connection timed out") {
+        } else if has("device was not found", "device is not connected", "device is disconnected", "unable to find a device matching", "unable to find a destination matching the provided destination specifier", "failed to establish a connection", "operation timed out", "connection timed out") {
             cause = .unreachable
         } else if stage == .build && text.range(of: #"\.swift:\d+(?::\d+)?: error:"#, options: .regularExpression) != nil {
             cause = .build
@@ -88,7 +88,7 @@ struct PhoneFailure: LocalizedError {
         case .locked:
             "The phone is locked. Unlock it with its passcode and keep it unlocked, then Retry."
         case .unreachable:
-            "Lamp couldn't reach the phone. Plug it in with a data cable, unlock it, and check that it appears in Xcode → Window → Devices and Simulators, then Retry."
+            "Lamp couldn't reach the phone. Plug it in with a data cable and unlock it, then Retry."
         case .developerMode:
             "Turn on Developer Mode on the phone in Settings → Privacy & Security → Developer Mode. Restart, unlock it, and confirm Turn On, then Retry."
         case .signing:

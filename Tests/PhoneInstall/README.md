@@ -4,6 +4,8 @@ path writes the exact plain-language messages for UI replay.
 
 `Fixtures/manifest.json` distinguishes each input's source:
 
+- `local-real-output`: captured during the real Lamp phone run on this Mac. The missing-destination
+  fixture came from Xcode 27 with cable and phone Wi-Fi off; identifiers were redacted.
 - `reported-output`: diagnostic excerpts from people reporting actual tool runs. Paths, team IDs and
   names are redacted where noted. The three-app and ten-ID cases are reported Xcode messages, not full
   captured command transcripts. These were not captured on our machine.
