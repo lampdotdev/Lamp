@@ -1,5 +1,6 @@
 ---
 import { Image, getImage } from "astro:assets";
+import type { ImageMetadata } from "astro";
 import Base from "../layouts/Base.astro";
 import Carousel from "../components/Carousel.astro";
 import DownloadButton from "../components/DownloadButton.astro";
@@ -48,27 +49,52 @@ const apps = [
   },
 ];
 
-// The features as a bento box: wide and narrow tiles in turn, a couple in colour.
+// Icons Lamp made for apps it built, in one row under "Real Mac apps", all the same size. The row is centred
+// on the tile and wider than it, so it runs off both edges; at the tile's full width (1104px) the 136px icons
+// and 24px gaps put each edge through the middle of an icon. The order mixes the colours, as several are
+// purple. A name missing from src/assets/icons/ is skipped.
+const icons = import.meta.glob<ImageMetadata>("../assets/icons/*.png", { eager: true, import: "default" });
+const shelf = [
+  "mine-1", "mine-6", "mine-3", "mine-8", "habit-streaks", "mine-2", "palette-studio",
+  "mine-4", "neon-bricks", "mine-10", "mine-9", "mine-5", "mine-7", "reading-queue",
+].flatMap((name) => icons[`../assets/icons/${name}.png`] ?? []);
+
+// The rest of the features as a bento box: wide and narrow tiles in turn, a couple in colour.
 const points = [
-  {
-    title: "Real Mac apps",
-    text: "Each one is an app of its own, in your Applications folder and in Spotlight. No browser tab, no subscription to someone else's tool. No server or security to worry about.",
-    tile: "sm:col-span-3 bg-panel",
-  },
   {
     title: "Change it any time",
     text: "Always finding ways to improve? No worries, continue making changes to your apps. Saved versions let you try new things and roll back if it doesn't work out.",
+    tile: "sm:col-span-2 bg-panel",
+  },
+  {
+    title: "Apps that use your Mac",
+    text: "An app can use your other apps to get things done, browser included, with whatever you're already signed in to. It asks before every click and keystroke.",
+    tile: "sm:col-span-3 bg-night text-white",
+  },
+  {
+    title: "Works with what's on your Mac",
+    text: "Apps can read and add to your calendar, reminders and contacts, find and send mail, and send you notifications. Through your other apps, they can reach Notes, Messages and more.",
+    tile: "sm:col-span-3 bg-panel",
+  },
+  {
+    title: "Beautiful by default",
+    text: "Unless you ask for something different, every app looks and feels made in Cupertino: native controls, proper menus and keyboard shortcuts, and an icon of its own.",
     tile: "sm:col-span-2 bg-glow",
+  },
+  {
+    title: "Made for Apple silicon",
+    text: "Apps use what's built into your Mac, like reading text in pictures, understanding speech and translating, instantly and privately. Lamp can also run AI models on your Mac's own chip, both to build your apps and inside them.",
+    tile: "sm:col-span-2 bg-graphite text-white",
   },
   {
     title: "Your data stays put",
     text: "What an app keeps is kept safe through every change you make to it, so trying something new never costs you your stuff.",
-    tile: "sm:col-span-2 bg-panel",
+    tile: "sm:col-span-3 bg-panel",
   },
   {
     title: "Share with anyone",
     text: "Send an app to a friend by AirDrop, Messages or Mail. They get their own copy to make their own, and Lamp shows them what it does before it opens.",
-    tile: "sm:col-span-3 bg-night text-white",
+    tile: "sm:col-span-5 bg-panel",
   },
 ];
 
@@ -88,7 +114,12 @@ const description = "Describe what you want, and Lamp builds a real Mac app, wit
 ---
 
 <Base title="Lamp: wish Mac apps into existence" description={description} image="/og.png">
-  <main class="mx-auto max-w-6xl px-4 sm:px-6">
+  <!--
+    Full-width bands that alternate white and light grey, in the manner of Apple's product pages, each with the
+    content in the same centred column. Tiles take the other shade from the band they sit on.
+  -->
+  <main>
+    <div class="mx-auto max-w-6xl px-4 sm:px-6">
     <section class="flex flex-col items-center pt-20 pb-14 text-center sm:pt-28">
       <Image
         src={icon}
@@ -119,16 +150,43 @@ const description = "Describe what you want, and Lamp builds a real Mac app, wit
       />
     </section>
 
-    <section class="pt-8">
-      <h2 class="text-center font-display text-3xl font-semibold tracking-tight">Make a tool for the task that bugs you.</h2>
-      <p class="mx-auto mt-3 max-w-[50rem] text-center text-lg text-muted">
-        Or a game for when you're done. Each of these came from a single request.
-      </p>
-      <Carousel slides={apps} />
+    </div>
+
+    <section class="bg-panel">
+      <div class="mx-auto max-w-6xl px-4 pt-20 sm:px-6 sm:pt-24">
+        <h2 class="text-center font-display text-4xl font-semibold tracking-tight sm:text-5xl">Make a tool for the task that bugs you.</h2>
+        <p class="mx-auto mt-4 max-w-[50rem] text-center text-lg text-muted">
+          Or a game for when you're done. Each of these came from a single request.
+        </p>
+        <Carousel slides={apps} />
+      </div>
     </section>
 
-    <section class="border-t border-rule py-20">
+    <section class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
       <div class="grid gap-4 sm:grid-cols-5">
+        <div class="overflow-hidden rounded-[28px] bg-panel pt-12 text-center sm:col-span-5 sm:pt-16">
+          <h3 class="px-8 font-display text-3xl font-semibold tracking-tight sm:text-5xl">Real Mac apps</h3>
+          <p class="mx-auto mt-4 max-w-[50rem] px-8 text-lg leading-relaxed text-muted">
+            Each one is an app of its own, in your Applications folder and in Spotlight. No browser tab, no subscription
+            to someone else's tool. No server or security to worry about.
+          </p>
+          <div aria-hidden="true" class="mt-8 pb-10 sm:mt-10 sm:pb-12">
+            <div class="relative left-1/2 flex w-max -translate-x-1/2 gap-4 sm:gap-6">
+              {
+                shelf.map((icon) => (
+                  <Image
+                    src={icon}
+                    alt=""
+                    width={136}
+                    height={136}
+                    densities={[1, 2]}
+                    class="size-24 drop-shadow-[0_12px_18px_rgba(0,0,0,0.14)] sm:size-34"
+                  />
+                ))
+              }
+            </div>
+          </div>
+        </div>
         {
           points.map((point) => (
             <div class:list={["flex min-h-56 flex-col justify-end rounded-[28px] p-8 sm:p-10", point.tile]}>
@@ -140,9 +198,10 @@ const description = "Describe what you want, and Lamp builds a real Mac app, wit
       </div>
     </section>
 
-    <section class="border-t border-rule py-20 text-center">
-      <h2 class="font-display text-3xl font-semibold tracking-tight">Bring the AI you already pay for.</h2>
-      <p class="mx-auto mt-3 max-w-[50rem] text-lg text-muted">
+    <section class="bg-panel">
+      <div class="mx-auto max-w-6xl px-4 py-20 text-center sm:px-6 sm:py-24">
+      <h2 class="font-display text-4xl font-semibold tracking-tight sm:text-5xl">Use the AI you already have.</h2>
+      <p class="mx-auto mt-4 max-w-[50rem] text-lg text-muted">
         Lamp is free. It builds with your Claude or ChatGPT subscription, a key from more than a dozen AI providers, or
         a model that runs right on your Mac.
       </p>
@@ -166,18 +225,19 @@ const description = "Describe what you want, and Lamp builds a real Mac app, wit
           ))
         }
       </ul>
+      </div>
     </section>
 
-    <section class="border-t border-rule py-20 text-center">
-      <Image src={icon} alt="" width={72} height={72} densities={[1, 2]} class="mx-auto size-18" />
-      <h2 class="mt-5 font-display text-3xl font-semibold tracking-tight">Try Lamp. Let your genie out.</h2>
-      <div class="mt-7"><DownloadButton /></div>
+    <section class="mx-auto max-w-6xl px-4 py-24 text-center sm:px-6 sm:py-28">
+      <Image src={icon} alt="" width={96} height={96} densities={[1, 2]} class="mx-auto size-24 drop-shadow-[0_12px_24px_rgba(217,122,6,0.25)]" />
+      <h2 class="mt-6 font-display text-4xl font-semibold tracking-tight sm:text-5xl">Let your genie out.</h2>
+      <div class="mt-9"><DownloadButton /></div>
     </section>
   </main>
 
   <QuickLook />
 
-  <footer class="border-t border-rule py-10 text-center text-sm text-muted">
+  <footer class="bg-panel py-10 text-center text-sm text-muted">
     <p>Made by <a href="https://roocode.com" class="text-ink hover:underline">Roo Code</a> · © {new Date().getFullYear()}</p>
   </footer>
 </Base>
