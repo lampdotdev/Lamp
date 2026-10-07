@@ -137,6 +137,14 @@ final class Store: ObservableObject {
     /// Which Lamp built each installed app (see BuildStamp). Missing for apps that aren't built yet.
     @Published var stamps: [String: BuildStamp] = [:]
     @Published var chatFocusRequest = 0
+    @Published private(set) var pendingSubmissions = PendingSubmissions()
+
+    func beginSubmission(_ project: LampProject) -> UUID? {
+        guard let current = current(project) else { return nil }
+        return pendingSubmissions.begin(current.id)
+    }
+
+    func endSubmission(_ token: UUID) { pendingSubmissions.end(token) }
     @Published var setup = SetupCheck()
     /// The welcome finished this run. Normally the saved setting says so too, but `-onboarded NO` on the
     /// command line (for checking the welcome) keeps that setting from changing until Lamp quits.
@@ -439,7 +447,7 @@ final class Store: ObservableObject {
     // MARK: - Drafts
 
     /// What's typed but not sent in an app's chat.
-    struct Draft {
+    struct Draft: Equatable {
         var text = ""
         var attachments: [URL] = []
         /// The request in the chat this takes the place of when it's sent (see `sendAgain`).
@@ -448,9 +456,40 @@ final class Store: ObservableObject {
         /// sent again after all.
         var setAsideText = ""
         var setAsideAttachments: [URL] = []
+
+        /// Only clear input that is still exactly the captured request. An idea, edit or late file added
+        /// while setup was open belongs to the next draft, even though the earlier request was sent.
+        func afterSubmission(_ captured: Draft, sent: Bool) -> Draft {
+            guard sent else { return self }
+            if self == captured { return Draft() }
+            var kept = self
+            if kept.replacing == captured.replacing {
+                kept.replacing = nil
+                kept.setAsideText = ""
+                kept.setAsideAttachments = []
+            }
+            return kept
+        }
     }
 
     private var drafts: [String: Draft] = [:]
+    /// Changes made outside the current editor must reach whichever chat view is now on screen, even
+    /// when a submission begins and finishes in the same event (as it does for Mac apps).
+    @Published private(set) var draftUpdates: [String: UUID] = [:]
+
+    func updateDraft(_ draft: Draft, for project: LampProject) {
+        saveDraft(draft, for: project)
+        draftUpdates[project.id] = UUID()
+    }
+
+    /// A drop can finish loading after its original chat view has gone away. Add its files to the
+    /// latest saved input rather than writing that view's old words and replacement state back.
+    func attach(_ files: [URL], to project: LampProject) {
+        guard let current = current(project), !files.isEmpty else { return }
+        var latest = draft(for: current)
+        latest.attachments.append(contentsOf: files)
+        updateDraft(latest, for: current)
+    }
 
     /// Each app keeps its own draft, so it's still there after switching apps. The text also survives a
     /// restart (.lamp/draft.txt), and so do the request it replaces and the text that was set aside for it;
@@ -568,21 +607,6 @@ final class Store: ObservableObject {
         return nil
     }
 
-    /// The app is for both devices: it opens on the preferred one, or on whichever this Mac can show. Nil,
-    /// after saying why, when this Mac can show neither.
-    private func simulatorFamily(preferring family: DeviceFamily) -> DeviceFamily? {
-        let other: DeviceFamily = family == .iphone ? .ipad : .iphone
-        let usable = Simulator.problem(family) != nil && Simulator.problem(other) == nil ? other : family
-        if let problem = Simulator.problem(usable) {
-            let alert = NSAlert()
-            alert.messageText = "Lamp can't build iOS apps on this Mac yet"
-            alert.informativeText = problem
-            alert.runModal()
-            return nil
-        }
-        return usable
-    }
-
     /// The kind chosen in a new app's intro: a draft only says what it will be, so this is a change to that.
     /// Quietly, as nothing in the chat would make sense of it.
     func setKind(_ project: LampProject, platform: Platform, family: DeviceFamily) {
@@ -591,8 +615,9 @@ final class Store: ObservableObject {
         var changed = projects[index]
         changed.platform = platform
         if platform == .iphone {
-            guard let usable = simulatorFamily(preferring: family) else { return }
-            changed.family = usable
+            // Choosing what to make doesn't need installed tools. Send checks the selected simulator
+            // before building and explains the next setup action without blocking this draft's picker.
+            changed.family = family
         } else {
             changed.device = nil
         }
@@ -705,7 +730,7 @@ final class Store: ObservableObject {
     /// An untitled app you left without ever using is deleted, so trying New App leaves nothing behind.
     private func discardIfUnused(_ id: String) {
         guard let project = projects.first(where: { $0.id == id }), project.untitled,
-              (logs[id] ?? []).isEmpty, queued[id] == nil, !busy.contains(id),
+              (logs[id] ?? []).isEmpty, queued[id] == nil, !busy.contains(id), !pendingSubmissions.contains(id),
               !FileManager.default.fileExists(atPath: project.builtURL.path) else { return }
         try? FileManager.default.removeItem(at: project.dir)
         projects.removeAll { $0.id == id }
@@ -828,6 +853,9 @@ final class Store: ObservableObject {
         for (from, to) in moved where to == old.id { moved[from] = project.id }
         moved = moved.filter { $0.key != project.id }
         moved[old.id] = project.id
+        pendingSubmissions.move(from: old.id, to: project.id)
+        if let draft = drafts.removeValue(forKey: old.id) { drafts[project.id] = draft }
+        draftWrites.removeValue(forKey: old.id)?.cancel()
         logs[project.id] = logs.removeValue(forKey: old.id)
         usage[project.id] = usage.removeValue(forKey: old.id)
         queued[project.id] = queued.removeValue(forKey: old.id)
@@ -849,7 +877,7 @@ final class Store: ObservableObject {
 
     /// The app as it is now, following any rescaffold since `project` was taken (one step: `moved` always
     /// points straight at the latest id).
-    private func current(_ project: LampProject) -> LampProject? {
+    func current(_ project: LampProject) -> LampProject? {
         projects.first { $0.id == moved[project.id] ?? project.id }
     }
 
