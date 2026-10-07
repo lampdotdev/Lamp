@@ -2464,7 +2464,7 @@ final class Store: ObservableObject {
     /// Retry the phone operation alone: an account or device problem is never sent to the coding agent.
     func retryPhone(_ project: LampProject, udid: String) async {
         guard let current = projects.first(where: { $0.id == project.id }), current.device == udid,
-              Experiments.devices, let owner = begin(current) else { return }
+              Experiments.iosApps, let owner = begin(current) else { return }
         defer { finish(current) }
         _ = await installOnDevice(current, owner: owner, udid: udid)
     }
