@@ -5,6 +5,13 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## Unreleased
+
+- The build script and package file of every app are Lamp's own again at each build, so nothing the agent
+  writes into them can run around your approval.
+- Opening a shared app: the check no longer warns about Lamp's own building blocks, and says which of your
+  data an app hands to the AI.
+
 ## 0.9.2
 
 - Apps can use your other apps whatever builds them: with a local model or your Claude Code or Codex

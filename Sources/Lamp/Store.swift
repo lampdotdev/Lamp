@@ -2217,8 +2217,14 @@ final class Store: ObservableObject {
     private func build(_ project: LampProject) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         log(project, .status, "Building…")
-        try? Template.writeSupport(for: project)
-        Template.upgradeBuildScript(for: project)
+        // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
+        do {
+            try Template.writeOwnedFiles(for: project)
+        } catch {
+            let problem = "Lamp couldn't write the app's build files: \(error.localizedDescription)"
+            log(project, .error, problem)
+            return problem
+        }
         // Taken before the build, so an edit made while it runs still counts as a change afterwards.
         let fingerprint = Runtime.fingerprint(project)
         var output: [String] = []

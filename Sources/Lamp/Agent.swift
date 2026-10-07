@@ -160,13 +160,17 @@ enum Agent {
 
         static let macFrameworks = """
         - Write code that compiles first time: only use Apple frameworks (SwiftUI, AppKit, Foundation, etc.), \
-        no third-party packages, and APIs available on macOS 14.
+        no third-party packages, and APIs available on macOS 14. Package.swift and build.sh belong to Lamp and \
+        are written afresh before every build, so an edit to either is lost: no dependencies, plugins, compiler \
+        flags or build steps; everything the app needs goes in Sources/.
         """
 
         static let iPhoneFrameworks = """
         - Write code that compiles first time: only Apple frameworks (SwiftUI, UIKit, Foundation, MapKit, \
         AVFoundation and the rest), no third-party packages, APIs available on iOS 17, nothing from AppKit. One \
-        `WindowGroup`; the app is built for iPhone and iPad.
+        `WindowGroup`; the app is built for iPhone and iPad. Package.swift and build.sh belong to Lamp and are \
+        written afresh before every build, so an edit to either is lost: no dependencies, plugins, compiler flags \
+        or build steps; everything the app needs goes in Sources/.
         """
 
         static let macBlocks = """
