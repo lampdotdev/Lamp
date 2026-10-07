@@ -1,52 +1,104 @@
 import SceneKit
-import AppKit
 import simd
 
-enum Lamp {
-    /// Where the smoke comes out, in the lamp's own coordinates.
-    static let spoutTip = SIMD3<Float>(2.5, 1.3, 0)
-    /// The middle of the body, where the lamp "sees" its surroundings from.
-    static let heart = SIMD3<Float>(0.15, 0.85, 0)
+// Procedural geometry for Blender export. Lighting, materials, and cameras live in render-onboarding.py.
 
-    static func gold() -> SCNMaterial {
-        let m = SCNMaterial()
-        m.lightingModel = .physicallyBased
-        m.diffuse.contents = NSColor(srgbRed: 1.0, green: 0.77, blue: 0.4, alpha: 1)
-        m.metalness.contents = 1.0
-        m.roughness.contents = 0.1
-        m.isDoubleSided = true
-        return m
+// MARK: - The model
+
+/// A grid of points that wraps around in `cols`, turned into a smooth SceneKit surface.
+private func gridGeometry(rows: Int, cols: Int, flip: Bool = false, _ point: (Int, Int) -> SIMD3<Float>) -> SCNGeometry {
+    var p = [SIMD3<Float>](repeating: .zero, count: rows * cols)
+    for i in 0..<rows { for j in 0..<cols { p[i * cols + j] = point(i, j) } }
+    func at(_ i: Int, _ j: Int) -> SIMD3<Float> { p[min(max(i, 0), rows - 1) * cols + (j + cols) % cols] }
+    var normals = [SIMD3<Float>]()
+    for i in 0..<rows {
+        for j in 0..<cols {
+            let du = at(i, j + 1) - at(i, j - 1)
+            var dv = at(i + 1, j) - at(i - 1, j)
+            // At a pole the ring collapses; look one ring further in.
+            if simd_length(du) < 1e-5 { dv = at(i + 1, j) - at(i - 1, j) }
+            var n = flip ? simd_cross(du, dv) : simd_cross(dv, du)
+            if simd_length(n) < 1e-9 { n = SIMD3(0, i == 0 ? -1 : 1, 0) }
+            normals.append(simd_normalize(n))
+        }
     }
+    var idx = [UInt32]()
+    for i in 0..<(rows - 1) {
+        for j in 0..<cols {
+            let a = UInt32(i * cols + j), b = UInt32(i * cols + (j + 1) % cols)
+            let c = UInt32((i + 1) * cols + (j + 1) % cols), d = UInt32((i + 1) * cols + j)
+            idx += [a, b, c, a, c, d]
+        }
+    }
+    let vs = SCNGeometrySource(vertices: p.map { SCNVector3($0.x, $0.y, $0.z) })
+    let ns = SCNGeometrySource(normals: normals.map { SCNVector3($0.x, $0.y, $0.z) })
+    return SCNGeometry(sources: [vs, ns], elements: [SCNGeometryElement(indices: idx, primitiveType: .triangles)])
+}
+
+/// Catmull-Rom through the profile points, so a handful of numbers make a smooth silhouette.
+private func smooth(_ pts: [SIMD2<Float>], steps: Int = 8) -> [SIMD2<Float>] {
+    var out = [SIMD2<Float>]()
+    for k in 0..<(pts.count - 1) {
+        let p0 = pts[max(k - 1, 0)], p1 = pts[k], p2 = pts[k + 1], p3 = pts[min(k + 2, pts.count - 1)]
+        for s in 0..<steps {
+            let t = Float(s) / Float(steps), t2 = t * t, t3 = t2 * t
+            let a: SIMD2<Float> = 2 * p1
+            let b: SIMD2<Float> = p2 - p0
+            var c: SIMD2<Float> = 2 * p0 - 5 * p1
+            c += 4 * p2 - p3
+            var d: SIMD2<Float> = 3 * p1 - p0
+            d += p3 - 3 * p2
+            let sum: SIMD2<Float> = a + b * t + c * t2 + d * t3
+            out.append(0.5 * sum)
+        }
+    }
+    out.append(pts.last!)
+    return out
+}
+
+/// A surface of revolution from (radius, height) points, bottom to top. `relief` scales the radius by angle
+/// and height (for fluting and petals); `warp` bends the result.
+private func lathe(_ profile: [SIMD2<Float>], segments: Int = 120, steps: Int = 8,
+           relief: (Float, Float) -> Float = { _, _ in 1 },
+           warp: (SIMD3<Float>) -> SIMD3<Float> = { $0 }) -> SCNGeometry {
+    let prof = smooth(profile, steps: steps)
+    return gridGeometry(rows: prof.count, cols: segments, flip: true) { i, j in
+        let a = Float(j) / Float(segments) * 2 * .pi
+        let r = max(prof[i].x * relief(a, prof[i].y), 0.002)
+        return warp(SIMD3(r * cos(a), prof[i].y, r * sin(a)))
+    }
+}
+
+/// A tube along a cubic Bézier, its radius changing along the way.
+private func tube(_ c: [SIMD3<Float>], radius: (Float) -> Float, rows: Int = 90, segments: Int = 48,
+          squash: (Float) -> Float = { _ in 1 }) -> SCNGeometry {
+    func at(_ t: Float) -> SIMD3<Float> {
+        let u = 1 - t
+        let a: SIMD3<Float> = (u * u * u) * c[0] + (3 * u * u * t) * c[1]
+        let b: SIMD3<Float> = (3 * u * t * t) * c[2] + (t * t * t) * c[3]
+        return a + b
+    }
+    // The curves here lie in the xy plane, so z is a steady binormal: no twisting frames needed.
+    let side = SIMD3<Float>(0, 0, 1)
+    return gridGeometry(rows: rows, cols: segments, flip: true) { i, j in
+        let t = Float(i) / Float(rows - 1)
+        let tangent = simd_normalize(at(min(t + 0.001, 1)) - at(max(t - 0.001, 0)))
+        let normal = simd_normalize(simd_cross(side, tangent))
+        let a = Float(j) / Float(segments) * 2 * .pi
+        let r = radius(t)
+        return at(t) + r * squash(t) * cos(a) * normal + r * sin(a) * side
+    }
+}
+
+
+enum LampModel {
+    static let spoutTip = SIMD3<Float>(2.5, 1.3, 0)
 
     /// A soft-edged band between two heights, 0 outside it and 1 in the middle.
     static func band(_ y: Float, _ from: Float, _ to: Float) -> Float {
         let edge: Float = 0.012
         let a = min(max((y - from) / edge, 0), 1), b = min(max((to - y) / edge, 0), 1)
         return a * b
-    }
-
-    /// Matte white, like an unglazed porcelain model: only light and shadow show its shape.
-    static func clay() -> SCNMaterial {
-        let m = SCNMaterial()
-        m.lightingModel = .physicallyBased
-        m.diffuse.contents = NSColor(srgbRed: 0.9, green: 0.885, blue: 0.86, alpha: 1)
-        m.metalness.contents = 0.0
-        m.roughness.contents = 0.72
-        m.isDoubleSided = true
-        return m
-    }
-
-    /// Charcoal porcelain, for the icon in dark mode: a deep warm grey with only a faint glaze.
-    static func charcoal() -> SCNMaterial {
-        let m = SCNMaterial()
-        m.lightingModel = .physicallyBased
-        m.diffuse.contents = NSColor(srgbRed: 0.2, green: 0.195, blue: 0.19, alpha: 1)
-        m.metalness.contents = 0.0
-        m.roughness.contents = 0.6
-        m.clearCoat.contents = 0.15
-        m.clearCoatRoughness.contents = 0.35
-        m.isDoubleSided = true
-        return m
     }
 
     static func bump(_ t: Float, _ at: Float, _ width: Float) -> Float { exp(-pow((t - at) / width, 2)) }
@@ -58,7 +110,7 @@ enum Lamp {
         return a + b
     }
 
-    static func node(material: SCNMaterial = gold()) -> SCNNode {
+    static func node(material: SCNMaterial) -> SCNNode {
         let lamp = SCNNode()
         let mat = material
         func add(_ g: SCNGeometry) { g.materials = [mat]; lamp.addChildNode(SCNNode(geometry: g)) }
@@ -191,33 +243,5 @@ enum Lamp {
         return lamp
     }
 
-    /// An imaginary warm studio for the gold to reflect: a pale ceiling, a dark floor, dark panels and bright
-    /// softboxes, so the metal has strong light and shade to show its shape against a pale page.
-    static func environment() -> NSImage {
-        let w = 1024, h = 512
-        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8,
-                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-                                   bytesPerRow: 0, bitsPerPixel: 0)!
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        let sky = NSGradient(colors: [NSColor(srgbRed: 0.08, green: 0.06, blue: 0.05, alpha: 1),
-                                      NSColor(srgbRed: 0.3, green: 0.24, blue: 0.2, alpha: 1),
-                                      NSColor(srgbRed: 0.98, green: 0.95, blue: 0.9, alpha: 1),
-                                      NSColor(srgbRed: 0.45, green: 0.4, blue: 0.36, alpha: 1),
-                                      NSColor(srgbRed: 0.97, green: 0.95, blue: 0.92, alpha: 1)],
-                               atLocations: [0, 0.4, 0.5, 0.62, 1], colorSpace: .sRGB)!
-        sky.draw(in: NSRect(x: 0, y: 0, width: w, height: h), angle: 90)
-        // Dark panels between the lights give the reflections crisp edges.
-        NSColor(srgbRed: 0.12, green: 0.1, blue: 0.09, alpha: 1).setFill()
-        NSRect(x: 380, y: 270, width: 140, height: 200).fill()
-        NSRect(x: 900, y: 260, width: 90, height: 220).fill()
-        NSColor(white: 1, alpha: 1).setFill()
-        NSBezierPath(roundedRect: NSRect(x: 150, y: 330, width: 200, height: 120), xRadius: 24, yRadius: 24).fill()
-        NSBezierPath(roundedRect: NSRect(x: 620, y: 290, width: 90, height: 180), xRadius: 24, yRadius: 24).fill()
-        NSRect(x: 0, y: 478, width: w, height: 18).fill()
-        NSGraphicsContext.restoreGraphicsState()
-        let image = NSImage(size: NSSize(width: w, height: h))
-        image.addRepresentation(rep)
-        return image
-    }
+
 }

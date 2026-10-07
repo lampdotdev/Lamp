@@ -20,9 +20,7 @@ enum Onboarding {
 
     static var isDone: Bool { UserDefaults.standard.bool(forKey: key) }
 
-    static let size = CGSize(width: 1080, height: 760)
-    /// The smallest the welcome's window gets; everything still fits.
-    static let minimumSize = CGSize(width: 900, height: 660)
+    static let size = CGSize(width: 1080, height: 660)
     /// The window Lamp opens into after the welcome.
     static let appSize = CGSize(width: 1180, height: 800)
 }
@@ -41,7 +39,7 @@ private enum Step: Int, CaseIterable {
 
 /// Lamp's colours: near-black ink on a warm white page, where the porcelain lamp behind the welcome sits.
 private enum Palette {
-    static let ground = Color(nsColor: LampStage.page)
+    static let ground = Color(nsColor: LampBackdrop.page)
     static let accent = Color(red: 0.2, green: 0.19, blue: 0.18)
     static let accentDeep = Color(red: 0.08, green: 0.075, blue: 0.07)
     static let ink = Color(red: 0.11, green: 0.10, blue: 0.10)
@@ -76,15 +74,14 @@ struct OnboardingView: View {
                 .padding(.bottom, 22)
                 .opacity(step == .hello || leaving ? 0 : 1)
         }
-        .frame(minWidth: Onboarding.minimumSize.width, maxWidth: .infinity,
-               minHeight: Onboarding.minimumSize.height, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
             ZStack {
                 Palette.ground
                 LampBackdrop(step: step.rawValue)
                 // Behind the later steps' content the lamp fades into the page, so it never competes with it.
-                LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: Palette.ground.opacity(0.85), location: 0.24),
-                                       .init(color: Palette.ground.opacity(0.85), location: 0.76), .init(color: .clear, location: 1)],
+                LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: Palette.ground.opacity(0.425), location: 0.24),
+                                       .init(color: Palette.ground.opacity(0.425), location: 0.76), .init(color: .clear, location: 1)],
                                startPoint: .leading, endPoint: .trailing)
                     .opacity(step == .hello ? 0 : 1)
                     .animation(.easeInOut(duration: 0.8), value: step)
@@ -144,10 +141,9 @@ private struct HelloStep: View {
     @State private var shown = false
 
     var body: some View {
-        // Near the top, with fixed gaps, leaving the lower half of the window to the lamp.
         GeometryReader { proxy in
             VStack(spacing: 0) {
-                Text("What do you wish you had?")
+                Text("What app do you wish you had?")
                     .font(.system(size: 54, weight: .bold))
                     .tracking(-1.2)
                     .foregroundStyle(Palette.ink)
@@ -164,8 +160,7 @@ private struct HelloStep: View {
                     .padding(.top, 30)
                     .reveal(shown, delay: 0.35, rise: 8)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.top, max(proxy.size.height * 0.15, 60))
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
         // A moment after appearing, once the window has its size.
         .task {
@@ -258,7 +253,7 @@ private struct IdeaStep: View {
                 BigButton(title: "Continue", action: next).disabled(prompt.trimmed.isEmpty)
             } aside: {
                 if prompt.trimmed.isEmpty {
-                    Button("Skip for now", action: next).buttonStyle(.plain).foregroundStyle(.secondary)
+                    Button("Skip", action: next).buttonStyle(.plain).foregroundStyle(.secondary)
                 }
             }
         }
@@ -1016,7 +1011,7 @@ private struct Footer<Primary: View, Aside: View>: View {
             Spacer()
             primary()
         }
-        // Anything secondary, like "Skip for now", sits in the middle.
+        // Anything secondary, like "Skip", sits in the middle.
         .overlay { aside() }
         .padding(.horizontal, 44)
         .padding(.bottom, 44)
@@ -1130,15 +1125,17 @@ private struct WindowReader: NSViewRepresentable {
 /// the window gets its chrome back and grows into Lamp's, around the same center.
 private enum Chrome {
     private static var saved: (mask: NSWindow.StyleMask, transparent: Bool, title: NSWindow.TitleVisibility, movable: Bool,
-                               name: String, minSize: NSSize)?
+                               name: String, minSize: NSSize, maxSize: NSSize)?
 
     static func hide(_ window: NSWindow) {
         guard saved == nil else { return }
         saved = (window.styleMask, window.titlebarAppearsTransparent, window.titleVisibility, window.isMovableByWindowBackground,
-                 window.title, window.contentMinSize)
+                 window.title, window.contentMinSize, window.contentMaxSize)
         window.title = ""
-        window.styleMask.insert([.fullSizeContentView, .resizable])
-        window.contentMinSize = Onboarding.minimumSize
+        window.styleMask.insert(.fullSizeContentView)
+        window.styleMask.remove(.resizable)
+        window.contentMinSize = Onboarding.size
+        window.contentMaxSize = Onboarding.size
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.titlebarSeparatorStyle = .none
@@ -1157,6 +1154,7 @@ private enum Chrome {
             window.titleVisibility = .hidden
             window.titlebarSeparatorStyle = .none
             window.styleMask.insert(.fullSizeContentView)
+            window.styleMask.remove(.resizable)
             // …and lay the content out again, now that it reaches the top edge.
             window.contentView?.needsLayout = true
             window.setContentSize(size)
@@ -1168,6 +1166,7 @@ private enum Chrome {
         self.saved = nil
         window.styleMask = saved.mask.union(.resizable)
         window.contentMinSize = saved.minSize
+        window.contentMaxSize = saved.maxSize
         window.titlebarAppearsTransparent = saved.transparent
         window.titleVisibility = saved.title
         window.title = saved.name
