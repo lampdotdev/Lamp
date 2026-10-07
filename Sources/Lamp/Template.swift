@@ -2,10 +2,10 @@ import Foundation
 
 /// The scaffold every generated app starts from.
 enum Template {
-    static func scaffold(name rawName: String, untitled: Bool = false, platform: Platform = .mac, family: DeviceFamily = .iphone, in root: URL) throws -> LampProject {
+    static func scaffold(name rawName: String, untitled: Bool = false, platform: Platform = .mac, family: DeviceFamily = .iphone, in root: URL, id: String? = nil) throws -> LampProject {
         let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
         let exe = identifier(from: name)
-        var slug = exe.lowercased()
+        var slug = id ?? exe.lowercased()
         var n = 2
         while FileManager.default.fileExists(atPath: root.appendingPathComponent(slug).path) {
             slug = "\(exe.lowercased())-\(n)"

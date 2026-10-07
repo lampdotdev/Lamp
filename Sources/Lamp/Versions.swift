@@ -117,6 +117,14 @@ enum Versions {
         return !output.trimmed.isEmpty
     }
 
+    /// Unlike a failed commit, a clean tree proves there is nothing left to save. Include attachments
+    /// and require Git to succeed, so a read failure can't pass for an already-saved request.
+    static func isSaved(_ project: LampProject) async -> Bool {
+        var output = ""
+        let status = await Shell.run("git status --porcelain", cwd: project.dir) { output += $0 }
+        return status == 0 && output.trimmed.isEmpty
+    }
+
     /// Restores a version's files and saves the result as a new version. False when nothing changed.
     static func restore(_ project: LampProject, to version: AppVersion, message: String, trailer: String? = nil) async -> Bool {
         guard await restoreFiles(project, to: version) else { return false }

@@ -175,6 +175,7 @@ final class Store: ObservableObject {
         var agent: Process?                 // the engine, while it runs
         var build: Process?                 // the app's build.sh, while it runs
         var stopped = false                 // the user pressed Stop (or deleted the app, or quit Lamp)
+        var installFailed = false           // couldn't install or open; distinct from an app crash the agent can fix
         var allowAll = false                // "Allow all for this turn"
         var approving = false               // between the queue check and the approval card
         var look = Look()                   // what the agent's look_at_app has done
@@ -554,9 +555,9 @@ final class Store: ObservableObject {
         Task { await initRepo(project, message: "Scaffold") }
     }
 
-    private func initRepo(_ project: LampProject, message: String) async {
-        _ = await Shell.run("git init -q && git add -A && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: project.dir,
-                            env: ["LAMP_MESSAGE": message]) { _ in }
+    @discardableResult private func initRepo(_ project: LampProject, message: String) async -> Bool {
+        await Shell.run("git init -q && git add -A && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: project.dir,
+                        env: ["LAMP_MESSAGE": message]) { _ in } == 0
     }
 
     /// Which simulator an iPhone & iPad app opens in. Takes effect at its next open; the app is quit first
@@ -645,25 +646,49 @@ final class Store: ObservableObject {
     /// Replaces an untouched app with a fresh scaffold under its new name, carrying over its chat and queue.
     private func rescaffold(_ old: LampProject, as name: String) async -> LampProject {
         let fm = FileManager.default
+        // Not discoverable by reload: the named app appears only once its repository and recovery
+        // baseline are durable. Until then, the original app remains the recoverable one.
+        let staging = root.appendingPathComponent(".rename-" + UUID().uuidString)
+        defer { try? fm.removeItem(at: staging) }
+        let base = Template.identifier(from: name).lowercased()
+        var id = base
+        var suffix = 2
+        while fm.fileExists(atPath: root.appendingPathComponent(id).path) {
+            id = "\(base)-\(suffix)"
+            suffix += 1
+        }
+        let staged: LampProject
         let project: LampProject
         do {
-            project = try Template.scaffold(name: name, platform: old.platform, family: old.family, in: root)
+            staged = try Template.scaffold(name: name, platform: old.platform, family: old.family, in: staging, id: id)
+            project = LampProject(id: staged.id, name: staged.name, exe: staged.exe,
+                                  dir: root.appendingPathComponent(staged.id), platform: old.platform, family: old.family)
+            for path in [".lamp/chat.json", ".lamp/usage.json", Attachments.folder] {
+                let from = old.dir.appendingPathComponent(path)
+                if fm.fileExists(atPath: from.path) {
+                    try fm.copyItem(at: from, to: staged.dir.appendingPathComponent(path))
+                }
+            }
         } catch {
             NSAlert(error: error).runModal()
             return old
         }
-        for path in [".lamp/chat.json", ".lamp/usage.json", ".lamp/interrupted-turn.json", Attachments.folder] {
-            let from = old.dir.appendingPathComponent(path)
-            if fm.fileExists(atPath: from.path) {
-                try? fm.copyItem(at: from, to: project.dir.appendingPathComponent(path))
+        guard await initRepo(staged, message: "Scaffold"), let head = await Versions.head(staged) else {
+            log(old, .error, "Lamp couldn't prepare the new name. The original app is still kept.")
+            return old
+        }
+        do {
+            if var record = interrupted[old.id] {
+                record.before = head
+                try record.save(in: staged)
             }
+            try fm.moveItem(at: staged.dir, to: project.dir)
+        } catch {
+            log(old, .error, "Lamp couldn't keep the unfinished change safe under its new name. The original app is still kept.")
+            return old
         }
-        await initRepo(project, message: "Scaffold")
-        if var record = interrupted.removeValue(forKey: old.id), let head = await Versions.head(project) {
-            record.before = head
-            do { try record.save(in: project) } catch { log(project, .error, "Lamp couldn't keep the unfinished change safe.") }
-            interrupted[project.id] = record
-        }
+        interrupted[project.id] = InterruptedTurn.load(in: project)
+        interrupted[old.id] = nil
         await quit(old)
         try? fm.removeItem(at: old.installedURL)
         try? fm.removeItem(at: old.dir)
@@ -1001,11 +1026,24 @@ final class Store: ObservableObject {
             versionsRevision += 1
         }
         Versions.remember(project, restoredTo: target.label, from: target.date)
+        if target.message == "Scaffold" {
+            // look_at_app can install the first version before the request is saved. Its bundles must
+            // go too: otherwise Open would bring the discarded implementation back.
+            do {
+                for bundle in [project.installedURL, project.builtURL] where FileManager.default.fileExists(atPath: bundle.path) {
+                    try FileManager.default.removeItem(at: bundle)
+                }
+                stamps[project.id] = nil
+            } catch {
+                log(project, .error, "Lamp couldn't remove the unfinished app. Its restored files are kept; try Discard again.")
+                return
+            }
+        }
         guard clearInterrupted(project) else { return }
         log(project, .status, "Discarded the unfinished change")
         // A look_at_app may have installed the partial change before Lamp quit. Replace that too; a new
         // app with no first version yet just returns to its scaffold, without opening an empty app.
-        if hasVersions(project), setup.hasBuildTools {
+        if target.message != "Scaffold", setup.hasBuildTools {
             if await build(project) == nil { await installReportingCrash(project) }
             else { log(project, .error, "The change was discarded, but the restored app couldn't be rebuilt.") }
         }
@@ -1221,6 +1259,10 @@ final class Store: ObservableObject {
             ?? Self.label(attachments: saved)
         var committed = await Shell.run("git add -A && \(Self.commit) -qm \"$LAMP_PROMPT\"", cwd: project.dir,
                                         env: ["LAMP_PROMPT": label]) { _ in } == 0
+        if !committed, await !Versions.isSaved(project) {
+            log(project, .error, "Lamp couldn't save this change. The unfinished edits are kept; try Finish again.")
+            return TurnResult(end: .failed, watched: watched)
+        }
         // A crash can come after the commit but before the request was linked or the app opened.
         if finishingSaved, let record = interrupted[project.id], let head = await Versions.head(project), head != record.before {
             committed = true
@@ -1244,6 +1286,7 @@ final class Store: ObservableObject {
                 }
             }
         }
+        guard turns[project.id]?.installFailed != true else { return TurnResult(end: .failed, watched: watched) }
         // Like build errors, a crash on launch goes back to the agent. The fix joins this turn's commit,
         // so Undo still reverts the whole change.
         for _ in 0..<2 where crash != nil {
@@ -1252,8 +1295,14 @@ final class Store: ObservableObject {
                                  on: project),
                   await buildFixingErrors(project) else { return TurnResult(end: .failed, watched: watched) }
             let commit = committed ? "-q --amend --no-edit" : "-qm 'Fix a crash on launch'"
-            if await Shell.run("git add -A && \(Self.commit) \(commit)", cwd: project.dir) { _ in } == 0 { committed = true }
+            let saved = await Shell.run("git add -A && \(Self.commit) \(commit)", cwd: project.dir) { _ in } == 0
+            if !saved, await !Versions.isSaved(project) {
+                log(project, .error, "Lamp couldn't save the repair. The unfinished edits are kept; try Finish again.")
+                return TurnResult(end: .failed, watched: watched)
+            }
+            if saved { committed = true }
             crash = await install(project)
+            guard turns[project.id]?.installFailed != true else { return TurnResult(end: .failed, watched: watched) }
         }
         if crash != nil {
             log(project, .error, "\(project.name) still quits right after opening. Retry with Finish, or discard this change.")
@@ -2232,6 +2281,7 @@ final class Store: ObservableObject {
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
     private func install(_ project: LampProject, inFront: Bool = true) async -> String? {
         guard exists(project) else { return nil }
+        turns[project.id]?.installFailed = false
         if project.platform == .iphone { return await installOnSimulator(project, inFront: inFront) }
         await prepareIcon(project)
         await quit(project)
@@ -2239,6 +2289,7 @@ final class Store: ObservableObject {
         do {
             try await deploy(project)
         } catch {
+            turns[project.id]?.installFailed = true
             log(project, .error, "Couldn't install the app: \(error.localizedDescription)")
             return nil
         }
@@ -2258,6 +2309,7 @@ final class Store: ObservableObject {
                 log(project, .status, "\(project.name) is ready")
             }
         } catch {
+            turns[project.id]?.installFailed = true
             log(project, .error, "Couldn't open the app: \(error.localizedDescription)")
         }
         upgradeIconArt(project)
@@ -2953,8 +3005,9 @@ final class Store: ObservableObject {
         if screenshots.isEmpty {
             let launched = Date()
             let crash = await install(project, inFront: false)
-            turn.look.installed = true
+            turn.look.installed = !turn.installFailed
             turn.look.crash = crash
+            if turn.installFailed { return (200, ["text": "The app built, but Lamp couldn't install or open it. The error is in the chat."]) }
             if let crash {
                 return (200, ["text": "The app \(changed ? "built" : "is built"), but it quit right after launching.\n\n\(crash)"])
             }
