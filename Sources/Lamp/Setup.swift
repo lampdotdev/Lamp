@@ -588,24 +588,42 @@ struct ExperimentalSettings: View {
 /// needed and asks for its permissions; turning it off stops apps using it (CuaDriver stays installed).
 struct ComputerUseSettings: View {
     @AppStorage("computerUse") private var enabled = false
+    @AppStorage("codexComputerUseOff") private var codexOff = false
     @State private var status: ComputerUse.Status?
     @State private var working: String?
     @State private var problem: String?
 
     var body: some View {
         Section("Permissions and Privacy") {
-            // A checkbox with its description under its words, as in Building's Permissions and Privacy.
+            // Checkboxes with their descriptions under their words, as in Building's Permissions and Privacy;
+            // the choice of what does the clicking is a part of the first, so it's indented under it.
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Let apps use your other apps", isOn: Binding(get: { enabled }, set: { on in
                     if on { Task { await turnOn() } } else { enabled = false; problem = nil }
                 }))
-                .toggleStyle(.checkbox)
                 .disabled(working != nil)
-                Text("Lets your apps read and use your other apps, such as Slack, Mail, or Gmail and LinkedIn in your browser, with the accounts you're already signed in to. Turning it on adds CuaDriver (from Cua, open source) to Applications, and macOS asks you to allow it Accessibility and Screen Recording. Apps ask before every click or keystroke. Needs an OpenRouter key.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 20)   // lines up with the checkbox's words
+                note("Lets your apps read and use your other apps, such as Slack, Mail, or Gmail and LinkedIn in your browser, with the accounts you're already signed in to. Apps ask before every click or keystroke.")
+                if CodexComputerUse.server != nil {
+                    // The ChatGPT app's Computer Use is on this Mac: it does the looking and clicking, unless the
+                    // person would rather keep CuaDriver.
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("Use the ChatGPT app's Computer Use", isOn: Binding(get: { !codexOff }, set: { useCodex in
+                            codexOff = !useCodex
+                            // Back to CuaDriver while the feature is on: it has to be installed and allowed, like a first turn-on.
+                            Task { if enabled, !useCodex { await turnOn() } else { status = await ComputerUse.status() } }
+                        }))
+                        .disabled(working != nil)
+                        note(codexOff
+                             ? "CuaDriver (from Cua, open source) does the looking and clicking: turning the setting above on adds it to Applications, and macOS asks you to allow it Accessibility and Screen Recording."
+                             : "The ChatGPT app has Computer Use installed, so it does the looking and clicking, with the permissions you gave it there. It sends real clicks to the app in the background and reads its contents without moving your pointer. Turn it off to use CuaDriver instead.")
+                    }
+                    .padding(.top, 6)
+                    .padding(.leading, 20)
+                } else {
+                    note("Turning it on adds CuaDriver (from Cua, open source) to Applications, and macOS asks you to allow it Accessibility and Screen Recording. With the ChatGPT app and its Computer Use plugin installed, Lamp uses that instead.")
+                }
             }
+            .toggleStyle(.checkbox)
             .frame(maxWidth: .infinity, alignment: .leading)
             if let working {
                 HStack(spacing: 6) { ProgressView().controlSize(.small); Text(working).foregroundStyle(.secondary) }
@@ -622,8 +640,21 @@ struct ComputerUseSettings: View {
         .task { status = await ComputerUse.status() }
     }
 
+    /// A checkbox's description, lined up with its words.
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.leading, 20)
+    }
+
     private func turnOn() async {
         problem = nil
+        if CodexComputerUse.isAvailable {   // nothing to install: the ChatGPT app's helper has the permissions
+            status = .ready
+            enabled = true
+            return
+        }
         do {
             try await ComputerUse.install { working = $0 }
             status = await ComputerUse.status()

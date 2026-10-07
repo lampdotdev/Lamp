@@ -21,6 +21,15 @@ enum Edition {
     /// What the app is called where a name appears: window title, folders.
     static let name = isDev ? "Lamp Dev" : "Lamp"
 
+    static var bugReportEndpoint: URL {
+        // An isolated development build can exercise real HTTP delivery to a local stand-in.
+        // Installed releases always use lamp.dev; no destination secret belongs in the app.
+        if isDev, let value = ProcessInfo.processInfo.environment["LAMP_BUG_REPORT_TEST_ENDPOINT"],
+           let url = URL(string: value), url.scheme == "http",
+           ["127.0.0.1", "localhost", "[::1]"].contains(url.host ?? "") { return url }
+        return URL(string: "https://lamp.dev/api/bug-report")!
+    }
+
     private static let home = FileManager.default.homeDirectoryForCurrentUser
 
     /// ~/Library/Application Support/Lamp (Dev): apps, keys, pi's config, models, tools.

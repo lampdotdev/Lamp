@@ -1082,8 +1082,11 @@ final class Store: ObservableObject {
     /// while the agent builds the first version. Returns the app as it is now.
     private func bootstrap(_ project: LampProject, brief: String) async -> LampProject {
         var project = project
-        if project.untitled, let name = await AppName.suggest(for: brief) {
-            project = await performRename(project, to: name)
+        if project.untitled {
+            let suggestion = await AppName.suggest(for: brief)
+            progress[project.id]?.sketch = suggestion?.sketch ?? []
+            progress[project.id]?.naming = false
+            if let name = suggestion?.name { project = await performRename(project, to: name) }
         }
         if Icons.load(project) == nil {
             let designing = project
@@ -1116,6 +1119,9 @@ final class Store: ObservableObject {
         // the answers start the build and get the build card. An imported app has already been built.
         let newApp = Template.isScaffold(project) && !hasVersions(project)
         progress[project.id] = TurnProgress(newApp: newApp)
+        // Only the first message names the app (bootstrap). A later one, after the agent only asked questions,
+        // finds it untitled if that naming failed, and mustn't show a naming that isn't happening.
+        progress[project.id]?.naming = first && project.untitled
         Task {
             var project = project
             let saved = post(messages, to: project)
@@ -1328,7 +1334,7 @@ final class Store: ObservableObject {
             crash = await install(project)
         }
         if crash != nil {
-            log(project, .error, "\(project.name) still quits right after opening. Try describing the change differently, or press Undo.")
+            log(project, .error, ErrorMessages.quitsAfterLaunch(project.name))
         }
         // After the crash fixes, which amend the commit, so the name and the links stay on the version that's kept.
         if committed || turns[project.id]?.pendingName != nil, let head = await Versions.head(project) {
@@ -1376,7 +1382,7 @@ final class Store: ObservableObject {
         }
         guard turns[project.id]?.stopped != true, exists(project) else { return false }
         if errors != nil {
-            log(project, .error, "Sorry, I couldn't get that change working. Try describing it differently, or press Undo.")
+            log(project, .error, ErrorMessages.buildFailed)
         }
         return errors == nil
     }
@@ -1755,7 +1761,7 @@ final class Store: ObservableObject {
         do {
             _ = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
         } catch {
-            log(project, .error, "Couldn't open the app: \(error.localizedDescription)")
+            log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
         }
         refreshOpenApps()
     }
@@ -2063,7 +2069,7 @@ final class Store: ObservableObject {
         if await build(project) == nil {
             await installReportingCrash(project)
         } else {
-            log(project, .error, "This app doesn't build right now. Describe a change and I'll fix it, or press Undo.")
+            log(project, .error, ErrorMessages.appDoesNotBuild)
         }
     }
 
@@ -2127,7 +2133,7 @@ final class Store: ObservableObject {
         guard let target = start.flatMap({ id in versions.first { $0.id == id } }),
               await Versions.restoreFiles(project, to: target),
               let chat = logs[project.id], let index = chat.firstIndex(where: { $0.id == line.id }) else {
-            log(project, .error, "Lamp couldn't go back to how the app was before that message, so nothing was sent.")
+            log(project, .error, ErrorMessages.restoreFailed)
             return false
         }
         if await Versions.save(project, message: Versions.restoredMessage(to: target)), let head = await Versions.head(project) {
@@ -2281,8 +2287,14 @@ final class Store: ObservableObject {
     private func build(_ project: LampProject) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         log(project, .status, "Building…")
-        try? Template.writeSupport(for: project)
-        Template.upgradeBuildScript(for: project)
+        // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
+        do {
+            try Template.writeOwnedFiles(for: project)
+        } catch {
+            let problem = "Lamp couldn't write the app's build files: \(error.localizedDescription)"
+            log(project, .error, problem)
+            return problem
+        }
         // Taken before the build, so an edit made while it runs still counts as a change afterwards.
         let fingerprint = Runtime.fingerprint(project)
         var output: [String] = []
@@ -2322,7 +2334,7 @@ final class Store: ObservableObject {
         do {
             try await deploy(project)
         } catch {
-            log(project, .error, "Couldn't install the app: \(error.localizedDescription)")
+            log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
             return nil
         }
         let config = NSWorkspace.OpenConfiguration()
@@ -2341,7 +2353,7 @@ final class Store: ObservableObject {
                 log(project, .status, "\(project.name) is ready")
             }
         } catch {
-            log(project, .error, "Couldn't open the app: \(error.localizedDescription)")
+            log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
         }
         upgradeIconArt(project)
         refreshOpenApps()
@@ -2423,7 +2435,7 @@ final class Store: ObservableObject {
             if inFront { log(project, .status, "\(project.name) is ready on the \(project.family.name) simulator") }
         } catch {
             // A failure to boot, install or launch is reported like a crash: the agent must hear about it.
-            log(project, .error, "Couldn't open the app: \(error.localizedDescription)")
+            log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
             refreshOpenApps()
             return giveBack("Couldn't open the app in the simulator: \(error.localizedDescription)")
         }
@@ -2555,7 +2567,7 @@ final class Store: ObservableObject {
     /// For Open App and Undo, where no agent is running to fix a crash.
     private func installReportingCrash(_ project: LampProject) async {
         if await install(project) != nil {
-            log(project, .error, "\(project.name) crashes when it opens. Ask me to fix the crash, or press Undo.")
+            log(project, .error, ErrorMessages.crashAfterLaunch(project.name))
         }
     }
 
@@ -2834,7 +2846,7 @@ final class Store: ObservableObject {
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
-        let paths = ["/ai", "/ai/image", "/ai/decide", "/ai/computer", "/agent/look", "/agent/use", "/agent/approve",
+        let paths = ["/ai", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
                      "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/mcp", "/pi/key"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
@@ -2860,6 +2872,12 @@ final class Store: ObservableObject {
         if route == "/pi/key" {
             guard let key = KeyTicket.redeem(token) else { return (403, ["error": "This ticket isn't good any more."]) }
             return (200, ["key": key])
+        }
+        // A coding agent driving another app's task (ComputerUse.Job): its token opens only the task's own
+        // tools, over MCP (Claude Code, Codex) or pi's extension's route, never the build tools.
+        if let task = computerTasks[token] {
+            guard route == "/mcp" || route == "/agent/computer" else { return (403, ["error": "Not for this task."]) }
+            return await computerCall(request, task: task, mcp: route == "/mcp")
         }
         if agentRoute {
             // The agent's routes take only the agent's token for the turn in progress.
@@ -3048,22 +3066,74 @@ final class Store: ObservableObject {
             }
             return (503, ["error": "Using other apps is turned off. Turn on “Let apps use your other apps” in Lamp → Settings → Apps, then try again."])
         }
-        // The model the app chose in its info panel; Sonnet if it hasn't chosen one.
-        let model = AppAI.models.first { $0.id == AppModels.load(project).text }?.openRouter ?? AppAI.defaultModel.openRouter
+        if let problem = ComputerUse.check() { return (502, ["error": problem.message]) }
+        // The model the app chose in its info panel; Sonnet if it hasn't chosen one. Its OpenRouter name with a
+        // key, its own name for Claude Code or Codex answering instead.
+        let chosen = AppAI.models.first { $0.id == AppModels.load(project).text } ?? AppAI.defaultModel
+        let model = Provider.hasKey ? chosen.openRouter : chosen.id
         var allowAll = false
         do {
-            let (text, cost) = try await ComputerUse.run(task: task, appName: project.name, allowActions: allowActions,
-                                                         model: model) { [weak self] action in
+            let work = try await ComputerUse.Job(task, appName: project.name, allowActions: allowActions) { [weak self] action in
                 guard let self, ComputerUse.enabled else { return false }
                 if allowAll { return true }
                 let answer = await self.confirm(action, for: project)
                 if answer == .allowAll { allowAll = true }
                 return answer != .deny
             }
+            defer { work.close() }
+            let token = UUID().uuidString + UUID().uuidString
+            computerTasks[token] = work
+            defer { computerTasks[token] = nil }
+            let (text, cost) = try await ComputerUse.answer(work, model: model, token: token)
             record(project, cost: cost)
             return (200, ["text": text])
         } catch {
             return (502, ["error": error.localizedDescription])
+        }
+    }
+
+    /// Tasks a coding agent is driving right now, by the token that agent was given.
+    private var computerTasks: [String: ComputerUse.Job] = [:]
+
+    /// A coding agent's call into a task: MCP for Claude Code and Codex (list the tools, call one), or pi's
+    /// extension's plain POST of {name, arguments}, answered with the text and the pictures.
+    private func computerCall(_ request: Gateway.Request, task: ComputerUse.Job, mcp: Bool) async -> (Int, [String: Any]) {
+        let json = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+        guard mcp else {
+            guard let name = json["name"] as? String else { return (400, ["error": "Missing tool name."]) }
+            do {
+                let (text, pictures) = try await task.call(name, json["arguments"] as? [String: Any] ?? [:])
+                return (200, ["text": text, "pictures": pictures.map { ["mimeType": $0.mimeType, "data": $0.data] }])
+            } catch {
+                return (502, ["error": error.localizedDescription])
+            }
+        }
+        guard let method = json["method"] as? String else {
+            return (400, ["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "Not a JSON-RPC request."]])
+        }
+        let id = json["id"] ?? NSNull()
+        func reply(_ result: [String: Any]) -> (Int, [String: Any]) { (200, ["jsonrpc": "2.0", "id": id, "result": result]) }
+        switch method {
+        case "initialize":
+            return reply(["protocolVersion": "2025-03-26", "capabilities": ["tools": [:]],
+                          "serverInfo": ["name": "lamp", "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"]])
+        case "ping":
+            return reply([:])
+        case "tools/list":
+            return reply(["tools": task.mcpTools])
+        case "tools/call":
+            let params = json["params"] as? [String: Any] ?? [:]
+            do {
+                let (text, pictures) = try await task.call(params["name"] as? String ?? "", params["arguments"] as? [String: Any] ?? [:])
+                var content: [[String: Any]] = [["type": "text", "text": text]]
+                content += pictures.map { ["type": "image", "data": $0.data, "mimeType": $0.mimeType] }
+                return reply(["content": content])
+            } catch {
+                return reply(["content": [["type": "text", "text": error.localizedDescription]], "isError": true])
+            }
+        default:
+            if json["id"] == nil { return (202, [:]) }
+            return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Method not found: \(method)"]])
         }
     }
 

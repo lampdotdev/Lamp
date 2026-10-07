@@ -551,6 +551,9 @@ extension Agent {
         switch (type, item["type"] as? String) {
         case ("thread.started", _):
             return (obj["thread_id"] as? String).map { [.session($0)] } ?? []
+        case ("turn.started", _):
+            // The model starts by thinking, sometimes for minutes, and says nothing until its first tool call.
+            return [.step("")]
         case ("item.completed", "agent_message"):
             return (item["text"] as? String)?.trimmed.nilIfEmpty.map { [.text($0)] } ?? []
         case ("item.started", "web_search"):

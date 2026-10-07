@@ -5,6 +5,24 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.9.3
+
+- Report a bug from Help: Lamp gathers what happened, shows you the report to check, and sends it through
+  lamp.dev.
+- The build script and package file of every app are Lamp's own again at each build, so nothing the agent
+  writes into them can run around your approval.
+- Opening a shared app: the check no longer warns about Lamp's own building blocks, and says which of your
+  data an app hands to the AI.
+
+## 0.9.2
+
+- Apps can use your other apps whatever builds them: with a local model or your Claude Code or Codex
+  sign-in as well as with an OpenRouter key. The person still approves every click and keystroke.
+- With the ChatGPT app's Computer Use installed, that's what does the looking and clicking: real clicks and
+  drags in the background, better reading of what's on screen, and nothing to install. CuaDriver stays as the
+  fallback, and a switch in Settings → Apps chooses.
+- The key Lamp hands its built-in agent is given out only to this Mac again.
+
 ## 0.9.1
 
 - iPhone and iPad apps use more of the phone: the agent knows about the motion sensors, the camera and

@@ -46,6 +46,7 @@ enum ComputerUse {
     static var isInstalled: Bool { FileManager.default.isExecutableFile(atPath: executable.path) }
 
     static func status() async -> Status {
+        if CodexComputerUse.isAvailable { return .ready }   // its helper app holds the permissions
         guard isInstalled else { return .notInstalled }
         // The daemon answers with its own permission state (it holds them, not Lamp). Right after an install
         // it may not be up yet, and the answer has no permissions in it: ask again shortly.
@@ -197,7 +198,7 @@ enum ComputerUse {
     }
 
     /// "the “Send” button": what a person would call an element from the last window read.
-    private static func label(of element: [String: Any]) -> String? {
+    static func label(of element: [String: Any]) -> String? {
         let text = [element["label"], element["title"], element["value"], element["description"]]
             .compactMap { ($0 as? String)?.trimmed }.first { !$0.isEmpty }
         guard let text else { return nil }
@@ -208,61 +209,222 @@ enum ComputerUse {
         return "the “\(text.prefix(80))” \(kind)"
     }
 
-    /// Runs `task` and returns the model's answer, plus the cost in USD. `approve` is asked before every action
-    /// and returns false to refuse it.
-    static func run(task: String, appName: String, allowActions: Bool, model: String,
-                    approve: @escaping (Action) async -> Bool) async throws -> (String, Double) {
-        guard isInstalled else {
-            throw Failure(message: "Using other apps isn't set up yet. Turn on “Let apps use your other apps” in Lamp → Settings → Apps.")
+    /// What stops a task before it starts, or nil.
+    static func check() -> Failure? {
+        guard isInstalled || CodexComputerUse.isAvailable else {
+            return Failure(message: "Using other apps isn't set up yet. Turn on “Let apps use your other apps” in Lamp → Settings → Apps.")
         }
         // While the Mac is locked, apps don't expose their windows and screen capture is refused.
         if (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true {
-            throw Failure(message: "The Mac is locked, so other apps can't be read. Try again once it's unlocked.")
+            return Failure(message: "The Mac is locked, so other apps can't be read. Try again once it's unlocked.")
         }
-        guard let key = KeyStore.openRouterKey else {
-            throw Failure(message: "Using other apps needs an OpenRouter key. Add one in Lamp → Settings → Providers.")
-        }
-        let client = try MCPClient(executable: executable, arguments: ["mcp"])
-        defer { client.close() }
-        let instructions = try await client.initialize()
-        let allowed = allowActions ? readTools.union(actTools) : readTools
-        let tools = try await client.listTools().filter { allowed.contains($0.name) }.map { tool -> [String: Any] in
-            var schema = tool.inputSchema
-            if actTools.contains(tool.name) {
-                // Every action carries a plain description, shown to the person before it happens.
-                var properties = schema["properties"] as? [String: Any] ?? [:]
-                properties["intent"] = ["type": "string",
-                                        "description": "What this does, in plain words for the person approving it, e.g. “Click Send in Slack”."]
-                schema["properties"] = properties
-                schema["required"] = ((schema["required"] as? [String]) ?? []) + ["intent"]
+        return nil
+    }
+
+    /// Turning the setting off stops a task that's already running, before its next step.
+    static let stopped = Failure(message: "Using other apps was turned off, so Lamp stopped the task.")
+
+    /// One task in progress (not Swift's Task): the connection to the driver, the tools the model may use, what the person has
+    /// to approve, and the names of what's on screen. Whichever model drives the task (OpenRouter, a local
+    /// model, or a coding agent through Lamp's MCP endpoint) calls `call` for each step.
+    /// What does the looking and clicking: Codex's computer use when the ChatGPT app has it, else CuaDriver.
+    enum Driver: String { case codex, cua }
+
+    final class Job {
+        let taskText: String
+        let appName: String
+        let allowActions: Bool
+        let approve: (Action) async -> Bool
+        let driver: Driver
+        private let client: MCPClient
+        private let allowed: Set<String>
+        /// The driver's tools the model may use, with `intent` added to those that act.
+        let tools: [MCPClient.Tool]
+        let systemPrompt: String
+        private var labels: [String: String] = [:]   // element tokens from the windows read so far
+
+        init(_ taskText: String, appName: String, allowActions: Bool, approve: @escaping (Action) async -> Bool) async throws {
+            self.taskText = taskText
+            self.appName = appName
+            self.allowActions = allowActions
+            self.approve = approve
+            // Codex's computer use first, when it's there and starts; CuaDriver otherwise. Codex's asks before
+            // each step, and the answer is the person's for anything that acts.
+            var codex: MCPClient?
+            var codexInstructions = ""
+            if CodexComputerUse.isAvailable {
+                if let client = try? CodexComputerUse.connect(elicitation: { _ in false }),
+                   let instructions = try? await client.initialize() {
+                    codex = client
+                    codexInstructions = instructions
+                } else {
+                    print("Codex's computer use is installed but didn't start; using CuaDriver.")
+                }
             }
-            return ["type": "function", "function": ["name": tool.name, "description": tool.description, "parameters": schema]]
+            if let codex {
+                driver = .codex
+                client = codex
+                let names: Set<String> = ["js", "js_reset"]
+                allowed = names
+                let listed = try await client.listTools()
+                tools = listed.filter { names.contains($0.name) }
+                systemPrompt = CodexComputerUse.systemPrompt(appName: appName, allowActions: allowActions, instructions: codexInstructions,
+                                                             toolDescription: listed.first { $0.name == "js" }?.description ?? "")
+                return   // the server's questions are answered from `call`, once self exists
+            }
+            driver = .cua
+            guard isInstalled else {
+                throw Failure(message: "Using other apps isn't set up yet. Turn on “Let apps use your other apps” in Lamp → Settings → Apps.")
+            }
+            client = try MCPClient(executable: executable, arguments: ["mcp"])
+            let instructions: String
+            do {
+                instructions = try await client.initialize()
+            } catch {
+                client.close()
+                throw error
+            }
+            allowed = allowActions ? readTools.union(actTools) : readTools
+            let allowed = allowed
+            tools = try await client.listTools().filter { allowed.contains($0.name) }.map { tool in
+                var schema = tool.inputSchema
+                if actTools.contains(tool.name) {
+                    // Every action carries a plain description, shown to the person before it happens.
+                    var properties = schema["properties"] as? [String: Any] ?? [:]
+                    properties["intent"] = ["type": "string",
+                                            "description": "What this does, in plain words for the person approving it, e.g. “Click Send in Slack”."]
+                    schema["properties"] = properties
+                    schema["required"] = ((schema["required"] as? [String]) ?? []) + ["intent"]
+                }
+                return MCPClient.Tool(name: tool.name, description: tool.description, inputSchema: schema)
+            }
+            systemPrompt = """
+            You use the apps on this Mac on behalf of "\(appName)", an app the person made, to do one task, then answer.
+            The person is signed in to their apps and browsers already; work with what's there.
+            \(allowActions
+                ? "You may click, type and press keys when the task needs it. Each action is shown to the person to approve first, so give every action a clear `intent`. Never send, post, delete, buy or change settings unless the task asks for exactly that."
+                : "Only look: you can read windows and scroll, but not click, type or change anything.")
+            Find the right window with list_windows, read it with get_window_state, and scroll to see more. A web page \
+            that's open but not in front: find it with list_browser_tabs and bring it forward with show_browser_tab, \
+            then read its window. Prefer the \
+            element tree to the picture when both have what you need. Keep going until you can answer, then reply \
+            with only the answer, in the form the task asks for. If you can't do it, say what stopped you. Use only \
+            these tools: never a shell, and never files.
+
+            About the tools:
+            \(instructions)
+            """
         }
 
-        let system = """
-        You use the apps on this Mac on behalf of "\(appName)", an app the person made, to do one task, then answer.
-        The person is signed in to their apps and browsers already; work with what's there.
-        \(allowActions
-            ? "You may click, type and press keys when the task needs it. Each action is shown to the person to approve first, so give every action a clear `intent`. Never send, post, delete, buy or change settings unless the task asks for exactly that."
-            : "Only look: you can read windows and scroll, but not click, type or change anything.")
-        Find the right window with list_windows, read it with get_window_state, and scroll to see more. A web page \
-        that's open but not in front: find it with list_browser_tabs and bring it forward with show_browser_tab, \
-        then read its window. Prefer the \
-        element tree to the picture when both have what you need. Keep going until you can answer, then reply \
-        with only the answer, in the form the task asks for. If you can't do it, say what stopped you.
+        func close() { client.close() }
 
-        About the tools:
-        \(instructions)
-        """
-        let allTools = tools + BrowserTabs.tools
-        var messages: [[String: Any]] = [["role": "system", "content": system], ["role": "user", "content": task]]
+        /// Codex's question before a step: reads go ahead, actions only when the task may act and the person
+        /// allows this one (or allowed all for the task). The same dialog as CuaDriver's actions get.
+        private func decide(_ elicitation: MCPClient.Elicitation) async -> Bool {
+            guard enabled else { return false }
+            if CodexComputerUse.read(elicitation) { return true }
+            guard allowActions else { return false }
+            let allowed = await approve(CodexComputerUse.action(elicitation, intent: currentIntent))
+            return allowed && enabled   // it may have been turned off during the dialog
+        }
+
+        /// What the model said the current `js` step is for, shown with each approval it raises.
+        private var currentIntent: String?
+
+        /// The tools in OpenAI's function-calling shape, for the chat-completions loop.
+        var openAITools: [[String: Any]] {
+            tools.map { ["type": "function", "function": ["name": $0.name, "description": $0.description, "parameters": $0.inputSchema]] }
+                + BrowserTabs.tools
+        }
+
+        /// The tools as an MCP server lists them, for the coding agents.
+        var mcpTools: [[String: Any]] {
+            tools.map { ["name": $0.name, "description": $0.description, "inputSchema": $0.inputSchema] }
+                + BrowserTabs.tools.compactMap { tool in
+                    guard let function = tool["function"] as? [String: Any] else { return nil }
+                    return ["name": function["name"] ?? "", "description": function["description"] ?? "", "inputSchema": function["parameters"] ?? [:]]
+                }
+        }
+
+        /// One step: the person's approval when it acts, then the driver. Pictures come back apart from
+        /// the text, for the caller to hand to its model in that model's way.
+        func call(_ name: String, _ arguments: [String: Any]) async throws -> (text: String, pictures: [(mimeType: String, data: String)]) {
+            var arguments = arguments
+            let intent = arguments.removeValue(forKey: "intent") as? String
+            guard enabled else { throw stopped }
+            if BrowserTabs.handles(name) { return (await BrowserTabs.call(name, arguments), []) }
+            guard allowed.contains(name) else { return ("That tool isn't available for this task.", []) }
+            if driver == .codex {
+                // The server asks about each step itself (decide); the title is the model's word for it.
+                client.elicitationHandler = { [weak self] in await self?.decide($0) ?? false }
+                currentIntent = arguments["title"] as? String ?? intent
+                do {
+                    let result = try await client.call(name, arguments: arguments)
+                    return (String(result.text.prefix(60_000)), result.images.map { (mimeType: "image/jpeg", data: compactJPEG($0.data, mimeType: $0.mimeType)) })
+                } catch {
+                    return ("Error: \(error.localizedDescription)", [])
+                }
+            }
+            if actTools.contains(name) {
+                let described = ComputerUse.describe(name, arguments, labels: labels)
+                let action = Action(tool: name, target: described.target, details: described.details, intent: intent)
+                guard await approve(action) else {
+                    return ("The person declined this action. Don't try it another way; finish with what you have, or say what you needed.", [])
+                }
+                guard enabled else { throw stopped }   // it may have been turned off during the dialog
+            }
+            if name == "get_window_state", arguments["max_image_dimension"] == nil { arguments["max_image_dimension"] = 1024 }
+            do {
+                let result = try await client.call(name, arguments: arguments)
+                var text = result.text.isEmpty ? "Done." : String(result.text.prefix(60_000))
+                if name == "list_windows", let windows = visibleWindows(result.structured) { text = windows }
+                if name == "get_window_state",
+                   let elements = (result.structured as? [String: Any])?["elements"] as? [[String: Any]] {
+                    for element in elements {
+                        if let token = element["element_token"] as? String, let label = ComputerUse.label(of: element) {
+                            labels[token] = label
+                        }
+                    }
+                }
+                return (text, result.images.map { (mimeType: "image/jpeg", data: compactJPEG($0.data, mimeType: $0.mimeType)) })
+            } catch {
+                return ("Error: \(error.localizedDescription)", [])
+            }
+        }
+    }
+
+    /// Runs the task with whatever AI Lamp has, and returns the answer plus the cost in USD: OpenRouter when
+    /// there's a key, else the builder itself (pi with whichever provider or local model it builds with,
+    /// Claude Code or Codex) with the driver's tools served by Lamp. `token` is the task's, for that.
+    static func answer(_ task: Job, model: String, token: String) async throws -> (String, Double) {
+        if let key = KeyStore.openRouterKey {
+            return try await loop(task, endpoint: "https://openrouter.ai/api/v1/chat/completions", key: key, model: model)
+        }
+        switch Builder.engine {
+        case .pi:
+            guard Agent.executable != nil else { throw Failure(message: "Lamp's AI builder is missing. Download Lamp again.") }
+            // A local model's server is started, and Ollama's or LM Studio's models are registered with pi,
+            // as before a build turn.
+            if Builder.piProvider == Builder.localProvider { _ = try await LocalModels.shared.ensureServer(for: Builder.piModel) }
+            if LocalModels.externalIDs.contains(Builder.piProvider) { await LocalModels.shared.detectExternal() }
+            return try await viaEngine(.pi, task, token: token, model: nil)
+        case .claude, .codex:
+            guard ToolLocator.path(for: Builder.engine) != nil else {
+                throw Failure(message: "Using other apps needs an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,).")
+            }
+            return try await viaEngine(Builder.engine, task, token: token, model: model)
+        }
+    }
+
+    /// The loop for OpenRouter's chat-completions API with tool calling: the model gets the task and the
+    /// tools, and each tool call goes to the driver until it answers.
+    private static func loop(_ task: Job, endpoint: String, key: String?, model: String) async throws -> (String, Double) {
+        let tools = task.openAITools
+        var messages: [[String: Any]] = [["role": "system", "content": task.systemPrompt], ["role": "user", "content": task.taskText]]
         var cost = 0.0
-        var labels: [String: String] = [:]   // element tokens from the windows read so far
-        // Turning the setting off stops a task that's already running, before its next step.
-        let stopped = Failure(message: "Using other apps was turned off, so Lamp stopped the task.")
         for _ in 0..<40 {
             guard enabled else { throw stopped }
-            let (message, stepCost) = try await complete(messages: messages, tools: allTools, model: model, key: key)
+            let (message, stepCost) = try await complete(endpoint: endpoint, messages: messages, tools: tools, model: model, key: key)
             cost += stepCost
             messages.append(message)
             let calls = message["tool_calls"] as? [[String: Any]] ?? []
@@ -273,43 +435,11 @@ enum ComputerUse {
             for call in calls {
                 let function = call["function"] as? [String: Any] ?? [:]
                 let name = function["name"] as? String ?? ""
-                var arguments = ((function["arguments"] as? String).flatMap {
+                let arguments = ((function["arguments"] as? String).flatMap {
                     try? JSONSerialization.jsonObject(with: Data($0.utf8))
                 } as? [String: Any]) ?? [:]
-                let intent = arguments.removeValue(forKey: "intent") as? String
-                guard enabled else { throw stopped }
-                var reply: String
-                if BrowserTabs.handles(name) {
-                    reply = await BrowserTabs.call(name, arguments)
-                } else if !allowed.contains(name) {
-                    reply = "That tool isn't available for this task."
-                } else if actTools.contains(name), !(await approve({
-                    let described = describe(name, arguments, labels: labels)
-                    return Action(tool: name, target: described.target, details: described.details, intent: intent)
-                }())) {
-                    reply = "The person declined this action. Don't try it another way; finish with what you have, or say what you needed."
-                } else {
-                    guard enabled else { throw stopped }   // it may have been turned off during the dialog
-                    if name == "get_window_state", arguments["max_image_dimension"] == nil { arguments["max_image_dimension"] = 1024 }
-                    do {
-                        let result = try await client.call(name, arguments: arguments)
-                        reply = result.text.isEmpty ? "Done." : String(result.text.prefix(60_000))
-                        if name == "list_windows", let windows = visibleWindows(result.structured) { reply = windows }
-                        if name == "get_window_state",
-                           let elements = (result.structured as? [String: Any])?["elements"] as? [[String: Any]] {
-                            for element in elements {
-                                if let token = element["element_token"] as? String, let name = label(of: element) {
-                                    labels[token] = name
-                                }
-                            }
-                        }
-                        pictures += result.images.map {
-                            ["type": "image_url", "image_url": ["url": compact($0.data, mimeType: $0.mimeType)]]
-                        }
-                    } catch {
-                        reply = "Error: \(error.localizedDescription)"
-                    }
-                }
+                let (reply, images) = try await task.call(name, arguments)
+                pictures += images.map { ["type": "image_url", "image_url": ["url": "data:\($0.mimeType);base64,\($0.data)"]] }
                 messages.append(["role": "tool", "tool_call_id": call["id"] as? String ?? "", "content": reply])
             }
             // Tool results are text; pictures from them follow as one message the model can see.
@@ -327,19 +457,113 @@ enum ComputerUse {
         throw Failure(message: "The task took too many steps, so Lamp stopped it.")
     }
 
-    /// The driver's pictures are PNGs, around a megabyte each: as JPEGs they're a tenth of that, which keeps each
-    /// request small enough to upload reliably.
-    private static func compact(_ base64: String, mimeType: String) -> String {
-        guard let data = Data(base64Encoded: base64), let bitmap = NSBitmapImageRep(data: data),
-              let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.7]) else {
-            return "data:\(mimeType);base64,\(base64)"
+    /// The task as one turn of a coding agent, with the driver's tools: pi through its extension (which
+    /// posts each call to Lamp), Claude Code and Codex through Lamp's MCP endpoint. Isolated from the
+    /// person's own setup like a build turn, in an empty folder, with no file or shell tools. The agent's
+    /// last message is the answer.
+    private static func viaEngine(_ engine: Engine, _ task: Job, token: String, model: String?) async throws -> (String, Double) {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-computer-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var env: [String: String] = ["PATH": ToolLocator.userPath, "LAMP_TOKEN": token,
+                                     "LAMP_SYSTEM": task.systemPrompt, "LAMP_PROMPT": task.taskText,
+                                     "MCP_TOOL_TIMEOUT": "600000"]
+        let command: String
+        switch engine {
+        case .pi:
+            // The extension registers the tools from this file and posts each call to Lamp.
+            let toolsFile = folder.appendingPathComponent("computer-tools.json")
+            try JSONSerialization.data(withJSONObject: task.mcpTools).write(to: toolsFile)
+            env.merge(Agent.environment(prompt: task.taskText, files: [], session: "", sessionDir: folder.path)) { $1 }
+            env["LAMP_COMPUTER_TOOLS_JSON"] = toolsFile.path
+            env["LAMP_COMPUTER_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/computer"
+            env["LAMP_SYSTEM"] = task.systemPrompt
+            // No built-in tools (files, shell) but the extension's; no extensions but Lamp's, whatever the
+            // person's own pi setup has.
+            command = """
+            "$LAMP_PI" --mode json --provider "$LAMP_PROVIDER" --model "$LAMP_MODEL" --no-builtin-tools --no-session \\
+              --no-extensions -e "$LAMP_TOOLS" --no-skills --no-prompt-templates --no-context-files --no-approve \\
+              --system-prompt "$LAMP_SYSTEM" -- "$LAMP_PROMPT"
+            """
+        case .claude:
+            env["LAMP_TOOL"] = ToolLocator.path(for: .claude) ?? "claude"
+            let mcpConfig = folder.appendingPathComponent("mcp.json")
+            let mcp: [String: Any] = ["mcpServers": ["lamp": ["type": "http", "url": "http://127.0.0.1:\(Gateway.port)/mcp",
+                                                               "headers": ["Authorization": "Bearer ${LAMP_TOKEN}"]]]]
+            try JSONSerialization.data(withJSONObject: mcp).write(to: mcpConfig)
+            env["LAMP_CLAUDE_MCP"] = mcpConfig.path
+            env["LAMP_CLAUDE_ALLOWED"] = task.mcpTools.compactMap { $0["name"] as? String }.map { "mcp__lamp__" + $0 }.joined(separator: ",")
+            env["LAMP_MODEL"] = model ?? ""
+            command = """
+            "$LAMP_TOOL" -p "$LAMP_PROMPT" --output-format stream-json --verbose --no-session-persistence \\
+              --restricted --strict-mcp-config --mcp-config "$LAMP_CLAUDE_MCP" --disable-slash-commands \\
+              --tools '' --allowedTools "$LAMP_CLAUDE_ALLOWED" --system-prompt "$LAMP_SYSTEM"
+            """ + ((model ?? "").isEmpty ? "" : " --model \"$LAMP_MODEL\"")
+        case .codex:
+            env["LAMP_TOOL"] = ToolLocator.path(for: .codex) ?? "codex"
+            env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Agent.tomlString(task.systemPrompt)
+            var modelArg = ""
+            if let model, Builder.codexModels.contains(where: { $0.id == model && !model.isEmpty }) {
+                env["LAMP_MODEL"] = model
+                modelArg = "-m \"$LAMP_MODEL\" "
+            }
+            // Codex keeps its shell whatever the sandbox, and reads files with it: a hook says no to every
+            // command, so the task has nothing but its own tools. The read-only sandbox covers writes.
+            let deny = folder.appendingPathComponent("deny.sh")
+            try """
+            #!/bin/sh
+            printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"This task may only use the tools Lamp gave it: no shell, no files."}}'
+
+            """.write(to: deny, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: deny.path)
+            env["LAMP_CODEX_HOOKS"] = #"hooks.PreToolUse=[{matcher="^Bash$",hooks=[{type="command",timeout=60,command="'"# + deny.path + #"'"}]}]"#
+            command = """
+            "$LAMP_TOOL" exec --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check --ephemeral \\
+              -s read-only -c "$LAMP_CODEX_HOOKS" \(modelArg)-c "$LAMP_CODEX_INSTRUCTIONS" \\
+              -c mcp_servers.lamp.url="http://127.0.0.1:\(Gateway.port)/mcp" -c mcp_servers.lamp.bearer_token_env_var="LAMP_TOKEN" \\
+              -c mcp_servers.lamp.tool_timeout_sec=3600 -c mcp_servers.lamp.default_tools_approval_mode="approve" -- "$LAMP_PROMPT"
+            """
         }
-        return "data:image/jpeg;base64,\(jpeg.base64EncodedString())"
+        var text = ""
+        var cost = 0.0
+        var failure: String?
+        var notice: String?   // the agent's own last word about what went wrong, when it didn't answer
+        var lastLine = ""
+        let status = await Shell.run(command, cwd: folder, env: env) { line in
+            lastLine = line
+            for event in Agent.parse(line, engine: engine) {
+                switch event {
+                case .text(let chunk): text = chunk   // the last message is the answer
+                case .cost(let amount): cost += amount
+                case .failed(let message): failure = message
+                case .raw(let message): notice = message
+                default: break
+                }
+            }
+        }
+        guard enabled else { throw stopped }
+        if let failure { throw Failure(message: Provider.friendlyError(failure)) }
+        guard status == 0 || !text.isEmpty else {
+            let why = notice ?? (lastLine.hasPrefix("{") ? "" : lastLine.trimmed)
+            // 137 is a kill: the agent was stopped from outside, before it said anything.
+            let stoppedEarly = status == 137 && text.isEmpty && why.isEmpty
+            throw Failure(message: stoppedEarly ? "\(engine.title) stopped before it could answer. Try again."
+                          : "The AI didn't answer." + (why.isEmpty ? "" : " " + Provider.friendlyError(why)))
+        }
+        return (text.trimmed, cost)
+    }
+
+    /// The driver's pictures are PNGs, around a megabyte each: as JPEGs they're a tenth of that, which keeps each
+    /// request small enough to upload reliably. Base64 of the JPEG (or of the original when it can't be read).
+    static func compactJPEG(_ base64: String, mimeType: String) -> String {
+        guard let data = Data(base64Encoded: base64), let bitmap = NSBitmapImageRep(data: data),
+              let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.7]) else { return base64 }
+        return jpeg.base64EncodedString()
     }
 
     /// list_windows lists every window on the Mac, hundreds of them, most off screen or untitled. The model only
     /// needs the ones a person could be looking at.
-    private static func visibleWindows(_ structured: Any?) -> String? {
+    static func visibleWindows(_ structured: Any?) -> String? {
         guard let windows = (structured as? [String: Any])?["windows"] as? [[String: Any]] else { return nil }
         let lines = windows.compactMap { window -> String? in
             guard window["is_on_screen"] as? Bool == true, let title = window["title"] as? String, !title.isEmpty,
@@ -349,12 +573,12 @@ enum ComputerUse {
         return lines.isEmpty ? "No visible windows." : "Visible windows:\n" + lines.joined(separator: "\n")
     }
 
-    private static func complete(messages: [[String: Any]], tools: [[String: Any]], model: String,
-                                 key: String) async throws -> ([String: Any], Double) {
-        var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
+    private static func complete(endpoint: String, messages: [[String: Any]], tools: [[String: Any]], model: String,
+                                 key: String?) async throws -> ([String: Any], Double) {
+        var request = URLRequest(url: URL(string: endpoint)!)
         request.httpMethod = "POST"
         request.timeoutInterval = 180
-        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        if let key { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Lamp", forHTTPHeaderField: "X-Title")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
@@ -408,6 +632,18 @@ final class MCPClient: @unchecked Sendable {
         var structured: Any? = nil
     }
 
+    /// A question the server asks before a step (MCP elicitation): what it wants to do and in which app.
+    struct Elicitation {
+        let message: String
+        let tool: String                    // _meta.tool_name, e.g. "click"
+        let parameters: [String: Any]       // _meta.tool_params
+        let display: [String: String]       // _meta.tool_params_display, by display name
+        let risk: String?
+    }
+
+    /// Answers the server's elicitations: true accepts, false declines. Without one, every question is declined.
+    var elicitationHandler: ((Elicitation) async -> Bool)?
+
     private let process = Process()
     private let input = Pipe()
     private let output = Pipe()
@@ -415,10 +651,21 @@ final class MCPClient: @unchecked Sendable {
     private var buffer = Data()
     private var waiting: [Int: CheckedContinuation<[String: Any], Error>] = [:]
     private var nextID = 1
+    /// When each request in flight gives up, pushed back while the person is being asked about a step, and
+    /// again when they've answered, so the driver gets its full time after a slow dialog.
+    private var deadlines: [Int: Date] = [:]
+    private var asking = 0   // elicitations the handler is answering right now
+    /// Rises when a request gives up or the server stops: a question asked for a request that's gone is
+    /// declined when its answer comes, so a step approved late can't run after the model has moved on.
+    private var generation = 0
+    /// Set when the server has been stopped or has gone: requests after that fail at once.
+    private var closed = false
+    private static let patience: TimeInterval = 120
 
-    init(executable: URL, arguments: [String]) throws {
+    init(executable: URL, arguments: [String], environment: [String: String] = [:]) throws {
         process.executableURL = executable
         process.arguments = arguments
+        if !environment.isEmpty { process.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 } }
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
@@ -435,7 +682,7 @@ final class MCPClient: @unchecked Sendable {
     /// Starts the session; returns the server's instructions.
     func initialize() async throws -> String {
         let result = try await request("initialize", [
-            "protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any],
+            "protocolVersion": "2025-06-18", "capabilities": ["elicitation": [:] as [String: Any]] as [String: Any],
             "clientInfo": ["name": "Lamp", "version": BuildStamp.current.lamp ?? "0"],
         ])
         notify("notifications/initialized")
@@ -485,18 +732,45 @@ final class MCPClient: @unchecked Sendable {
     private func request(_ method: String, _ params: [String: Any]) async throws -> [String: Any] {
         try await withCheckedThrowingContinuation { continuation in
             lock.lock()
+            guard !closed else {
+                lock.unlock()
+                continuation.resume(throwing: ComputerUse.Failure(message: "The computer-use driver has stopped; the task can't go on."))
+                return
+            }
             let id = nextID
             nextID += 1
             waiting[id] = continuation
+            deadlines[id] = Date().addingTimeInterval(Self.patience)
             lock.unlock()
             send(["jsonrpc": "2.0", "id": id, "method": method, "params": params])
-            DispatchQueue.global().asyncAfter(deadline: .now() + 120) { [weak self] in
-                guard let self else { return }
-                lock.lock()
-                let late = waiting.removeValue(forKey: id)
+            watch(id)
+        }
+    }
+
+    /// Gives up on a request at its deadline, unless the deadline has moved (the person was being asked
+    /// about a step) or the person is still being asked, in which case it looks again later.
+    private func watch(_ id: Int) {
+        lock.lock()
+        let deadline = deadlines[id] ?? Date()
+        lock.unlock()
+        DispatchQueue.global().asyncAfter(deadline: .now() + max(deadline.timeIntervalSinceNow, 0.1)) { [weak self] in
+            guard let self else { return }
+            lock.lock()
+            guard waiting[id] != nil else { lock.unlock(); return }
+            if asking > 0 { deadlines[id] = Date().addingTimeInterval(Self.patience) }
+            if let moved = deadlines[id], moved > Date() {
                 lock.unlock()
-                late?.resume(throwing: ComputerUse.Failure(message: "The computer-use driver didn't answer in two minutes."))
+                watch(id)
+                return
             }
+            let late = waiting.removeValue(forKey: id)
+            deadlines[id] = nil
+            generation += 1
+            lock.unlock()
+            late?.resume(throwing: ComputerUse.Failure(message: "The computer-use driver didn't answer in two minutes, so it was stopped."))
+            // The call may still be running in the server, and could ask about a step later, while a newer
+            // call of ours is waiting: there's no telling the two apart, so the server goes with the call.
+            close()
         }
     }
 
@@ -512,11 +786,17 @@ final class MCPClient: @unchecked Sendable {
         lock.lock()
         buffer.append(chunk)
         var replies: [(CheckedContinuation<[String: Any], Error>, Result<[String: Any], Error>)] = []
+        var questions: [(Any, [String: Any])] = []
         while let newline = buffer.firstIndex(of: 0x0A) {
             let line = buffer[buffer.startIndex..<newline]
             buffer.removeSubrange(buffer.startIndex...newline)
-            guard let message = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
-                  let id = message["id"] as? Int, let continuation = waiting.removeValue(forKey: id) else { continue }
+            guard let message = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { continue }
+            // A request from the server, which arrives while a call of ours is in flight: answered on its own.
+            if message["method"] as? String == "elicitation/create", let id = message["id"] {
+                questions.append((id, message["params"] as? [String: Any] ?? [:]))
+                continue
+            }
+            guard let id = message["id"] as? Int, let continuation = waiting.removeValue(forKey: id) else { continue }
             if let error = message["error"] as? [String: Any] {
                 replies.append((continuation, .failure(ComputerUse.Failure(message: error["message"] as? String ?? "The helper failed."))))
             } else {
@@ -525,12 +805,56 @@ final class MCPClient: @unchecked Sendable {
         }
         lock.unlock()
         for (continuation, result) in replies { continuation.resume(with: result) }
+        for (id, params) in questions { answer(id, params) }
+    }
+
+    /// Asks the handler and replies: accept with an empty form (the server's forms have no fields), or decline.
+    private func answer(_ id: Any, _ params: [String: Any]) {
+        let meta = params["_meta"] as? [String: Any] ?? [:]
+        var display: [String: String] = [:]
+        for item in meta["tool_params_display"] as? [[String: Any]] ?? [] {
+            if let name = item["display_name"] as? String ?? item["name"] as? String, let value = item["value"] { display[name] = "\(value)" }
+        }
+        let elicitation = Elicitation(message: params["message"] as? String ?? "", tool: meta["tool_name"] as? String ?? "",
+                                      parameters: meta["tool_params"] as? [String: Any] ?? [:], display: display, risk: meta["riskLevel"] as? String)
+        let handler = elicitationHandler
+        lock.lock()
+        // A question with no call of ours waiting is the server carrying on after a call gave up: nobody
+        // is asked, and the step doesn't run.
+        guard !waiting.isEmpty else {
+            lock.unlock()
+            send(["jsonrpc": "2.0", "id": id, "result": ["action": "decline"]])
+            return
+        }
+        let asked = generation
+        asking += 1
+        lock.unlock()
+        Task.detached { [weak self] in
+            let answer = await handler?(elicitation) ?? false
+            guard let self else { return }
+            let accepted = answered(answer, askedIn: asked)
+            let result: [String: Any] = accepted ? ["action": "accept", "content": [:] as [String: Any]] : ["action": "decline"]
+            send(["jsonrpc": "2.0", "id": id, "result": result])
+        }
+    }
+
+    /// Books the person's answer: the call this was asked for may have given up meanwhile, and then whatever
+    /// they said, the step doesn't run. The requests still waiting get their full time again.
+    private func answered(_ accepted: Bool, askedIn generation: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        asking -= 1
+        for id in waiting.keys { deadlines[id] = Date().addingTimeInterval(Self.patience) }
+        return accepted && generation == self.generation
     }
 
     private func failAll() {
         lock.lock()
+        closed = true
         let pending = waiting
         waiting.removeAll()
+        deadlines.removeAll()
+        generation += 1
         lock.unlock()
         for continuation in pending.values {
             continuation.resume(throwing: ComputerUse.Failure(message: "The helper stopped unexpectedly."))

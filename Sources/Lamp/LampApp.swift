@@ -42,6 +42,7 @@ struct LampApp: App {
             SettingsView().environmentObject(store)
         }
         LampHelpScene()
+        BugReportScene()
         AboutScene()
     }
 }

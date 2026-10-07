@@ -67,21 +67,21 @@ enum Provider {
         let text = raw.lowercased()
         let name = Builder.engine == .pi ? (apiProvider(Builder.piProvider)?.name ?? "AI provider") : Builder.engine.title
         if text.contains("401") || text.contains("authenticat") || text.contains("api key") || text.contains("unauthorized") {
-            return "Your \(name) key or sign-in didn't work. Check it in Lamp → Settings (⌘,)."
+            return ErrorMessages.authenticationFailed(name)
         }
         if text.contains("402") || text.contains("credit") || text.contains("insufficient") || text.contains("quota") {
-            return "Your \(name) account is out of credit or quota. Top it up, or pick another provider in Settings."
+            return ErrorMessages.quotaExceeded(name)
         }
         if text.contains("429") || text.contains("rate limit") {
-            return "The AI is busy right now. Wait a minute and try again."
+            return ErrorMessages.providerBusy
         }
         if text.contains("connection refused") || text.contains("econnrefused") {
-            return "Couldn't reach the local model server. Check Settings → Providers → Native Mac AI."
+            return ErrorMessages.localServerUnreachable
         }
         if text.contains("requires a newer version") || text.contains("upgrade") {
             return "\(name) needs updating: \(raw.prefix(160))"
         }
-        return "Something went wrong talking to the AI: \(raw.prefix(160))"
+        return ErrorMessages.aiFailed(String(raw.prefix(160)))
     }
 }
 

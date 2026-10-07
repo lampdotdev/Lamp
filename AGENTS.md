@@ -30,6 +30,18 @@ A capability given to one engine must be given to all of them that can take it, 
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items.
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
+- **Using other apps** (`ComputerUse`): two drivers behind one `ComputerUse.Job`. When the ChatGPT app has
+  its Computer Use plugin installed, Lamp drives that (`CodexComputerUse`: the `cua_repl` MCP server from
+  `~/.codex/plugins/cache/openai-bundled/unified-computer-use/<newest>/.mcp.json`, one `js` tool in which the
+  model writes JavaScript against `cua`; the server asks before each step through MCP elicitation, which
+  `MCPClient` answers from `Job.decide`: reads go ahead, actions through the person's approval). It isn't a
+  documented interface, so when it's missing, off (Settings → Apps), or won't start, CuaDriver's tools are used
+  as before. With an OpenRouter key, Lamp runs the tool loop itself against
+  OpenRouter. Without one, the task is one turn of the builder: pi gets the driver's tools through its
+  extension (a tools file and `LAMP_COMPUTER_URL`, which posts each call to `/agent/computer`), Claude Code
+  and Codex through `/mcp` with the task's own token (`Store.computerTasks`, never the build tools). The
+  driver, approvals and element names live in `ComputerUse.Job` either way, so a change to what a task may
+  do is made once.
 
 Before opening a PR that touches any of this, check each engine's `case` in `Agent.run` and its parser,
 and say in the PR description which engines you tried.
@@ -97,6 +109,12 @@ gateway also listens on the network while the switch is on (`Gateway.setLocalNet
 requests, and admits them only to the app routes with the Mac's own name as Host (`Store.isMacHost`).
 
 ## Generated apps
+
+Lamp owns three files in every app and never trusts what's in them: `Sources/LampSupport.swift`, `build.sh`
+and `Package.swift` are written afresh before every build (`Template.writeOwnedFiles`), and the build stops if
+that fails. The last two are what the build runs (the shell runs build.sh; SwiftPM compiles and executes
+Package.swift as a program), so they're replaced rather than checked: nothing the agent's file tools wrote
+into them, with no card, can run. Shared apps never carry them: import writes its own.
 
 `Sources/Lamp/Template.swift` holds `LampSupport.swift`, the support code copied into every generated
 app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_app`). It is a Swift
