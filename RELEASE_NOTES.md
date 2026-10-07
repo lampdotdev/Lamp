@@ -5,8 +5,10 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
-## Unreleased
+## 0.9.3
 
+- Report a bug from Help: Lamp gathers what happened, shows you the report to check, and sends it through
+  lamp.dev.
 - The build script and package file of every app are Lamp's own again at each build, so nothing the agent
   writes into them can run around your approval.
 - Opening a shared app: the check no longer warns about Lamp's own building blocks, and says which of your
