@@ -421,9 +421,11 @@ enum ComputerUse {
             env["LAMP_COMPUTER_TOOLS_JSON"] = toolsFile.path
             env["LAMP_COMPUTER_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/computer"
             env["LAMP_SYSTEM"] = task.systemPrompt
+            // No built-in tools (files, shell) but the extension's; no extensions but Lamp's, whatever the
+            // person's own pi setup has.
             command = """
-            "$LAMP_PI" --mode json --provider "$LAMP_PROVIDER" --model "$LAMP_MODEL" --no-tools --no-session \\
-              -e "$LAMP_TOOLS" --no-skills --no-prompt-templates --no-context-files --no-approve \\
+            "$LAMP_PI" --mode json --provider "$LAMP_PROVIDER" --model "$LAMP_MODEL" --no-builtin-tools --no-session \\
+              --no-extensions -e "$LAMP_TOOLS" --no-skills --no-prompt-templates --no-context-files --no-approve \\
               --system-prompt "$LAMP_SYSTEM" -- "$LAMP_PROMPT"
             """
         case .claude:
@@ -448,9 +450,19 @@ enum ComputerUse {
                 env["LAMP_MODEL"] = model
                 modelArg = "-m \"$LAMP_MODEL\" "
             }
+            // Codex keeps its shell whatever the sandbox, and reads files with it: a hook says no to every
+            // command, so the task has nothing but its own tools. The read-only sandbox covers writes.
+            let deny = folder.appendingPathComponent("deny.sh")
+            try """
+            #!/bin/sh
+            printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"This task may only use the tools Lamp gave it: no shell, no files."}}'
+
+            """.write(to: deny, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: deny.path)
+            env["LAMP_CODEX_HOOKS"] = #"hooks.PreToolUse=[{matcher="^Bash$",hooks=[{type="command",timeout=60,command="'"# + deny.path + #"'"}]}]"#
             command = """
-            "$LAMP_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
-              -s read-only -c hooks={} \(modelArg)-c "$LAMP_CODEX_INSTRUCTIONS" \\
+            "$LAMP_TOOL" exec --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check --ephemeral \\
+              -s read-only -c "$LAMP_CODEX_HOOKS" \(modelArg)-c "$LAMP_CODEX_INSTRUCTIONS" \\
               -c mcp_servers.lamp.url="http://127.0.0.1:\(Gateway.port)/mcp" -c mcp_servers.lamp.bearer_token_env_var="LAMP_TOKEN" \\
               -c mcp_servers.lamp.tool_timeout_sec=3600 -c mcp_servers.lamp.default_tools_approval_mode="approve" -- "$LAMP_PROMPT"
             """
@@ -458,19 +470,29 @@ enum ComputerUse {
         var text = ""
         var cost = 0.0
         var failure: String?
+        var notice: String?   // the agent's own last word about what went wrong, when it didn't answer
+        var lastLine = ""
         let status = await Shell.run(command, cwd: folder, env: env) { line in
+            lastLine = line
             for event in Agent.parse(line, engine: engine) {
                 switch event {
                 case .text(let chunk): text = chunk   // the last message is the answer
                 case .cost(let amount): cost += amount
                 case .failed(let message): failure = message
+                case .raw(let message): notice = message
                 default: break
                 }
             }
         }
         guard enabled else { throw stopped }
         if let failure { throw Failure(message: Provider.friendlyError(failure)) }
-        guard status == 0 || !text.isEmpty else { throw Failure(message: "The AI didn't answer.") }
+        guard status == 0 || !text.isEmpty else {
+            let why = notice ?? (lastLine.hasPrefix("{") ? "" : lastLine.trimmed)
+            // 137 is a kill: the agent was stopped from outside, before it said anything.
+            let stoppedEarly = status == 137 && text.isEmpty && why.isEmpty
+            throw Failure(message: stoppedEarly ? "\(engine.title) stopped before it could answer. Try again."
+                          : "The AI didn't answer." + (why.isEmpty ? "" : " " + Provider.friendlyError(why)))
+        }
         return (text.trimmed, cost)
     }
 
