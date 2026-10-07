@@ -398,6 +398,9 @@ struct ProjectView: View {
     @State private var sendProblem: UUID?
     /// A request on its way out again: what it replaces stays out of sight until the chat has let go of it.
     @State private var sendingAgain: UUID?
+    /// The end of the chat has been on screen. Only the rows in view are made, so this is how the chat
+    /// knows it opened on its latest messages (see `body`).
+    @State private var endShown = false
 
     /// Worked out once per body (see `body`): it filters the whole chat, and body runs on every streamed token.
     private var lines: [LogLine] {
@@ -461,6 +464,7 @@ struct ProjectView: View {
                                     .padding(.top, lines.isEmpty ? 0 : 32)
                             }
                             Color.clear.frame(height: 1).id("bottom")
+                                .onAppear { endShown = true }
                         }
                         // A readable line length; wide windows get margins instead of longer lines.
                         .frame(maxWidth: 640)
@@ -472,6 +476,20 @@ struct ProjectView: View {
                     // A chat opens on its latest messages: the scroll view starts at the bottom, with
                     // no scrolling to get there.
                     .defaultScrollAnchor(.bottom)
+                    // That start is worked out from a guess at the height of the rows that aren't made yet,
+                    // and in a long chat the guess can land anywhere: the top, the middle, past the end. So
+                    // the chat then goes to its last row, which it can only do once it has been laid out:
+                    // sooner does nothing, and there's no telling when that is but by the end showing up.
+                    // It tries for half a second, and once more when the end is there, to land on it exactly.
+                    .task {
+                        for attempt in 0..<10 {
+                            if attempt == 0 { await Task.yield() } else { try? await Task.sleep(for: .milliseconds(50)) }
+                            guard !Task.isCancelled else { return }
+                            let done = endShown
+                            proxy.scrollTo("bottom", anchor: .bottom)
+                            if done { return }
+                        }
+                    }
                     .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: written(lines)) { proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
