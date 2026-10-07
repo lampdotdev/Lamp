@@ -28,4 +28,9 @@
     background: var(--color-page);
     color: var(--color-ink);
   }
+
+  /* No lone word on a last line, anywhere on the page. */
+  h1, h2, h3, p, li {
+    text-wrap: pretty;
+  }
 }

@@ -1,6 +1,7 @@
 ---
 import { Image, getImage } from "astro:assets";
 import type { ImageMetadata } from "astro";
+import { together } from "../lib/text";
 
 interface Props {
   slides: { image: ImageMetadata; name: string; request: string; alt: string }[];
@@ -19,8 +20,8 @@ const chevron = "M10.5 3.5 6 8l4.5 4.5";
 -->
 <section
   data-carousel
-  data-requests={JSON.stringify(slides.map((slide) => slide.request))}
-  aria-roledescription="carousel" aria-label="Apps made with Lamp" class="mt-12 pb-20">
+  data-requests={JSON.stringify(slides.map((slide) => together(slide.request)))}
+  aria-roledescription="carousel" aria-label="Apps made with Lamp" class="mt-8 pb-14">
   <div class="group relative">
     <div
       data-track
@@ -90,7 +91,7 @@ const chevron = "M10.5 3.5 6 8l4.5 4.5";
   </div>
 
   <p data-caption aria-live="polite" class="mx-auto mt-4 max-w-3xl px-2 text-center leading-relaxed text-muted">
-    “{slides[0].request}”
+    “{together(slides[0].request)}”
   </p>
 </section>
 
