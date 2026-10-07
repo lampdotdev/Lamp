@@ -2905,6 +2905,9 @@ final class Store: ObservableObject {
         guard let id = tokens[token], let project = projects.first(where: { $0.id == id }) else {
             return (401, ["error": "This app isn't registered with Lamp."])
         }
+        // A phone asking what it may keep is answered whatever the state of setup: a key just removed makes
+        // setup incomplete, and that's exactly when the phone has to hear that its copy should go.
+        if route == "/ai/keys" { return keysForPhone(project) }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
     }
@@ -3002,7 +3005,6 @@ final class Store: ObservableObject {
     /// The routes a running app uses: text, pictures, decisions, and using the other apps on the Mac.
     private func appRequest(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
         if request.path == "/ai/computer" { return await useComputer(for: project, request: request.body) }
-        if request.path == "/ai/keys" { return keysForPhone(project) }
         if request.path == "/ai/decide" {
             guard let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any],
                   let state = body["state"], let questions = body["questions"] as? [String: Any], !questions.isEmpty else {
