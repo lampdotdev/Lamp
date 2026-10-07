@@ -2134,8 +2134,8 @@ final class Store: ObservableObject {
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
     private func install(_ project: LampProject, inFront: Bool = true) async -> String? {
         guard exists(project) else { return nil }
-        if project.platform == .iphone { return await installOnSimulator(project, inFront: inFront) }
         await prepareIcon(project)
+        if project.platform == .iphone { return await installOnSimulator(project, inFront: inFront) }
         await quit(project)
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
         do {

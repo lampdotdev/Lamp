@@ -314,11 +314,16 @@ enum Template {
             #endif
         }
 
+        /// The pixels, the right way up. A photo from the camera or the library keeps its pixels as the
+        /// sensor took them and an orientation to turn them by; the AI and Vision would see it sideways.
         var lampCGImage: CGImage? {
             #if os(macOS)
             cgImage(forProposedRect: nil, context: nil, hints: nil)
             #else
-            cgImage ?? ciImage.flatMap { CIContext().createCGImage($0, from: $0.extent) }
+            if imageOrientation == .up, let cgImage { return cgImage }
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            return UIGraphicsImageRenderer(size: size, format: format).image { _ in draw(in: CGRect(origin: .zero, size: size)) }.cgImage
             #endif
         }
 
