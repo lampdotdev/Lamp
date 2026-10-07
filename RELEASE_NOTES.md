@@ -5,7 +5,7 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
-## Unreleased
+## 0.9.1
 
 - iPhone and iPad apps use more of the phone: the agent knows about the motion sensors, the camera and
   scanning, location, haptics, Face ID, Bluetooth, nearby phones, Health, NFC, Siri and Shortcuts, AR and
