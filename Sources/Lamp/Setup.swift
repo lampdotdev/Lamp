@@ -390,20 +390,13 @@ struct BuildingSettings: View {
         // The sign-ins, each model they offer; an uninstalled one is a single entry so it can still be picked
         // and its fix shown.
         if ToolLocator.path(for: .claude) != nil {
-            var items = Builder.claudeModels.filter { !$0.id.isEmpty }.map { TextChoice(id: "claude:\($0.id)", label: $0.label) }
-            if selectedEngine == .claude, Builder.engineModel(.claude).isEmpty {
-                items.insert(TextChoice(id: "claude:", label: "Claude Code's default"), at: 0)
-            }
-            groups.append(TextGroup(title: "Claude Code", items: items))
+            // The tool's own default stays on offer, so the account's choice can be returned to.
+            groups.append(TextGroup(title: "Claude Code", items: Builder.claudeModels.map { TextChoice(id: "claude:\($0.id)", label: $0.label) }))
         } else {
             groups.append(TextGroup(title: "Claude Code", items: [TextChoice(id: "claude:", label: "Not installed")]))
         }
         if ToolLocator.path(for: .codex) != nil {
-            var items = Builder.codexModels.filter { !$0.id.isEmpty }.map { TextChoice(id: "codex:\($0.id)", label: $0.label) }
-            if items.isEmpty || (selectedEngine == .codex && Builder.engineModel(.codex).isEmpty) {
-                items.insert(TextChoice(id: "codex:", label: "Codex's default model"), at: 0)
-            }
-            groups.append(TextGroup(title: "Codex", items: items))
+            groups.append(TextGroup(title: "Codex", items: Builder.codexModels.map { TextChoice(id: "codex:\($0.id)", label: $0.label) }))
         } else {
             groups.append(TextGroup(title: "Codex", items: [TextChoice(id: "codex:", label: "Not installed")]))
         }
