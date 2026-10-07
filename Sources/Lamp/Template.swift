@@ -3430,10 +3430,15 @@ enum Template {
         private var lastShake = Date.distantPast
         private var countingFrom = Date.distantPast
         private var dayWatch: Any?
+        /// Rises on each start and stop: work queued by an earlier run (a pedometer reading, the foreground
+        /// notice) sees it has changed and does nothing, so stopping stays stopped.
+        private var run = 0
 
         /// Starts the sensors; `rate` is readings per second (30 suits a view, 60 a game).
         func start(rate: Double = 30) {
             guard manager.isDeviceMotionAvailable, !manager.isDeviceMotionActive else { return }
+            run += 1
+            let run = run
             manager.deviceMotionUpdateInterval = 1 / max(rate, 1)
             manager.startDeviceMotionUpdates(using: .xMagneticNorthZVertical, to: .main) { [weak self] data, _ in
                 guard let self, let data else { return }
@@ -3450,17 +3455,18 @@ enum Template {
                     shakes += 1
                 }
             }
-            countSteps()
+            countSteps(run: run)
             // Midnight, and coming back to the app, start today's count over: the pedometer counts on from
             // the day it was started otherwise.
             dayWatch = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.countSteps() }
+                Task { @MainActor in self?.countSteps(run: run) }
             }
         }
 
         /// Today's steps, from the start of today; started over when today isn't the day it was started on.
-        private func countSteps() {
-            guard CMPedometer.isStepCountingAvailable() else { return }
+        /// Only for the run it was asked for: nothing from a run that has been stopped.
+        private func countSteps(run: Int) {
+            guard run == self.run, CMPedometer.isStepCountingAvailable() else { return }
             let today = Calendar.current.startOfDay(for: Date())
             guard today != countingFrom else { return }
             countingFrom = today
@@ -3469,13 +3475,14 @@ enum Template {
             pedometer.startUpdates(from: today) { [weak self] data, _ in
                 guard let count = data?.numberOfSteps.intValue else { return }
                 Task { @MainActor in
-                    guard let self else { return }
-                    if Calendar.current.startOfDay(for: Date()) != self.countingFrom { self.countSteps() } else { self.steps = count }
+                    guard let self, run == self.run else { return }
+                    if Calendar.current.startOfDay(for: Date()) != self.countingFrom { self.countSteps(run: run) } else { self.steps = count }
                 }
             }
         }
 
         func stop() {
+            run += 1
             manager.stopDeviceMotionUpdates()
             pedometer.stopUpdates()
             countingFrom = .distantPast
