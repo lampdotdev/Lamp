@@ -182,7 +182,7 @@ struct BuildCard: View {
                 AppIcon(project: project, size: 44)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(project.untitled ? "New app" : project.name).font(.headline)
-                    status.font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    status.font(.body).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
                 Elapsed(from: progress.started, to: progress.finished)
