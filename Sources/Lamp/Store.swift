@@ -177,6 +177,10 @@ final class Store: ObservableObject {
     private var computerUseRefused: Set<String> = []   // apps told once this launch that using other apps is off
     /// The app whose Rename… alert is showing.
     @Published var renaming: LampProject?
+    /// The app whose icon is being made in Image Playground. It stays set after the sheet closes, since the
+    /// picked picture can arrive after that.
+    @Published var playgroundIcon: LampProject?
+    @Published var showingPlayground = false
     /// The app whose Delete confirmation is showing.
     @Published var deleting: LampProject?
     /// The version whose Name… alert is showing.
@@ -2845,6 +2849,43 @@ final class Store: ObservableObject {
         }
         log(project, .status, AppAI.imageRoute != nil ? "New icon applied. Artwork is on its way." : "New icon applied.")
         Task { upgradeIconArt(project) }
+    }
+
+    /// Opens Image Playground to make this app's icon, with the request an image model would have got.
+    func iconFromPlayground(_ project: LampProject) {
+        playgroundIcon = project
+        showingPlayground = true
+    }
+
+    /// The request Image Playground opens with.
+    var playgroundPrompt: String {
+        playgroundIcon.flatMap(Icons.load).map(Icons.artPrompt) ?? ""
+    }
+
+    /// Makes the picture picked in Image Playground the icon's artwork: cut out and kept where generated
+    /// artwork is, so composing, installing and sharing treat it as they treat any other.
+    func useIconPicture(_ picture: Data, for project: LampProject) async {
+        guard let spec = Icons.load(project) else { return }
+        do {
+            let png = try await Task.detached { () throws -> Data in
+                let art = try Icons.cutOut(picture)
+                guard let tiff = art.tiffRepresentation,
+                      let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
+                    throw AppAI.Failure(message: "Couldn't save the picture.")
+                }
+                return png
+            }.value
+            let url = Icons.artURL(project, spec: spec)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try png.write(to: url)
+            artApplied[project.id] = nil   // the icon on show was made with other artwork, or none
+            // As with generated artwork: a turn that has the app installs the picture when it ends.
+            guard begin(project) != nil else { pendingIconArt.insert(project.id); return }
+            await applyIconArt(project, spec: spec)
+            finish(project)
+        } catch {
+            log(project, .status, "That picture couldn't become \(project.name)'s icon: \(error.localizedDescription)")
+        }
     }
 
     /// Gives apps made before icons existed an icon, once.

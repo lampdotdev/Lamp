@@ -1,6 +1,7 @@
 import AppKit
 import CoreImage
 import CryptoKit
+import ImagePlayground
 import Vision
 
 /// The editable description of an app's icon, kept in `icon.json` in the app folder
@@ -428,8 +429,14 @@ enum Icons {
     /// Asks the image model for the object alone on a plain background (never a whole icon), so Lamp can
     /// cut it out and compose the icon itself. Returns PNG/JPEG data.
     static func generateArt(_ spec: IconSpec) async throws -> Data {
+        try await AppAI.image(prompt: artPrompt(spec), references: [], aspectRatio: "1:1", model: iconModel).0
+    }
+
+    /// What a picture maker is asked to draw for an icon: the image models get it as it is, and Image
+    /// Playground opens with it already typed in.
+    static func artPrompt(_ spec: IconSpec) -> String {
         let bg = background(named: spec.background)
-        let prompt = """
+        return """
         A single \(spec.subject), drawn as the object for a macOS app icon in Apple's own icon style: one tangible \
         object with a simple, instantly recognizable silhouette, smooth rounded forms, subtle soft gradients and \
         gentle light from above, front or slight three-quarter view. Two or three colors at most, mainly \
@@ -437,7 +444,13 @@ enum Icons {
         70% of the frame, on a plain flat light gray background. No scene, no ground, no cast shadow, no \
         background elements, no text, no letters, no border, no frame, no rounded square tile, no app icon shape.
         """
-        return try await AppAI.image(prompt: prompt, references: [], aspectRatio: "1:1", model: iconModel).0
+    }
+
+    /// Whether this Mac can show Image Playground (Apple Intelligence on, a Mac that runs it). Apple's
+    /// picture maker has no way in for an app but its own sheet, where the person picks the picture.
+    static var playgroundAvailable: Bool {
+        if #available(macOS 15.1, *) { return ImagePlaygroundViewController.isAvailable }
+        return false
     }
 
     /// Lifts the object off its background with Vision's subject isolation (on-device, free).
