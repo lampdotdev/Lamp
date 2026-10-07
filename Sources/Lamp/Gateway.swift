@@ -160,6 +160,32 @@ enum AppAI {
     /// Sonnet through OpenRouter: what Lamp's own calls use when there's a key.
     static var defaultOpenRouterModel: String { anthropicModels.first { $0.id == "sonnet" }!.openRouter }
 
+    /// The OpenRouter model for Lamp's own text-only calls (an app's name and parts, the next-message
+    /// suggestion, a version's title): Sonnet, unless apps' text goes to a model on this Mac. Someone who
+    /// chose to stay local gets nil here, so these calls follow that route instead of leaving the Mac.
+    @MainActor static func helperModel() async -> String? {
+        // Ollama and LM Studio are looked for a moment after launch. A call made before that (the suggestion
+        // for the chat Lamp opens on) would find the chosen model missing and go to OpenRouter, so look first.
+        let wanted = UserDefaults.standard.string(forKey: "appModel") ?? (Builder.engine == .pi ? "\(Builder.piProvider):" : "")
+        if LocalModels.shared.external.isEmpty, LocalModels.externalIDs.contains(where: { wanted.hasPrefix("\($0):") }) {
+            await LocalModels.shared.detectExternal()
+        }
+        if case .localModel = model.kind { return nil }
+        return defaultOpenRouterModel
+    }
+
+    /// Whether a helper's answer is one of its own prompt's examples handed back, which small models do when
+    /// they can't work one out: a tip calculator's version titled "Added account shortcuts". That counts as
+    /// no answer, unless the person's own words say the same (asked for a stopwatch, "Stopwatch" is its name).
+    nonisolated static func parrots(_ answer: String, examples: [String], asked: String = "") -> Bool {
+        func plain(_ text: String) -> String {
+            text.lowercased().split { !$0.isLetter && !$0.isNumber }.joined(separator: " ")
+        }
+        let answer = plain(answer)
+        guard examples.contains(where: { plain($0) == answer }) else { return false }
+        return !" \(plain(asked)) ".contains(" \(answer) ")
+    }
+
     /// The models OpenRouter offers for apps; Sonnet is the default among them (Haiku is cheaper but
     /// noticeably worse, so it's only used when someone picks it).
     static let anthropicModels: [(id: String, label: String, openRouter: String)] = [

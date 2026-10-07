@@ -12,7 +12,7 @@ enum NextStep {
 
     Rules:
     - Always suggest something. If the next step is uncertain, pick the most plausible concrete one rather \
-    than generic filler like "keep going" or "looks good".
+    than generic filler like "\(examples[0])" or "\(examples[1])".
     - Keep it to 5-10 words, on a single line, with no surrounding quotes, markdown, or emoji.
     - Write it as an instruction or question addressed to Lamp, mimicking the voice and tone of the user's \
     previous messages: match their casing, punctuation, formality, and phrasing habits so it reads like \
@@ -30,6 +30,8 @@ enum NextStep {
     private static let maxConversationChars = 60_000
     private static let maxWords = 12
     private static let maxChars = 100
+    /// The filler the prompt rules out, in its own words: a suggestion that is one of them is no suggestion.
+    static let examples = ["keep going", "looks good"]
 
     /// One generation per finished agent turn, keyed by that turn's last agent message.
     private static var cache: [UUID: String] = [:]
@@ -48,7 +50,7 @@ enum NextStep {
         let conversation = conversationText(lines.filter { $0.kind == .user || $0.kind == .agent }.suffix(historyLimit))
         let request = "\(prompt)\nThe app is called \(project.name).\n\nHere is the conversation:\n\(conversation)"
         guard let (text, _) = try? await AppAI.complete(prompt: request, images: [], system: "", json: true,
-                                                         model: AppAI.defaultOpenRouterModel),
+                                                         model: await AppAI.helperModel()),
               let data = text.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let raw = object["suggestion"] as? String,
@@ -77,12 +79,13 @@ enum NextStep {
     }
 
     /// Collapses to one line, strips wrapping quotes, and drops overlong answers instead of cutting them mid-thought.
-    private static func normalize(_ raw: String) -> String? {
+    static func normalize(_ raw: String) -> String? {
         var text = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         if text.count > 1, let first = text.first, first == text.last, first == "\"" || first == "'" {
             text = String(text.dropFirst().dropLast()).trimmed
         }
-        guard !text.isEmpty, text.split(separator: " ").count <= maxWords, text.count <= maxChars else { return nil }
+        guard !text.isEmpty, text.split(separator: " ").count <= maxWords, text.count <= maxChars,
+              !AppAI.parrots(text, examples: examples) else { return nil }
         return text
     }
 }
@@ -91,20 +94,25 @@ enum NextStep {
 /// while the agent is still thinking. Fails soft: without a name the app stays untitled.
 @MainActor
 enum AppName {
+    /// The names and parts the prompt shows as examples. One of them back as the answer, for a request that
+    /// never mentioned it, is the model repeating the prompt: the app stays untitled, the part is left out.
+    static let exampleNames = ["Lucide Picker", "Build Tally", "Brew Log", "Notes", "Stopwatch", "Calendar", "Photo Booth", "Night Shift"]
+    static let exampleParts = ["Your habits, ticked off daily", "A reminder in the evening"]
+
     private static let prompt = """
     Name a small Mac app from what its user asked for.
 
     First, check whether the user already named it. A name is usually a capitalized phrase used as a title, \
-    often at the very start ("Lucide Picker, an app that…", "Build Tally: a counter…", "make me an app called \
-    Brew Log"). If they named it, use their name exactly as they wrote it, even if it includes a brand or \
+    often at the very start ("\(exampleNames[0]), an app that…", "\(exampleNames[1]): a counter…", "make me an app called \
+    \(exampleNames[2])"). If they named it, use their name exactly as they wrote it, even if it includes a brand or \
     product name. Their choice beats every rule below.
 
     Only if they didn't name it, pick a name in the spirit of Apple's own apps: one or two plain, friendly \
-    words that say what it is or evoke it (Notes, Stopwatch, Calendar, Photo Booth, Night Shift). No "App", \
+    words that say what it is or evoke it (\(exampleNames[3...].joined(separator: ", "))). No "App", \
     "Pro" or "AI" suffix, no made-up portmanteaus, no emoji, and not the name of an existing product or brand.
 
     Then sketch what it will do: 3 or 4 short phrases, two to six words each, naming its main parts the way \
-    its user would ("Your habits, ticked off daily", "A reminder in the evening"). No file, type or framework \
+    its user would ("\(exampleParts[0])", "\(exampleParts[1])"). No file, type or framework \
     names.
 
     Respond with JSON: {"named_by_user": true or false, "name": "...", "parts": ["...", "..."]}
@@ -119,22 +127,22 @@ enum AppName {
     static func suggest(for brief: String) async -> Suggestion? {
         let request = "\(prompt)\n\nThe user asked for:\n\(brief.prefix(4000))"
         guard let (text, _) = try? await AppAI.complete(prompt: request, images: [], system: "", json: true,
-                                                         model: AppAI.defaultOpenRouterModel),
+                                                         model: await AppAI.helperModel()),
               let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
         else { return nil }
         let sketch = (object["parts"] as? [Any] ?? []).compactMap { ($0 as? String)?.trimmed }
-            .filter { !$0.isEmpty && $0.count <= 60 }.prefix(5)
-        return Suggestion(name: name(object), sketch: sketch.count >= 2 ? Array(sketch) : [])
+            .filter { !$0.isEmpty && $0.count <= 60 && !AppAI.parrots($0, examples: exampleParts, asked: brief) }.prefix(5)
+        return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [])
     }
 
-    private static func name(_ object: [String: Any]) -> String? {
+    static func name(_ object: [String: Any], asked brief: String) -> String? {
         guard let raw = object["name"] as? String else { return nil }
         let name = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
             .trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”‘’."))
         // The user's own name gets more room than one Lamp makes up.
         let named = object["named_by_user"] as? Bool ?? false
-        guard !name.isEmpty, name.split(separator: " ").count <= (named ? 5 : 3), name.count <= (named ? 40 : 24)
-        else { return nil }
+        guard !name.isEmpty, name.split(separator: " ").count <= (named ? 5 : 3), name.count <= (named ? 40 : 24),
+              !AppAI.parrots(name, examples: exampleNames, asked: brief) else { return nil }
         return name
     }
 }
