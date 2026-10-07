@@ -269,7 +269,53 @@ const restoreVersion = defineTool({
 	},
 });
 
+/**
+ * When Lamp runs pi to use the other apps on the Mac for one of its apps (ComputerUse.viaEngine), the
+ * driver's tools come from a file Lamp wrote (LAMP_COMPUTER_TOOLS_JSON), and each call is posted to Lamp
+ * (LAMP_COMPUTER_URL), which asks the person before anything that acts and answers with text and pictures.
+ */
+function computerTools() {
+	const file = process.env.LAMP_COMPUTER_TOOLS_JSON;
+	const url = process.env.LAMP_COMPUTER_URL;
+	if (!file || !url) return [];
+	const tools = JSON.parse(readFileSync(file, "utf8")) as { name: string; description: string; inputSchema: Record<string, unknown> }[];
+	return tools.map((tool) =>
+		defineTool({
+			name: tool.name,
+			label: tool.name.replace(/_/g, " "),
+			description: tool.description,
+			// biome-ignore lint/suspicious/noExplicitAny: the schema is JSON from the driver
+			parameters: Type.Unsafe<any>(tool.inputSchema),
+			async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+				const response = await fetch(url, {
+					method: "POST",
+					headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+					body: JSON.stringify({ name: tool.name, arguments: params }),
+					signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(600_000)]) : AbortSignal.timeout(600_000),
+				});
+				const reply = (await response.json()) as { text?: string; error?: string; pictures?: { mimeType: string; data: string }[] };
+				if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+				const content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] = [
+					{ type: "text", text: reply.text ?? "" },
+				];
+				const pictures = reply.pictures ?? [];
+				if (pictures.length > 0 && ctx.model && !ctx.model.input.includes("image")) {
+					content.push({ type: "text", text: "This model can't view images, so the picture was left out." });
+				} else {
+					for (const picture of pictures) content.push({ type: "image", data: picture.data, mimeType: picture.mimeType });
+				}
+				return { content, details: {} };
+			},
+		}),
+	);
+}
+
 export default function (pi: ExtensionAPI) {
+	const computer = computerTools();
+	if (computer.length > 0) {
+		for (const tool of computer) pi.registerTool(tool);
+		return;   // a task in other apps: none of the build tools
+	}
 	pi.on("tool_call", async (event, ctx) => {
 		if (fileTools.has(event.toolName)) {
 			const given = (event.input as { path?: unknown }).path;

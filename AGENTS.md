@@ -30,6 +30,12 @@ A capability given to one engine must be given to all of them that can take it, 
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items.
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
+- **Using other apps** (`ComputerUse`): with an OpenRouter key, Lamp runs the tool loop itself against
+  OpenRouter. Without one, the task is one turn of the builder: pi gets the driver's tools through its
+  extension (a tools file and `LAMP_COMPUTER_URL`, which posts each call to `/agent/computer`), Claude Code
+  and Codex through `/mcp` with the task's own token (`Store.computerTasks`, never the build tools). The
+  driver, approvals and element names live in `ComputerUse.Job` either way, so a change to what a task may
+  do is made once.
 
 Before opening a PR that touches any of this, check each engine's `case` in `Agent.run` and its parser,
 and say in the PR description which engines you tried.
