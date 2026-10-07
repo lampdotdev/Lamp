@@ -227,8 +227,9 @@ struct BuildCard: View {
         .animation(.easeInOut(duration: 0.5), value: progress.screenshot != nil)
     }
 
+    /// A part being worked on gets a spinner instead.
     private static let symbols: [TurnProgress.PartState: String] = [
-        .open: "circle", .started: "circle.dotted", .active: "circle.dotted", .done: "checkmark.circle.fill",
+        .open: "circle", .started: "circle.dotted", .done: "checkmark.circle.fill",
     ]
 
     /// The agent's plan with ticks, what it has worked on when there's no plan, or what Lamp is doing before either.
@@ -239,9 +240,8 @@ struct BuildCard: View {
                 ForEach(progress.plan) { part in
                     let state = progress.state(of: part)
                     HStack(alignment: .firstTextBaseline, spacing: 9) {
-                        Image(systemName: Self.symbols[state] ?? "circle")
+                        Mark(symbol: Self.symbols[state])
                             .foregroundStyle(state == .done ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
-                            .symbolEffect(.pulse, isActive: state == .active)
                         Text(part.title).foregroundStyle(state == .open ? .secondary : .primary)
                     }
                 }
@@ -252,10 +252,9 @@ struct BuildCard: View {
                 ForEach(progress.steps.suffix(5), id: \.self) { step in
                     // The step it's on right now is still open; the footer says so.
                     let current = progress.finished == nil && step == progress.activity
-                    Label(step, systemImage: current ? "circle.dotted" : "checkmark.circle.fill")
+                    Label { Text(step) } icon: { Mark(symbol: current ? nil : "checkmark.circle.fill") }
                         .labelStyle(.titleAndIcon)
                         .foregroundStyle(.secondary)
-                        .symbolEffect(.pulse, isActive: current)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -304,10 +303,24 @@ struct BuildCard: View {
     }
 
     private static func step(_ title: String, done: Bool, working: Bool) -> some View {
-        Label(title, systemImage: done ? "checkmark.circle.fill" : "circle.dotted")
+        Label { Text(title) } icon: { Mark(symbol: done ? "checkmark.circle.fill" : working ? nil : "circle.dotted") }
             .foregroundStyle(.secondary)
-            .symbolEffect(.pulse, isActive: working && !done)
             .transition(.opacity)
+    }
+}
+
+/// A checklist row's mark: a symbol, or a spinner (nil) for what's being worked on right now.
+private struct Mark: View {
+    let symbol: String?
+
+    var body: some View {
+        if let symbol {
+            Image(systemName: symbol)
+        } else {
+            // Sized and aligned like a symbol, so the row doesn't move when its spinner becomes a tick.
+            Image(systemName: "circle").hidden()
+                .overlay { ProgressView().controlSize(.small).scaleEffect(0.75) }
+        }
     }
 }
 
