@@ -126,9 +126,12 @@ extension Simulator {
         /// into points on screen.
         struct Screen {
             let app: AXUIElement
-            let origin: CGPoint
+            let window: AXUIElement     // the one Simulator window showing this device: lookups stay inside it
+            let rect: CGRect            // the device's screen on the Mac's display
+            let udid: String
             let scale: Double
             let pid: pid_t
+            var origin: CGPoint { rect.origin }
             /// Pictures are made at point size (`screenshot`), so a pixel in them is a point on the screen.
             func point(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: origin.x + x, y: origin.y + y) }
         }
@@ -140,36 +143,43 @@ extension Simulator {
             let scale = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_SCALE"], timeout: 20)).output.trimmed) ?? 0
             guard width > 0, height > 0, scale > 0 else { return nil }
             let app = AXUIElementCreateApplication(simulator.processIdentifier)
-            let name = deviceName(udid) ?? ""
-            let windows = attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
-            let candidates = windows.filter { name.isEmpty || (attribute($0, kAXTitleAttribute) as? String ?? "").hasPrefix(name) }
+            // Only the window titled with this device's name: never another device's, however alike.
+            guard let name = deviceName(udid) else { return nil }
+            let windows = (attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? [])
+                .filter { (attribute($0, kAXTitleAttribute) as? String ?? "").hasPrefix(name + " ") }
             // The screen is the group whose size is the device's size in points, give or take a pixel.
             let points = CGSize(width: width / scale, height: height / scale)
-            for window in candidates + windows {
+            for window in windows {
                 for group in children(window) where attribute(group, kAXRoleAttribute) as? String == kAXGroupRole {
                     let frame = frame(of: group)
                     if abs(frame.width - points.width) <= 2, abs(frame.height - points.height) <= 2 {
-                        return Screen(app: app, origin: frame.origin, scale: scale, pid: simulator.processIdentifier)
+                        return Screen(app: app, window: window, rect: frame, udid: udid, scale: scale, pid: simulator.processIdentifier)
                     }
                 }
             }
             return nil
         }
 
-        /// Carries out the actions in order and says what each one did, like the Mac apps' driver.
-        static func perform(_ actions: [Action], on screen: Screen, udid: String, picture: URL) async -> String {
+        /// Carries out the actions in order and says what each one did, like the Mac apps' driver. `live` is
+        /// asked before every action: when the turn was stopped, the app deleted or the app gone, the rest of
+        /// the batch is dropped rather than carried out on whatever the simulator shows next.
+        static func perform(_ actions: [Action], on screen: Screen, picture: URL, live: () -> Bool) async -> String {
             var lines: [String] = []
             var before = try? Data(contentsOf: picture)
             for action in actions {
+                guard live() else { lines.append("stopped before the rest: the app was stopped, deleted or closed"); break }
                 lines.append(await carryOut(action, on: screen))
                 try? await Task.sleep(for: .milliseconds(350))
-                _ = await Simulator.screenshot(on: udid, to: picture)
+                _ = await Simulator.screenshot(on: screen.udid, to: picture)
                 let after = try? Data(contentsOf: picture)
                 if action.action != "wait", let before, let after, before == after { lines[lines.count - 1] += " (nothing changed on screen)" }
                 before = after
             }
             return lines.joined(separator: "\n")
         }
+
+        /// The app was relaunched: whatever field was remembered for it is gone.
+        static func forget(_ udid: String) { lastFields[udid] = nil }
 
         private static func carryOut(_ action: Action, on screen: Screen) async -> String {
             let at = "\(Int(action.x ?? 0)), \(Int(action.y ?? 0))"
@@ -179,7 +189,7 @@ extension Simulator {
                 guard let hit = element(at: point, in: screen) else { return "\(action.action) at \(at): nothing there" }
                 // A tap that lands beside a control (on its label, say) is meant for the control.
                 let element = isInteractive(hit) ? hit : (nearestInteractive(to: point, in: screen) ?? hit)
-                lastField = attribute(element, kAXRoleAttribute) as? String == kAXTextFieldRole ? element : nil
+                lastFields[screen.udid] = attribute(element, kAXRoleAttribute) as? String == kAXTextFieldRole ? element : nil
                 let name = describe(element) + (element == hit ? "" : " (the nearest thing to tap; the point itself was \(describe(hit)))")
                 if action.action == "right_click" {
                     // A long press: the finger held down, which opens context menus and the like.
@@ -201,7 +211,7 @@ extension Simulator {
                 guard let text = action.text else { return "type: no text given" }
                 // The field with the keyboard is the one last tapped; the bridge doesn't say which has focus,
                 // so the text goes to the text field under the point given, or the one tapped last.
-                guard let field = lastField ?? textField(near: point, in: screen) ?? onlyTextField(in: screen) else {
+                guard let field = rememberedField(in: screen) ?? textField(near: point, in: screen) ?? onlyTextField(in: screen) else {
                     return "typed nothing: tap a text field first, then type"
                 }
                 // The text replaces what the field holds: a tapped field on an iPhone shows its old value
@@ -255,7 +265,19 @@ extension Simulator {
 
         // MARK: Finding and naming things
 
-        private static var lastField: AXUIElement?
+        /// The text field last tapped on each device, so `type` knows where the keyboard is.
+        private static var lastFields: [String: AXUIElement] = [:]
+
+        /// That field, if it's still on this device's screen (not a stale one from before a relaunch).
+        private static func rememberedField(in screen: Screen) -> AXUIElement? {
+            guard let field = lastFields[screen.udid] else { return nil }
+            let rect = frame(of: field)
+            guard attribute(field, kAXRoleAttribute) as? String == kAXTextFieldRole, screen.rect.intersects(rect) else {
+                lastFields[screen.udid] = nil
+                return nil
+            }
+            return field
+        }
 
         private static func element(at point: CGPoint, in screen: Screen) -> AXUIElement? {
             var element: AXUIElement?
@@ -270,15 +292,15 @@ extension Simulator {
             interactiveRoles.contains(attribute(element, kAXRoleAttribute) as? String ?? "")
         }
 
-        /// Everything that can be tapped on the iPhone's screen, as the Mac sees it.
+        /// Everything that can be tapped on this device's screen, as the Mac sees it: its window only.
         private static func interactiveElements(in screen: Screen) -> [AXUIElement] {
             var found: [AXUIElement] = []
             func visit(_ element: AXUIElement, depth: Int) {
                 guard depth < 40, found.count < 400 else { return }
-                if isInteractive(element) { found.append(element) }
+                if isInteractive(element), screen.rect.intersects(frame(of: element)) { found.append(element) }
                 for child in children(element) { visit(child, depth: depth + 1) }
             }
-            for window in attribute(screen.app, kAXWindowsAttribute) as? [AXUIElement] ?? [] { visit(window, depth: 0) }
+            visit(screen.window, depth: 0)
             return found
         }
 
@@ -305,18 +327,12 @@ extension Simulator {
         }
 
         private static func button(named name: String, in screen: Screen) -> AXUIElement? {
-            var found: AXUIElement?
-            func visit(_ element: AXUIElement, depth: Int) {
-                guard found == nil, depth < 40 else { return }
+            interactiveElements(in: screen).first { element in
                 let role = attribute(element, kAXRoleAttribute) as? String ?? ""
-                if role == kAXButtonRole || role == kAXMenuItemRole {
-                    let label = (attribute(element, kAXDescriptionAttribute) as? String ?? attribute(element, kAXTitleAttribute) as? String ?? "")
-                    if label.caseInsensitiveCompare(name) == .orderedSame { found = element; return }
-                }
-                for child in children(element) { visit(child, depth: depth + 1) }
+                guard role == kAXButtonRole || role == kAXMenuItemRole else { return false }
+                let label = attribute(element, kAXDescriptionAttribute) as? String ?? attribute(element, kAXTitleAttribute) as? String ?? ""
+                return label.caseInsensitiveCompare(name) == .orderedSame
             }
-            for window in attribute(screen.app, kAXWindowsAttribute) as? [AXUIElement] ?? [] { visit(window, depth: 0) }
-            return found
         }
 
         private static func describe(_ element: AXUIElement) -> String {

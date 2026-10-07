@@ -1622,7 +1622,11 @@ final class Store: ObservableObject {
         }
         let printed = Runtime.logSize(project)
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
-        let report = await Simulator.Driver.perform(decoded, on: screen, udid: running.udid, picture: picture)
+        let turn = turns[project.id]
+        let report = await Simulator.Driver.perform(decoded, on: screen, picture: picture) { [weak self] in
+            guard let self, exists(project), turns[project.id] === turn, turn?.stopped != true else { return false }
+            return Simulator.isRunning(pid: running.pid)
+        }
         if let data = try? JSONSerialization.data(withJSONObject: ["id": UUID().uuidString, "report": report]) {
             try? data.write(to: Runtime.folder(project).appendingPathComponent("use.json"))
         }
@@ -2134,6 +2138,7 @@ final class Store: ObservableObject {
             let turn = turns[project.id]
             guard exists(project), turn?.stopped != true else { return "The app was deleted or stopped before it opened." }
             Runtime.startLog(project)
+            Simulator.Driver.forget(udid)
             let pid = try await Simulator.launch(project.bundleID, on: udid, log: Runtime.logURL(project))
             // The same could have happened during the launch itself: then the app just started belongs to
             // nobody, and is stopped before anything records it.
