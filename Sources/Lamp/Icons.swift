@@ -127,6 +127,8 @@ enum Icons {
     static func carURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/Assets.car") }
     static func documentURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/AppIcon.icon") }
     static func previewURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/icon.png") }
+    /// The icon as iOS takes it: a plain 1024px square, which the device rounds itself.
+    static func squareURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/AppIcon-square.png") }
 
     /// The icon at its largest size (1024px) as a PNG for Quick Look, named after the app so the panel's title reads well.
     /// Falls back to the small sidebar preview when there's no .icns yet.
@@ -279,6 +281,17 @@ enum Icons {
         }
     }
 
+    /// The same icon for iPhone and iPad, where the system rounds the corners and wants an opaque square: the
+    /// tile's own gradient goes on behind it, so its transparent corners fill with the same colours, and the tile
+    /// is drawn a little larger than the canvas so its rounded rim falls outside.
+    static func square(_ spec: IconSpec, tile: NSImage) -> NSBitmapImageRep {
+        let bg = background(named: spec.background)
+        return canvas(1024) { rect in
+            NSGradient(colors: [color(hex: bg.top) ?? .white, color(hex: bg.bottom) ?? .gray])?.draw(in: rect, angle: -90)
+            tile.draw(in: rect.insetBy(dx: -8, dy: -8))
+        }
+    }
+
     /// Places a full-bleed tile on Apple's macOS grid: an 824pt square centred on a 1024pt canvas, with shadow.
     static func onGrid(_ tile: NSImage, size: Int) -> NSBitmapImageRep {
         canvas(size) { rect in
@@ -294,8 +307,9 @@ enum Icons {
         }
     }
 
-    /// Writes .lamp/AppIcon.icns and .lamp/icon.png and, with Xcode 26, .lamp/AppIcon.icon and
-    /// .lamp/Assets.car (what macOS 26 uses for Liquid Glass). Returns the preview image.
+    /// Writes .lamp/AppIcon.icns, .lamp/icon.png and .lamp/AppIcon-square.png (for iPhone and iPad) and, with
+    /// Xcode 26, .lamp/AppIcon.icon and .lamp/Assets.car (what macOS 26 uses for Liquid Glass). Returns the
+    /// preview image.
     @discardableResult
     static func write(_ spec: IconSpec, art: NSImage?, for project: LampProject) async throws -> NSImage {
         let fm = FileManager.default
@@ -322,6 +336,7 @@ enum Icons {
             if pixels == 256 { preview = png }
         }
         _ = await IconTools.run("/usr/bin/iconutil", ["-c", "icns", iconset.path, "-o", icnsURL(project).path])
+        try square(spec, tile: tile).representation(using: .png, properties: [:])?.write(to: squareURL(project))
 
         if let preview { try preview.write(to: previewURL(project)) }
         return NSImage(contentsOf: previewURL(project)) ?? NSImage()

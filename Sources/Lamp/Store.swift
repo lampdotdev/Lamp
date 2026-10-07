@@ -2134,8 +2134,14 @@ final class Store: ObservableObject {
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
     private func install(_ project: LampProject, inFront: Bool = true) async -> String? {
         guard exists(project) else { return nil }
-        if project.platform == .iphone { return await installOnSimulator(project, inFront: inFront) }
+        // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
+        // and start the next one's, which must not inherit this launch.
+        let owner = turns[project.id]
         await prepareIcon(project)
+        if project.platform == .iphone {
+            guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
+            return await installOnSimulator(project, owner: owner, inFront: inFront)
+        }
         await quit(project)
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
         do {
@@ -2170,16 +2176,15 @@ final class Store: ObservableObject {
 
     /// The iPhone counterpart of `install`: the built app goes into the booted simulator and is launched there,
     /// with what it prints going to the same log the Mac apps use. Returns what's known if it died at once.
-    private func installOnSimulator(_ project: LampProject, inFront: Bool) async -> String? {
+    private func installOnSimulator(_ project: LampProject, owner: Turn, inFront: Bool) async -> String? {
         guard let udid = Simulator.device(project.family) else {
             let problem = "No \(project.family.name) simulator with iOS \(Simulator.minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components."
             log(project, .error, problem)
             return problem
         }
-        // The turn that owns the app now, taken before anything waits: Delete or Stop can come during any of
-        // the waits below, and then nothing more is written or launched for it (not even by a later turn of
-        // the same app, which would have a launch of its own).
-        guard let owner = turns[project.id] else { return "Lamp isn't working on this app." }
+        // `owner` is the turn the app belongs to, taken by `install` before anything waited: Delete or Stop
+        // can come during any of the waits, and then nothing more is written or launched for it (not even by
+        // a later turn of the same app, which would have a launch of its own).
         // Launches on one device go one after another: a launch already under way finishes (and is then
         // closed, below) before the next starts, so two apps can't be racing onto the same screen.
         let previous = simulatorWork[udid]
@@ -2207,6 +2212,7 @@ final class Store: ObservableObject {
             return message
         }
         note("Opening \(project.name) on the \(project.family.name) simulator…", for: project)
+        await finishSimulatorBundle(project)
         do {
             try await Simulator.boot(udid, show: inFront)
             await Simulator.terminate(project.bundleID, on: udid)
@@ -2249,6 +2255,50 @@ final class Store: ObservableObject {
         refreshOpenApps()
         stamps[project.id] = BuildStamp.read(project.builtURL)
         return nil
+    }
+
+    /// Finishes the bundle build.sh made, the way `deploy` finishes a Mac app's: the reasons iOS shows when
+    /// the app first asks for the microphone, photos or calendar (without which it's killed on the spot), the
+    /// icon, and the files attached in Lamp's chat, which LampAssets finds next to the executable. Then the
+    /// bundle is signed again, ad hoc, which is all the simulator asks for.
+    private func finishSimulatorBundle(_ project: LampProject) async {
+        let fm = FileManager.default
+        let app = project.builtURL
+        var script = """
+            P="$LAMP_APP/Info.plist"
+            plutil -replace CFBundleName -string "$LAMP_NAME" "$P" && \\
+            plutil -replace CFBundleDisplayName -string "$LAMP_NAME" "$P" && \\
+            plutil -replace NSMicrophoneUsageDescription -string "$LAMP_NAME listens to your microphone." "$P" && \\
+            plutil -replace NSSpeechRecognitionUsageDescription -string "$LAMP_NAME turns your speech into text." "$P" && \\
+            plutil -replace NSCameraUsageDescription -string "$LAMP_NAME uses your camera." "$P" && \\
+            plutil -replace NSPhotoLibraryUsageDescription -string "$LAMP_NAME uses your photos." "$P" && \\
+            plutil -replace NSCalendarsFullAccessUsageDescription -string "$LAMP_NAME reads and adds calendar events." "$P" && \\
+            plutil -replace NSRemindersFullAccessUsageDescription -string "$LAMP_NAME reads and adds reminders." "$P" && \\
+            plutil -replace NSContactsUsageDescription -string "$LAMP_NAME looks up people in your contacts." "$P"
+
+            """
+        // iOS reads icons by name and scale from the bundle itself when told to in Info.plist: the home screen
+        // sizes for iPhone (60pt at 2x and 3x) and iPad (76pt and 83.5pt at 2x), all cut from the one square.
+        if fm.fileExists(atPath: Icons.squareURL(project).path) {
+            let sizes = [("AppIcon60x60@2x", 120), ("AppIcon60x60@3x", 180), ("AppIcon76x76@2x", 152), ("AppIcon83.5x83.5@2x", 167)]
+            for (name, pixels) in sizes {
+                script += "sips -z \(pixels) \(pixels) \"$LAMP_ICON\" --out \"$LAMP_APP/\(name).png\" >/dev/null && \\\n"
+            }
+            script += """
+                plutil -replace CFBundleIcons -json '{"CFBundlePrimaryIcon":{"CFBundleIconFiles":["AppIcon60x60"]}}' "$P" && \\
+                plutil -replace 'CFBundleIcons~ipad' -json '{"CFBundlePrimaryIcon":{"CFBundleIconFiles":["AppIcon60x60","AppIcon76x76","AppIcon83.5x83.5"]}}' "$P"
+
+                """
+        }
+        _ = await Shell.run(script, cwd: project.dir,
+                            env: ["LAMP_APP": app.path, "LAMP_NAME": project.name, "LAMP_ICON": Icons.squareURL(project).path]) { _ in }
+        let attachments = project.dir.appendingPathComponent(Attachments.folder)
+        try? fm.removeItem(at: app.appendingPathComponent(Attachments.folder))
+        if fm.fileExists(atPath: attachments.path) {
+            try? fm.copyItem(at: attachments, to: app.appendingPathComponent(Attachments.folder))
+        }
+        _ = await Shell.run("xattr -cr \"$LAMP_APP\" && codesign --force -s - \"$LAMP_APP\"", cwd: project.dir,
+                            env: ["LAMP_APP": app.path]) { _ in }
     }
 
     /// iPhone apps running in the simulator: which simulator each was launched on, and its process id.
