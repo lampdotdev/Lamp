@@ -1103,7 +1103,8 @@ struct NewAppIntro: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            AppIcon(project: project, size: 112)
+            // Catches the light once the reveal has passed it.
+            AppIcon(project: project, size: 112).shine(delay: 0.4)
             TextField("Name", text: $name, prompt: Text(project.untitled ? "Untitled" : project.name))
                 .textFieldStyle(.plain)
                 .font(.title.weight(.semibold))
