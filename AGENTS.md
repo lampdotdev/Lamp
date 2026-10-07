@@ -12,7 +12,7 @@ the output of each is read by its own parser there (`parseClaude`, `parseCodex`,
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, the version tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
@@ -22,8 +22,19 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file` and the version tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
+- **What Lamp remembers** (`Memory`): two short sets of notes, about the person (`about-you.md` in the
+  support folder) and about each app (`.lamp/notes.md`), each with a one-line summary. They must cost the
+  person tokens only when used: the agent is told just the summaries and opens the notes with `read_notes`
+  when it judges a request needs them; `save_notes` replaces a set. The summaries go at the end of the
+  request, in `Agent.run`, before the engine's `case`, not in the system prompt: Claude Code and Codex keep
+  the one a conversation began with when it is resumed, so anything that changes between turns has to ride
+  with the request. `Memory.brief` adds them once per conversation and again only when the notes were
+  changed by someone else, going by what `.lamp/notes-shown.json` says that engine's conversation last knew;
+  most requests carry nothing. A conversation its engine has compacted is told again (pi's and Claude Code's parsers report
+  `.compacted`; Codex doesn't say, so its conversations are told again every few requests), and it is an experiment (`Experiments.memory`, off by default, in Settings → Building → Experimental): off, there are no notes tools, rule or summaries, and no Memory tab in Settings.
+  What is worth saving is said in `save_notes`'s description: every word there is paid for on every call.
 - **Approvals and privacy**: shell commands go through `/agent/approve` for every engine (pi's extension,
   Claude Code's hooks, Codex's hooks); file access outside the app's folder is checked the same way.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every

@@ -12,6 +12,7 @@ enum AgentEvent {
     case session(String)   // an external engine's conversation id, to resume next turn
     case step(String)      // the model has started on a tool call (its name), or on text ("")
     case stepArgs(String)  // a piece of that call's arguments, as they stream in
+    case compacted         // the engine summed up the conversation so far to make room
     case plan([PlanPart])  // the agent's checklist for the build card
 }
 
@@ -21,13 +22,14 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version")
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version"
+            + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
     /// Lamp's own tools for pi (Resources/lamp-tools.ts): `look_at_app` has Lamp build and open the app
     /// mid-turn and shows the agent the result; `plan` is the checklist on the build card; `delete_file`
     /// removes a file, which pi's own tools can't; the version tools list, name and restore the app's saved
-    /// versions. Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
+    /// versions; `read_notes` and `save_notes` are Lamp's notes (Memory). Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
     static var lampTools: URL? {
         let url = Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.ts")
         return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
@@ -35,7 +37,7 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static var tryRules: String { lookRules + planRules }
+    static var tryRules: String { lookRules + planRules + (Memory.isOn ? memoryRules : "") }
 
     private static let lookRules = """
 
@@ -76,6 +78,17 @@ enum Agent {
     one (its id from `list_versions`) before a big or risky change, e.g. “Before the redesign”. \
     `restore_version` brings back an earlier version's files: use it only when the user asks to go back, \
     never to undo your own attempt, and find the version with `list_versions` first.
+    """
+
+    /// Kept short, like the tools' descriptions: every word here is sent with every call to the model. What the
+    /// notes cover comes at the end of a request (Memory.brief); the notes only when the agent asks.
+    private static let memoryRules = """
+
+    - Lamp keeps notes about the person and about this app between requests (`read_notes`, `save_notes`), and \
+    tells you in a line what they cover. Read them before you build a new app or a new screen, and whenever \
+    a request touches what they cover; not otherwise, since reading costs the person. Follow them, but what \
+    the person asks now wins: do that and correct the note. Don't mention them unless asked: the person sees \
+    them in Lamp's Settings, under Memory.
     """
 
     /// pi ships inside Lamp.app (see build.sh).
@@ -682,6 +695,8 @@ enum Agent {
                 events.append(.failed(message["errorMessage"] as? String ?? "Unknown error"))
             }
             return events
+        case "compaction_end":
+            if obj["result"] != nil { return [.compacted] }
         case "auto_retry_end":
             if obj["success"] as? Bool == false { return [.failed(obj["finalError"] as? String ?? "Unknown error")] }
         default:
@@ -702,7 +717,18 @@ enum Agent {
         }
         if let pattern = args["pattern"] as? String { return "\(name) \(pattern)" }
         if let actions = args["actions"] as? [[String: Any]] { return "\(name) \(summary(of: actions))" }
+        if let note = noteArgument(name, args) { return "\(name) \(note)" }
         return name
+    }
+
+    /// Which notes a call to one of the notes tools is about, for the transcript.
+    static func noteArgument(_ name: String, _ args: [String: Any]) -> String? {
+        guard name == "read_notes" || name == "save_notes" else { return nil }
+        switch (args["about"] as? String)?.lowercased() {
+        case "you": return "about you"
+        case "app": return "about this app"
+        default: return name == "read_notes" ? "about you and this app" : nil
+        }
     }
 
     /// What a use_app call does, for the transcript: "click, type, key".

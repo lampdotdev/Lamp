@@ -12,6 +12,9 @@ enum Experiments {
     /// Apple account through Xcode, with Lamp answering its AI over the local network and the app keeping a
     /// copy of the person's OpenRouter key for when it's away from the Mac.
     static var iosApps: Bool { UserDefaults.standard.bool(forKey: "experimentIOSApps") }
+    /// What Lamp remembers (Memory): notes about the person and about each app, kept between requests. Off,
+    /// nothing is noted and the agent has no rule, tools or word about notes.
+    static var memory: Bool { UserDefaults.standard.bool(forKey: Memory.switchKey) }
 }
 
 enum Edition {

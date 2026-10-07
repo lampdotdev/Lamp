@@ -291,6 +291,8 @@ extension Agent {
     /// relative to the app folder; `session` is the engine's saved conversation id, if any; `token` is the
     /// agent's own token for this turn (Store.agentTokens), never the app's.
     static func run(prompt: String, files: [String], project: LampProject, session: String?, token: String) -> AgentRun {
+        // A line on what Lamp remembers goes with the request when the conversation needs telling, the same for each engine.
+        let prompt = prompt + Memory.brief(for: project, engine: Builder.engine, session: session)
         var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt(for: project), "LAMP_DIR": project.dir.path,
                                      "PATH": ToolLocator.userPath]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
@@ -302,6 +304,7 @@ extension Agent {
             env["LAMP_LOOK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/look"
             env["LAMP_USE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/use"
             env["LAMP_VERSIONS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/versions"
+            env["LAMP_MEMORY_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/memory"
             env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve"
             env["LAMP_TOKEN"] = token
             return AgentRun(command: command(fileCount: files.count),
@@ -341,6 +344,7 @@ extension Agent {
             }
             var permissionMode = "acceptEdits"
             var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version"
+            if Memory.isOn { allowed += ",mcp__lamp__read_notes,mcp__lamp__save_notes" }
             // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
             // it the only server. The config is a file that reads the token from the environment, so the
             // token isn't on the command line for every process on the Mac to see.
@@ -485,6 +489,7 @@ extension Agent {
         if let pattern = input["pattern"] as? String { return "\(name) \(pattern)" }
         if let command = input["command"] as? String { return "\(name): \(command)" }
         if let actions = input["actions"] as? [[String: Any]] { return "\(name) \(Agent.summary(of: actions))" }
+        if let note = Agent.noteArgument(name, input) { return "\(name) \(note)" }
         return name
     }
 
@@ -500,6 +505,7 @@ extension Agent {
         switch type {
         case "system":
             if obj["subtype"] as? String == "init", let id = obj["session_id"] as? String { return [.session(id)] }
+            if obj["subtype"] as? String == "compact_boundary" { return [.compacted] }
         case "assistant":
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
             return content.compactMap { block in
