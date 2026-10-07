@@ -25,6 +25,30 @@ struct BugReportTests {
         precondition(draft(busy: true, dev: true).contains("Work in progress: Yes"))
         precondition(draft(dev: true).contains("Edition: Lamp Dev"))
 
+        // Exercise the actual definitions/helpers used to produce Store and Provider messages,
+        // rather than reproducing their wording here; a formatter drift must fail this contract.
+        let privateDetail = "SYNTHETIC_PRIVATE_DETAIL /Users/private/Secret.swift sk-test-only"
+        let producedMessages: [(String, String)] = [
+            (ErrorMessages.buildFailed, "The app failed to build."),
+            (ErrorMessages.appDoesNotBuild, "The app failed to build."),
+            (ErrorMessages.restoreFailed, "Returning to an earlier version failed."),
+            (ErrorMessages.providerBusy, "The AI provider rate-limited the request."),
+            (ErrorMessages.localServerUnreachable, "The local model server could not be reached."),
+            (ErrorMessages.openFailed(privateDetail), "The app could not be opened."),
+            (ErrorMessages.installFailed(privateDetail), "The app could not be installed."),
+            (ErrorMessages.aiFailed(privateDetail), "Communication with the AI failed."),
+            (ErrorMessages.authenticationFailed(privateDetail), "The AI key or sign-in did not work."),
+            (ErrorMessages.quotaExceeded(privateDetail), "The AI account is out of credit or quota."),
+            (ErrorMessages.crashAfterLaunch(privateDetail), "The app quit unexpectedly after opening."),
+            (ErrorMessages.quitsAfterLaunch(privateDetail), "The app quit unexpectedly after opening.")
+        ]
+        for (message, expected) in producedMessages {
+            precondition(BugReport.errorSummary(message) == expected, "Produced message is no longer recognised")
+            let report = draft(error: message)
+            precondition(report.contains(expected))
+            precondition(!report.contains(privateDetail) && !report.contains("SYNTHETIC_PRIVATE_DETAIL"))
+        }
+
         let privateMessages = [
             "sk-or-v1-private-key Authorization: Bearer private-token",
             "Something went wrong talking to the AI: My confidential chat and app source code",
@@ -53,6 +77,6 @@ struct BugReportTests {
         precondition(sequence.components(separatedBy: " → ").count == 20)
         precondition(!sequence.contains("Request"))
         precondition(sequence.hasSuffix("Tool call → Error"))
-        print("PASS: versions, all engines, empty/selected/busy states, bounded activity, safe error classification and private payload exclusion")
+        print("PASS: versions, all engines, empty/selected/busy states, bounded activity, shared producer-message recognition and private payload exclusion")
     }
 }

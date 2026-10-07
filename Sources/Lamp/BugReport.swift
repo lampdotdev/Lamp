@@ -17,33 +17,32 @@ enum BugReport {
     static func errorSummary(_ message: String?) -> String {
         guard let message else { return "No error recorded." }
         switch message {
-        case "Sorry, I couldn't get that change working. Try describing it differently, or press Undo.",
-             "This app doesn't build right now. Describe a change and I'll fix it, or press Undo.":
+        case ErrorMessages.buildFailed, ErrorMessages.appDoesNotBuild:
             return "The app failed to build."
-        case "Lamp couldn't go back to how the app was before that message, so nothing was sent.":
+        case ErrorMessages.restoreFailed:
             return "Returning to an earlier version failed."
-        case "The AI is busy right now. Wait a minute and try again.":
+        case ErrorMessages.providerBusy:
             return "The AI provider rate-limited the request."
-        case "Couldn't reach the local model server. Check Settings → Providers → Native Mac AI.":
+        case ErrorMessages.localServerUnreachable:
             return "The local model server could not be reached."
         default:
-            if message.hasPrefix("Couldn't open the app: ") {
+            if message.hasPrefix(ErrorMessages.openFailedPrefix) {
                 return "The app could not be opened."
             }
-            if message.hasPrefix("Couldn't install the app: ") {
+            if message.hasPrefix(ErrorMessages.installFailedPrefix) {
                 return "The app could not be installed."
             }
-            if message.hasPrefix("Something went wrong talking to the AI: ") {
+            if message.hasPrefix(ErrorMessages.aiFailedPrefix) {
                 return "Communication with the AI failed."
             }
-            if message.hasSuffix(" key or sign-in didn't work. Check it in Lamp → Settings (⌘,).") {
+            if message.hasSuffix(ErrorMessages.authenticationFailedSuffix) {
                 return "The AI key or sign-in did not work."
             }
-            if message.hasSuffix(" account is out of credit or quota. Top it up, or pick another provider in Settings.") {
+            if message.hasSuffix(ErrorMessages.quotaExceededSuffix) {
                 return "The AI account is out of credit or quota."
             }
-            if message.hasSuffix(" crashes when it opens. Ask me to fix the crash, or press Undo.") ||
-                message.hasSuffix(" still quits right after opening. Try describing the change differently, or press Undo.") {
+            if message.hasSuffix(ErrorMessages.crashAfterLaunchSuffix) ||
+                message.hasSuffix(ErrorMessages.quitsAfterLaunchSuffix) {
                 return "The app quit unexpectedly after opening."
             }
             return "An error was recorded; its message is omitted for privacy."
