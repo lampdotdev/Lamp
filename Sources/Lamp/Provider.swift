@@ -94,19 +94,25 @@ enum Provider {
 /// which shared this folder until Lamp Dev got its own) moves its keys into the Keychain and removes it.
 /// Keys are read once per launch.
 enum KeyStore {
+    /// Serialises the Keychain and file work; `cacheLock` guards only the cache, so a look at it never waits
+    /// behind a Keychain prompt.
     private static let lock = NSLock()
+    private static let cacheLock = NSLock()
     nonisolated(unsafe) private static var cache: [String: String?] = [:]
 
     /// True when this copy of Lamp is signed with an Apple Team ID.
-    static let usesKeychain: Bool = {
+    static let usesKeychain: Bool = teamID != nil
+
+    /// The Apple Team ID this copy of Lamp is signed with, or nil for a local build.
+    static let teamID: String? = {
         var code: SecCode?
         var info: CFDictionary?
         guard SecCodeCopySelf([], &code) == errSecSuccess, let code,
               let staticCode = { var s: SecStaticCode?; SecCodeCopyStaticCode(code, [], &s); return s }(),
               SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
-              let team = (info as? [String: Any])?[kSecCodeInfoTeamIdentifier as String] as? String
-        else { return false }
-        return !team.isEmpty
+              let team = (info as? [String: Any])?[kSecCodeInfoTeamIdentifier as String] as? String, !team.isEmpty
+        else { return nil }
+        return team
     }()
 
     /// Done once per launch, before a signed build first reads or changes a key.
@@ -114,21 +120,58 @@ enum KeyStore {
 
     static var openRouterKey: String? { key(for: "openrouter") }
 
+    /// Posted on the main thread once the keys have been read at launch: what was drawn without them draws again.
+    static let loaded = Notification.Name("LampKeysLoaded")
+    nonisolated(unsafe) private static var preloaded = false
+
+    /// Reads every provider's key, off the main thread, so the Keychain's questions (a password, when an
+    /// item isn't Lamp's own) come at launch and not in the middle of drawing a view: a Keychain prompt
+    /// inside a layout pass runs the event loop inside the layout, which AppKit answers by crashing. The
+    /// main thread only ever reads what this has found, and says there's no key for anything it hasn't
+    /// (a question declined, say); Settings → Providers asks again when it opens.
+    static func preload() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            if usesKeychain { for provider in Provider.keyProviders { _ = key(for: provider.id) } }
+            DispatchQueue.main.async {
+                preloaded = true
+                NotificationCenter.default.post(name: loaded, object: nil)
+            }
+        }
+    }
+
+    private static func cached(_ provider: String) -> String?? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return cache[provider]
+    }
+
+    private static func remember(_ value: String?, for provider: String) {
+        cacheLock.lock()
+        cache[provider] = .some(value)
+        cacheLock.unlock()
+    }
+
     static func key(for provider: String) -> String? {
+        if let cached = cached(provider) { return cached }
+        // The main thread never asks the Keychain: not before the launch-time read is in, nor for a key that
+        // read couldn't get (a declined question); it's told there's no key, and preload asks again later.
+        if usesKeychain, Thread.isMainThread { return nil }
         lock.lock()
         defer { lock.unlock() }
-        if let cached = cache[provider] { return cached }
+        if let cached = cached(provider) { return cached }
         let value: String?
         if usesKeychain {
             _ = movedFileToKeychain
             let (status, key) = KeychainItem.read(provider)
-            value = key
             // Don't cache a denied or cancelled prompt, so the next use can ask again.
             guard status == errSecSuccess || status == errSecItemNotFound else { return key }
+            if let key { KeychainItem.adopt(key, provider) }
+            // A key the Keychain wouldn't take stays in the file (moveToKeychain tries again each launch).
+            value = key ?? (status == errSecItemNotFound ? KeyFile.stored()?[provider] : nil)
         } else {
             value = KeyFile.read()[provider]
         }
-        cache[provider] = .some(value)
+        remember(value, for: provider)
         return value
     }
 
@@ -136,7 +179,7 @@ enum KeyStore {
         lock.lock()
         defer { lock.unlock() }
         let key = key?.trimmed.nilIfEmpty
-        cache[provider] = .some(key)
+        remember(key, for: provider)
         if usesKeychain {
             _ = movedFileToKeychain
             KeychainItem.delete(provider)
@@ -174,7 +217,7 @@ enum KeyStore {
             KeyFile.write(all)
             guard KeyFile.read()[provider] == key else { return false }
         }
-        cache[provider] = .some(key)
+        remember(key, for: provider)
         return true
     }
 
@@ -203,6 +246,52 @@ enum KeyStore {
         }
 
         static func delete(_ account: String) { SecItemDelete(query(account) as CFDictionary) }
+
+        /// An item that isn't Lamp's own, as one put there with the `security` tool (its partition is
+        /// "apple-tool:", not Lamp's team), makes macOS ask for the login password at every read, however
+        /// often Allow is clicked. Once a read has got through, the item is made Lamp's: written afresh,
+        /// so its access list is this app's and no one is asked again.
+        static func adopt(_ key: String, _ account: String) {
+            guard let team = teamID, let partitions = partitions(account),
+                  !partitions.contains("teamid:\(team)"), !partitions.contains("apple:") else { return }
+            // The key is kept in the file, and read back, before the old item goes: if the new one can't be
+            // added (or Lamp dies between the two), the file is what's read until it can be.
+            var all: [String: String] = [:]
+            if FileManager.default.fileExists(atPath: KeyFile.url.path) {
+                guard let stored = KeyFile.stored() else { return }   // a file that can't be read isn't written over
+                all = stored
+            }
+            all[account] = key
+            guard KeyFile.write(all), KeyFile.stored()?[account] == key else { return }
+            delete(account)
+            if write(key, account) { KeyFile.forget(account) }
+        }
+
+        /// The partitions an item's access list admits ("apple-tool:", "teamid:…", "apple:"): a hex-encoded
+        /// plist in the partition ACL's description. Nil when it can't be read.
+        private static func partitions(_ account: String) -> [String]? {
+            var ref: CFTypeRef?
+            var q = query(account)
+            q[kSecReturnRef as String] = true
+            guard SecItemCopyMatching(q as CFDictionary, &ref) == errSecSuccess, let ref else { return nil }
+            let item = ref as! SecKeychainItem
+            var access: SecAccess?
+            guard SecKeychainItemCopyAccess(item, &access) == errSecSuccess, let access,
+                  let acl = (SecAccessCopyMatchingACLList(access, kSecACLAuthorizationPartitionID) as? [SecACL])?.first else { return nil }
+            var apps: CFArray?
+            var description: CFString?
+            var selector = SecKeychainPromptSelector()
+            guard SecACLCopyContents(acl, &apps, &description, &selector) == errSecSuccess, let hex = description as String? else { return nil }
+            var bytes = [UInt8]()
+            var index = hex.startIndex
+            while index < hex.endIndex, let next = hex.index(index, offsetBy: 2, limitedBy: hex.endIndex) {
+                guard let byte = UInt8(hex[index..<next], radix: 16) else { return nil }
+                bytes.append(byte)
+                index = next
+            }
+            let plist = try? PropertyListSerialization.propertyList(from: Data(bytes), format: nil)
+            return (plist as? [String: Any])?["Partitions"] as? [String]
+        }
     }
 
     /// keys.json, readable only by this user. Also takes in the older single-key file, and a key an earlier
@@ -212,9 +301,15 @@ enum KeyStore {
         static let url = folder.appendingPathComponent("keys.json")
         static let legacy = folder.appendingPathComponent("openrouter-key")
 
+        /// The file as it is: nil when there's none, or when it can't be read or decoded (which is left
+        /// alone, never written over).
+        static func stored() -> [String: String]? {
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            return try? JSONDecoder().decode([String: String].self, from: data)
+        }
+
         static func read() -> [String: String] {
-            if let data = try? Data(contentsOf: url),
-               let keys = try? JSONDecoder().decode([String: String].self, from: data) { return keys }
+            if let keys = stored() { return keys }
             var keys: [String: String] = [:]
             if let old = (try? String(contentsOf: legacy, encoding: .utf8))?.trimmed.nilIfEmpty {
                 keys["openrouter"] = old
@@ -273,18 +368,20 @@ enum KeyStore {
             if provider == "openrouter" { try? fm.removeItem(at: legacy) }
         }
 
-        static func write(_ keys: [String: String]) {
+        @discardableResult
+        static func write(_ keys: [String: String]) -> Bool {
             let fm = FileManager.default
             try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            guard let data = try? JSONEncoder().encode(keys) else { return }
+            guard let data = try? JSONEncoder().encode(keys) else { return false }
             // Written beside the file, private from the start, then put in its place in one step: the keys
             // are never readable by others, and a write that fails leaves the file as it was.
             let fresh = folder.appendingPathComponent("keys.json.\(UUID().uuidString)")
             guard fm.createFile(atPath: fresh.path, contents: data, attributes: [.posixPermissions: 0o600]),
                   rename(fresh.path, url.path) == 0 else {
                 try? fm.removeItem(at: fresh)
-                return
+                return false
             }
+            return true
         }
     }
 }

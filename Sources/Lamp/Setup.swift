@@ -964,7 +964,7 @@ struct ProvidersSettings: View {
         } message: {
             Text("Lamp forgets its API key. Apps and builds that use it stop working until you add it again.")
         }
-        .onAppear { openPending(); refreshSignIns() }
+        .onAppear { openPending(); refreshSignIns(); KeyStore.preload() }   // a key declined at launch is asked for again
         .onChange(of: pendingSheet) { openPending() }
         .task { local.refresh(); await local.detectExternal() }
     }
