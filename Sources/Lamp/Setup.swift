@@ -575,7 +575,7 @@ struct AppsSettings: View {
                         ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
                     }
                     if Provider.hasKey {
-                        Text("When an app can't reach this Mac it goes to OpenRouter with your key: these for text and pictures, and Jev for decisions as above. What it spends then isn't shown in Lamp.")
+                        Text("When an app can't reach this Mac it goes to OpenRouter with your key: these for text and pictures, and Jev for decisions. What it spends then isn't shown in Lamp.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
                         KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")
