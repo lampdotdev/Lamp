@@ -9,6 +9,8 @@ struct LampHelpCommands: Commands {
             Button("Lamp Help") { openWindow(id: "help") }
                 // macOS reserves ⇧⌘/ for the Help menu's search field.
                 .keyboardShortcut("/", modifiers: .command)
+            Divider()
+            Button("Report a Bug…") { openWindow(id: "bug-report") }
         }
     }
 }
@@ -23,6 +25,7 @@ struct LampHelpScene: Scene {
 }
 
 struct LampHelpView: View {
+    @Environment(\.openWindow) private var openWindow
     @State private var selection: HelpTopic? = .gettingStarted
 
     var body: some View {
@@ -41,6 +44,9 @@ struct LampHelpView: View {
                             Text(LocalizedStringKey(section.text))
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+                    }
+                    if topic == .troubleshooting {
+                        Button("Report a Bug…") { openWindow(id: "bug-report") }
                     }
                 }
                 .textSelection(.enabled)
@@ -129,6 +135,7 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
             ]
         case .troubleshooting:
             [
+                HelpSection(title: "Report a bug", text: "Choose Help → Report a Bug… to describe what happened and review the diagnostics, then click Send to send the text shown to the Lamp team through lamp.dev. If sending fails or you are offline, copy or share it with the person who invited you. Lamp includes its version and build, your macOS version, the selected engine and activity labels. Log text, keys, chat and app code are left out unless you add them yourself. Nothing is sent automatically. New Report… starts a fresh snapshot after asking before replacing your draft."),
                 HelpSection(title: "A build or change failed", text: "Read the message in the chat. When an app does not build, Lamp sends the compiler errors back to the agent, up to three times. If it still fails, describe what you wanted and ask Lamp to fix it, or click Undo Last Change. Agent Details in the toolbar shows more of what happened."),
                 HelpSection(title: "Your key or sign-in does not work", text: "Double-click the provider in Settings → Providers to replace its key, and check that the account has credit or quota. For Claude Code or Codex, Settings → Building shows whether it is installed and signed in, with a Sign In… button if it is not. It also helps to open the Claude or ChatGPT app and check that it works there."),
                 HelpSection(title: "A local model will not start", text: "Try a smaller model; it may need more memory than your Mac has. Double-click Native Mac AI in Settings → Providers to see how much memory each model needs and to download another."),

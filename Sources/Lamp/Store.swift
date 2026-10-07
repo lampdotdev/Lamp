@@ -1265,7 +1265,7 @@ final class Store: ObservableObject {
             crash = await install(project)
         }
         if crash != nil {
-            log(project, .error, "\(project.name) still quits right after opening. Try describing the change differently, or press Undo.")
+            log(project, .error, ErrorMessages.quitsAfterLaunch(project.name))
         }
         // After the crash fixes, which amend the commit, so the name and the links stay on the version that's kept.
         if committed || turns[project.id]?.pendingName != nil, let head = await Versions.head(project) {
@@ -1313,7 +1313,7 @@ final class Store: ObservableObject {
         }
         guard turns[project.id]?.stopped != true, exists(project) else { return false }
         if errors != nil {
-            log(project, .error, "Sorry, I couldn't get that change working. Try describing it differently, or press Undo.")
+            log(project, .error, ErrorMessages.buildFailed)
         }
         return errors == nil
     }
@@ -1692,7 +1692,7 @@ final class Store: ObservableObject {
         do {
             _ = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
         } catch {
-            log(project, .error, "Couldn't open the app: \(error.localizedDescription)")
+            log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
         }
         refreshOpenApps()
     }
@@ -1999,7 +1999,7 @@ final class Store: ObservableObject {
         if await build(project) == nil {
             await installReportingCrash(project)
         } else {
-            log(project, .error, "This app doesn't build right now. Describe a change and I'll fix it, or press Undo.")
+            log(project, .error, ErrorMessages.appDoesNotBuild)
         }
     }
 
@@ -2063,7 +2063,7 @@ final class Store: ObservableObject {
         guard let target = start.flatMap({ id in versions.first { $0.id == id } }),
               await Versions.restoreFiles(project, to: target),
               let chat = logs[project.id], let index = chat.firstIndex(where: { $0.id == line.id }) else {
-            log(project, .error, "Lamp couldn't go back to how the app was before that message, so nothing was sent.")
+            log(project, .error, ErrorMessages.restoreFailed)
             return false
         }
         if await Versions.save(project, message: Versions.restoredMessage(to: target)), let head = await Versions.head(project) {
@@ -2258,7 +2258,7 @@ final class Store: ObservableObject {
         do {
             try await deploy(project)
         } catch {
-            log(project, .error, "Couldn't install the app: \(error.localizedDescription)")
+            log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
             return nil
         }
         let config = NSWorkspace.OpenConfiguration()
@@ -2277,7 +2277,7 @@ final class Store: ObservableObject {
                 log(project, .status, "\(project.name) is ready")
             }
         } catch {
-            log(project, .error, "Couldn't open the app: \(error.localizedDescription)")
+            log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
         }
         upgradeIconArt(project)
         refreshOpenApps()
@@ -2359,7 +2359,7 @@ final class Store: ObservableObject {
             if inFront { log(project, .status, "\(project.name) is ready on the \(project.family.name) simulator") }
         } catch {
             // A failure to boot, install or launch is reported like a crash: the agent must hear about it.
-            log(project, .error, "Couldn't open the app: \(error.localizedDescription)")
+            log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
             refreshOpenApps()
             return giveBack("Couldn't open the app in the simulator: \(error.localizedDescription)")
         }
@@ -2491,7 +2491,7 @@ final class Store: ObservableObject {
     /// For Open App and Undo, where no agent is running to fix a crash.
     private func installReportingCrash(_ project: LampProject) async {
         if await install(project) != nil {
-            log(project, .error, "\(project.name) crashes when it opens. Ask me to fix the crash, or press Undo.")
+            log(project, .error, ErrorMessages.crashAfterLaunch(project.name))
         }
     }
 
