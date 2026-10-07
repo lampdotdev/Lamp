@@ -378,9 +378,10 @@ private struct SetupStep: View {
         }
     }
 
+    /// A check that can't tell counts as signed out: the Sign In button is then the way to find out.
     private func refreshSignIns() async {
         for engine in [Engine.claude, .codex] where ToolLocator.path(for: engine) != nil && signingIn != engine {
-            signedIn[engine] = await EngineSignIn.isSignedIn(engine)
+            signedIn[engine] = await EngineSignIn.isSignedIn(engine) ?? false
         }
     }
 }
@@ -527,11 +528,13 @@ private struct BuilderCard: View {
         problem = nil
         choice = new
         let which: Engine? = new == .claude ? .claude : new == .chatGPT ? .codex : nil
-        guard let which, ToolLocator.path(for: which) != nil else { return }
+        guard let which else { return }
+        // Saved whether or not the app is there yet: once it's installed and signed in, the choice stands.
         Builder.engine = which
         engine = which.rawValue
+        guard ToolLocator.path(for: which) != nil else { return }
         Task {
-            if signedIn[which] == nil { signedIn[which] = await EngineSignIn.isSignedIn(which) }
+            if signedIn[which] == nil { signedIn[which] = await EngineSignIn.isSignedIn(which) ?? false }
             await store.recheckSetup()
         }
     }
