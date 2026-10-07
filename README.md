@@ -115,7 +115,7 @@ Local models are slower and much less capable than the best cloud models for who
 - **Builds fail with "plugin for module 'SwiftUIMacros' not found"**: the macOS 27 SDK needs a compiler plugin that only ships with full Xcode. With just the Command Line Tools, Lamp builds against the newest older SDK they include, so this only happens when there isn't one. Install Xcode, or an older Command Line Tools SDK.
 - **`Downloading pi` fails during `./build.sh`**: GitHub must be reachable. The download is cached in `vendor/` afterwards.
 - **Build errors mentioning the SDK, with Xcode installed**: point at it explicitly with `sudo xcode-select -s /Applications/Xcode.app`.
-- **Keychain asks "Lamp wants to access key dev.lamp.host"**: Lamp is moving an OpenRouter key saved by an older build out of the Keychain. Allow it once. Local builds don't use the Keychain after that.
+- **Keychain asks "Lamp wants to access key dev.lamp.host"**: a build without an Apple signature is copying an OpenRouter key that a signed Lamp saved in the Keychain. Allow it once. Local builds don't use the Keychain after that.
 - **A local model won't start**: check `~/Library/Logs/Lamp/llama-server.log` (GGUF) or `mlx-server.log` (MLX). The model may need more memory than the Mac has; pick a smaller one.
 - **Claude Code or Codex errors**: Lamp shows their message. Make sure the tool works on its own in Terminal first: you're signed in, and it's up to date (an old Codex can't use new models).
 - **Apps can't use AI ("Couldn't reach Lamp")**: Lamp must be running, and port `47811` must be free (check with `lsof -i :47811`).

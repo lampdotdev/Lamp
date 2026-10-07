@@ -90,7 +90,9 @@ enum Provider {
 /// Builds signed with an Apple Team ID (Developer ID releases) use the login Keychain. Local builds
 /// have no Team ID, and macOS ties Keychain approval to each exact build, so every rebuild would ask
 /// again. Those builds keep keys in a file only your user account can read instead:
-/// keys.json in Lamp's support folder. Keys are read once per launch.
+/// keys.json in Lamp's support folder. A signed build that finds that file (left by a build from source,
+/// which shared this folder until Lamp Dev got its own) moves its keys into the Keychain and removes it.
+/// Keys are read once per launch.
 enum KeyStore {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var cache: [String: String?] = [:]
@@ -107,6 +109,9 @@ enum KeyStore {
         return !team.isEmpty
     }()
 
+    /// Done once per launch, before a signed build first reads or changes a key.
+    private static let movedFileToKeychain: Void = KeyFile.moveToKeychain()
+
     static var openRouterKey: String? { key(for: "openrouter") }
 
     static func key(for provider: String) -> String? {
@@ -115,6 +120,7 @@ enum KeyStore {
         if let cached = cache[provider] { return cached }
         let value: String?
         if usesKeychain {
+            _ = movedFileToKeychain
             let (status, key) = KeychainItem.read(provider)
             value = key
             // Don't cache a denied or cancelled prompt, so the next use can ask again.
@@ -132,8 +138,10 @@ enum KeyStore {
         let key = key?.trimmed.nilIfEmpty
         cache[provider] = .some(key)
         if usesKeychain {
+            _ = movedFileToKeychain
             KeychainItem.delete(provider)
-            if let key { KeychainItem.write(key, provider) }
+            // Unless the new key couldn't be saved: then the file's is the only one there is.
+            if key.map({ KeychainItem.write($0, provider) }) ?? true { KeyFile.forget(provider) }
         } else {
             var all = KeyFile.read()
             all[provider] = key
@@ -159,16 +167,18 @@ enum KeyStore {
             return (status, (item as? Data).flatMap { String(data: $0, encoding: .utf8) }?.nilIfEmpty)
         }
 
-        static func write(_ key: String, _ account: String) {
+        @discardableResult
+        static func write(_ key: String, _ account: String) -> Bool {
             var q = query(account)
             q[kSecValueData as String] = Data(key.utf8)
-            SecItemAdd(q as CFDictionary, nil)
+            return SecItemAdd(q as CFDictionary, nil) == errSecSuccess
         }
 
         static func delete(_ account: String) { SecItemDelete(query(account) as CFDictionary) }
     }
 
-    /// keys.json, readable only by this user. Also migrates the older single-key file and Keychain item.
+    /// keys.json, readable only by this user. Also takes in the older single-key file, and a key an earlier
+    /// build left in the Keychain: that one is copied, not moved, so a signed Lamp on the same Mac keeps it.
     private enum KeyFile {
         static let folder = Edition.supportFolder
         static let url = folder.appendingPathComponent("keys.json")
@@ -182,7 +192,6 @@ enum KeyStore {
                 keys["openrouter"] = old
             } else if let old = KeychainItem.read("openrouter").1 {
                 keys["openrouter"] = old
-                KeychainItem.delete("openrouter")
             }
             if !keys.isEmpty {
                 write(keys)
@@ -191,15 +200,63 @@ enum KeyStore {
             return keys
         }
 
+        /// What a signed build does with the file. Each key goes into the Keychain, unless that provider
+        /// already has one there (the one Lamp has been using wins), and leaves the file as soon as it's
+        /// over; the file goes with its last key. A key that couldn't be moved (the Keychain is locked, or
+        /// the person declined) stays in the file for the next launch. A file that's there but can't be read
+        /// is left alone: removing it would lose keys that could still be recovered.
+        static func moveToKeychain() {
+            let fm = FileManager.default
+            var keys: [String: String] = [:]
+            if fm.fileExists(atPath: url.path) {
+                guard let data = try? Data(contentsOf: url),
+                      let stored = try? JSONDecoder().decode([String: String].self, from: data) else { return }
+                keys = stored
+                let left = keys.filter { !moved($0.value, to: $0.key) }
+                if left.isEmpty { try? fm.removeItem(at: url) } else if left.count < keys.count { write(left) }
+            }
+            // The single-key file is older than keys.json: its key matters only if keys.json has none for
+            // OpenRouter, and it goes once OpenRouter's key is in the Keychain either way.
+            if fm.fileExists(atPath: legacy.path) {
+                guard let text = try? String(contentsOf: legacy, encoding: .utf8) else { return }
+                let key = keys["openrouter"] ?? text.trimmed.nilIfEmpty
+                if key.map({ moved($0, to: "openrouter") }) ?? true { try? fm.removeItem(at: legacy) }
+            }
+        }
+
+        /// True once the Keychain holds a key for the provider: its own, or this one.
+        private static func moved(_ key: String, to provider: String) -> Bool {
+            switch KeychainItem.read(provider).0 {
+            case errSecSuccess: return true
+            case errSecItemNotFound: return KeychainItem.write(key, provider)
+            default: return false
+            }
+        }
+
+        /// A key set or removed in a signed build is the last word on that provider: whatever the file
+        /// still holds for it (a key that couldn't be moved yet) goes, so it can't come back at the next launch.
+        static func forget(_ provider: String) {
+            let fm = FileManager.default
+            if let data = try? Data(contentsOf: url),
+               var keys = try? JSONDecoder().decode([String: String].self, from: data), keys[provider] != nil {
+                keys[provider] = nil
+                if keys.isEmpty { try? fm.removeItem(at: url) } else { write(keys) }
+            }
+            if provider == "openrouter" { try? fm.removeItem(at: legacy) }
+        }
+
         static func write(_ keys: [String: String]) {
             let fm = FileManager.default
             try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            // Create it private first, then write, so keys are never briefly readable by others.
-            if !fm.fileExists(atPath: url.path) {
-                fm.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
+            guard let data = try? JSONEncoder().encode(keys) else { return }
+            // Written beside the file, private from the start, then put in its place in one step: the keys
+            // are never readable by others, and a write that fails leaves the file as it was.
+            let fresh = folder.appendingPathComponent("keys.json.\(UUID().uuidString)")
+            guard fm.createFile(atPath: fresh.path, contents: data, attributes: [.posixPermissions: 0o600]),
+                  rename(fresh.path, url.path) == 0 else {
+                try? fm.removeItem(at: fresh)
+                return
             }
-            try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-            try? JSONEncoder().encode(keys).write(to: url)
         }
     }
 }
