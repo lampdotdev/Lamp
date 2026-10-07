@@ -658,6 +658,8 @@ final class MCPClient: @unchecked Sendable {
     /// Rises when a request gives up or the server stops: a question asked for a request that's gone is
     /// declined when its answer comes, so a step approved late can't run after the model has moved on.
     private var generation = 0
+    /// Set when the server has been stopped or has gone: requests after that fail at once.
+    private var closed = false
     private static let patience: TimeInterval = 120
 
     init(executable: URL, arguments: [String], environment: [String: String] = [:]) throws {
@@ -730,6 +732,11 @@ final class MCPClient: @unchecked Sendable {
     private func request(_ method: String, _ params: [String: Any]) async throws -> [String: Any] {
         try await withCheckedThrowingContinuation { continuation in
             lock.lock()
+            guard !closed else {
+                lock.unlock()
+                continuation.resume(throwing: ComputerUse.Failure(message: "The computer-use driver has stopped; the task can't go on."))
+                return
+            }
             let id = nextID
             nextID += 1
             waiting[id] = continuation
@@ -843,6 +850,7 @@ final class MCPClient: @unchecked Sendable {
 
     private func failAll() {
         lock.lock()
+        closed = true
         let pending = waiting
         waiting.removeAll()
         deadlines.removeAll()
