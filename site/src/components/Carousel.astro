@@ -1,5 +1,5 @@
 ---
-import { Image } from "astro:assets";
+import { Image, getImage } from "astro:assets";
 import type { ImageMetadata } from "astro";
 
 interface Props {
@@ -7,12 +7,14 @@ interface Props {
 }
 
 const { slides } = Astro.props;
+// The full-size picture Quick Look swaps in.
+const large = await Promise.all(slides.map((slide) => getImage({ src: slide.image, width: slide.image.width, format: "webp" })));
 const chevron = "M10.5 3.5 6 8l4.5 4.5";
 ---
 
 <!--
   Window pictures of apps Lamp has built, in the manner of the Mac's own galleries: a strip that swipes on a
-  trackpad or phone, round frosted arrows, and a row of page dots. It moves on by itself
+  trackpad or phone, round frosted arrows, and page dots like the Mac app's welcome screens. It moves on by itself
   until someone touches it, and not at all for people who've asked for less motion.
 -->
 <section
@@ -36,8 +38,9 @@ const chevron = "M10.5 3.5 6 8l4.5 4.5";
               src={slide.image}
               alt={slide.alt}
               widths={[640, 1024, 1600, 2048]}
-              sizes="(min-width: 1024px) 1024px, 100vw"
+              sizes="(min-width: 1152px) 1104px, 100vw"
               loading={index === 0 ? "eager" : "lazy"}
+              data-quicklook={large[index].src}
               class="mx-auto h-auto w-full"
             />
           </div>
@@ -56,7 +59,7 @@ const chevron = "M10.5 3.5 6 8l4.5 4.5";
           aria-label={arrow.label}
           class:list={[
             arrow.side,
-            "absolute top-1/2 grid size-9 -translate-y-1/2 place-items-center rounded-full bg-white/85 text-ink shadow-[0_2px_10px_rgba(0,0,0,0.18)] ring-1 ring-black/10 backdrop-blur-md transition hover:bg-white sm:size-10 focus-visible:outline-2 focus-visible:outline-amber sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100",
+            "absolute top-1/2 grid size-9 -translate-y-1/2 place-items-center rounded-full bg-white/85 text-ink shadow-[0_2px_10px_rgba(0,0,0,0.18)] ring-1 ring-black/10 backdrop-blur-md transition hover:bg-white sm:size-10 focus-visible:outline-2 focus-visible:outline-graphite sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100",
           ]}
         >
           <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 fill-none stroke-current stroke-2 [stroke-linecap:round] [stroke-linejoin:round]">
@@ -77,16 +80,16 @@ const chevron = "M10.5 3.5 6 8l4.5 4.5";
             data-index={index}
             aria-selected={index === 0 ? "true" : "false"}
             aria-label={slide.name}
-            class="group/dot grid size-6 place-items-center rounded-full focus-visible:outline-2 focus-visible:outline-amber"
+            class="group/dot grid h-6 place-items-center rounded-full px-[3.5px] focus-visible:outline-2 focus-visible:outline-graphite"
           >
-            <span class="size-2 rounded-full bg-ink/20 transition group-hover/dot:bg-ink/40 group-aria-selected/dot:bg-ink/75" />
+            <span class="h-[7px] w-[7px] rounded-full bg-black/15 transition-all duration-300 group-hover/dot:bg-black/30 group-aria-selected/dot:w-5 group-aria-selected/dot:bg-graphite" />
           </button>
         ))
       }
     </div>
   </div>
 
-  <p data-caption aria-live="polite" class="mx-auto mt-4 max-w-xl px-2 text-center leading-relaxed text-muted">
+  <p data-caption aria-live="polite" class="mx-auto mt-4 max-w-3xl px-2 text-center leading-relaxed text-muted">
     “{slides[0].request}”
   </p>
 </section>

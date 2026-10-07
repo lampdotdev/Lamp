@@ -1,0 +1,18 @@
+---
+// The update server redirects this to the newest release's DMG.
+const download = "https://updates.lamp.dev/download/latest";
+---
+
+<!--
+  The same button as the Mac app's welcome screens (BigButton in Onboarding.swift): a graphite capsule with a
+  faint light edge and a soft shadow, which grows a little and glows more under the pointer.
+-->
+<div class="flex flex-col items-center">
+  <a
+    href={download}
+    class="inline-flex h-[52px] items-center rounded-full bg-linear-to-b from-graphite to-graphite-deep px-9 text-[17px] font-semibold text-white shadow-[0_6px_20px_rgba(20,19,17,0.28)] ring-1 ring-white/25 ring-inset transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-[1.03] hover:shadow-[0_8px_32px_rgba(20,19,17,0.4)] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-graphite active:scale-[0.98]"
+  >
+    Download Lamp
+  </a>
+  <p class="mt-3 text-sm text-muted">Free · Requires macOS 14 Sonoma or later</p>
+</div>

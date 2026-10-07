@@ -1,12 +1,15 @@
 ---
-import { Image } from "astro:assets";
+import { Image, getImage } from "astro:assets";
 import Base from "../layouts/Base.astro";
 import Carousel from "../components/Carousel.astro";
+import DownloadButton from "../components/DownloadButton.astro";
+import QuickLook from "../components/QuickLook.astro";
 import icon from "../assets/AppIcon.png";
 import anthropic from "../assets/logos/anthropic.png";
 import openai from "../assets/logos/openai.png";
 import openrouter from "../assets/logos/openrouter.png";
-import google from "../assets/logos/google.png";
+import ollama from "../assets/logos/ollama.png";
+import lmstudio from "../assets/logos/lmstudio.png";
 
 // Lamp's window just after building an app, and windows of apps it built, all taken from Lamp Dev with
 // made-up data (see RELEASING.md).
@@ -15,6 +18,8 @@ import readingQueue from "../assets/apps/reading-queue.png";
 import neonBricks from "../assets/apps/neon-bricks.png";
 import habitStreaks from "../assets/apps/habit-streaks.png";
 import paletteStudio from "../assets/apps/palette-studio.png";
+
+const lampWindowLarge = await getImage({ src: lampWindow, width: lampWindow.width, format: "webp" });
 
 const apps = [
   {
@@ -43,29 +48,47 @@ const apps = [
   },
 ];
 
-// The update server redirects this to the newest release's DMG.
-const download = "https://updates.lamp.dev/download/latest";
-
+// The features as a bento box: wide and narrow tiles in turn, a couple in colour.
 const points = [
-  { title: "Real Mac apps", text: "Each one is an app of its own, in your Applications folder and in Spotlight. No browser tab, no subscription to someone else's tool." },
-  { title: "Change it any time", text: "Press ⇧⌘E in any app you made to ask for something different. It's rebuilt in moments, and Undo puts it back." },
-  { title: "Your data stays put", text: "What an app keeps is kept safe through every change, and every version is saved so you can go back." },
-  { title: "Share with a coworker", text: "Send an app by AirDrop, Messages or Mail. They get their own copy to adapt, after Lamp shows them what it can do." },
+  {
+    title: "Real Mac apps",
+    text: "Each one is an app of its own, in your Applications folder and in Spotlight. No browser tab, no subscription to someone else's tool. No server or security to worry about.",
+    tile: "sm:col-span-3 bg-panel",
+  },
+  {
+    title: "Change it any time",
+    text: "Always finding ways to improve? No worries, continue making changes to your apps. Saved versions let you try new things and roll back if it doesn't work out.",
+    tile: "sm:col-span-2 bg-glow",
+  },
+  {
+    title: "Your data stays put",
+    text: "What an app keeps is kept safe through every change you make to it, so trying something new never costs you your stuff.",
+    tile: "sm:col-span-2 bg-panel",
+  },
+  {
+    title: "Share with anyone",
+    text: "Send an app to a friend by AirDrop, Messages or Mail. They get their own copy to make their own, and Lamp shows them what it does before it opens.",
+    tile: "sm:col-span-3 bg-night text-white",
+  },
 ];
 
-// Black marks are softened to sit with the grey text; Gemini's is in colour and stays as it is.
+// Signed-in subscriptions first, then a key, then the models that run on the Mac itself, in the app's own
+// order. Lamp's built-in models (Native Mac AI) run on Metal; they get a chip, like the app's Providers tab,
+// since Apple's logo isn't ours to use.
 const providers = [
-  { logo: anthropic, name: "Claude", mono: true },
-  { logo: openai, name: "ChatGPT", mono: true },
-  { logo: google, name: "Gemini", mono: false },
-  { logo: openrouter, name: "OpenRouter", mono: true },
+  { logo: anthropic, name: "Claude" },
+  { logo: openai, name: "ChatGPT" },
+  { logo: openrouter, name: "OpenRouter" },
+  { name: "Apple Metal" },
+  { logo: ollama, name: "Ollama" },
+  { logo: lmstudio, name: "LM Studio" },
 ];
 
-const description = "Describe what you need, and Lamp builds a real Mac app that you can keep using, change whenever you like, and share.";
+const description = "Describe what you want, and Lamp builds a real Mac app, with AI inside when it helps. Keep using it, change it whenever you like, and share it. No need to know how to code or deploy anything.";
 ---
 
-<Base title="Lamp: the apps your work is missing" description={description} image={lampWindow.src}>
-  <main class="mx-auto max-w-5xl px-4 sm:px-6">
+<Base title="Lamp: wish Mac apps into existence" description={description} image={lampWindow.src}>
+  <main class="mx-auto max-w-6xl px-4 sm:px-6">
     <section class="flex flex-col items-center pt-20 pb-14 text-center sm:pt-28">
       <Image
         src={icon}
@@ -76,24 +99,12 @@ const description = "Describe what you need, and Lamp builds a real Mac app that
         loading="eager"
         class="size-36 drop-shadow-[0_14px_30px_rgba(217,122,6,0.28)] sm:size-44"
       />
-      <h1 class="mt-6 font-display text-5xl font-semibold tracking-tight sm:text-6xl">Lamp</h1>
-      <p class="mt-4 max-w-xl font-display text-2xl leading-snug font-medium tracking-tight sm:text-3xl">
-        The apps your work is missing,<br class="hidden sm:inline" /> made for you on your Mac.
+      <h1 class="mt-6 font-display text-5xl font-bold tracking-tight sm:text-6xl">Lamp</h1>
+      <p class="mt-4 font-display text-3xl leading-tight font-semibold tracking-tight sm:text-4xl sm:whitespace-nowrap">
+        Wish Mac apps into existence.
       </p>
-      <p class="mt-5 max-w-lg text-lg leading-relaxed text-muted">
-        Describe what you need, and Lamp builds a real Mac app, with AI inside when it helps. Keep using it, change it
-        whenever you like, and share it.
-      </p>
-      <a
-        href={download}
-        class="mt-9 inline-flex items-center gap-2 rounded-full bg-amber px-7 py-3 text-lg font-medium text-night shadow-sm transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber"
-      >
-        <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 fill-current">
-          <path d="M8 1.5a.75.75 0 0 1 .75.75v7.69l2.47-2.47a.75.75 0 1 1 1.06 1.06l-3.75 3.75a.75.75 0 0 1-1.06 0L3.72 8.53a.75.75 0 0 1 1.06-1.06l2.47 2.47V2.25A.75.75 0 0 1 8 1.5ZM2.75 13.5h10.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5Z" />
-        </svg>
-        Download Lamp
-      </a>
-      <p class="mt-3 text-sm text-muted">Free · Requires macOS 14 Sonoma or later</p>
+      <p class="mt-5 max-w-[50rem] text-lg leading-relaxed text-muted">{description}</p>
+      <div class="mt-9"><DownloadButton /></div>
     </section>
 
     <section class="pb-20">
@@ -101,27 +112,28 @@ const description = "Describe what you need, and Lamp builds a real Mac app that
         src={lampWindow}
         alt="Lamp having just built a Reading Queue app: the request, the plan and a picture of the finished app"
         widths={[640, 1024, 1600, 2048]}
-        sizes="(min-width: 1024px) 1024px, 100vw"
+        sizes="(min-width: 1152px) 1104px, 100vw"
         loading="eager"
+        data-quicklook={lampWindowLarge.src}
         class="mx-auto h-auto w-full"
       />
     </section>
 
-    <section class="border-t border-rule pt-20">
+    <section class="pt-8">
       <h2 class="text-center font-display text-3xl font-semibold tracking-tight">Make a tool for the task that bugs you.</h2>
-      <p class="mx-auto mt-3 max-w-lg text-center text-lg text-muted">
+      <p class="mx-auto mt-3 max-w-[50rem] text-center text-lg text-muted">
         Or a game for when you're done. Each of these came from a single request.
       </p>
       <Carousel slides={apps} />
     </section>
 
     <section class="border-t border-rule py-20">
-      <div class="grid gap-x-12 gap-y-10 sm:grid-cols-2">
+      <div class="grid gap-4 sm:grid-cols-5">
         {
           points.map((point) => (
-            <div>
-              <h3 class="font-display text-xl font-semibold tracking-tight">{point.title}</h3>
-              <p class="mt-2 text-lg leading-relaxed text-muted">{point.text}</p>
+            <div class:list={["flex min-h-56 flex-col justify-end rounded-[28px] p-8 sm:p-10", point.tile]}>
+              <h3 class="font-display text-2xl font-semibold tracking-tight sm:text-3xl">{point.title}</h3>
+              <p class="mt-3 text-lg leading-relaxed opacity-75">{point.text}</p>
             </div>
           ))
         }
@@ -130,7 +142,7 @@ const description = "Describe what you need, and Lamp builds a real Mac app that
 
     <section class="border-t border-rule py-20 text-center">
       <h2 class="font-display text-3xl font-semibold tracking-tight">Bring the AI you already pay for.</h2>
-      <p class="mx-auto mt-3 max-w-lg text-lg text-muted">
+      <p class="mx-auto mt-3 max-w-[50rem] text-lg text-muted">
         Lamp is free. It builds with your Claude or ChatGPT subscription, a key from more than a dozen AI providers, or
         a model that runs right on your Mac.
       </p>
@@ -138,7 +150,17 @@ const description = "Describe what you need, and Lamp builds a real Mac app that
         {
           providers.map((provider) => (
             <li class="flex items-center gap-2.5 text-muted">
-              <Image src={provider.logo} alt="" width={24} height={24} densities={[1, 2]} class:list={["size-6", provider.mono && "opacity-70"]} />
+              {
+                provider.logo ? (
+                  <Image src={provider.logo} alt="" width={24} height={24} densities={[1, 2]} class="size-6 opacity-70" />
+                ) : (
+                  <svg aria-hidden="true" viewBox="0 0 24 24" class="size-6 fill-none stroke-current stroke-[1.6] opacity-90">
+                    <rect x="6" y="6" width="12" height="12" rx="2.5" />
+                    <rect x="9.5" y="9.5" width="5" height="5" rx="1" />
+                    <path d="M9 2.5v3.5M12 2.5v3.5M15 2.5v3.5M9 18v3.5M12 18v3.5M15 18v3.5M2.5 9H6M2.5 12H6M2.5 15H6M18 9h3.5M18 12h3.5M18 15h3.5" stroke-linecap="round" />
+                  </svg>
+                )
+              }
               <span class="font-medium">{provider.name}</span>
             </li>
           ))
@@ -148,16 +170,12 @@ const description = "Describe what you need, and Lamp builds a real Mac app that
 
     <section class="border-t border-rule py-20 text-center">
       <Image src={icon} alt="" width={72} height={72} densities={[1, 2]} class="mx-auto size-18" />
-      <h2 class="mt-5 font-display text-3xl font-semibold tracking-tight">Try Lamp.</h2>
-      <a
-        href={download}
-        class="mt-7 inline-flex items-center rounded-full bg-amber px-7 py-3 text-lg font-medium text-night shadow-sm transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber"
-      >
-        Download Lamp
-      </a>
-      <p class="mt-3 text-sm text-muted">Free · Requires macOS 14 Sonoma or later</p>
+      <h2 class="mt-5 font-display text-3xl font-semibold tracking-tight">Try Lamp. Let your genie out.</h2>
+      <div class="mt-7"><DownloadButton /></div>
     </section>
   </main>
+
+  <QuickLook />
 
   <footer class="border-t border-rule py-10 text-center text-sm text-muted">
     <p>Made by <a href="https://roocode.com" class="text-ink hover:underline">Roo Code</a> · © {new Date().getFullYear()}</p>
