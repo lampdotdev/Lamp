@@ -111,7 +111,7 @@ struct QueuedMessage: Identifiable {
 final class Store: ObservableObject {
     static let shared = Store()
 
-    @Published var projects: [LampProject] = []
+    @Published var projects: [LampProject] = [] { didSet { syncLocalNetwork() } }   // the network listener follows which apps open on a phone
     @Published var selection: String? {
         didSet {
             markRead()
@@ -615,6 +615,7 @@ final class Store: ObservableObject {
                                               platform: changed.platform, family: changed.family, device: udid))
             .write(to: changed.dir.appendingPathComponent(".lamp/meta.json"))
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
+        updateLocalNetwork()
         let name = devices.first(where: { $0.udid == udid })?.name
         log(changed, .status, name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
                                ?? "\(changed.name) will open on the \(changed.family.name) simulator from now on.")
@@ -634,7 +635,7 @@ final class Store: ObservableObject {
 
     /// What Try On shows beside Play: the simulator's kind, or the chosen phone's name.
     func tryOnName(_ project: LampProject) -> String {
-        guard Experiments.devices, let udid = project.device else { return project.family.name }
+        guard Experiments.iosApps, let udid = project.device else { return project.family.name }
         return devices.first(where: { $0.udid == udid })?.name ?? "Your phone"
     }
 
@@ -673,7 +674,7 @@ final class Store: ObservableObject {
     @Published var pairing: Set<String> = []
 
     func refreshDevices() {
-        guard Experiments.devices else { if !devices.isEmpty { devices = [] }; return }
+        guard Experiments.iosApps else { if !devices.isEmpty { devices = [] }; return }
         Task {
             let found = await Devices.list()
             if found != devices { devices = found }
@@ -1725,7 +1726,7 @@ final class Store: ObservableObject {
     func open(_ project: LampProject) async {
         if project.platform == .iphone {
             // Running already: bring the simulator forward. Otherwise build (if needed) and launch.
-            let toSimulator = !(Experiments.devices && project.device != nil)
+            let toSimulator = !(Experiments.iosApps && project.device != nil)
             if toSimulator, let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id { await Simulator.show(); return }
             if FileManager.default.fileExists(atPath: project.builtURL.path), stamps[project.id]?.isOutdated != true {
                 guard begin(project) != nil else { return }
@@ -2332,7 +2333,7 @@ final class Store: ObservableObject {
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
             // The person's own phone gets the app when they press Play or a change is finished; the agent's
             // looks (not in front) stay on the simulator, which is the only screen Lamp can see.
-            if inFront, Experiments.devices, let udid = project.device {
+            if inFront, Experiments.iosApps, let udid = project.device {
                 return await installOnDevice(project, owner: owner, udid: udid)
             }
             return await installOnSimulator(project, owner: owner, inFront: inFront)
@@ -2839,22 +2840,28 @@ final class Store: ObservableObject {
         let gateway = Gateway { request in await Store.shared.handleAI(request) }
         do {
             try gateway.start()
-            gateway.setLocalNetwork(Experiments.devices)
+            gateway.setLocalNetwork(Experiments.iosApps && projects.contains { $0.platform == .iphone && $0.device != nil })
             self.gateway = gateway
         } catch {
             NSLog("Lamp AI gateway failed to start: \(error)")
         }
     }
 
-    /// Whether apps on the person's phones may reach Lamp over the local network (Settings → Experimental).
-    func setLocalNetwork(_ on: Bool) {
-        gateway?.setLocalNetwork(on)
+    /// The gateway answers on the local network only while an app is set to open on the person's own phone:
+    /// kept in step with the list of apps (Try On, deletion, rename, reload) and the experiment's switch.
+    func syncLocalNetwork() {
+        gateway?.setLocalNetwork(Experiments.iosApps && projects.contains { $0.platform == .iphone && $0.device != nil })
+    }
+
+    /// The experiment's switch changed: the listener and the list of phones follow.
+    func updateLocalNetwork() {
+        syncLocalNetwork()
         refreshDevices()
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
-        let paths = ["/ai", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
+        let paths = ["/ai", "/ai/keys", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
                      "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/mcp", "/pi/key"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
@@ -2905,6 +2912,9 @@ final class Store: ObservableObject {
         guard let id = tokens[token], let project = projects.first(where: { $0.id == id }) else {
             return (401, ["error": "This app isn't registered with Lamp."])
         }
+        // A phone asking what it may keep is answered whatever the state of setup: a key just removed makes
+        // setup incomplete, and that's exactly when the phone has to hear that its copy should go.
+        if route == "/ai/keys" { return keysForPhone(project) }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
     }
@@ -3051,6 +3061,33 @@ final class Store: ObservableObject {
         } catch {
             return (502, ["error": "Couldn't reach the AI: \(error.localizedDescription)"])
         }
+    }
+
+    /// What an app on the person's own phone keeps so its AI works away from the Mac (Settings → Experimental):
+    /// the OpenRouter key, the TypeSafe key when decisions go there, and the models the app is set to. Only for
+    /// iPhone apps, only while the switch is on; a Mac app or the simulator never needs it, and the key stays
+    /// in the phone's Keychain, put there by the app itself.
+    private func keysForPhone(_ project: LampProject) -> (Int, [String: Any]) {
+        guard project.platform == .iphone, Experiments.iosApps else { return (403, ["error": "Not for this app."]) }
+        guard let key = KeyStore.openRouterKey else { return (404, ["error": "There's no OpenRouter key to keep."]) }
+        let models = AppModels.load(project)
+        let decision = AppAI.decisionModels.first { $0.id == models.decision } ?? AppAI.decisionModel
+        var keys: [String: Any] = [
+            "openrouter": key,
+            "text_model": AppAI.model(for: models.text).openRouter,
+            "decision_model": decision.model, "decision_provider": decision.provider,
+        ]
+        // The image model the gateway itself would use for this app; none when that's the Mac's own model,
+        // which the phone can't run, so it says so rather than quietly paying for another.
+        let image = Icons.artModels.contains { $0.id == models.image } ? models.image! : (models.image == Icons.localArt ? Icons.localArt : Icons.artModel)
+        if image != Icons.localArt { keys["image_model"] = image }
+        if decision.provider == "typesafe", let typesafe = KeyStore.key(for: "typesafe") { keys["typesafe"] = typesafe }
+        // Sealed with the secret that went to the phone inside its build, never over the network: the token
+        // in the request is on the air too, so it can't be what protects the key.
+        guard let json = try? JSONSerialization.data(withJSONObject: keys),
+              let box = try? AES.GCM.seal(json, using: SymmetricKey(data: SHA256.hash(data: Data(Template.phoneSecret(for: project).utf8)))),
+              let sealed = box.combined else { return (500, ["error": "Couldn't prepare the keys."]) }
+        return (200, ["sealed": sealed.base64EncodedString()])
     }
 
     /// `LampComputer.ask` / `.perform` from an app: a task done with the other apps on the Mac (see ComputerUse).

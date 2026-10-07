@@ -8,10 +8,10 @@ import Foundation
 /// Features that are in but not yet for everyone, switched on in Settings → Building → Experimental.
 enum Experiments {
     /// iPhone and iPad apps: built and tried in the iOS Simulator. Needs Xcode and an Accessibility grant.
+    /// With it, an app can go on the person's own iPhone or iPad too (chosen under Try On), signed with their
+    /// Apple account through Xcode, with Lamp answering its AI over the local network and the app keeping a
+    /// copy of the person's OpenRouter key for when it's away from the Mac.
     static var iosApps: Bool { UserDefaults.standard.bool(forKey: "experimentIOSApps") }
-    /// Those apps on the person's own iPhone or iPad, signed with their Apple account through Xcode, with
-    /// Lamp answering their AI calls over the local network.
-    static var devices: Bool { iosApps && UserDefaults.standard.bool(forKey: "experimentDevices") }
 }
 
 enum Edition {

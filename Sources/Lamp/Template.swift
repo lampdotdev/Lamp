@@ -60,6 +60,17 @@ enum Template {
         return token
     }
 
+    /// A second secret for iPhone apps, which only ever reaches the phone inside the build (over the cable
+    /// or Xcode's install), never over the network: what the keys an app keeps are sealed with, so a copy of
+    /// the Wi‑Fi traffic, token and all, gives nobody the key.
+    static func phoneSecret(for project: LampProject) -> String {
+        let url = project.dir.appendingPathComponent(".lamp/phone-secret")
+        if let secret = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !secret.isEmpty { return secret }
+        let secret = UUID().uuidString + UUID().uuidString
+        try? secret.write(to: url, atomically: true, encoding: .utf8)
+        return secret
+    }
+
     /// The three files Lamp owns in every app, written afresh before every build: LampSupport.swift, build.sh
     /// and Package.swift. The last two are what the build runs (the shell runs build.sh, and SwiftPM compiles
     /// and executes Package.swift as a program before building anything), so nothing the agent, or something
@@ -100,6 +111,7 @@ enum Template {
             .replacingOccurrences(of: "{{HOST}}", with: Edition.bundleID)
             .replacingOccurrences(of: "{{APPS}}", with: Edition.supportFolder.appendingPathComponent("Apps").path)
             .replacingOccurrences(of: "{{MACHOST}}", with: Devices.macHost)
+            .replacingOccurrences(of: "{{PHONE_SECRET}}", with: project.platform == .iphone ? phoneSecret(for: project) : "")
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         let url = project.dir.appendingPathComponent("Sources/LampSupport.swift")
         if (try? String(contentsOf: url, encoding: .utf8)) != contents {
@@ -526,8 +538,263 @@ enum Template {
     #else
     import UIKit
     import CoreMotion
+    import Security
     /// A picture: NSImage on the Mac, UIImage on iPhone and iPad.
     typealias LampImage = UIImage
+    #endif
+
+    #if os(iOS) && !targetEnvironment(simulator)
+    /// An app on the person's own phone, away from the Mac: Lamp answers its AI whenever the Mac is reachable,
+    /// and otherwise the app asks the provider itself with the person's own key, kept in the phone's Keychain
+    /// since the last time it saw Lamp (Settings → Experimental in Lamp decides whether it may keep one). The
+    /// prompt is the same either way: the fencing and the dates are made here. What's spent this way doesn't
+    /// show in Lamp, and using the Mac's other apps still needs the Mac.
+    enum LampDirect {
+        private static let keychainAccount = "lamp-ai-keys"
+
+        /// Whether the Mac answered lately, shared by every call so two at once don't each decide for
+        /// themselves: one probe at a time, and all callers wait for its answer.
+        private actor Reach {
+            private var lastProbe = Date.distantPast
+            private var reachable = true
+            private var probe: Task<Bool, Never>?
+
+            func useMac(token: String) async -> Bool {
+                if let probe { return await probe.value }
+                if Date().timeIntervalSince(lastProbe) < 30 { return reachable }
+                let task = Task<Bool, Never> { await LampDirect.probe(token: token) }
+                probe = task
+                let answer = await task.value
+                probe = nil
+                lastProbe = Date()
+                reachable = answer
+                return answer
+            }
+
+            /// A call to the Mac just failed to connect: the next caller checks again rather than trusting
+            /// the last answer.
+            func lost() { lastProbe = .distantPast; reachable = false }
+        }
+        private static let reach = Reach()
+
+        /// Whether to go through Lamp now: looked up at most every half minute with a quick call that also
+        /// refreshes the keys while the Mac is there.
+        static func useMac(token: String) async -> Bool { await reach.useMac(token: token) }
+
+        /// Whether an error from the Mac means the Mac couldn't be reached at all (as opposed to answering
+        /// with a failure), so the phone should answer for itself.
+        static func unreachable(_ error: Error) -> Bool {
+            guard let error = error as? URLError else { return false }
+            return [.cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .notConnectedToInternet, .networkConnectionLost,
+                    .timedOut, .internationalRoamingOff, .dataNotAllowed].contains(error.code)
+        }
+
+        static func lost() async { await reach.lost() }
+
+        private static func probe(token: String) async -> Bool {
+            var request = URLRequest(url: URL(string: lampGateway + "/ai/keys")!)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 4
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = Data("{}".utf8)
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                switch (response as? HTTPURLResponse)?.statusCode {
+                case 200:
+                    // Sealed with the secret that came with the build, never over the air: a copy of this
+                    // traffic gives nobody the key.
+                    if let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let sealed = (reply["sealed"] as? String).flatMap({ Data(base64Encoded: $0) }),
+                       let box = try? AES.GCM.SealedBox(combined: sealed),
+                       let opened = try? AES.GCM.open(box, using: sealingKey),
+                       let keys = try? JSONSerialization.jsonObject(with: opened) as? [String: Any] {
+                        save(keys)
+                    }
+                case 403, 404:
+                    save(nil)   // the person turned keeping a key off, or there's no key any more: it goes
+                default:
+                    break   // a passing failure: the copy stays
+                }
+                return true
+            } catch {
+                return false
+            }
+        }
+
+        private static var sealingKey: SymmetricKey { SymmetricKey(data: SHA256.hash(data: Data("{{PHONE_SECRET}}".utf8))) }
+
+        /// The keys and model choices the phone keeps, or nil when it has none.
+        static var keys: [String: Any]? {
+            let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Bundle.main.bundleIdentifier ?? "lamp",
+                                        kSecAttrAccount as String: keychainAccount, kSecReturnData as String: true]
+            var item: CFTypeRef?
+            guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
+            return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        }
+
+        private static func save(_ keys: [String: Any]?) {
+            let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Bundle.main.bundleIdentifier ?? "lamp",
+                                        kSecAttrAccount as String: keychainAccount]
+            SecItemDelete(query as CFDictionary)
+            guard let keys, let data = try? JSONSerialization.data(withJSONObject: keys) else { return }
+            var add = query
+            add[kSecValueData as String] = data
+            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            SecItemAdd(add as CFDictionary, nil)
+        }
+
+        /// Answers what the gateway would, with the provider directly.
+        static func handle(_ path: String, _ body: [String: Any]) async throws -> [String: Any] {
+            guard let keys, let key = keys["openrouter"] as? String else {
+                throw LampAI.Failure(message: "Couldn't reach Lamp, and this phone has no key of its own yet. Open the app once while Lamp is reachable.")
+            }
+            fputs("LampAI \(path): Lamp isn't reachable, using the key kept on this phone\n", stderr)
+            switch path {
+            case "/ai":
+                let text = try await complete(body, key: key, model: keys["text_model"] as? String ?? "anthropic/claude-sonnet-5.5")
+                return ["text": text]
+            case "/ai/decide":
+                return ["answers": try await decide(body, keys: keys)]
+            case "/ai/image":
+                guard let model = keys["image_model"] as? String else {
+                    throw LampAI.Failure(message: "Pictures are made by a model on your Mac, so this needs the phone to reach Lamp.")
+                }
+                return ["image": try await image(body, key: key, model: model), "media_type": "image/png"]
+            default:
+                throw LampAI.Failure(message: "Using the Mac's other apps needs this phone to reach Lamp. Try again on the same Wi‑Fi as the Mac.")
+            }
+        }
+
+        private static func complete(_ body: [String: Any], key: String, model: String) async throws -> String {
+            let prompt = body["prompt"] as? String ?? ""
+            var system = body["system"] as? String ?? ""
+            let json = body["json"] as? Bool ?? false
+            if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
+            var text = try await chat(prompt: prompt, system: system, images: body["images"] as? [[String: String]] ?? [], json: json, key: key, model: model)
+            guard json else { return text }
+            // A JSON reply that doesn't parse is useless to the app: once more, saying so.
+            text = unfenced(text)
+            if !isJSON(text) {
+                let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
+                text = unfenced(try await chat(prompt: again, system: system, images: body["images"] as? [[String: String]] ?? [], json: true, key: key, model: model))
+                if !isJSON(text) { throw LampAI.Failure(message: "The AI's reply wasn't valid JSON, even on a second try. Ask for less at once.") }
+            }
+            return text
+        }
+
+        private static func chat(prompt: String, system: String, images: [[String: String]], json: Bool, key: String, model: String) async throws -> String {
+            var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 120
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Lamp", forHTTPHeaderField: "X-Title")
+            var messages: [[String: Any]] = []
+            if !system.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { messages.append(["role": "system", "content": system]) }
+            let content: [[String: Any]] = [["type": "text", "text": prompt]] + images.compactMap { image in
+                guard let type = image["media_type"], let data = image["data"] else { return nil }
+                return ["type": "image_url", "image_url": ["url": "data:\(type);base64,\(data)"]]
+            }
+            messages.append(["role": "user", "content": content])
+            var payload: [String: Any] = ["model": model, "messages": messages]
+            if json {
+                payload["response_format"] = ["type": "json_object"]
+                payload["max_tokens"] = 16_000
+            }
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+            // The provider's content filter sometimes refuses an ordinary request at random: ask again.
+            for attempt in 0..<3 {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                guard status == 200, let choice = (obj["choices"] as? [[String: Any]])?.first else {
+                    throw LampAI.Failure(message: friendly(status, (obj["error"] as? [String: Any])?["message"] as? String))
+                }
+                if choice["finish_reason"] as? String == "content_filter" {
+                    if attempt < 2 { try await Task.sleep(for: .milliseconds(400 << attempt)); continue }
+                    throw LampAI.Failure(message: "The AI provider's content filter cut the reply off. Try rewording the request.")
+                }
+                return (choice["message"] as? [String: Any])?["content"] as? String ?? ""
+            }
+            throw LampAI.Failure(message: "The AI didn't answer.")
+        }
+
+        private static func decide(_ body: [String: Any], keys: [String: Any]) async throws -> [String: Any] {
+            let typesafe = keys["decision_provider"] as? String == "typesafe" ? keys["typesafe"] as? String : nil
+            let key = typesafe ?? (keys["openrouter"] as? String ?? "")
+            let endpoint = typesafe != nil ? "https://api.typesafe.ai/v1/systemone" : "https://openrouter.ai/api/v1/systemone"
+            var request = URLRequest(url: URL(string: endpoint)!)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 60
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Lamp", forHTTPHeaderField: "X-Title")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["state": body["state"] ?? NSNull(), "model": keys["decision_model"] as? String ?? "jev-latest",
+                                                                           "questions": body["questions"] ?? [:]] as [String: Any])
+            for attempt in 0..<4 {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+                if (status == 429 || status == 529) && attempt < 3 {
+                    try await Task.sleep(for: .milliseconds(500 << attempt))
+                    continue
+                }
+                guard status == 200, let answers = obj["answers"] as? [String: Any] else {
+                    throw LampAI.Failure(message: friendly(status, (obj["error"] as? [String: Any])?["message"] as? String))
+                }
+                return answers
+            }
+            throw LampAI.Failure(message: "The decision model is busy. Try again in a moment.")
+        }
+
+        private static func image(_ body: [String: Any], key: String, model: String) async throws -> String {
+            var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/images")!)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 240
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Lamp", forHTTPHeaderField: "X-Title")
+            var payload: [String: Any] = ["model": model, "prompt": body["prompt"] ?? "", "n": 1, "output_format": "png"]
+            if let ratio = body["aspect_ratio"] { payload["aspect_ratio"] = ratio }
+            let references = (body["images"] as? [[String: String]] ?? []).compactMap { image -> [String: Any]? in
+                guard let type = image["media_type"], let data = image["data"] else { return nil }
+                return ["type": "image_url", "image_url": ["url": "data:\(type);base64,\(data)"]]
+            }
+            if !references.isEmpty { payload["input_references"] = references }
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard status == 200 else { throw LampAI.Failure(message: friendly(status, (obj["error"] as? [String: Any])?["message"] as? String)) }
+            guard let base64 = (obj["data"] as? [[String: Any]])?.first?["b64_json"] as? String else {
+                throw LampAI.Failure(message: "The image model didn't return a picture.")
+            }
+            return base64
+        }
+
+        private static func friendly(_ status: Int, _ detail: String?) -> String {
+            switch status {
+            case 401, 403: return "Your OpenRouter key didn't work. Open the app while Lamp is reachable to get the current one."
+            case 402: return "Your OpenRouter account is out of credit."
+            case 429: return "The AI is busy right now. Wait a minute and try again."
+            default: return "Something went wrong talking to the AI: \(detail ?? "HTTP \(status)")"
+            }
+        }
+
+        private static func unfenced(_ text: String) -> String {
+            var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if t.hasPrefix("```") {
+                t = String(t.drop(while: { $0 != "\n" }).dropFirst())
+                if let end = t.range(of: "```", options: .backwards) { t = String(t[..<end.lowerBound]) }
+            }
+            return t.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        private static func isJSON(_ text: String) -> Bool {
+            (try? JSONSerialization.jsonObject(with: Data(text.utf8), options: [.fragmentsAllowed])) != nil
+        }
+    }
     #endif
 
     /// Where Lamp is: on this Mac for a Mac app and for the simulator, and the Mac's name on the local
@@ -2571,6 +2838,25 @@ enum Template {
         }
 
         private static func post(_ path: String, body: Data, timeout: TimeInterval = 240) async throws -> [String: Any] {
+            #if os(iOS) && !targetEnvironment(simulator)
+            // Away from the Mac, the phone answers for itself when it has a key: when the Mac didn't answer
+            // the last check, and when a call to it fails to connect meanwhile.
+            func direct() async throws -> [String: Any] {
+                try await LampDirect.handle(path, (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:])
+            }
+            if await !LampDirect.useMac(token: "{{TOKEN}}"), LampDirect.keys != nil { return try await direct() }
+            do {
+                return try await postToLamp(path, body: body, timeout: timeout)
+            } catch where LampDirect.unreachable(error) && LampDirect.keys != nil {
+                await LampDirect.lost()
+                return try await direct()
+            }
+            #else
+            return try await postToLamp(path, body: body, timeout: timeout)
+            #endif
+        }
+
+        private static func postToLamp(_ path: String, body: Data, timeout: TimeInterval) async throws -> [String: Any] {
             var request = URLRequest(url: URL(string: lampGateway + path)!)
             request.httpMethod = "POST"
             request.timeoutInterval = timeout
@@ -2600,7 +2886,11 @@ enum Template {
                 }
             }
             fputs("LampAI \(path) failed: couldn't reach Lamp\n", stderr)
+            #if os(iOS) && !targetEnvironment(simulator)
+            throw URLError(.cannotConnectToHost)   // so the phone can answer for itself
+            #else
             throw Failure(message: "Couldn't reach Lamp. Open Lamp and try again.")
+            #endif
         }
 
         /// Downscales to at most 1568px on the long side (the most the model uses) and JPEG-encodes.

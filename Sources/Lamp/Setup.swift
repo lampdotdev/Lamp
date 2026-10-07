@@ -543,42 +543,35 @@ struct AppsSettings: View {
 struct ExperimentalSettings: View {
     @EnvironmentObject private var store: Store
     @AppStorage("experimentIOSApps") private var iosApps = false
-    @AppStorage("experimentDevices") private var devices = false
     @AppStorage("appleTeam") private var team = ""
     @State private var teams: [(id: String, name: String)] = []
 
     var body: some View {
         Section {
-            // Checkboxes in a stack, as in Permissions and Privacy. Load iOS apps is a part of Build iOS apps,
-            // so it sits under it, indented, with its note under its words.
-            VStack(alignment: .leading, spacing: 10) {
+            // A checkbox, as in Permissions and Privacy. Where an app opens (a simulator or the person's own
+            // phone) is chosen per app under Try On, so there's nothing more to switch here: just the team the
+            // phone builds are signed for.
+            VStack(alignment: .leading, spacing: 2) {
                 Toggle("Build iOS apps", isOn: $iosApps)
-                    .onChange(of: iosApps) { store.setLocalNetwork(Experiments.devices) }
-                if iosApps {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Toggle("Load iOS apps onto my device", isOn: $devices)
-                            .onChange(of: devices) { store.setLocalNetwork(Experiments.devices) }
-                        Text("Requires an Apple Developer account")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .padding(.leading, 20)
-                    }
+                    .onChange(of: iosApps) { store.updateLocalNetwork() }
+                Text("Choose iPhone or iPad when you start a new app, then where it opens under Try On: a simulator on this Mac, or your own iPhone or iPad. Needs Xcode.")
+                    .font(.caption).foregroundStyle(.secondary)
                     .padding(.leading, 20)
-                }
             }
             .toggleStyle(.checkbox)
             .frame(maxWidth: .infinity, alignment: .leading)
             if iosApps {
                 Group {
-                    if devices {
-                        if teams.isEmpty {
-                            TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
-                        } else {
-                            Picker("Apple Team", selection: $team) {
-                                ForEach(teams, id: \.id) { Text("\($0.name) (\($0.id))").tag($0.id) }
-                                if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
-                            }
+                    if teams.isEmpty {
+                        TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
+                    } else {
+                        Picker("Apple Team", selection: $team) {
+                            ForEach(teams, id: \.id) { Text("\($0.name) (\($0.id))").tag($0.id) }
+                            if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
                         }
                     }
+                    Text("For putting an app on your own iPhone or iPad: sign in to your Apple account in Xcode, plug the phone in, and Try On offers to pair it. Away from this Mac the app uses your OpenRouter key itself; what it spends then isn't shown here.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(.leading, 20)
             }
