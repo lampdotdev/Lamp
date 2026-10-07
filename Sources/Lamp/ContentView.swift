@@ -1043,6 +1043,8 @@ struct NewAppIntro: View {
     @Binding var draft: String
     @State private var name = ""
     @State private var fresh = false   // nothing built yet (not, say, an imported app)
+    /// Drawn once when the chat first shows, so they don't change under the reader or when a draft is cleared.
+    @State private var ideas: [Idea] = []
     @FocusState private var editingName: Bool
 
     private var busy: Bool { store.busy.contains(project.id) }
@@ -1068,8 +1070,8 @@ struct NewAppIntro: View {
             Text("While using the app, press ⇧⌘E to come back here and ask for changes.")
                 .font(.callout).foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
-            if fresh && draft.trimmed.isEmpty {
-                StarterIdeas { prompt in
+            if fresh && draft.trimmed.isEmpty && !ideas.isEmpty {
+                StarterIdeas(ideas: ideas) { prompt in
                     draft = prompt
                     store.chatFocusRequest += 1
                 }
@@ -1082,6 +1084,10 @@ struct NewAppIntro: View {
         .onAppear {
             name = project.untitled ? "" : project.name
             fresh = Template.isScaffold(project)
+            if ideas.isEmpty {
+                let others = store.projects.filter { $0.id != project.id && !$0.untitled }
+                ideas = Ideas.starters(made: others.map(\.name))
+            }
         }
         .onChange(of: editingName) { if !editingName { commit() } }
     }
@@ -1363,17 +1369,15 @@ struct ApprovalCard: View {
 /// Apps to start from, under a new app's empty chat. Choosing one fills in the request (it isn't sent) so the
 /// user can make it theirs first.
 struct StarterIdeas: View {
+    let ideas: [Idea]
     let choose: (String) -> Void
     @State private var hovered: String?
-
-    /// The first of Lamp's ideas. Choosing one fills in the first request for the user to edit and send.
-    static let examples = Ideas.pool.prefix(6)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Need an idea? Pick one, then change it to suit you.").font(.callout).foregroundStyle(.secondary)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
-                ForEach(Self.examples, id: \.title) { example in
+                ForEach(ideas) { example in
                     Button { choose(example.prompt) } label: {
                         HStack(alignment: .top, spacing: 8) {
                             IdeaIcon(symbol: example.symbol, hue: example.hue, size: 22, lit: hovered == example.title)

@@ -27,7 +27,8 @@ struct Idea: Identifiable, Equatable {
 /// Starting points for a first app. Each shows something different a Mac app can do, and every one is
 /// something Lamp builds well. They come six to a page, and each page mixes the kinds: the Mac's own
 /// powers (files, the menu bar, shortcuts), the person's calendar, mail and contacts, reading and writing,
-/// pictures, and something to play with. The first six are the ones a new app's empty chat shows.
+/// pictures, and something to play with. The first six are the welcome's first page, and what a new app's
+/// empty chat shows until the person has an app of their own.
 enum Ideas {
     static let pool: [Idea] = [
         Idea("Downloads Tidy", "folder.badge.gearshape", 0.58, "Sorts what lands in Downloads, from the menu bar.",
@@ -100,6 +101,15 @@ enum Ideas {
     static func page(_ index: Int) -> [Idea] {
         let start = (index * 6) % pool.count
         return (0..<6).map { pool[(start + $0) % pool.count] }
+    }
+
+    /// Six for a new app's empty chat. Until the person has an app, the first six, chosen to be a good first
+    /// look; after that a random six, so the chat keeps turning up ones they haven't seen, leaving out any
+    /// they've already made (by name).
+    static func starters(made names: [String]) -> [Idea] {
+        guard !names.isEmpty else { return Array(pool.prefix(6)) }
+        let made = Set(names.map { $0.lowercased() })
+        return Array(pool.filter { !made.contains($0.title.lowercased()) }.shuffled().prefix(6))
     }
 
     /// Whether this Mac can make up new ideas with Apple's on-device model.
