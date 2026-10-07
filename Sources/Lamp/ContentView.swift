@@ -1499,18 +1499,26 @@ private struct TryOnChoices: View {
         }
         .pickerStyle(.inline)
         if devices {
+            let paired = store.devices.filter(\.paired), unpaired = store.devices.filter { !$0.paired }
             Picker("Your Devices", selection: Binding(get: { project.device }, set: { store.setDevice(project, $0) })) {
-                ForEach(store.devices) { device in
-                    Label(device.connected ? device.name : "\(device.name) (not connected)", systemImage: device.family == .ipad ? "ipad" : "iphone")
+                ForEach(paired) { device in
+                    Label(device.name + (device.developerMode ? "" : " (Developer Mode is off)"), systemImage: device.family == .ipad ? "ipad" : "iphone")
                         .tag(Optional(device.udid))
                 }
-                if let chosen = project.device, !store.devices.contains(where: { $0.udid == chosen }) {
+                if let chosen = project.device, !paired.contains(where: { $0.udid == chosen }) {
                     Label("Chosen phone (not paired)", systemImage: "iphone.slash").tag(Optional(chosen))
                 }
             }
             .pickerStyle(.inline)
+            // A phone that's plugged in but hasn't trusted this Mac yet: pairing puts the question on it.
+            ForEach(unpaired) { device in
+                Button(store.pairing.contains(device.udid) ? "Pairing with \(device.name)…" : "Pair \(device.name)…") {
+                    store.pairDevice(device, for: project)
+                }
+                .disabled(store.pairing.contains(device.udid))
+            }
             if store.devices.isEmpty {
-                Text("No iPhone or iPad is paired with this Mac. Plug one in and trust this Mac on it.")
+                Text("No iPhone or iPad found. Plug one in with a cable and unlock it, then look again.")
             }
         }
         Divider()

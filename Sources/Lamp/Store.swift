@@ -599,6 +599,40 @@ final class Store: ObservableObject {
         return devices.first(where: { $0.udid == udid })?.name ?? "Your phone"
     }
 
+    /// Pairs a plugged-in phone that hasn't trusted this Mac yet, then lists again. Told in the app's chat,
+    /// where the person is looking, as the Try On menu is the app's.
+    func pairDevice(_ device: Devices.Device, for project: LampProject) {
+        guard !pairing.contains(device.udid) else { return }
+        pairing.insert(device.udid)
+        log(project, .status, "Look at \(device.name): tap Trust when it asks, and enter its passcode.")
+        Task {
+            defer { pairing.remove(device.udid) }
+            // The chat may have moved meanwhile: a first message renames a new app under a new id.
+            @MainActor func tell(_ kind: LogLine.Kind, _ text: String) { if let now = current(project) { log(now, kind, text) } }
+            do {
+                try await Devices.pair(device.udid)
+                devices = await Devices.list()
+                guard let paired = devices.first(where: { $0.udid == device.udid }), paired.paired else {
+                    // Paired, as far as devicectl said, but not in the list now: unplugged, or the listing
+                    // failed. Not a word about Developer Mode until the phone is seen again.
+                    tell(.status, "\(device.name) said yes, but it isn't in the list now. Plug it in, unlock it and choose Look for Devices Again under Try On.")
+                    return
+                }
+                if paired.developerMode {
+                    tell(.status, "\(device.name) is paired with this Mac. Choose it under Try On and press Play.")
+                } else {
+                    tell(.status, "\(device.name) is paired with this Mac. Now turn on Developer Mode on it (Settings → Privacy & Security → Developer Mode; the phone restarts), then choose it under Try On.")
+                }
+            } catch {
+                tell(.error, error.localizedDescription)
+                devices = await Devices.list()
+            }
+        }
+    }
+
+    /// Phones being paired right now, so the menu doesn't offer it twice.
+    @Published var pairing: Set<String> = []
+
     func refreshDevices() {
         guard Experiments.devices else { if !devices.isEmpty { devices = [] }; return }
         Task {
@@ -710,6 +744,16 @@ final class Store: ObservableObject {
         try? fm.removeItem(at: old.installedURL)
         try? fm.removeItem(at: old.dir)
 
+        if let device = old.device {   // the phone chosen before the first message stays chosen
+            try? JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, platform: project.platform,
+                                                  family: project.family, device: device))
+                .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
+        }
+        // Rewritten so every entry points straight at the latest id: a slug that comes free and is used
+        // again (A → B → A) would otherwise close a loop. Nothing points at the new id afterwards.
+        for (from, to) in moved where to == old.id { moved[from] = project.id }
+        moved = moved.filter { $0.key != project.id }
+        moved[old.id] = project.id
         logs[project.id] = logs.removeValue(forKey: old.id)
         usage[project.id] = usage.removeValue(forKey: old.id)
         queued[project.id] = queued.removeValue(forKey: old.id)
@@ -724,6 +768,16 @@ final class Store: ObservableObject {
         reload()
         if selection == old.id { selection = project.id }
         return project
+    }
+
+    /// Where an app's chat went when its first message rescaffolded it under a new id, so something started
+    /// on the old app (pairing a phone, say) can still speak in the right chat.
+    private var moved: [String: String] = [:]
+
+    /// The app as it is now, following any rescaffold since `project` was taken (one step: `moved` always
+    /// points straight at the latest id).
+    private func current(_ project: LampProject) -> LampProject? {
+        projects.first { $0.id == moved[project.id] ?? project.id }
     }
 
     /// Display names must be unique: each app installs as "<name>.app" in the apps folder (Edition.appsFolder).

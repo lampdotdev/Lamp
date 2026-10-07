@@ -17,6 +17,7 @@ enum Devices {
         let name: String
         let model: String          // "iPhone 16 Pro Max"
         let connected: Bool        // a tunnel to it is open now; it's opened on demand, so false says little
+        let paired: Bool           // trusted this Mac for development; until then nothing can be put on it
         let developerMode: Bool
         var id: String { udid }
         var family: DeviceFamily { model.hasPrefix("iPad") ? .ipad : .iphone }
@@ -63,7 +64,8 @@ enum Devices {
         return teams
     }
 
-    /// Paired iPhones and iPads, connected ones first.
+    /// The iPhones and iPads the Mac can see: paired ones, and plugged-in ones that haven't yet trusted
+    /// this Mac for development, which Try On offers to pair. Connected ones first.
     static func list() async -> [Device] {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-devices-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: file) }
@@ -77,14 +79,31 @@ enum Devices {
             let properties = entry["deviceProperties"] as? [String: Any] ?? [:]
             let connection = entry["connectionProperties"] as? [String: Any] ?? [:]
             guard hardware["reality"] as? String == "physical", let udid = hardware["udid"] as? String,
-                  ["iPhone", "iPad"].contains(hardware["deviceType"] as? String ?? ""),
-                  connection["pairingState"] as? String == "paired" else { return nil }
-            return Device(udid: udid, name: properties["name"] as? String ?? "iPhone",
+                  ["iPhone", "iPad"].contains(hardware["deviceType"] as? String ?? "") else { return nil }
+            return Device(udid: udid, name: properties["name"] as? String ?? (hardware["deviceType"] as? String ?? "iPhone"),
                           model: hardware["marketingName"] as? String ?? (hardware["deviceType"] as? String ?? "iPhone"),
                           connected: connection["tunnelState"] as? String == "connected" || properties["ddiServicesAvailable"] as? Bool == true,
+                          paired: connection["pairingState"] as? String == "paired",
                           developerMode: properties["developerModeStatus"] as? String == "enabled")
         }
         .sorted { ($0.connected ? 0 : 1, $0.name) < ($1.connected ? 0 : 1, $1.name) }
+    }
+
+    /// Pairs a plugged-in phone with this Mac for development: the phone shows "Trust This Computer?" and
+    /// asks for its passcode, and this waits for the answer. What Xcode's Devices window does on its own.
+    static func pair(_ udid: String) async throws {
+        let result = await Subprocess.run("/usr/bin/xcrun", ["devicectl", "manage", "pair", "--device", udid, "--timeout", "120"],
+                                          mergeErrors: true, timeout: 150)
+        guard result.ok else {
+            let output = result.output.lowercased()
+            if output.contains("cancel") || output.contains("denied") || output.contains("rejected") {
+                throw Failure(message: "The phone didn't trust this Mac. Tap Trust when it asks, and enter its passcode.")
+            }
+            if output.contains("locked") || output.contains("passcode") {
+                throw Failure(message: "Unlock the phone, then try pairing again.")
+            }
+            throw Failure(message: "Couldn't pair with the phone. Plug it in with a cable, unlock it, and try again.\n\n\(tail(result.output, lines: 4))")
+        }
     }
 
     /// Builds the app for the phone with Xcode, signed for the team, and gives back the bundle. Automatic
@@ -136,6 +155,7 @@ enum Devices {
     /// What's wrong before anything is tried, in plain words, or nil when the phone is ready.
     static func problem(_ device: Device?, team: String) -> String? {
         guard let device else { return "That phone isn't paired with this Mac any more. Plug it in and choose it again under Try On." }
+        guard device.paired else { return "\(device.name) hasn't trusted this Mac yet. Choose Pair under Try On, and tap Trust on the phone." }
         guard device.developerMode else { return "Turn on Developer Mode on \(device.name) (Settings → Privacy & Security → Developer Mode), then try again." }
         guard team.count == 10 else { return "Choose your Apple team in Lamp's Settings → Building → Experimental first." }
         let signedIn = xcodeTeams()
