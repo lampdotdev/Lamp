@@ -23,7 +23,8 @@ enum Privacy {
 
     /// Places that hold nothing personal: the system, developer tools and installed packages.
     private static let publicRoots = ["/System", "/usr", "/Library/Developer", "/Applications/Xcode.app", "/opt/homebrew"]
-    private static let scratchRoots = ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"]
+    /// Scratch, and /dev: `2>/dev/null` in a command names a device, not a file with anything in it.
+    private static let scratchRoots = ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders", "/dev"]
 
     /// Whether one of the agent's file tools may touch `path` (as the agent gave it, relative to the app's folder).
     static func verdict(tool: String, path raw: String, project: LampProject) -> Verdict {
