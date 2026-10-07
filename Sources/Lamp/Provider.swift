@@ -98,15 +98,18 @@ enum KeyStore {
     nonisolated(unsafe) private static var cache: [String: String?] = [:]
 
     /// True when this copy of Lamp is signed with an Apple Team ID.
-    static let usesKeychain: Bool = {
+    static let usesKeychain: Bool = teamID != nil
+
+    /// The Apple Team ID this copy of Lamp is signed with, or nil for a local build.
+    static let teamID: String? = {
         var code: SecCode?
         var info: CFDictionary?
         guard SecCodeCopySelf([], &code) == errSecSuccess, let code,
               let staticCode = { var s: SecStaticCode?; SecCodeCopyStaticCode(code, [], &s); return s }(),
               SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
-              let team = (info as? [String: Any])?[kSecCodeInfoTeamIdentifier as String] as? String
-        else { return false }
-        return !team.isEmpty
+              let team = (info as? [String: Any])?[kSecCodeInfoTeamIdentifier as String] as? String, !team.isEmpty
+        else { return nil }
+        return team
     }()
 
     /// Done once per launch, before a signed build first reads or changes a key.
@@ -125,6 +128,7 @@ enum KeyStore {
             value = key
             // Don't cache a denied or cancelled prompt, so the next use can ask again.
             guard status == errSecSuccess || status == errSecItemNotFound else { return key }
+            if let key { KeychainItem.adopt(key, provider) }
         } else {
             value = KeyFile.read()[provider]
         }
@@ -203,6 +207,48 @@ enum KeyStore {
         }
 
         static func delete(_ account: String) { SecItemDelete(query(account) as CFDictionary) }
+
+        /// An item that isn't Lamp's own, as one put there with the `security` tool (its partition is
+        /// "apple-tool:", not Lamp's team), makes macOS ask for the login password at every read, however
+        /// often Allow is clicked. Once a read has got through, the item is made Lamp's: written afresh,
+        /// so its access list is this app's and no one is asked again.
+        static func adopt(_ key: String, _ account: String) {
+            guard let team = teamID, let partitions = partitions(account),
+                  !partitions.contains("teamid:\(team)"), !partitions.contains("apple:") else { return }
+            delete(account)
+            if !write(key, account) {
+                // Never lose the key: the file is read when the Keychain has nothing.
+                var all = KeyFile.read()
+                all[account] = key
+                KeyFile.write(all)
+            }
+        }
+
+        /// The partitions an item's access list admits ("apple-tool:", "teamid:…", "apple:"): a hex-encoded
+        /// plist in the partition ACL's description. Nil when it can't be read.
+        private static func partitions(_ account: String) -> [String]? {
+            var ref: CFTypeRef?
+            var q = query(account)
+            q[kSecReturnRef as String] = true
+            guard SecItemCopyMatching(q as CFDictionary, &ref) == errSecSuccess, let ref else { return nil }
+            let item = ref as! SecKeychainItem
+            var access: SecAccess?
+            guard SecKeychainItemCopyAccess(item, &access) == errSecSuccess, let access,
+                  let acl = (SecAccessCopyMatchingACLList(access, kSecACLAuthorizationPartitionID) as? [SecACL])?.first else { return nil }
+            var apps: CFArray?
+            var description: CFString?
+            var selector = SecKeychainPromptSelector()
+            guard SecACLCopyContents(acl, &apps, &description, &selector) == errSecSuccess, let hex = description as String? else { return nil }
+            var bytes = [UInt8]()
+            var index = hex.startIndex
+            while index < hex.endIndex, let next = hex.index(index, offsetBy: 2, limitedBy: hex.endIndex) {
+                guard let byte = UInt8(hex[index..<next], radix: 16) else { return nil }
+                bytes.append(byte)
+                index = next
+            }
+            let plist = try? PropertyListSerialization.propertyList(from: Data(bytes), format: nil)
+            return (plist as? [String: Any])?["Partitions"] as? [String]
+        }
     }
 
     /// keys.json, readable only by this user. Also takes in the older single-key file, and a key an earlier
