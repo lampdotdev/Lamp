@@ -521,14 +521,21 @@ final class Store: ObservableObject {
     // MARK: - Actions
 
     /// New App: an untitled app, straight into its chat. Its first message names it and designs its icon.
-    func create(platform: Platform = .mac, family: DeviceFamily = .iphone) {
+    func create(platform: Platform = .mac, family preferred: DeviceFamily = .iphone) {
         guard platform == .mac || Experiments.iosApps else { return }   // Settings → Building → Experimental
-        if platform == .iphone, let problem = Simulator.problem(family) {
-            let alert = NSAlert()
-            alert.messageText = "Lamp can't build \(family.name) apps on this Mac yet"
-            alert.informativeText = problem
-            alert.runModal()
-            return
+        var family = preferred
+        if platform == .iphone {
+            // The app is for both devices: it opens on the preferred one, or on whichever this Mac can show.
+            if Simulator.problem(family) != nil, Simulator.problem(family == .iphone ? .ipad : .iphone) == nil {
+                family = family == .iphone ? .ipad : .iphone
+            }
+            if let problem = Simulator.problem(family) {
+                let alert = NSAlert()
+                alert.messageText = "Lamp can't build iPhone & iPad apps on this Mac yet"
+                alert.informativeText = problem
+                alert.runModal()
+                return
+            }
         }
         let project: LampProject
         do {
@@ -551,14 +558,19 @@ final class Store: ObservableObject {
     /// Which simulator an iPhone & iPad app opens in. Takes effect at its next open; the app is quit first
     /// so the other device gets a fresh launch.
     func setFamily(_ project: LampProject, _ family: DeviceFamily) {
-        guard project.platform == .iphone, project.family != family else { return }
-        try? JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
-                                              platform: project.platform, family: family))
-            .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
+        guard project.platform == .iphone, project.family != family, begin(project) != nil else { return }
+        var changed = project
+        changed.family = family
+        try? JSONEncoder().encode(ProjectMeta(name: changed.name, exe: changed.exe, untitled: changed.untitled ? true : nil,
+                                              platform: changed.platform, family: family))
+            .write(to: changed.dir.appendingPathComponent(".lamp/meta.json"))
+        // In the list straight away, so nothing that starts meanwhile sees the old choice; the app itself is
+        // quit so its next open is a fresh launch on the other device.
+        if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
         Task {
-            await quit(project)
-            reload()
-            log(project, .status, "\(project.name) will open on the \(family.name) simulator from now on.")
+            await quit(changed)
+            log(changed, .status, "\(changed.name) will open on the \(family.name) simulator from now on.")
+            finish(changed)
         }
     }
 
