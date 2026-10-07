@@ -156,9 +156,15 @@ extension Simulator {
             // larger than its size in points: its window can be zoomed), the largest such if several.
             let points = CGSize(width: width / scale, height: height / scale)
             let ratio = points.width / points.height
-            let groups = children(window).filter { attribute($0, kAXRoleAttribute) as? String == kAXGroupRole }
-                .map { frame(of: $0) }
-                .filter { $0.width > 50 && $0.height > 50 && abs($0.width / $0.height - ratio) < 0.02 }
+            // Spelled out step by step: as one chained expression it's more than the compiler can type-check.
+            let elements: [AXUIElement] = children(window).filter { (element: AXUIElement) -> Bool in
+                attribute(element, kAXRoleAttribute) as? String == kAXGroupRole
+            }
+            let groups: [CGRect] = elements.map { frame(of: $0) }.filter { (rect: CGRect) -> Bool in
+                guard rect.width > 50, rect.height > 50 else { return false }
+                let shape: CGFloat = rect.width / rect.height
+                return abs(shape - ratio) < 0.02
+            }
             guard let frame = groups.max(by: { $0.width < $1.width }) else { return nil }
             return Screen(app: app, window: window, rect: frame, udid: udid, owner: owner, scale: scale,
                           zoom: frame.width / points.width, pid: simulator.processIdentifier)
