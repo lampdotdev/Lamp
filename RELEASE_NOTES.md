@@ -5,12 +5,19 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
-## Unreleased
+## 0.9.0
 
 - Your iPhone or iPad apps on your own phone: with the new switch in Settings → Building → Experimental
   and your Apple account signed in to Xcode, plug your phone in: Try On pairs it with your Mac and lists
   it. Press Play and Lamp builds the app for your phone, signs it with your account and puts it there; its
   AI still goes through Lamp, over your Wi‑Fi.
+- A new welcome: the first screen and the new-app screen are quieter, with a short film of the lamp, and
+  the ideas to start from are fewer and broader, drawing on the Mac's own apps. Once you have an app of
+  your own, a new app's chat offers six fresh ideas each time.
+- Quick Look for the files in a chat: press Space on an attachment to see it.
+- Versions stays open after an Undo that takes an app back to empty.
+- Your keys live in the Keychain: a signed Lamp moves any left in its settings file there, and the agent
+  no longer keeps a copy of its own.
 
 ## 0.8.0
 
