@@ -5,6 +5,10 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## Unreleased
+
+- Pictures are made with Nano Banana 2.1, Google's newest image model, unless you pick another in Settings → AI.
+
 ## 0.9.3
 
 - Report a bug from Help: Lamp gathers what happened, shows you the report to check, and sends it through
