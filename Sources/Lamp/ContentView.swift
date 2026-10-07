@@ -940,6 +940,9 @@ struct AppInfoView: View {
                     Picker("Away from this Mac", selection: choice(\.away, default: AppAI.awayModel.id)) {
                         ForEach(AppAI.anthropicModels, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
                     }
+                    Picker("Pictures away", selection: choice(\.awayImage, default: AppAI.awayImageModel)) {
+                        ForEach(Icons.artModels, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
+                    }
                 }
             } header: {
                 Text("AI inside this app")

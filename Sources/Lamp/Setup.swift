@@ -498,6 +498,7 @@ struct BuildingSettings: View {
 struct AppsSettings: View {
     @AppStorage("appModel") private var appModel = AppAI.defaultRoute.id
     @AppStorage("awayModel") private var awayModel = ""
+    @AppStorage("awayImageModel") private var awayImageModel = ""
     @AppStorage("experimentIOSApps") private var iosApps = false
     @AppStorage("settingsTab") private var settingsTab = "building"
     @AppStorage("settingsSheet") private var settingsSheet = ""
@@ -543,11 +544,14 @@ struct AppsSettings: View {
                 // An app on the person's phone can only reach OpenRouter when it can't reach this Mac, so the
                 // choice here is among OpenRouter's models, and it's the one thing a phone needs a key for.
                 Section("Away from this Mac") {
-                    Picker("Apps on your iPhone or iPad", selection: Binding(get: { AppAI.awayModel.id }, set: { awayModel = $0 })) {
+                    Picker("Text in apps on your iPhone or iPad", selection: Binding(get: { AppAI.awayModel.id }, set: { awayModel = $0 })) {
                         ForEach(AppAI.anthropicModels, id: \.id) { Text($0.label).tag($0.id) }
                     }
+                    Picker("Pictures", selection: Binding(get: { AppAI.awayImageModel }, set: { awayImageModel = $0 })) {
+                        ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
+                    }
                     if Provider.hasKey {
-                        Text("When an app can't reach this Mac it goes to OpenRouter with your key: this model for text, \(Icons.artModels.first { $0.id == Icons.artModel }?.label ?? "the image model above") for pictures, Jev for decisions. What it spends then isn't shown in Lamp.")
+                        Text("When an app can't reach this Mac it goes to OpenRouter with your key: these for text and pictures, and Jev for decisions as above. What it spends then isn't shown in Lamp.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
                         HStack(spacing: 8) {

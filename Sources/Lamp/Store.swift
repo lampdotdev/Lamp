@@ -3077,10 +3077,8 @@ final class Store: ObservableObject {
             "text_model": AppAI.awayModel(for: models.away).openRouter,
             "decision_model": decision.model, "decision_provider": decision.provider,
         ]
-        // The image model the gateway itself would use for this app; none when that's the Mac's own model,
-        // which the phone can't run, so it says so rather than quietly paying for another.
-        let image = Icons.artModels.contains { $0.id == models.image } ? models.image! : (models.image == Icons.localArt ? Icons.localArt : Icons.artModel)
-        if image != Icons.localArt { keys["image_model"] = image }
+        // The cloud image model chosen for away from the Mac (the Mac's own model can't travel).
+        keys["image_model"] = AppAI.awayImageModel(for: models.awayImage)
         if decision.provider == "typesafe", let typesafe = KeyStore.key(for: "typesafe") { keys["typesafe"] = typesafe }
         // Sealed with the secret that went to the phone inside its build, never over the network: the token
         // in the request is on the air too, so it can't be what protects the key.
@@ -3359,6 +3357,7 @@ struct AppModels: Codable, Equatable {
     var image: String?      // an id from Icons.artModels
     var decision: String?   // an id from AppAI.decisionModels
     var away: String?       // iPhone apps: an id from AppAI.anthropicModels, for when the phone can't reach the Mac
+    var awayImage: String?  // iPhone apps: an id from Icons.artModels, likewise
 
     private static func url(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/models.json") }
 

@@ -222,6 +222,19 @@ enum AppAI {
         anthropicModels.first { $0.id == choice } ?? awayModel
     }
 
+    /// The image model an app on the phone uses away from the Mac: Settings' choice, else the Mac's own
+    /// choice when that's a cloud model, else the first cloud model. The model on this Mac can't travel.
+    @MainActor static var awayImageModel: String {
+        let saved = UserDefaults.standard.string(forKey: "awayImageModel") ?? ""
+        if Icons.artModels.contains(where: { $0.id == saved }) { return saved }
+        let macs = Icons.artModel
+        return Icons.artModels.contains(where: { $0.id == macs }) ? macs : Icons.artModels[0].id
+    }
+
+    @MainActor static func awayImageModel(for choice: String?) -> String {
+        Icons.artModels.contains { $0.id == choice } ? choice! : awayImageModel
+    }
+
     /// The route Settings chose for apps, when it can still answer; else the default.
     @MainActor static var model: TextRoute { route(for: UserDefaults.standard.string(forKey: "appModel")) }
 
