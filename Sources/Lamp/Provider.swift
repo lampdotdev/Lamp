@@ -124,10 +124,11 @@ enum KeyStore {
     static let loaded = Notification.Name("LampKeysLoaded")
     nonisolated(unsafe) private static var preloaded = false
 
-    /// Reads every provider's key once, off the main thread, so the Keychain's questions (a password, when
-    /// an item isn't Lamp's own) come at launch and not in the middle of drawing a view: a Keychain prompt
-    /// inside a layout pass runs the event loop inside the layout, which AppKit answers by crashing.
-    /// Until it's done, a read on the main thread says there's no key rather than ask.
+    /// Reads every provider's key, off the main thread, so the Keychain's questions (a password, when an
+    /// item isn't Lamp's own) come at launch and not in the middle of drawing a view: a Keychain prompt
+    /// inside a layout pass runs the event loop inside the layout, which AppKit answers by crashing. The
+    /// main thread only ever reads what this has found, and says there's no key for anything it hasn't
+    /// (a question declined, say); Settings → Providers asks again when it opens.
     static func preload() {
         DispatchQueue.global(qos: .userInitiated).async {
             if usesKeychain { for provider in Provider.keyProviders { _ = key(for: provider.id) } }
@@ -152,9 +153,9 @@ enum KeyStore {
 
     static func key(for provider: String) -> String? {
         if let cached = cached(provider) { return cached }
-        // Before the launch-time read is in, the main thread is told there's no key rather than made to ask,
-        // or to wait for a question being asked on the other thread.
-        if usesKeychain, Thread.isMainThread, !preloaded { return nil }
+        // The main thread never asks the Keychain: not before the launch-time read is in, nor for a key that
+        // read couldn't get (a declined question); it's told there's no key, and preload asks again later.
+        if usesKeychain, Thread.isMainThread { return nil }
         lock.lock()
         defer { lock.unlock() }
         if let cached = cached(provider) { return cached }
