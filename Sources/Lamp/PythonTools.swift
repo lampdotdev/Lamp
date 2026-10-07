@@ -24,7 +24,7 @@ final class PythonTools: ObservableObject {
         ToolLocator.path(named: "uv") ?? (FileManager.default.isExecutableFile(atPath: ownUV.path) ? ownUV.path : nil)
     }
 
-    /// A few hundred megabytes of Python packages, a minute or two.
+    /// About 1.3 GB on disk for mflux and 0.5 GB for mlx-lm (they share most of it); well under a minute on a fast connection.
     func install(_ tool: Tool) async {
         guard !installing.contains(tool) else { return }
         installing.insert(tool)
@@ -101,7 +101,7 @@ final class PythonTools: ObservableObject {
             case .offline: "Lamp couldn't reach the internet to download this. Check your connection, then click Install again."
             case .unavailable: "The download isn't available right now. The problem is at the other end, not on your Mac. Click Install again in a few minutes."
             case .damaged: "The download arrived damaged. Click Install again."
-            case .diskFull: "This Mac is almost out of storage space. Free up about 3 GB (emptying the Trash is a good start), then click Install again."
+            case .diskFull: "This Mac is almost out of storage space. Free up about 2 GB (emptying the Trash is a good start), then click Install again."
             case .saving: "Lamp couldn't save what it downloaded. Click Install again."
             case .installing(let detail): "It didn't install. Click Install again." + (detail.isEmpty ? "" : " (What it said: \(detail))")
             }
