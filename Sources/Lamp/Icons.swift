@@ -432,8 +432,7 @@ enum Icons {
         try await AppAI.image(prompt: artPrompt(spec), references: [], aspectRatio: "1:1", model: iconModel).0
     }
 
-    /// What a picture maker is asked to draw for an icon: the image models get it as it is, and Image
-    /// Playground opens with it already typed in.
+    /// What an image model is asked to draw for an icon.
     static func artPrompt(_ spec: IconSpec) -> String {
         let bg = background(named: spec.background)
         return """
@@ -443,6 +442,18 @@ enum Icons {
         \(spec.tint), chosen to stand out against a \(bg.name) background. The object alone, centered, filling about \
         70% of the frame, on a plain flat light gray background. No scene, no ground, no cast shadow, no \
         background elements, no text, no letters, no border, no frame, no rounded square tile, no app icon shape.
+        """
+    }
+
+    /// The same request as Image Playground takes it. Its sheet boils a long request down to a few words
+    /// and loses the "no …" list on the way, turns down anything naming macOS or Apple ("Try describing
+    /// something different"), and draws a whole rounded tile when asked for an "app icon". So it gets the
+    /// object and the look in one short sentence. It has no use for a hex color: the subject names its own.
+    static func playgroundPrompt(_ spec: IconSpec) -> String {
+        let subject = spec.subject.trimmed
+        return subject.prefix(1).uppercased() + subject.dropFirst() + """
+        , a single object with a simple bold shape, smooth rounded forms, soft gradients and gentle light \
+        from above. Centered on a plain flat light gray background, nothing else in the picture.
         """
     }
 

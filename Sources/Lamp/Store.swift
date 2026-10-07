@@ -2851,7 +2851,7 @@ final class Store: ObservableObject {
         Task { upgradeIconArt(project) }
     }
 
-    /// Opens Image Playground to make this app's icon, with the request an image model would have got.
+    /// Opens Image Playground to make this app's icon, with a request for the icon's object already typed in.
     func iconFromPlayground(_ project: LampProject) {
         playgroundIcon = project
         showingPlayground = true
@@ -2859,7 +2859,7 @@ final class Store: ObservableObject {
 
     /// The request Image Playground opens with.
     var playgroundPrompt: String {
-        playgroundIcon.flatMap(Icons.load).map(Icons.artPrompt) ?? ""
+        playgroundIcon.flatMap(Icons.load).map(Icons.playgroundPrompt) ?? ""
     }
 
     /// Makes the picture picked in Image Playground the icon's artwork: cut out and kept where generated
