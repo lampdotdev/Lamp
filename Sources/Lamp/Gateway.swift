@@ -12,9 +12,12 @@ final class Gateway: @unchecked Sendable {
         let path: String
         let headers: [String: String]   // lowercased names
         let body: Data
+        /// Came in over the local network (an app on the person's phone) rather than from this Mac.
+        var fromNetwork = false
     }
 
     private var listener: NWListener?
+    private var networkListener: NWListener?
     private let queue = DispatchQueue(label: "dev.lamp.gateway")
     private let handler: @Sendable (Request) async -> (Int, [String: Any])
 
@@ -29,19 +32,43 @@ final class Gateway: @unchecked Sendable {
         let listener = try NWListener(using: params)
         listener.newConnectionHandler = { [weak self] connection in
             connection.start(queue: self?.queue ?? .main)
-            self?.receive(connection, buffer: Data())
+            self?.receive(connection, buffer: Data(), fromNetwork: false)
         }
         listener.start(queue: queue)
         self.listener = listener
     }
 
-    private func receive(_ connection: NWConnection, buffer: Data) {
+    /// Also answers on the local network, for apps on the person's own iPhone or iPad (Settings →
+    /// Experimental). Requests that come in this way are marked, and the handler lets them use only the
+    /// app routes; the agent's stay on this Mac.
+    func setLocalNetwork(_ on: Bool) {
+        queue.async { [self] in
+            if !on {
+                networkListener?.cancel()
+                networkListener = nil
+                return
+            }
+            guard networkListener == nil else { return }
+            let params = NWParameters.tcp
+            params.allowLocalEndpointReuse = true
+            guard let listener = try? NWListener(using: params, on: NWEndpoint.Port(rawValue: Self.port)!) else { return }
+            listener.newConnectionHandler = { [weak self] connection in
+                connection.start(queue: self?.queue ?? .main)
+                self?.receive(connection, buffer: Data(), fromNetwork: true)
+            }
+            listener.start(queue: queue)
+            networkListener = listener
+        }
+    }
+
+    private func receive(_ connection: NWConnection, buffer: Data, fromNetwork: Bool) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 16) { [weak self] data, _, done, error in
             guard let self else { return }
             var buffer = buffer
             if let data { buffer.append(data) }
-            if let request = Self.parse(buffer) {
+            if var request = Self.parse(buffer) {
                 if request.method == "BAD" { self.respond(connection, status: 400, json: ["error": "Bad request"]); return }
+                request.fromNetwork = fromNetwork
                 Task {
                     let (status, json) = await self.handler(request)
                     self.respond(connection, status: status, json: json)
@@ -49,7 +76,7 @@ final class Gateway: @unchecked Sendable {
             } else if done || error != nil || buffer.count > 40_000_000 {
                 connection.cancel()
             } else {
-                self.receive(connection, buffer: buffer)
+                self.receive(connection, buffer: buffer, fromNetwork: fromNetwork)
             }
         }
     }

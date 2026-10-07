@@ -473,14 +473,43 @@ struct AppsSettings: View {
 
 /// What's in Lamp but not yet for everyone: each switch here brings a feature into the interface.
 struct ExperimentalSettings: View {
+    @EnvironmentObject private var store: Store
     @AppStorage("experimentIOSApps") private var iosApps = false
+    @AppStorage("experimentDevices") private var devices = false
+    @AppStorage("appleTeam") private var team = ""
+    @State private var teams: [(id: String, name: String)] = []
 
     var body: some View {
         Section {
-            Toggle("iPhone and iPad apps (simulator only)", isOn: $iosApps)
-            Text("Adds New iPhone & iPad App. Lamp builds the app and tries it in the iPhone or iPad simulator on this Mac (right-click the app for Try On): that needs Xcode (free on the Mac App Store) and, the first time it tries an app, permission to control this computer. The apps run in the simulator only; putting one on a real iPhone or iPad isn't possible yet.")
+            Toggle("iPhone and iPad apps", isOn: $iosApps)
+                .onChange(of: iosApps) { store.setLocalNetwork(Experiments.devices) }
+            Text("Adds New iPhone & iPad App. Lamp builds the app and tries it in the iPhone or iPad simulator on this Mac (Try On, beside the Play button): that needs Xcode (free on the Mac App Store) and, the first time it tries an app, permission to control this computer.")
                 .font(.caption).foregroundStyle(.secondary)
+            if iosApps {
+                Toggle("Put apps on your own iPhone or iPad", isOn: $devices)
+                    .onChange(of: devices) { store.setLocalNetwork(Experiments.devices) }
+                if devices {
+                    if teams.isEmpty {
+                        TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
+                    } else {
+                        Picker("Apple Team", selection: $team) {
+                            ForEach(teams, id: \.id) { Text("\($0.name) (\($0.id))").tag($0.id) }
+                            if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
+                        }
+                    }
+                }
+                Text("Sign in to your Apple account in Xcode → Settings → Accounts (a free account will do: its apps last a week on the phone, a paid one's a year), plug the phone in and trust this Mac on it, and turn on Developer Mode on the phone (Settings → Privacy & Security). Then choose the phone under Try On and press Play. The app's AI goes through Lamp over your Wi‑Fi, so the phone and this Mac must be on the same network and Lamp must be open. The agent still tries the app on the simulator: it can't see the phone's screen.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         } header: { Text("Experimental") }
+        .task {
+            teams = await Devices.knownTeams()
+            // The account signed in to Xcode is the one that can sign, so its team is the first choice
+            // whenever the stored one isn't among Xcode's.
+            let signedIn = Devices.xcodeTeams()
+            if let first = signedIn.first, !signedIn.contains(where: { $0.id == team }) { team = first.id }
+            else if team.isEmpty, let first = teams.first { team = first.id }
+        }
     }
 }
 

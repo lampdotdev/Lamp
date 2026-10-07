@@ -5,6 +5,13 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## Unreleased
+
+- Your iPhone or iPad apps on your own phone: with the new switch in Settings → Building → Experimental
+  and your Apple account signed in to Xcode, Try On lists the phones paired with your Mac. Press Play and
+  Lamp builds the app for your phone, signs it with your account and puts it there; its AI still goes
+  through Lamp, over your Wi‑Fi.
+
 ## 0.8.0
 
 - iPhone and iPad apps, as an experiment you switch on in Settings → Building: build an app and try it in

@@ -83,6 +83,7 @@ enum Template {
             .replacingOccurrences(of: "{{NOTE}}", with: Edition.notificationPrefix)
             .replacingOccurrences(of: "{{HOST}}", with: Edition.bundleID)
             .replacingOccurrences(of: "{{APPS}}", with: Edition.supportFolder.appendingPathComponent("Apps").path)
+            .replacingOccurrences(of: "{{MACHOST}}", with: Devices.macHost)
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         let url = project.dir.appendingPathComponent("Sources/LampSupport.swift")
         if (try? String(contentsOf: url, encoding: .utf8)) != contents {
@@ -200,6 +201,132 @@ enum Template {
 
     """
 
+    // MARK: - On the person's own phone
+
+    /// The Xcode project that builds the app for a real iPhone or iPad, written under .lamp/device: one app
+    /// target over the package's Sources, with Xcode's automatic signing for the person's team, the icon in
+    /// an asset catalog and the chat's attachments copied in as a folder. Nothing else about the app changes:
+    /// Package.swift stays what the simulator and the agent build with.
+    static func writeDeviceProject(for project: LampProject, team: String) throws {
+        let fm = FileManager.default
+        let dir = project.dir.appendingPathComponent(".lamp/device")
+        let xcodeproj = dir.appendingPathComponent("\(project.exe).xcodeproj")
+        try fm.createDirectory(at: xcodeproj.appendingPathComponent("xcshareddata/xcschemes"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: project.dir.appendingPathComponent(Attachments.folder), withIntermediateDirectories: true)
+        let iconset = dir.appendingPathComponent("Assets.xcassets/AppIcon.appiconset")
+        try fm.createDirectory(at: iconset, withIntermediateDirectories: true)
+        try? fm.removeItem(at: iconset.appendingPathComponent("AppIcon.png"))
+        let hasIcon = fm.fileExists(atPath: Icons.squareURL(project).path)
+        if hasIcon { try fm.copyItem(at: Icons.squareURL(project), to: iconset.appendingPathComponent("AppIcon.png")) }
+        let files: [(String, String)] = [
+            ("\(project.exe).xcodeproj/project.pbxproj", devicePbxproj),
+            ("\(project.exe).xcodeproj/xcshareddata/xcschemes/\(project.exe).xcscheme", deviceScheme),
+            ("Info.plist", deviceInfoPlist),
+            ("Assets.xcassets/Contents.json", #"{ "info": { "author": "xcode", "version": 1 } }"#),
+            ("Assets.xcassets/AppIcon.appiconset/Contents.json", hasIcon
+                ? #"{ "images": [ { "filename": "AppIcon.png", "idiom": "universal", "platform": "ios", "size": "1024x1024" } ], "info": { "author": "xcode", "version": 1 } }"#
+                : #"{ "images": [ { "idiom": "universal", "platform": "ios", "size": "1024x1024" } ], "info": { "author": "xcode", "version": 1 } }"#),
+        ]
+        for (path, template) in files {
+            let contents = template
+                .replacingOccurrences(of: "{{EXE}}", with: project.exe)
+                .replacingOccurrences(of: "{{NAME}}", with: project.name)
+                .replacingOccurrences(of: "{{BUNDLE}}", with: project.deviceBundleID(team: team))
+                .replacingOccurrences(of: "{{TEAM}}", with: team)
+            let url = dir.appendingPathComponent(path)
+            if (try? String(contentsOf: url, encoding: .utf8)) != contents {
+                try contents.write(to: url, atomically: true, encoding: .utf8)
+            }
+        }
+    }
+
+    /// Xcode 16's project format: the Sources folder is a synchronized group, so every file in it is in
+    /// the target without being listed here. Only a Release configuration, which is what's built.
+    static let devicePbxproj = """
+    // !$*UTF8*$!
+    {
+    	archiveVersion = 1;
+    	classes = {
+    	};
+    	objectVersion = 77;
+    	objects = {
+    		A00000000000000000000001 /* Attachments in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* Attachments */; };
+    		A00000000000000000000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000004 /* Assets.xcassets */; };
+    		A00000000000000000000002 /* Attachments */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Attachments; path = ../../Attachments; sourceTree = "<group>"; };
+    		A00000000000000000000004 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+    		A00000000000000000000005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+    		A00000000000000000000006 /* {{EXE}}.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "{{EXE}}.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+    		A00000000000000000000007 /* Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; name = Sources; path = ../../Sources; sourceTree = "<group>"; };
+    		A00000000000000000000008 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Attachments */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
+    		A0000000000000000000000A /* Products */ = {isa = PBXGroup; children = (A00000000000000000000006 /* {{EXE}}.app */); name = Products; sourceTree = "<group>"; };
+    		A0000000000000000000000B /* {{EXE}} */ = {isa = PBXNativeTarget; buildConfigurationList = A0000000000000000000000C; buildPhases = (A0000000000000000000000D /* Sources */, A00000000000000000000008 /* Frameworks */, A0000000000000000000000E /* Resources */); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (A00000000000000000000007 /* Sources */); name = "{{EXE}}"; packageProductDependencies = (); productName = "{{EXE}}"; productReference = A00000000000000000000006 /* {{EXE}}.app */; productType = "com.apple.product-type.application"; };
+    		A0000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {A0000000000000000000000B = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A00000000000000000000010; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000009; minimizedProjectReferenceProxies = 1; preferredProjectObjectVersion = 77; productRefGroup = A0000000000000000000000A /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A0000000000000000000000B /* {{EXE}} */); };
+    		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Attachments in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
+    		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+    		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
+    		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+    		A00000000000000000000010 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+    		A0000000000000000000000C /* Build configuration list for PBXNativeTarget */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+    	};
+    	rootObject = A0000000000000000000000F /* Project object */;
+    }
+
+    """
+
+    static let deviceScheme = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <Scheme LastUpgradeVersion = "1600" version = "1.7">
+       <BuildAction parallelizeBuildables = "YES" buildImplicitDependencies = "YES">
+          <BuildActionEntries>
+             <BuildActionEntry buildForTesting = "YES" buildForRunning = "YES" buildForProfiling = "YES" buildForArchiving = "YES" buildForAnalyzing = "YES">
+                <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "A0000000000000000000000B" BuildableName = "{{EXE}}.app" BlueprintName = "{{EXE}}" ReferencedContainer = "container:{{EXE}}.xcodeproj">
+                </BuildableReference>
+             </BuildActionEntry>
+          </BuildActionEntries>
+       </BuildAction>
+       <LaunchAction buildConfiguration = "Release" selectedDebuggerIdentifier = "" selectedLauncherIdentifier = "Xcode.IDEFoundation.Launcher.PosixSpawn" launchStyle = "0" useCustomWorkingDirectory = "NO" ignoresPersistentStateOnLaunch = "NO" debugDocumentVersioning = "YES" debugServiceExtension = "internal" allowLocationSimulation = "YES">
+          <BuildableProductRunnable runnableDebuggingMode = "0">
+             <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "A0000000000000000000000B" BuildableName = "{{EXE}}.app" BlueprintName = "{{EXE}}" ReferencedContainer = "container:{{EXE}}.xcodeproj">
+             </BuildableReference>
+          </BuildableProductRunnable>
+       </LaunchAction>
+    </Scheme>
+
+    """
+
+    /// The phone's Info.plist: what the simulator's build.sh writes, plus leave to talk to Lamp on the Mac
+    /// over the local network, which iOS asks the person about once.
+    static let deviceInfoPlist = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0"><dict>
+      <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+      <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+      <key>CFBundleName</key><string>{{NAME}}</string>
+      <key>CFBundleDisplayName</key><string>{{NAME}}</string>
+      <key>CFBundlePackageType</key><string>APPL</string>
+      <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+      <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+      <key>CFBundleDevelopmentRegion</key><string>en</string>
+      <key>LSRequiresIPhoneOS</key><true/>
+      <key>UILaunchScreen</key><dict/>
+      <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
+      <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
+      <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+      <key>NSLocalNetworkUsageDescription</key><string>{{NAME}} talks to Lamp on your Mac for its AI features.</string>
+      <key>NSMicrophoneUsageDescription</key><string>{{NAME}} listens to your microphone.</string>
+      <key>NSSpeechRecognitionUsageDescription</key><string>{{NAME}} turns your speech into text.</string>
+      <key>NSCameraUsageDescription</key><string>{{NAME}} uses your camera.</string>
+      <key>NSPhotoLibraryUsageDescription</key><string>{{NAME}} uses your photos.</string>
+      <key>NSCalendarsFullAccessUsageDescription</key><string>{{NAME}} reads and adds calendar events.</string>
+      <key>NSRemindersFullAccessUsageDescription</key><string>{{NAME}} reads and adds reminders.</string>
+      <key>NSContactsUsageDescription</key><string>{{NAME}} looks up people in your contacts.</string>
+      <key>NSLocationWhenInUseUsageDescription</key><string>{{NAME}} uses your location.</string>
+    </dict></plist>
+
+    """
+
     /// "pomodoro timer!" → "PomodoroTimer"
     static func identifier(from name: String) -> String {
         let words = name.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
@@ -295,6 +422,14 @@ enum Template {
     import UIKit
     /// A picture: NSImage on the Mac, UIImage on iPhone and iPad.
     typealias LampImage = UIImage
+    #endif
+
+    /// Where Lamp is: on this Mac for a Mac app and for the simulator, and the Mac's name on the local
+    /// network for an app on a phone, which Lamp answers on the same Wi‑Fi.
+    #if os(iOS) && !targetEnvironment(simulator)
+    let lampGateway = "http://{{MACHOST}}:{{PORT}}"
+    #else
+    let lampGateway = "http://127.0.0.1:{{PORT}}"
     #endif
 
     /// Where the person turns a permission on: System Settings on a Mac, Settings on a phone.
@@ -2330,7 +2465,7 @@ enum Template {
         }
 
         private static func post(_ path: String, body: Data, timeout: TimeInterval = 240) async throws -> [String: Any] {
-            var request = URLRequest(url: URL(string: "http://127.0.0.1:{{PORT}}" + path)!)
+            var request = URLRequest(url: URL(string: lampGateway + path)!)
             request.httpMethod = "POST"
             request.timeoutInterval = timeout
             request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")

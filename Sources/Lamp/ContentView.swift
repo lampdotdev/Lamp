@@ -358,13 +358,9 @@ struct AppMenu: View {
         Button("Quit") { Task { await store.quitApp(project) } }
             .disabled(!store.openApps.contains(project.id))
         if project.platform == .iphone {
-            // Which simulator the app opens in; it's built for both.
-            Picker("Try On", selection: Binding(get: { project.family }, set: { store.setFamily(project, $0) })) {
-                Text("iPhone").tag(DeviceFamily.iphone)
-                Text("iPad").tag(DeviceFamily.ipad)
-            }
-            .pickerStyle(.menu)
-            .disabled(busy)
+            // Which simulator the app opens in (it's built for both), or which of the person's own phones.
+            Menu("Try On") { TryOnChoices(project: project) }
+                .disabled(busy)
         }
         Divider()
         Button("Rename…") { store.renaming = project }
@@ -777,16 +773,13 @@ struct ProjectView: View {
             ToolbarItem {
                 // Which simulator the app opens in, beside the Play button where Xcode keeps its destination.
                 Menu {
-                    Picker("Try On", selection: Binding(get: { project.family }, set: { store.setFamily(project, $0) })) {
-                        Label("iPhone", systemImage: "iphone").tag(DeviceFamily.iphone)
-                        Label("iPad", systemImage: "ipad").tag(DeviceFamily.ipad)
-                    }
-                    .pickerStyle(.inline)
+                    TryOnChoices(project: project)
                 } label: {
-                    Label(project.family.name, systemImage: project.family == .ipad ? "ipad" : "iphone")
+                    let device = store.devices.first { $0.udid == project.device }
+                    Label(store.tryOnName(project), systemImage: (device?.family ?? project.family) == .ipad ? "ipad" : "iphone")
                 }
                 .disabled(busy)
-                .help("Which simulator the app opens in")
+                .help("Where the app opens: a simulator, or your own iPhone or iPad")
             }
         }
         gap
@@ -1487,5 +1480,41 @@ struct StarterIdeas: View {
         }
         .frame(maxWidth: 600)
         .onAppear { deck.prefetch() }
+    }
+}
+
+/// The Try On choices: the iPhone and iPad simulators and, when apps may go on the person's own devices,
+/// each paired phone. The simulator choice is the family the agent builds and looks at; a phone is where
+/// Play puts the app.
+private struct TryOnChoices: View {
+    @EnvironmentObject private var store: Store
+    @AppStorage("experimentDevices") private var devices = false
+    let project: LampProject
+
+    var body: some View {
+        Picker("Simulator", selection: Binding(get: { project.device == nil ? project.family : nil },
+                                               set: { if let family = $0 { store.setSimulator(project, family) } })) {
+            Label("iPhone", systemImage: "iphone").tag(Optional(DeviceFamily.iphone))
+            Label("iPad", systemImage: "ipad").tag(Optional(DeviceFamily.ipad))
+        }
+        .pickerStyle(.inline)
+        if devices {
+            Picker("Your Devices", selection: Binding(get: { project.device }, set: { store.setDevice(project, $0) })) {
+                ForEach(store.devices) { device in
+                    Label(device.connected ? device.name : "\(device.name) (not connected)", systemImage: device.family == .ipad ? "ipad" : "iphone")
+                        .tag(Optional(device.udid))
+                }
+                if let chosen = project.device, !store.devices.contains(where: { $0.udid == chosen }) {
+                    Label("Chosen phone (not paired)", systemImage: "iphone.slash").tag(Optional(chosen))
+                }
+            }
+            .pickerStyle(.inline)
+            if store.devices.isEmpty {
+                Text("No iPhone or iPad is paired with this Mac. Plug one in and trust this Mac on it.")
+            }
+        }
+        Divider()
+        Button("Look for Devices Again") { store.refreshDevices() }
+            .onAppear { store.refreshDevices() }
     }
 }

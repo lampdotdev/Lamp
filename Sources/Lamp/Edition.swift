@@ -9,6 +9,9 @@ import Foundation
 enum Experiments {
     /// iPhone and iPad apps: built and tried in the iOS Simulator. Needs Xcode and an Accessibility grant.
     static var iosApps: Bool { UserDefaults.standard.bool(forKey: "experimentIOSApps") }
+    /// Those apps on the person's own iPhone or iPad, signed with their Apple account through Xcode, with
+    /// Lamp answering their AI calls over the local network.
+    static var devices: Bool { iosApps && UserDefaults.standard.bool(forKey: "experimentDevices") }
 }
 
 enum Edition {
