@@ -123,7 +123,11 @@ enum AppAI {
             case localModel(provider: String, model: String)   // Native Mac AI, Ollama or LM Studio
         }
         let id: String
+        /// The model with what runs it ("Opus via Claude Code"): captions and the per-app panel.
         let label: String
+        /// For the menus, where the routes sit under their provider: the provider's name and the model's.
+        let group: String
+        let name: String
         let kind: Kind
         /// Whether this route can answer right now: the key, the tool or the model it needs is there.
         /// Worked out when the list is made, on the main thread, where the local models live.
@@ -136,7 +140,7 @@ enum AppAI {
             return AppAI.anthropicModels.first { $0.id == "sonnet" }!.openRouter
         }
 
-        @MainActor static func make(id: String, label: String, kind: Kind) -> TextRoute {
+        @MainActor static func make(id: String, group: String, name: String, via: String? = nil, kind: Kind) -> TextRoute {
             let available: Bool
             switch kind {
             case .openRouter: available = Provider.hasKey
@@ -149,7 +153,7 @@ enum AppAI {
                 available = provider == Builder.localProvider ? LocalModels.shared.installed.contains { $0.id == model }
                                                               : LocalModels.shared.external[provider]?.contains(model) == true
             }
-            return TextRoute(id: id, label: label, kind: kind, available: available)
+            return TextRoute(id: id, label: "\(name) via \(via ?? group)", group: group, name: name, kind: kind, available: available)
         }
     }
 
@@ -168,34 +172,46 @@ enum AppAI {
     /// Every route there is, whether or not it can answer right now; the pickers show the ones that can,
     /// plus whatever is chosen.
     @MainActor static var allTextRoutes: [TextRoute] {
-        var routes = anthropicModels.map { TextRoute.make(id: $0.id, label: $0.label + " via OpenRouter", kind: .openRouter(model: $0.openRouter)) }
+        var routes = anthropicModels.map { TextRoute.make(id: $0.id, group: "OpenRouter", name: $0.label, kind: .openRouter(model: $0.openRouter)) }
         // The sign-ins, one route per model they offer (Claude Code's short names; the models Codex lists).
         for model in Builder.claudeModels where !model.id.isEmpty {
-            routes.append(.make(id: "engine:claude:\(model.id)", label: "\(model.label) via Claude Code", kind: .engine(.claude, model: model.id)))
+            routes.append(.make(id: "engine:claude:\(model.id)", group: "Claude Code", name: model.label, kind: .engine(.claude, model: model.id)))
         }
         // Codex lists its models once it has run; until then its default, with no model named, is the route.
         let codexModels = Builder.codexModels.filter { !$0.id.isEmpty }
         if codexModels.isEmpty {
-            routes.append(.make(id: "engine:codex", label: "Codex's default model via Codex", kind: .engine(.codex, model: "")))
+            routes.append(.make(id: "engine:codex", group: "Codex", name: "Codex's default model", kind: .engine(.codex, model: "")))
         }
         for model in codexModels {
-            routes.append(.make(id: "engine:codex:\(model.id)", label: "\(model.label) via Codex", kind: .engine(.codex, model: model.id)))
+            routes.append(.make(id: "engine:codex:\(model.id)", group: "Codex", name: model.label, kind: .engine(.codex, model: model.id)))
         }
         if Builder.piProvider == Builder.myPiProvider {
-            routes.append(.make(id: "engine:pi", label: "\(Builder.piModel) via your own pi setup", kind: .engine(.pi, model: Builder.piModel)))
+            routes.append(.make(id: "engine:pi", group: "Your own pi setup", name: Builder.piModel, kind: .engine(.pi, model: Builder.piModel)))
         } else if let provider = Provider.apiProvider(Builder.piProvider), provider.id != "openrouter" {
-            routes.append(.make(id: "engine:pi", label: "\(Builder.piModel) via your \(provider.name) key", kind: .engine(.pi, model: Builder.piModel)))
+            routes.append(.make(id: "engine:pi", group: provider.name, name: Builder.piModel, via: "your \(provider.name) key", kind: .engine(.pi, model: Builder.piModel)))
         }
         for model in LocalModels.shared.installed where !LocalModels.isDecisionModel(model.id) {
-            routes.append(.make(id: "local:\(model.id)", label: "\(model.name) on this Mac", kind: .localModel(provider: Builder.localProvider, model: model.id)))
+            routes.append(.make(id: "local:\(model.id)", group: "Native Mac AI", name: model.name, via: "Native Mac AI on this Mac",
+                                kind: .localModel(provider: Builder.localProvider, model: model.id)))
         }
         for (provider, models) in LocalModels.shared.external.sorted(by: { $0.key < $1.key }) {
             for model in models {
-                routes.append(.make(id: "\(provider):\(model)", label: "\(model) (\(LocalModels.externalName(provider)))",
+                routes.append(.make(id: "\(provider):\(model)", group: LocalModels.externalName(provider), name: model,
                                     kind: .localModel(provider: provider, model: model)))
             }
         }
         return routes
+    }
+
+    /// The routes a picker shows, under their providers in the order the routes come.
+    @MainActor static func textRouteGroups(including chosen: String?) -> [(title: String, routes: [TextRoute])] {
+        var groups: [(title: String, routes: [TextRoute])] = []
+        for route in textRoutes(including: chosen) {
+            if let index = groups.firstIndex(where: { $0.title == route.group }) { groups[index].routes.append(route) }
+            else { groups.append((route.group, [route])) }
+        }
+        return groups
+
     }
 
     /// What the pickers offer: the routes that can answer now, and the chosen one even if it can't (so a

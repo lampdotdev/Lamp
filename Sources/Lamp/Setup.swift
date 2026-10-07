@@ -308,14 +308,14 @@ struct BuildingSettings: View {
         }
     }
 
-    /// Ready or Not Ready, beside the Agent menu. Where Claude Code or Codex was found is in its help, for
-    /// working out which copy runs when there are several.
+    /// Not Ready beside the menu when something's wrong (ready says nothing). Where Claude Code or Codex was
+    /// found is in its help, for working out which copy runs when there are several.
     @ViewBuilder private var agentStatus: some View {
         Group {
             switch readiness {
-            // Icon and word close together: a Label in a form row spaces them like a list item.
-            case .ready: HStack(spacing: 4) { Image(systemName: "checkmark.circle.fill"); Text("Ready") }.foregroundStyle(.green)
+            case .ready: EmptyView()
             case .checking: ProgressView().controlSize(.small)
+            // Icon and word close together: a Label in a form row spaces them like a list item.
             default: HStack(spacing: 4) { Image(systemName: "exclamationmark.circle.fill"); Text("Not Ready") }.foregroundStyle(.orange)
             }
         }
@@ -364,12 +364,6 @@ struct BuildingSettings: View {
         signIns[engine] = await EngineSignIn.isSignedIn(engine) ?? true
     }
 
-    /// The model Claude Code or Codex builds with ("" for the tool's default).
-    private func engineModel(_ engine: Engine) -> Binding<String> {
-        Binding(get: { _ = revision; return Builder.engineModel(engine) },
-                set: { Builder.setEngineModel($0, for: engine); revision += 1 })
-    }
-
     /// Providers added in Settings → Providers, plus the current one even if its key was removed.
     private var addedProviders: [PiProvider] {
         _ = revision
@@ -382,62 +376,126 @@ struct BuildingSettings: View {
         Binding(get: { provider }, set: { if $0 == Self.configure { tab = "providers" } else { provider = $0 } })
     }
 
+    /// One menu for what builds apps, as Settings → Apps lists what answers inside them: the models under
+    /// what runs them (Claude Code, Codex, OpenRouter, Native Mac AI…). Long lists (OpenRouter's, another
+    /// key's) are the suggested models and the current one, with "Other model…" opening the search.
+    private struct TextChoice: Identifiable { let id: String; let label: String }
+    private struct TextGroup: Identifiable { let title: String; let items: [TextChoice]; var id: String { title } }
+
+    @State private var otherModel = false   // "Other model…" chosen: the search list is shown
+
+    private var textChoices: [TextGroup] {
+        _ = revision
+        var groups: [TextGroup] = []
+        // The sign-ins, each model they offer; an uninstalled one is a single entry so it can still be picked
+        // and its fix shown.
+        if ToolLocator.path(for: .claude) != nil {
+            // The tool's own default stays on offer, so the account's choice can be returned to.
+            groups.append(TextGroup(title: "Claude Code", items: Builder.claudeModels.map { TextChoice(id: "claude:\($0.id)", label: $0.label) }))
+        } else {
+            groups.append(TextGroup(title: "Claude Code", items: [TextChoice(id: "claude:", label: "Not installed")]))
+        }
+        if ToolLocator.path(for: .codex) != nil {
+            groups.append(TextGroup(title: "Codex", items: Builder.codexModels.map { TextChoice(id: "codex:\($0.id)", label: $0.label) }))
+        } else {
+            groups.append(TextGroup(title: "Codex", items: [TextChoice(id: "codex:", label: "Not installed")]))
+        }
+        for api in addedProviders {
+            var items: [TextChoice] = []
+            let current = Builder.piModel(for: api.id)
+            if api.id == "openrouter" {
+                items = Provider.models.map { TextChoice(id: "pi:openrouter:\($0.id)", label: $0.label) }
+                if !current.isEmpty, !Provider.models.contains(where: { $0.id == current }) {
+                    items.append(TextChoice(id: "pi:openrouter:\(current)", label: current))
+                }
+            } else if !current.isEmpty {
+                items.append(TextChoice(id: "pi:\(api.id):\(current)", label: current))
+            }
+            items.append(TextChoice(id: "pi-other:\(api.id)", label: "Other model…"))
+            groups.append(TextGroup(title: api.name, items: items))
+        }
+        if FileManager.default.fileExists(atPath: Agent.userConfigDir) {
+            var items: [TextChoice] = []
+            let current = Builder.piModel(for: Builder.myPiProvider)
+            if !current.isEmpty { items.append(TextChoice(id: "pi:\(Builder.myPiProvider):\(current)", label: current)) }
+            items.append(TextChoice(id: "pi-other:\(Builder.myPiProvider)", label: "Other model…"))
+            groups.append(TextGroup(title: "Your own pi setup", items: items))
+        }
+        var onMac = local.installed.filter { !LocalModels.isDecisionModel($0.id) }
+            .map { TextChoice(id: "pi:\(Builder.localProvider):\($0.id)", label: $0.name) }
+        if onMac.isEmpty { onMac.append(TextChoice(id: "pi-other:\(Builder.localProvider)", label: "No models yet")) }
+        groups.append(TextGroup(title: "Native Mac AI", items: onMac))
+        for id in local.external.keys.sorted(by: { LocalModels.externalName($0) < LocalModels.externalName($1) }) {
+            let items = (local.external[id] ?? []).map { TextChoice(id: "pi:\(id):\($0)", label: $0) }
+            if !items.isEmpty { groups.append(TextGroup(title: LocalModels.externalName(id), items: items)) }
+        }
+        return groups
+    }
+
+    private var textChoice: Binding<String> {
+        Binding(get: {
+            _ = revision
+            switch selectedEngine {
+            case .claude: return "claude:\(Builder.engineModel(.claude))"
+            case .codex: return "codex:\(Builder.engineModel(.codex))"
+            case .pi: return otherModel || model.isEmpty ? "pi-other:\(provider)" : "pi:\(provider):\(model)"
+            }
+        }, set: { choice in
+            if choice == Self.configure { tab = "providers"; return }
+            let parts = choice.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
+            switch parts[0] {
+            case "claude", "codex":
+                let which: Engine = parts[0] == "claude" ? .claude : .codex
+                Builder.setEngineModel(parts.count > 1 ? parts[1] : "", for: which)
+                engine = which.rawValue
+                otherModel = false
+            case "pi":
+                // The model is saved under its provider before the provider changes, so the change reads it back.
+                Builder.piProvider = parts[1]
+                Builder.piModel = parts[2]
+                provider = parts[1]
+                model = parts[2]
+                engine = Engine.pi.rawValue
+                otherModel = false
+            case "pi-other":
+                provider = parts[1]
+                engine = Engine.pi.rawValue
+                otherModel = true
+            default: break
+            }
+            revision += 1
+        })
+    }
+
     var body: some View {
         Form {
             Section("AI settings for Lamp") {
-                LabeledContent("Agent") {
+                LabeledContent("Text generation") {
                     HStack(spacing: 10) {
                         agentStatus
-                        Picker("Agent", selection: $engine) {
-                            ForEach(Engine.allCases) { option in
-                                let missing = option != .pi && ToolLocator.path(for: option) == nil
-                                Text(option.title + (missing ? " (not installed)" : "")).tag(option.rawValue)
+                        Picker("Text generation", selection: textChoice) {
+                            ForEach(textChoices) { group in
+                                Section(group.title) {
+                                    ForEach(group.items, id: \.id) { Text($0.label).tag($0.id) }
+                                }
                             }
+                            Divider()
+                            Text("Configure providers…").tag(Self.configure)
                         }
                         .labelsHidden()
                         .fixedSize()
                     }
                 }
                 agentFix
-
                 if selectedEngine == .pi {
-                    Picker("Provider", selection: providerChoice) {
-                        let hasPiSetup = FileManager.default.fileExists(atPath: Agent.userConfigDir)
-                        if !addedProviders.isEmpty || hasPiSetup {
-                            Section("Cloud") {
-                                ForEach(addedProviders) { Text($0.name).tag($0.id) }
-                                if hasPiSetup {
-                                    Text("My pi setup (logins and subscriptions)").tag(Builder.myPiProvider)
-                                }
-                            }
-                        }
-                        Section("Local") {
-                            Text("Native Mac AI").tag(Builder.localProvider)
-                            ForEach(local.external.keys.sorted { LocalModels.externalName($0) < LocalModels.externalName($1) },
-                                    id: \.self) { Text(LocalModels.externalName($0)).tag($0) }
-                        }
-                        Divider()
-                        Text("Configure providers…").tag(Self.configure)
-                    }
                     // Keys are managed in Providers; only ask here if the chosen provider has lost its key.
                     if let api = Provider.apiProvider(provider), KeyStore.key(for: api.id) == nil {
                         KeyRow(provider: api) { revision += 1; recheck() }
                     }
-                    ModelPicker(provider: provider, model: $model, revision: revision)
-                } else {
-                    if selectedEngine == .claude {
-                        Picker("Model", selection: engineModel(.claude)) {
-                            ForEach(Builder.claudeModels, id: \.id) { Text($0.label).tag($0.id) }
-                        }
-                    } else if selectedEngine == .codex {
-                        if Builder.codexModels.count > 1 {
-                            Picker("Model", selection: engineModel(.codex)) {
-                                ForEach(Builder.codexModels, id: \.id) { Text($0.label).tag($0.id) }
-                            }
-                        } else {
-                            TextField("Model", text: engineModel(.codex), prompt: Text("ChatGPT Codex's default"))
-                        }
-                    }
+                    if otherModel { ModelPicker(provider: provider, model: $model, revision: revision) }
+                }
+                Picker("Image generation", selection: Binding(get: { _ = revision; return Icons.iconModel }, set: { Icons.iconModel = $0; revision += 1 })) {
+                    ForEach(Icons.imageChoices, id: \.id) { Text($0.label).tag($0.id) }
                 }
             }
             Section {
@@ -512,7 +570,9 @@ struct AppsSettings: View {
         Form {
             Section("Models used in apps") {
                 Picker("Text generation", selection: Binding(get: { AppAI.canonicalRoute(appModel) }, set: { appModel = $0 })) {
-                    ForEach(AppAI.textRoutes(including: appModel)) { Text($0.label).tag($0.id) }
+                    ForEach(AppAI.textRouteGroups(including: appModel), id: \.title) { group in
+                        Section(group.title) { ForEach(group.routes) { Text($0.name).tag($0.id) } }
+                    }
                 }
                 Picker("Image generation", selection: $imageModel) {
                     ForEach(Icons.imageChoices, id: \.id) { Text($0.label).tag($0.id) }

@@ -133,16 +133,19 @@ enum Builder {
 
     /// The model for the current pi provider; each provider remembers its own.
     static var piModel: String {
-        get {
-            if let saved = UserDefaults.standard.string(forKey: "piModel.\(piProvider)"), !saved.isEmpty { return saved }
-            if piProvider == "openrouter" {   // from before the provider picker
-                let old = UserDefaults.standard.string(forKey: "model") ?? ""
-                return old.contains("/") ? old : Provider.defaultModel
-            }
-            if piProvider == localProvider { return LocalModels.installedIDs().first ?? "" }
-            return ""
-        }
+        get { piModel(for: piProvider) }
         set { UserDefaults.standard.set(newValue, forKey: "piModel.\(piProvider)") }
+    }
+
+    /// The model saved for one of pi's providers, chosen or not.
+    static func piModel(for provider: String) -> String {
+        if let saved = UserDefaults.standard.string(forKey: "piModel.\(provider)"), !saved.isEmpty { return saved }
+        if provider == "openrouter" {   // from before the provider picker
+            let old = UserDefaults.standard.string(forKey: "model") ?? ""
+            return old.contains("/") ? old : Provider.defaultModel
+        }
+        if provider == localProvider { return LocalModels.installedIDs().first ?? "" }
+        return ""
     }
 
     /// Whether the current choice can build right now, and if not, why.
