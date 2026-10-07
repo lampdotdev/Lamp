@@ -1564,10 +1564,7 @@ final class Store: ObservableObject {
               let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
             return (400, ["error": "use_app needs a list of actions."])
         }
-        if project.platform == .iphone {
-            return (200, ["text": "use_app can't drive iPhone apps yet. look_at_app shows the iPhone's screen after each change; " +
-                          "check what you can from the picture and the log, and say what you couldn't try."])
-        }
+        if project.platform == .iphone { return await useOnSimulator(project, actions: actions, json: json) }
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
@@ -1603,6 +1600,48 @@ final class Store: ObservableObject {
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
         return (200, ["text": text, "screenshots": Privacy.sharesPictures ? Runtime.pictures(of: project).map(\.path) : []])
+    }
+
+    /// `use_app` for an iPhone app: Lamp drives the simulator through the Mac's accessibility system
+    /// (Simulator.Driver), then a fresh picture of the screen follows the report.
+    private func useOnSimulator(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {
+        guard let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid) else {
+            return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it in the simulator."])
+        }
+        guard Simulator.Driver.isAllowed else {
+            Simulator.Driver.ask()
+            log(project, .status, "To try iPhone apps for you, Lamp needs to be allowed to control this computer: System Settings → Privacy & Security → Accessibility, then turn on Lamp.")
+            return (200, ["text": "Lamp isn't allowed to control the simulator yet. The user has just been asked to allow it (System Settings → " +
+                          "Privacy & Security → Accessibility). Say so to the user in plain words, and try again on their next request."])
+        }
+        guard let screen = await Simulator.Driver.screen(of: running.udid) else {
+            return (200, ["text": "Lamp can't find the iPhone's screen in the Simulator window. Make sure the Simulator is open and showing the iPhone, then try again."])
+        }
+        guard let data = json.data(using: .utf8), let decoded = try? JSONDecoder().decode([Simulator.Driver.Action].self, from: data) else {
+            return (400, ["error": "use_app needs a list of actions."])
+        }
+        let printed = Runtime.logSize(project)
+        let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
+        let report = await Simulator.Driver.perform(decoded, on: screen, udid: running.udid, picture: picture)
+        if let data = try? JSONSerialization.data(withJSONObject: ["id": UUID().uuidString, "report": report]) {
+            try? data.write(to: Runtime.folder(project).appendingPathComponent("use.json"))
+        }
+        guard Simulator.isRunning(pid: running.pid) else {
+            var text = "What happened:\n\(report)\n\nThe app quit or crashed while doing that."
+            if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nLast lines it printed:\n" + tail }
+            return (200, ["text": text])
+        }
+        var text = "What happened:\n\(report)"
+        if Runtime.sourcesChanged(project) {
+            text += "\n\nThis is the app as last built: it doesn't have the changes you've made to the code since. " +
+                "Call look_at_app to build and open them."
+        }
+        text += Privacy.sharesPictures
+            ? "\n\nA picture of the iPhone's screen follows. Points for the next use_app are pixels in it."
+            : "\n\n" + Privacy.picturesOff
+        if !Privacy.sharesLog { text += " " + Privacy.logOff }
+        if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
+        return (200, ["text": text, "screenshots": Privacy.sharesPictures ? [picture.path] : []])
     }
 
     /// `look_at_app` and `use_app` for agents that take tools over MCP (Claude Code and Codex): one streamable-HTTP
@@ -2705,7 +2744,7 @@ final class Store: ObservableObject {
             let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
             if let udid = simulatorApps[project.id]?.udid, await Simulator.screenshot(on: udid, to: picture) { screenshots = [picture] }
             var text = note + " " + (screenshots.isEmpty ? "No picture of the iPhone could be taken."
-                : Privacy.sharesPictures ? "A picture of the iPhone's screen follows. use_app can't tap it yet." : Privacy.picturesOff)
+                : Privacy.sharesPictures ? "A picture of the iPhone's screen follows. Points for use_app are pixels in it." : Privacy.picturesOff)
             if !Privacy.sharesLog { text += " " + Privacy.logOff }
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
             return (200, ["text": text, "screenshots": Privacy.sharesPictures ? screenshots.map(\.path) : []])

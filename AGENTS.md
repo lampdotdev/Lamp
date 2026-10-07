@@ -56,8 +56,12 @@ launches it with its output going to the app's log, and photographs the screen f
 scaffold is a Swift package built for the simulator SDK by its own `build.sh` (no Xcode project, no signing
 beyond ad hoc), with a small `LampSupport.swift` of its own (`Template.iPhoneSupportSwift`: AI through
 Lamp's gateway, which the simulator reaches as 127.0.0.1) and a prompt of its own (`Agent.iPhonePrompt`).
-`use_app` doesn't drive the simulator yet, and nothing puts an app on a real iPhone: that needs Apple's
-developer program and signing, which is the next step if this direction holds.
+`use_app` drives the simulator from outside the app (`Simulator.Driver`): the Simulator app shows the
+iPhone's whole accessibility tree to the Mac, so Lamp finds what's under a point and presses it, sets a
+field's text, and sends real mouse events for swipes, scrolls and long presses. Pictures are made at point
+size, so a pixel in them is a point on the screen. That needs Lamp to be allowed in System Settings →
+Privacy & Security → Accessibility; the first `use_app` asks. Nothing puts an app on a real iPhone yet:
+that needs Apple's developer program and signing.
 
 ## Generated apps
 
