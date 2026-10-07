@@ -162,6 +162,11 @@ enum Devices {
 
     /// Launches the app and stays attached: what it prints goes to the log until it quits, as on the
     /// simulator. The process is devicectl's, kept so a later launch or Stop can end it.
+    ///
+    /// devicectl writes to a terminal line by line but holds everything back until it exits when its
+    /// output is a file, so its "Launched application" line, and the app's own console, would arrive only
+    /// once the app had quit. It gets a pseudo-terminal, and what it says there is copied into the log as
+    /// it comes.
     @MainActor
     static func launch(_ bundleID: String, on udid: String, log: URL, started: (Process) -> Void,
                        cancelled: () -> Bool) async throws -> Process {
@@ -171,14 +176,40 @@ enum Devices {
         if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil) }
         let handle = try FileHandle(forWritingTo: log)
         let offset = handle.seekToEndOfFile()
-        process.standardOutput = handle
-        process.standardError = handle
+        var master: Int32 = -1, slave: Int32 = -1
+        guard openpty(&master, &slave, nil, nil, nil) == 0 else {
+            try? handle.close()
+            throw PhoneFailure(stage: .launch, output: "Couldn't open a terminal for the launch.")
+        }
+        let terminal = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
+        process.standardOutput = terminal
+        process.standardError = terminal
         process.standardInput = FileHandle.nullDevice
-        defer { try? handle.close() }
         do {
             try process.run()
+        } catch {
+            close(master); close(slave); try? handle.close()
+            throw error
+        }
+        close(slave)
+        // The copy runs on its own thread for as long as devicectl does: bytes as they are, less the
+        // terminal's carriage returns, so a character split across two reads survives. The log is what the
+        // launch wait and the app's log view read; the wait is told when the last of it is there.
+        let drained = PhoneLaunch.Flag()
+        Thread.detachNewThread {
+            var buffer = [UInt8](repeating: 0, count: 8192)
+            while true {
+                let count = read(master, &buffer, buffer.count)
+                guard count > 0 else { break }
+                handle.write(Data(buffer[0..<count].filter { $0 != 13 }))
+            }
+            close(master)
+            try? handle.close()
+            drained.set()
+        }
+        do {
             started(process)
-            try await PhoneLaunch.wait(process, bundleID: bundleID, output: log, offset: offset, cancelled: cancelled)
+            try await PhoneLaunch.wait(process, bundleID: bundleID, output: log, offset: offset, cancelled: cancelled, drained: drained.isSet)
             return process
         } catch {
             Subprocess.terminateTree(process)
