@@ -1,0 +1,186 @@
+import Foundation
+
+final class PhoneToolsChecks {
+    private let developer = "/Applications/Chosen Xcode.app/Contents/Developer"
+    private let runtimes = #"{"runtimes":[{"identifier":"com.apple.CoreSimulator.SimRuntime.iOS-17-0","version":"17.0","isAvailable":true}]}"#
+    private let simulators = #"{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-17-0":[{"name":"iPhone 15","udid":"sim-phone","state":"Shutdown"},{"name":"iPad Air","udid":"sim-pad","state":"Shutdown"}]}}"#
+
+    private func result(_ text: String = "", status: Int32 = 0, errors: String = "", timedOut: Bool = false) -> Subprocess.Result {
+        .init(status: status, output: text, errors: errors, timedOut: timedOut)
+    }
+
+    private func probe(fail: PhoneTools.Step? = nil, phoneVersion: String? = "17.0", runtime: String? = nil,
+                       commands: (([String]) -> Void)? = nil) -> PhoneTools.Probe {
+        .init(developer: { fail == .xcode ? nil : self.developer }, active: { fail == .tools ? "/Library/Developer/CommandLineTools" : self.developer }, run: { tool, args, env in
+            expectEqual(env["DEVELOPER_DIR"], self.developer)
+            commands?(args)
+            if args == ["-checkFirstLaunchStatus"] {
+                expectEqual(tool, self.developer + "/usr/bin/xcodebuild")
+                return self.result(status: fail == .firstLaunch ? 1 : 0)
+            }
+            if args.contains("--show-sdk-path") { return self.result("/an/sdk", status: fail == .platform ? 1 : 0) }
+            if args.contains("runtimes") { return self.result(runtime ?? (fail == .runtime ? #"{"runtimes":[]}"# : self.runtimes)) }
+            if args.contains("simctl") { return self.result(fail == .simulator ? #"{"devices":{}}"# : self.simulators) }
+            return self.result()
+        }, read: { _ in
+            guard let phoneVersion else { return nil }
+            return """
+            {"result":{"devices":[{"hardwareProperties":{"udid":"phone"},"deviceProperties":{"name":"Test iPhone","osVersionNumber":"\(phoneVersion)"}}]}}
+            """.data(using: .utf8)
+        })
+    }
+
+    func testStopsAtEachPrerequisiteAndDoesNotProbeLaterSteps() {
+        let steps = PhoneTools.Step.allCases.filter { $0 != .phone }
+        for (index, step) in steps.enumerated() {
+            var commands = [[String]]()
+            let report = PhoneTools.check(probe: probe(fail: step, commands: { commands.append($0) }))
+            expectEqual(report.issue?.step, step)
+            expectEqual(report.passed, Array(steps.prefix(index)))
+            if step == .xcode || step == .tools { expectTrue(commands.isEmpty) }
+            if step == .firstLaunch { expectEqual(commands, [["-checkFirstLaunchStatus"]]) }
+            if step == .platform { expectFalse(commands.contains { $0.contains("simctl") }) }
+        }
+    }
+
+    func testActionsMatchTheBlocker() {
+        let actions: [PhoneTools.Step: PhoneTools.Action] = [.xcode: .installXcode, .tools: .useXcode,
+            .firstLaunch: .openXcode, .platform: .components, .runtime: .components, .simulator: .simulator]
+        for (step, action) in actions { expectEqual(PhoneTools.check(probe: probe(fail: step)).issue?.action, action) }
+    }
+
+    func testLicenseAndFirstLaunchAreSeparateMessages() {
+        var p = probe()
+        p.run = { _, _, _ in self.result(status: 1, errors: "You have not agreed to the Xcode license agreements") }
+        expectEqual(PhoneTools.check(probe: p).issue?.title, "Accept Xcode's agreements")
+        p.run = { _, _, _ in self.result(status: 1, errors: "Additional components need to be installed") }
+        expectEqual(PhoneTools.check(probe: p).issue?.title, "Finish Xcode setup")
+        p.run = { _, _, _ in self.result(status: -1, timedOut: true) }
+        expectEqual(PhoneTools.check(probe: p).issue?.title, "Xcode isn't responding")
+    }
+
+    func testUnavailableAndOldRuntimesDoNotPass() {
+        for runtime in [
+            #"{"runtimes":[{"identifier":"com.apple.CoreSimulator.SimRuntime.iOS-17-0","version":"17.0","isAvailable":false}]}"#,
+            #"{"runtimes":[{"identifier":"com.apple.CoreSimulator.SimRuntime.iOS-16-4","version":"16.4","isAvailable":true}]}"#,
+            #"{"runtimes":[{"identifier":"com.apple.CoreSimulator.SimRuntime.tvOS-18-0","version":"18.0","isAvailable":true}]}"#
+        ] { expectEqual(PhoneTools.check(probe: probe(runtime: runtime)).issue?.step, .runtime) }
+    }
+
+    func testSimulatorFailureIsNotDescribedAsAMissingDownload() {
+        var p = probe()
+        let run = p.run
+        p.run = { tool, args, env in args.contains("runtimes") ? self.result("service unavailable", status: 1) : run(tool, args, env) }
+        expectEqual(PhoneTools.check(probe: p).issue?.title, "The simulator isn't responding")
+        expectEqual(PhoneTools.check(probe: probe(runtime: "bad JSON")).issue?.title, "The simulator isn't responding")
+    }
+
+    func testBothSDKsMustBeAvailable() {
+        var p = probe()
+        let run = p.run
+        p.run = { tool, args, env in args.contains("iphonesimulator") ? self.result(status: 1) : run(tool, args, env) }
+        expectEqual(PhoneTools.check(probe: p).issue?.step, .platform)
+    }
+
+    func testPhoneVersionIsReadFromChosenDeviceAndUnknownIsNotReady() {
+        let old = PhoneTools.check(phone: "phone", probe: probe(phoneVersion: "16.7.12"))
+        expectEqual(old.issue?.step, .phone)
+        expectEqual(old.issue?.action, .updatePhone)
+        expectTrue(old.issue?.message.contains("16.7.12") == true)
+        for version in ["17.0", "18.6", "26.0"] {
+            let report = PhoneTools.check(phone: "phone", probe: probe(phoneVersion: version))
+            expectTrue(report.ready)
+            expectEqual(report.passed.last, .phone)
+        }
+        for version in [nil, "", "unknown"] as [String?] {
+            expectEqual(PhoneTools.check(phone: "phone", probe: probe(phoneVersion: version)).issue?.action, .retry)
+        }
+        expectEqual(PhoneTools.check(phone: "different-phone", probe: probe()).issue?.action, .retry)
+    }
+
+    func testReadyForBothFamiliesAndDoesNotNeedAPhysicalPhone() {
+        for family in [DeviceFamily.iphone, .ipad] {
+            var commands = [[String]]()
+            let report = PhoneTools.check(family: family, probe: probe(commands: { commands.append($0) }))
+            expectTrue(report.ready)
+            expectFalse(report.passed.contains(.phone))
+            expectFalse(commands.contains { $0.contains("devicectl") })
+        }
+    }
+
+    func testRenamedXcodeAndCLTAreDistinguishedByBundleAndExecutable() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = root.appendingPathComponent("Renamed.app")
+        let dev = app.appendingPathComponent("Contents/Developer")
+        try FileManager.default.createDirectory(at: dev.appendingPathComponent("usr/bin"), withIntermediateDirectories: true)
+        let tool = dev.appendingPathComponent("usr/bin/xcodebuild")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: tool)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
+        expectFalse(PhoneTools.isXcode(dev.path))
+        try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": "com.apple.dt.Xcode"], format: .xml, options: 0)
+            .write(to: app.appendingPathComponent("Contents/Info.plist"))
+        expectTrue(PhoneTools.isXcode(dev.path))
+    }
+
+    @MainActor
+    func testXcodeChoiceReachesStreamingShellAndSubprocessWithoutGlobalSwitch() async {
+        let previous = ProcessInfo.processInfo.environment["DEVELOPER_DIR"]
+        let saved = UserDefaults.standard.string(forKey: PhoneTools.preference)
+        defer {
+            if let previous { setenv("DEVELOPER_DIR", previous, 1) } else { unsetenv("DEVELOPER_DIR") }
+            if let saved { UserDefaults.standard.set(saved, forKey: PhoneTools.preference) }
+            else { UserDefaults.standard.removeObject(forKey: PhoneTools.preference) }
+        }
+        let globalBefore = await Subprocess.run("/usr/bin/env", ["-u", "DEVELOPER_DIR", "/usr/bin/xcode-select", "-p"])
+        PhoneTools.use(developer)
+        expectEqual(ProcessInfo.processInfo.environment["DEVELOPER_DIR"], developer)
+        let child = await Subprocess.run("/usr/bin/printenv", ["DEVELOPER_DIR"])
+        expectEqual(child.output.trimmingCharacters(in: .whitespacesAndNewlines), developer)
+        var lines = [String]()
+        let status = await Shell.run("/usr/bin/printenv DEVELOPER_DIR", cwd: FileManager.default.temporaryDirectory) { lines.append($0) }
+        expectEqual(status, 0)
+        expectEqual(lines, [developer])
+        let globalAfter = await Subprocess.run("/usr/bin/env", ["-u", "DEVELOPER_DIR", "/usr/bin/xcode-select", "-p"])
+        expectEqual(globalBefore.output, globalAfter.output)
+        expectEqual(globalBefore.status, globalAfter.status)
+    }
+
+
+    func testLegacyDiscoveryIncludesOnlyOldPhysicalIOSDevices() {
+        let listing = #"[{"identifier":"old","name":"Test iPad","modelCode":"iPad6,3","platform":"com.apple.platform.iphoneos","simulator":false,"operatingSystemVersion":"16.7.10 (20H350)"},{"identifier":"new","platform":"com.apple.platform.iphoneos","simulator":false,"operatingSystemVersion":"17.0"},{"identifier":"sim","platform":"com.apple.platform.iphoneos","simulator":true,"operatingSystemVersion":"16.0"},{"identifier":"mac","platform":"com.apple.platform.macosx","simulator":false,"operatingSystemVersion":"14.0"}]"#
+        let old = PhoneTools.olderPhones(listing: listing)
+        expectEqual(old.map(\.id), ["old"])
+        expectEqual(old.first?.family, .ipad)
+        expectEqual(old.first?.version, "16.7.10")
+        var p = probe(phoneVersion: nil)
+        let run = p.run
+        p.run = { tool, args, env in args.contains("xcdevice") ? self.result(listing) : run(tool, args, env) }
+        let report = PhoneTools.check(phone: "old", probe: p)
+        expectEqual(report.issue?.action, .updatePhone)
+        expectTrue(report.issue?.message.contains("Test iPad") == true)
+        expectTrue(PhoneTools.olderPhones(listing: "bad JSON").isEmpty)
+    }
+
+
+    func testOldXcodeCanTrySimulatorButNeedsUpdatingForPhone() {
+        var p = probe()
+        p.xcodeVersion = { _ in "15.4" }
+        expectTrue(PhoneTools.check(probe: p).ready)
+        expectEqual(PhoneTools.check(phone: "phone", probe: p).issue?.title, "Update Xcode")
+        p.xcodeVersion = { _ in "16.0" }
+        expectTrue(PhoneTools.check(phone: "phone", probe: p).ready)
+    }
+
+}
+
+
+private func expectEqual<T: Equatable>(_ lhs: T, _ rhs: T, file: StaticString = #file, line: UInt = #line) {
+    precondition(lhs == rhs, "Expected \(lhs) to equal \(rhs)", file: file, line: line)
+}
+private func expectTrue(_ value: Bool, file: StaticString = #file, line: UInt = #line) {
+    precondition(value, "Expected true", file: file, line: line)
+}
+private func expectFalse(_ value: Bool, file: StaticString = #file, line: UInt = #line) {
+    precondition(!value, "Expected false", file: file, line: line)
+}

@@ -50,6 +50,7 @@ struct LampApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Before launch finishes, so clicking a notification that launched Lamp still opens its chat.
     func applicationWillFinishLaunching(_ notification: Notification) {
+        PhoneTools.restoreChoice()
         MainActor.assumeIsolated { Notifier.shared.start() }
     }
 

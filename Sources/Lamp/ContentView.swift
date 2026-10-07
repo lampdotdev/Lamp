@@ -182,7 +182,7 @@ struct AppSidebar: View {
             }
         } primaryAction: { ids in
             for project in store.projects where ids.contains(project.id) {
-                Task { await store.open(project) }
+                store.openPrepared(project)
             }
         }
     }
@@ -197,7 +197,7 @@ struct AppSidebar: View {
                         AppTile(project: project, selected: store.selection == project.id)
                     }
                     .buttonStyle(.plain)
-                    .simultaneousGesture(TapGesture(count: 2).onEnded { Task { await store.open(project) } })
+                    .simultaneousGesture(TapGesture(count: 2).onEnded { store.openPrepared(project) })
                     .contextMenu { AppMenu(project: project) }
                     .accessibilityLabel(project.name)
                     .accessibilityAddTraits(store.selection == project.id ? [.isSelected] : [])
@@ -338,8 +338,8 @@ struct AppMenu: View {
 
     var body: some View {
         let busy = store.busy.contains(project.id)
-        Button("Open") { Task { await store.open(project) } }
-        Button("Rebuild & Open") { Task { await store.run(project) } }
+        Button("Open") { store.openPrepared(project) }
+        Button("Rebuild & Open") { store.runPrepared(project) }
             .disabled(busy)
         Button("Quit") { Task { await store.quitApp(project) } }
             .disabled(!store.openApps.contains(project.id))
@@ -750,7 +750,7 @@ struct ProjectView: View {
                 }
                 .help("Quit the app (double-click it in the sidebar to bring it to the front)")
             } else {
-                Button { Task { await store.open(project) } } label: {
+                Button { store.openPrepared(project) } label: {
                     Label("Open App", systemImage: "play.fill")
                 }
                 .disabled(!made)
@@ -847,6 +847,11 @@ struct ProjectView: View {
     }
 
     private func send() {
+        guard !draft.trimmed.isEmpty || !attachments.isEmpty else { return }
+        PhoneSetup.shared.perform(for: project) { sendPrepared() }
+    }
+
+    private func sendPrepared() {
         let text = draft.trimmed
         guard !text.isEmpty || !attachments.isEmpty else { return }
         dictation.cancel()
@@ -1512,6 +1517,7 @@ struct StarterIdeas: View {
 private struct TryOnChoices: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
+    @State private var olderPhones: [PhoneTools.OlderPhone] = []
 
     var body: some View {
         Picker("Simulator", selection: Binding(get: { project.device == nil ? project.family : nil },
@@ -1522,7 +1528,9 @@ private struct TryOnChoices: View {
         .pickerStyle(.inline)
         do {
             let paired = store.devices.filter(\.paired), unpaired = store.devices.filter { !$0.paired }
-            Picker("Your Devices", selection: Binding(get: { project.device }, set: { store.setDevice(project, $0) })) {
+            Picker("Your Devices", selection: Binding(get: { project.device }, set: { chosen in
+                PhoneSetup.shared.perform(family: project.family, phone: chosen) { store.setDevice(project, chosen) }
+            })) {
                 ForEach(paired) { device in
                     Label(device.name + (device.developerMode ? "" : " (Developer Mode is off)"), systemImage: device.family == .ipad ? "ipad" : "iphone")
                         .tag(Optional(device.udid))
@@ -1539,12 +1547,23 @@ private struct TryOnChoices: View {
                 }
                 .disabled(store.pairing.contains(device.udid))
             }
-            if store.devices.isEmpty {
+            ForEach(olderPhones.filter { old in !store.devices.contains(where: { $0.udid == old.id }) }) { phone in
+                Button("\(phone.name) (needs iOS \(PhoneTools.minimumIOS))…") {
+                    PhoneSetup.shared.show(family: phone.family, phone: phone.id)
+                }
+            }
+            if store.devices.isEmpty && olderPhones.isEmpty {
                 Text("No iPhone or iPad found. Plug one in with a cable and unlock it, then look again.")
             }
         }
         Divider()
-        Button("Look for Devices Again") { store.refreshDevices() }
-            .onAppear { store.refreshDevices() }
+        Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show(family: project.family, phone: Experiments.devices ? project.device : nil) }
+        Button("Look for Devices Again") { refresh() }
+            .onAppear { refresh() }
+    }
+
+    private func refresh() {
+        store.refreshDevices()
+        if devices { Task { olderPhones = await PhoneTools.olderPhones() } }
     }
 }

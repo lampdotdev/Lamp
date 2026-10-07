@@ -617,6 +617,7 @@ struct ExperimentalSettings: View {
             .toggleStyle(.checkbox)
             .frame(maxWidth: .infinity, alignment: .leading)
             if iosApps {
+                Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() }
                 Group {
                     if teams.isEmpty {
                         TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))

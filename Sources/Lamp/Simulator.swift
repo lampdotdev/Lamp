@@ -11,20 +11,21 @@ enum Simulator {
 
     /// Whether Xcode and a simulator of the kind are on this Mac, with a plain message when not.
     static func problem(_ family: DeviceFamily = .iphone) -> String? {
-        let developer = Subprocess.runBlocking("/usr/bin/xcode-select", ["-p"], mergeErrors: false, timeout: 10).output.trimmed
-        guard developer.hasSuffix("Xcode.app/Contents/Developer") || developer.contains("/Xcode") else {
-            return "iPhone apps need Xcode (free on the Mac App Store), which brings the iPhone simulator."
-        }
-        return device(family) == nil ? "No \(family.name) simulator with iOS \(minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components." : nil
+        PhoneTools.checked(family: family, useCache: true).issue?.message
     }
 
     /// The apps Lamp makes need this iOS (the scaffold's deployment target), so only simulators that run it count.
-    static let minimumIOS = 17
+    static let minimumIOS = PhoneTools.minimumIOS
 
     /// The iPhone (or iPad) to use: one that's already booted, else the newest available, among those on a
     /// runtime the apps can run on. Sorted by name after the runtime, so the choice is the same every time.
     static func device(_ family: DeviceFamily = .iphone) -> String? {
         let listing = Subprocess.runBlocking("/usr/bin/xcrun", ["simctl", "list", "devices", "available", "-j"], mergeErrors: false, timeout: 30).output
+        return device(family, listing: listing)
+    }
+
+    /// Shared with the prerequisite check, so a passed check selects the same simulator as a build.
+    static func device(_ family: DeviceFamily, listing: String) -> String? {
         guard let data = listing.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let devices = json["devices"] as? [String: [[String: Any]]] else { return nil }
@@ -48,7 +49,7 @@ enum Simulator {
         _ = await Subprocess.run("/usr/bin/xcrun", ["simctl", "boot", udid], timeout: 60)   // "already booted" is fine
         let status = await Subprocess.run("/usr/bin/xcrun", ["simctl", "bootstatus", udid, "-b"], timeout: 120)
         guard status.ok else { throw Failure(message: "The iPhone simulator didn't start.") }
-        if show { _ = await Subprocess.run("/usr/bin/open", ["-a", "Simulator"], timeout: 30) }
+        if show { await self.show() }
     }
 
     static func install(_ app: URL, on udid: String) async throws {
@@ -87,7 +88,10 @@ enum Simulator {
     }
 
     /// Brings the Simulator window to the front.
-    static func show() async { _ = await Subprocess.run("/usr/bin/open", ["-a", "Simulator"], timeout: 30) }
+    static func show() async {
+        guard let developer = PhoneTools.discover() else { return }
+        _ = await Subprocess.run("/usr/bin/open", [developer + "/Applications/Simulator.app"], timeout: 30)
+    }
 }
 
 // MARK: - Driving the simulator
