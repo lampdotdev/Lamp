@@ -310,21 +310,65 @@ enum Agent {
             "PI_TELEMETRY": "0",
         ]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
-        // The key goes into pi's own auth file in Lamp's folder (which the agent's tools can't open), not
-        // into the environment every shell command would inherit.
+        // pi asks Lamp for the key when it first needs it (keyCommand), so the key is in neither a file nor
+        // the environment every shell command would inherit. The ticket is good for one answer, and pi spends
+        // it before the model has said anything: a command the agent runs later finds it used.
         if let provider = Provider.apiProvider(Builder.piProvider), Builder.piProvider != Builder.myPiProvider {
-            storeKey(KeyStore.key(for: provider.id), for: provider.id)
+            syncKeyFile()
+            if KeyStore.key(for: provider.id) != nil {
+                env["LAMP_KEY_TICKET"] = KeyTicket.issue(for: provider.id)
+                env["LAMP_KEY_URL"] = "http://127.0.0.1:\(Gateway.port)/pi/key"
+            }
         }
         return env
     }
 
-    /// Writes a provider's key into pi's auth.json under Lamp's config folder, in pi's own shape; nil takes
-    /// it out again. KeyStore calls this whenever a key changes, so the file never outlives the key.
-    static func storeKey(_ key: String?, for provider: String) {
+    /// What pi's auth.json holds for a provider that has a key: a command for pi to run, in place of the key.
+    /// It hands Lamp the ticket this run was started with and prints the key Lamp answers with. pi runs it
+    /// once, the first time it needs the key, and keeps the answer in memory.
+    private static let keyCommand = "!/usr/bin/curl -sf --max-time 10 -X POST -H \"Authorization: Bearer $LAMP_KEY_TICKET\" \"$LAMP_KEY_URL\" | /usr/bin/plutil -extract key raw -o - -"
+
+    /// Records in pi's auth.json that a provider has a key (as keyCommand) or no longer has one. KeyStore
+    /// calls this whenever a key changes. A sign-in pi keeps there for the same provider is left alone.
+    static func keyChanged(for provider: String, present: Bool) {
+        editKeyFile { auth in
+            let entry = auth[provider] as? [String: Any]
+            guard entry == nil || entry?["type"] as? String == "api_key" else { return }
+            auth[provider] = present && Provider.apiProvider(provider) != nil ? ["type": "api_key", "key": keyCommand] : nil
+        }
+    }
+
+    /// Brings pi's auth.json in step with KeyStore. Earlier versions of Lamp wrote the keys themselves into
+    /// that file: each one found there is taken out, after making sure KeyStore holds a key for that provider
+    /// (the file's, if it had none). If KeyStore can't be read or written just now, that key stays where it
+    /// is, still usable by pi, until the next try.
+    static func syncKeyFile() {
+        editKeyFile { auth in
+            for provider in Provider.keyProviders.map(\.id) {
+                let entry = auth[provider] as? [String: Any]
+                guard entry == nil || entry?["type"] as? String == "api_key" else { continue }
+                if let key = entry?["key"] as? String, !key.hasPrefix("!"), !KeyStore.adopt(key, for: provider) { continue }
+                auth[provider] = KeyStore.key(for: provider) != nil && Provider.apiProvider(provider) != nil
+                    ? ["type": "api_key", "key": keyCommand] : nil
+            }
+        }
+    }
+
+    /// Reads pi's auth.json in Lamp's config folder, applies a change, and writes it back if anything differs.
+    private static func editKeyFile(_ change: (inout [String: Any]) -> Void) {
         let url = URL(fileURLWithPath: configDir).appendingPathComponent("auth.json")
-        var auth = (try? JSONSerialization.jsonObject(with: Data(contentsOf: url))) as? [String: Any] ?? [:]
-        if (auth[provider] as? [String: Any])?["key"] as? String == key { return }
-        auth[provider] = key.map { ["type": "api_key", "key": $0] }
+        var before: [String: Any] = [:]
+        if FileManager.default.fileExists(atPath: url.path) {
+            // A file that's there but can't be read is left as it is: writing over it could lose what it holds.
+            guard let data = try? Data(contentsOf: url) else { return }
+            if !data.isEmpty {
+                guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+                before = object
+            }
+        }
+        var auth = before
+        change(&auth)
+        guard !NSDictionary(dictionary: auth).isEqual(to: before) else { return }
         try? FileManager.default.createDirectory(atPath: configDir, withIntermediateDirectories: true)
         if let data = try? JSONSerialization.data(withJSONObject: auth, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: url, options: .atomic)
@@ -528,5 +572,32 @@ enum Shell {
             let text = String(decoding: line, as: UTF8.self).trimmingCharacters(in: .newlines)
             if !text.isEmpty { output.yield(text) }
         }
+    }
+}
+
+/// Tickets pi trades for its provider's key (Agent.keyCommand). Each run of pi is started with a new one,
+/// and Lamp answers it once, within ten minutes: pi collects the key before its first request to the model,
+/// so by the time the agent can run a command, the ticket in its environment opens nothing.
+enum KeyTicket {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var open: [String: (provider: String, issued: Date)] = [:]
+    private static let lifetime: TimeInterval = 600
+
+    static func issue(for provider: String) -> String {
+        let ticket = UUID().uuidString + UUID().uuidString
+        lock.lock()
+        defer { lock.unlock() }
+        open = open.filter { Date().timeIntervalSince($0.value.issued) < lifetime }   // runs that never asked
+        open[ticket] = (provider, Date())
+        return ticket
+    }
+
+    /// The key the ticket was issued for, the first time it's asked; nil for a used, old or made-up ticket.
+    static func redeem(_ ticket: String) -> String? {
+        lock.lock()
+        let entry = open.removeValue(forKey: ticket)
+        lock.unlock()
+        guard let entry, Date().timeIntervalSince(entry.issued) < lifetime else { return nil }
+        return KeyStore.key(for: entry.provider)
     }
 }

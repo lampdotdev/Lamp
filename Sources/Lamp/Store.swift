@@ -242,6 +242,7 @@ final class Store: ObservableObject {
 
     private init() {
         Migration.fromForge()
+        Agent.syncKeyFile()   // keys an earlier Lamp left in pi's auth file come out of it
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         reload()
         restoreWaiting()
@@ -2300,7 +2301,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/image", "/ai/decide", "/ai/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/mcp"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/mcp", "/pi/key"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -2310,6 +2311,12 @@ final class Store: ObservableObject {
         // rebinding) arrives with that name as the host, and gets nothing. No Host at all gets nothing either.
         guard Self.isLocalHost(request.headers["host"]) else { return (403, ["error": "Not for this host."]) }
         let token = request.headers["authorization"]?.replacingOccurrences(of: "Bearer ", with: "") ?? ""
+        // pi collecting its provider's key (Agent.keyCommand). The ticket is the whole credential, and it's
+        // good once.
+        if route == "/pi/key" {
+            guard let key = KeyTicket.redeem(token) else { return (403, ["error": "This ticket isn't good any more."]) }
+            return (200, ["key": key])
+        }
         let agentRoute = route == "/mcp" || route.hasPrefix("/agent/")
         if agentRoute {
             // The agent's routes take only the agent's token for the turn in progress.
