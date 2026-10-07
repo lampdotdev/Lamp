@@ -147,7 +147,35 @@ enum KeyStore {
             all[provider] = key
             KeyFile.write(all)
         }
-        Agent.storeKey(key, for: provider)   // pi's copy of it, for the bundled agent
+        Agent.keyChanged(for: provider, present: key != nil)   // pi's note of where to ask for it
+    }
+
+    /// Takes in a key found outside the store (pi's auth file, where Lamp used to keep a copy) if this
+    /// provider has none. True once the store holds a key for the provider; false when the store couldn't be
+    /// read or written, so the caller keeps its copy.
+    static func adopt(_ key: String, for provider: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if usesKeychain {
+            _ = movedFileToKeychain   // the keys file first: its key is the saved one, pi's copy may be older
+            let status = KeychainItem.read(provider).0
+            if status == errSecSuccess { return true }
+            guard status == errSecItemNotFound else { return false }
+            KeychainItem.write(key, provider)
+            guard KeychainItem.read(provider).0 == errSecSuccess else { return false }
+        } else {
+            // A keys file that's there but can't be read isn't an empty one: writing a new file over it
+            // would lose whatever it holds.
+            if FileManager.default.fileExists(atPath: KeyFile.url.path),
+               (try? JSONDecoder().decode([String: String].self, from: Data(contentsOf: KeyFile.url))) == nil { return false }
+            var all = KeyFile.read()
+            if all[provider] != nil { return true }
+            all[provider] = key
+            KeyFile.write(all)
+            guard KeyFile.read()[provider] == key else { return false }
+        }
+        cache[provider] = .some(key)
+        return true
     }
 
     static func setOpenRouterKey(_ key: String?) { setKey(key, for: "openrouter") }
