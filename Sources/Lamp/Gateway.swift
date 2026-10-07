@@ -140,7 +140,10 @@ enum AppAI {
             let available: Bool
             switch kind {
             case .openRouter: available = Provider.hasKey
-            case .engine(.pi): available = Agent.executable != nil && Provider.apiProvider(Builder.piProvider) != nil && KeyStore.key(for: Builder.piProvider) != nil
+            case .engine(.pi):
+                // pi with the person's own setup (their sign-ins), or with a key provider that has its key.
+                available = Agent.executable != nil && (Builder.piProvider == Builder.myPiProvider
+                    || (Provider.apiProvider(Builder.piProvider) != nil && KeyStore.key(for: Builder.piProvider) != nil))
             case .engine(let engine): available = ToolLocator.path(for: engine) != nil
             case .localModel(let provider, let model):
                 available = provider == Builder.localProvider ? LocalModels.shared.installed.contains { $0.id == model }
@@ -168,7 +171,9 @@ enum AppAI {
         var routes = anthropicModels.map { TextRoute.make(id: $0.id, label: $0.label + " via OpenRouter", kind: .openRouter(model: $0.openRouter)) }
         routes.append(.make(id: "engine:claude", label: "Your Claude Code sign-in", kind: .engine(.claude)))
         routes.append(.make(id: "engine:codex", label: "Your Codex sign-in", kind: .engine(.codex)))
-        if let provider = Provider.apiProvider(Builder.piProvider), provider.id != "openrouter" {
+        if Builder.piProvider == Builder.myPiProvider {
+            routes.append(.make(id: "engine:pi", label: "Your own pi setup (its sign-ins)", kind: .engine(.pi)))
+        } else if let provider = Provider.apiProvider(Builder.piProvider), provider.id != "openrouter" {
             routes.append(.make(id: "engine:pi", label: "Your \(provider.name) key, through the builder", kind: .engine(.pi)))
         }
         for model in LocalModels.shared.installed {
@@ -268,11 +273,11 @@ enum AppAI {
     /// `model` overrides the in-app model (an OpenRouter model ID), e.g. for Lamp's own import review.
     /// `appModel` is an app's own text model (an id from `models`), when it has one.
     static func complete(prompt: String, images: [Image], system: String, json: Bool,
-                         model: String? = nil, appModel: String? = nil) async throws -> (String, Double) {
+                         model: String? = nil, appModel: String? = nil, engineModel: String? = nil) async throws -> (String, Double) {
         let chosen = await route(for: appModel)
         var system = system
         if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
-        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen)
+        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel)
         guard json else { return (text, cost) }
         // A JSON reply that doesn't parse (cut off, or wrapped in prose) is useless to the app: ask once more,
         // through the same provider, saying so, before giving up. Both attempts are billed, so the cost goes
@@ -281,7 +286,7 @@ enum AppAI {
         if !isJSON(reply) {
             let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
             do {
-                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen)
+                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel)
                 cost += more
                 reply = stripFences(retry)
             } catch let failure as Failure {
@@ -297,9 +302,10 @@ enum AppAI {
     }
 
     /// One request along the route: `model` names an OpenRouter model to use instead of the route's own, for
-    /// Lamp's own calls (the icon judge, suggestions) when there's a key.
+    /// Lamp's own calls (the icon judge, suggestions) when there's a key; `engineModel` likewise names the
+    /// model for Claude Code or Codex (the fast one for decisions by text).
     private static func dispatch(prompt: String, images: [Image], system: String, json: Bool, model: String?,
-                                 chosen: TextRoute) async throws -> (String, Double) {
+                                 chosen: TextRoute, engineModel: String? = nil) async throws -> (String, Double) {
         if let model, Provider.hasKey {
             return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json)
         }
@@ -311,7 +317,7 @@ enum AppAI {
             return try await viaPi(prompt: prompt, images: images, system: system)
         case .engine(let engine):
             return try await viaEngine(engine, prompt: prompt, images: images, system: system,
-                                       model: engine == .claude ? Builder.engineModel(.claude) : Builder.engineModel(.codex))
+                                       model: engineModel ?? Builder.engineModel(engine))
         case .localModel(let provider, let model):
             let base: String
             if provider == Builder.localProvider {
@@ -469,7 +475,6 @@ enum AppAI {
     static let decisionModels: [(id: String, label: String, provider: String, model: String)] = [
         ("openrouter:jev-latest", "Jev via OpenRouter", "openrouter", "jev-latest"),
         ("typesafe:jev-latest", "Jev via TypeSafe", "typesafe", "jev-latest"),
-        ("typesafe:jev-preview", "Jev preview via TypeSafe", "typesafe", "jev-preview"),
     ]
 
     static var decisionModel: (id: String, label: String, provider: String, model: String) {
@@ -570,7 +575,7 @@ enum AppAI {
         how concentrated the probabilities are.
         """
         let prompt = "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)"
-        let (text, cost) = try await complete(prompt: prompt, images: [], system: system, json: true, appModel: fastModel)
+        let (text, cost) = try await complete(prompt: prompt, images: [], system: system, json: true, engineModel: fastModel)
         guard let raw = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
             throw Failure(message: "The model's decision wasn't valid JSON.", cost: cost)
         }

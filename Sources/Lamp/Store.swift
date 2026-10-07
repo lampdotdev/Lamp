@@ -3110,15 +3110,8 @@ final class Store: ObservableObject {
             return (503, ["error": "Using other apps is turned off. Turn on “Let apps use your other apps” in Lamp → Settings → Apps, then try again."])
         }
         if let problem = ComputerUse.check() { return (502, ["error": problem.message]) }
-        // The model the app's text route uses: its OpenRouter name with a key; the builder's own model when
-        // Claude Code or Codex answers instead.
+        // The task goes along the app's text route, like its other AI.
         let chosen = AppAI.route(for: AppModels.load(project).text)
-        let model: String
-        switch chosen.kind {
-        case .openRouter(let name): model = name
-        case .engine(let engine): model = Builder.engineModel(engine)
-        case .localModel: model = Builder.piModel
-        }
         var allowAll = false
         do {
             let work = try await ComputerUse.Job(task, appName: project.name, allowActions: allowActions) { [weak self] action in
@@ -3132,7 +3125,7 @@ final class Store: ObservableObject {
             let token = UUID().uuidString + UUID().uuidString
             computerTasks[token] = work
             defer { computerTasks[token] = nil }
-            let (text, cost) = try await ComputerUse.answer(work, model: model, token: token)
+            let (text, cost) = try await ComputerUse.answer(work, route: chosen, token: token)
             record(project, cost: cost)
             return (200, ["text": text])
         } catch {

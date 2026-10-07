@@ -393,26 +393,31 @@ enum ComputerUse {
         }
     }
 
-    /// Runs the task with whatever AI Lamp has, and returns the answer plus the cost in USD: OpenRouter when
-    /// there's a key, else the builder itself (pi with whichever provider or local model it builds with,
-    /// Claude Code or Codex) with the driver's tools served by Lamp. `token` is the task's, for that.
-    static func answer(_ task: Job, model: String, token: String) async throws -> (String, Double) {
-        if let key = KeyStore.openRouterKey {
+    /// Runs the task along the app's text route and returns the answer plus the cost in USD: an OpenRouter
+    /// model in Lamp's own loop, Claude Code or Codex with the driver's tools over Lamp's MCP endpoint, or pi
+    /// (with its key provider, its own sign-ins, or a model on this Mac) through its extension. `token` is
+    /// the task's, for that endpoint.
+    static func answer(_ task: Job, route: AppAI.TextRoute, token: String) async throws -> (String, Double) {
+        switch route.kind {
+        case .openRouter(let model):
+            guard let key = KeyStore.openRouterKey else {
+                throw Failure(message: "Using other apps needs an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,).")
+            }
             return try await loop(task, endpoint: "https://openrouter.ai/api/v1/chat/completions", key: key, model: model)
-        }
-        switch Builder.engine {
-        case .pi:
+        case .engine(.pi), .localModel:
             guard Agent.executable != nil else { throw Failure(message: "Lamp's AI builder is missing. Download Lamp again.") }
             // A local model's server is started, and Ollama's or LM Studio's models are registered with pi,
             // as before a build turn.
-            if Builder.piProvider == Builder.localProvider { _ = try await LocalModels.shared.ensureServer(for: Builder.piModel) }
-            if LocalModels.externalIDs.contains(Builder.piProvider) { await LocalModels.shared.detectExternal() }
-            return try await viaEngine(.pi, task, token: token, model: nil)
-        case .claude, .codex:
-            guard ToolLocator.path(for: Builder.engine) != nil else {
+            if case .localModel(let provider, let model) = route.kind {
+                if provider == Builder.localProvider { _ = try await LocalModels.shared.ensureServer(for: model) }
+                if LocalModels.externalIDs.contains(provider) { await LocalModels.shared.detectExternal() }
+            }
+            return try await viaEngine(.pi, task, token: token, model: nil, piRoute: route)
+        case .engine(let engine):
+            guard ToolLocator.path(for: engine) != nil else {
                 throw Failure(message: "Using other apps needs an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,).")
             }
-            return try await viaEngine(Builder.engine, task, token: token, model: model)
+            return try await viaEngine(engine, task, token: token, model: Builder.engineModel(engine))
         }
     }
 
@@ -461,7 +466,7 @@ enum ComputerUse {
     /// posts each call to Lamp), Claude Code and Codex through Lamp's MCP endpoint. Isolated from the
     /// person's own setup like a build turn, in an empty folder, with no file or shell tools. The agent's
     /// last message is the answer.
-    private static func viaEngine(_ engine: Engine, _ task: Job, token: String, model: String?) async throws -> (String, Double) {
+    private static func viaEngine(_ engine: Engine, _ task: Job, token: String, model: String?, piRoute: AppAI.TextRoute? = nil) async throws -> (String, Double) {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-computer-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -475,6 +480,11 @@ enum ComputerUse {
             let toolsFile = folder.appendingPathComponent("computer-tools.json")
             try JSONSerialization.data(withJSONObject: task.mcpTools).write(to: toolsFile)
             env.merge(Agent.environment(prompt: task.taskText, files: [], session: "", sessionDir: folder.path)) { $1 }
+            // The route's own provider and model when it's a model on this Mac rather than the builder's.
+            if case .localModel(let provider, let model)? = piRoute?.kind {
+                env["LAMP_PROVIDER"] = provider == Builder.localProvider ? LocalModels.piProvider(for: model) : provider
+                env["LAMP_MODEL"] = model
+            }
             env["LAMP_COMPUTER_TOOLS_JSON"] = toolsFile.path
             env["LAMP_COMPUTER_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/computer"
             env["LAMP_SYSTEM"] = task.systemPrompt
