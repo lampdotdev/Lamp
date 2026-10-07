@@ -171,10 +171,10 @@ enum AppAI {
         var routes = anthropicModels.map { TextRoute.make(id: $0.id, label: $0.label + " via OpenRouter", kind: .openRouter(model: $0.openRouter)) }
         // The sign-ins, one route per model they offer (Claude Code's short names; the models Codex lists).
         for model in Builder.claudeModels where !model.id.isEmpty {
-            routes.append(.make(id: "engine:claude:\(model.id)", label: "\(model.label) via your Claude Code sign-in", kind: .engine(.claude, model: model.id)))
+            routes.append(.make(id: "engine:claude:\(model.id)", label: "\(model.label) via Claude Code", kind: .engine(.claude, model: model.id)))
         }
         for model in Builder.codexModels where !model.id.isEmpty {
-            routes.append(.make(id: "engine:codex:\(model.id)", label: "\(model.label) via your Codex sign-in", kind: .engine(.codex, model: model.id)))
+            routes.append(.make(id: "engine:codex:\(model.id)", label: "\(model.label) via Codex", kind: .engine(.codex, model: model.id)))
         }
         if Builder.piProvider == Builder.myPiProvider {
             routes.append(.make(id: "engine:pi", label: "\(Builder.piModel) via your own pi setup", kind: .engine(.pi, model: Builder.piModel)))
