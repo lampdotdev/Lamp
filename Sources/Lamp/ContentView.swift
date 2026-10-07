@@ -603,13 +603,14 @@ struct ProjectView: View {
     struct History: Equatable {
         /// Undo has a version to go back to, or a stopped turn's changes to discard.
         var undoable: Bool
-        /// Something has been made: more than the empty app Lamp starts with and its renames. Until then
-        /// there's nothing to open, share or look back on.
+        /// Something has been made: the app is no longer the empty one Lamp starts with. Until then there's
+        /// nothing to open, share or look back on. Read from the app's files, not its versions' messages: a
+        /// request is saved in its own words, which can look like one of Lamp's own notes ("Rename to …").
         var made: Bool
 
         static func read(_ project: LampProject) async -> History {
             let versions = await Versions.list(project)
-            let made = versions.contains { $0.message != "Scaffold" && !$0.message.hasPrefix("Rename to ") }
+            let made = !Template.isScaffold(project)
             let undoable = Versions.undoTarget(in: versions) != nil
             return History(undoable: undoable ? true : await Versions.hasUnsavedChanges(project), made: made)
         }
@@ -696,7 +697,13 @@ struct ProjectView: View {
             Text(problem.message)
         }
         .onChange(of: store.chatFocusRequest) { focusRequest += 1 }
-        .task(id: historyKey) { history = await History.read(project) }
+        .task(id: historyKey) {
+            // A read can outlast the change that started it (the git commands it runs finish even when it's
+            // cancelled), so one started before a turn ended mustn't land after the read that followed.
+            let read = await History.read(project)
+            guard !Task.isCancelled else { return }
+            history = read
+        }
         .task(id: suggestionTurn) {
             suggestion = nil
             guard suggestionTurn != nil else { return }
