@@ -181,11 +181,7 @@ private struct IdeaStep: View {
     let back: () -> Void
     let next: () -> Void
     @StateObject private var dictation = Dictation()
-    @State private var page = 0
-    @State private var ideas = Ideas.page(0)
-    @State private var invented: [Idea]?
-    @State private var inventing = false
-    @State private var seen = Set(Ideas.page(0).map(\.title))
+    @StateObject private var deck = IdeaDeck()
     @State private var chosen: String?
     @State private var flip = 0
     @FocusState private var focused: Bool
@@ -205,7 +201,7 @@ private struct IdeaStep: View {
                     .lineSpacing(3)
                     .lineLimit(3...5)
                     .focused($focused)
-                    .onChange(of: prompt) { if prompt != ideas.first(where: { $0.id == chosen })?.prompt { chosen = nil } }
+                    .onChange(of: prompt) { if prompt != deck.ideas.first(where: { $0.id == chosen })?.prompt { chosen = nil } }
                 Button(action: toggleDictation) {
                     Image(systemName: dictation.isListening ? "waveform" : "mic")
                         .font(.system(size: 15, weight: .medium))
@@ -230,9 +226,9 @@ private struct IdeaStep: View {
             HStack {
                 Text("Need an idea?").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
                 Spacer()
-                Button(action: more) {
+                Button(action: deck.more) {
                     HStack(spacing: 5) {
-                        Image(systemName: invented != nil ? "sparkles" : "arrow.clockwise")
+                        Image(systemName: IdeaDeck.moreSymbol)
                         Text("Show me others")
                     }
                     .font(.system(size: 13, weight: .medium))
@@ -245,7 +241,7 @@ private struct IdeaStep: View {
             .padding(.top, 26)
 
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
-                ForEach(Array(ideas.enumerated()), id: \.element.id) { index, idea in
+                ForEach(Array(deck.ideas.enumerated()), id: \.element.id) { index, idea in
                     IdeaTile(idea: idea, selected: chosen == idea.id) { choose(idea) }
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.92)).animation(.spring(response: 0.5, dampingFraction: 0.8).delay(Double(index) * 0.04)),
@@ -267,7 +263,7 @@ private struct IdeaStep: View {
             }
         }
         .onAppear {
-            prefetch()
+            deck.prefetch()
             // After the step has slid in: focus can't land while the old step still holds it.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { focused = true }
         }
@@ -278,31 +274,6 @@ private struct IdeaStep: View {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { chosen = idea.id }
         prompt = idea.prompt
         focused = true
-    }
-
-    /// The next six: made up on this Mac when it can, otherwise the next page of the built-in ideas.
-    private func more() {
-        let next: [Idea]
-        if let invented {
-            next = invented
-            self.invented = nil
-        } else {
-            page += 1
-            next = Ideas.page(page)
-        }
-        seen.formUnion(next.map(\.title))
-        withAnimation { ideas = next }
-        prefetch()
-    }
-
-    private func prefetch() {
-        guard Ideas.canInvent, invented == nil, !inventing else { return }
-        inventing = true
-        Task {
-            let avoiding = Array(seen) + Ideas.pool.map(\.title)
-            invented = await Ideas.invent(avoiding: avoiding)
-            inventing = false
-        }
     }
 
     private func toggleDictation() {

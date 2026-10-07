@@ -203,7 +203,8 @@ struct AppSidebar: View {
 
     private var tiles: some View {
         ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 84, maximum: 110), spacing: 4)], spacing: 8) {
+            // Tiles line up along the top of their row, as names take one line or two.
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 84, maximum: 110), spacing: 4, alignment: .top)], spacing: 8) {
                 ForEach(store.projects) { project in
                     // A button, so Tab reaches every tile and Space or Return selects it; a double-click opens.
                     Button { store.selection = project.id } label: {
@@ -255,11 +256,12 @@ struct AppTile: View {
                             .offset(x: 4, y: -4)
                     }
                 }
-            // One line, like the iOS home screen: every tile is the same height, so icons line up in rows.
+            // Up to two lines, so most names show whole; icons still line up, since rows align at the top.
             // The full name shows on hover.
             Text(project.name)
                 .font(.callout)
-                .lineLimit(1)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
                 .truncationMode(.tail)
                 .foregroundStyle(selected ? Color.white : Color.primary)
                 .padding(.horizontal, 5)
@@ -426,6 +428,8 @@ struct ProjectView: View {
     /// The end of the chat has been on screen. Only the rows in view are made, so this is how the chat
     /// knows it opened on its latest messages (see `body`).
     @State private var endShown = false
+    /// What the toolbar knows of the app's history, for which of its buttons can do anything. Nil until read.
+    @State private var history: History?
 
     /// Worked out once per body (see `body`): it filters the whole chat, and body runs on every streamed token.
     private var lines: [LogLine] {
@@ -477,7 +481,7 @@ struct ProjectView: View {
                     // room: in a short window a pinned card would fill the chat and hide everything else.
                     let pinned: PinnedScrollableViews = building != nil && area.size.height >= Self.roomToPinCard ? [.sectionHeaders] : []
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: pinned) {
-                        chatRows(lines)
+                        chatRows(lines, height: area.size.height)
                     }
                     // A readable line length; wide windows get margins instead of longer lines.
                     .frame(maxWidth: 640)
@@ -515,9 +519,11 @@ struct ProjectView: View {
     /// The chat's rows: the intro for a new app, the transcript with its build card or activity, and the
     /// messages waiting their turn.
     @ViewBuilder
-    private func chatRows(_ lines: [LogLine]) -> some View {
+    private func chatRows(_ lines: [LogLine], height: CGFloat) -> some View {
         if lines.isEmpty && queued.isEmpty {
+            // In the middle of the chat area: less the scroll view's own padding.
             NewAppIntro(project: project, draft: $draft)
+                .frame(minHeight: height - 32)
         }
         if let card = store.progress[project.id], card.newApp,
            let request = lines.lastIndex(where: { $0.kind == .user }) {
@@ -594,6 +600,34 @@ struct ProjectView: View {
         .padding(12)
     }
 
+    struct History: Equatable {
+        /// Undo has a version to go back to, or a stopped turn's changes to discard.
+        var undoable: Bool
+        /// Something has been made: the app is no longer the empty one Lamp starts with. Until then there's
+        /// nothing to open, share or look back on. Read from the app's files, not its versions' messages: a
+        /// request is saved in its own words, which can look like one of Lamp's own notes ("Rename to …").
+        var made: Bool
+        /// There's more saved than the version the app started as. Apart from `made`: an Undo back to the
+        /// empty app keeps the build it undid, and Versions is how to get it back.
+        var saved: Bool
+
+        static func read(_ project: LampProject) async -> History {
+            let versions = await Versions.list(project)
+            let made = !Template.isScaffold(project)
+            let undoable = Versions.undoTarget(in: versions) != nil
+            return History(undoable: undoable ? true : await Versions.hasUnsavedChanges(project), made: made,
+                           saved: made || versions.count > 1)
+        }
+    }
+    /// The history is read again whenever a turn starts or ends and whenever the chat changes (a rename, an Undo).
+    private var historyKey: String { "\(project.id) \(busy) \(store.logs[project.id]?.count ?? 0)" }
+    private var undoable: Bool { history?.undoable ?? true }
+    private var made: Bool { history?.made ?? true }
+    private var saved: Bool { history?.saved ?? true }
+    private var inspectorShown: Binding<Bool> {
+        Binding(get: { showInfo || (showVersions && saved) }, set: { if !$0 { showInfo = false; showVersions = false } })
+    }
+
     var body: some View {
         let lines = self.lines
         return VStack(spacing: 0) {
@@ -624,10 +658,9 @@ struct ProjectView: View {
             return true
         }
         .background(Color(nsColor: .textBackgroundColor))
-        .inspector(isPresented: Binding(get: { showInfo || showVersions },
-                                        set: { if !$0 { showInfo = false; showVersions = false } })) {
+        .inspector(isPresented: inspectorShown) {
             Group {
-                if showVersions { VersionsView(project: project) } else { AppInfoView(project: project) }
+                if showVersions && saved { VersionsView(project: project) } else { AppInfoView(project: project) }
             }
             .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
         }
@@ -669,6 +702,13 @@ struct ProjectView: View {
             Text(problem.message)
         }
         .onChange(of: store.chatFocusRequest) { focusRequest += 1 }
+        .task(id: historyKey) {
+            // A read can outlast the change that started it (the git commands it runs finish even when it's
+            // cancelled), so one started before a turn ended mustn't land after the read that followed.
+            let read = await History.read(project)
+            guard !Task.isCancelled else { return }
+            history = read
+        }
         .task(id: suggestionTurn) {
             suggestion = nil
             guard suggestionTurn != nil else { return }
@@ -729,7 +769,8 @@ struct ProjectView: View {
                 Button { Task { await store.open(project) } } label: {
                     Label("Open App", systemImage: "play.fill")
                 }
-                .help("Open the app (right-click it in the sidebar to rebuild)")
+                .disabled(!made)
+                .help(made ? "Open the app (right-click it in the sidebar to rebuild)" : "Describe the app first; Lamp opens it once it's built")
             }
         }
         if project.platform == .iphone {
@@ -753,8 +794,8 @@ struct ProjectView: View {
             Button { Task { await store.undo(project) } } label: {
                 Label("Undo Last Change", systemImage: "arrow.uturn.backward")
             }
-            .disabled(busy)
-            .help("Go back to the version before this one")
+            .disabled(busy || !undoable)
+            .help(undoable ? "Go back to the version before this one" : "Nothing to undo yet")
             Button { store.deleting = project } label: {
                 Label("Delete App", systemImage: "trash")
             }
@@ -768,7 +809,8 @@ struct ProjectView: View {
                 } label: {
                     Label("Share App", systemImage: "square.and.arrow.up")
                 }
-                .help("Send this app to someone with Lamp")
+                .disabled(!made)
+                .help(made ? "Send this app to someone with Lamp" : "Nothing to share until the app is built")
             }
         }
         gap
@@ -778,10 +820,11 @@ struct ProjectView: View {
             }
             .help("Agent details")
             // Versions and App Info share the side panel: showing one hides the other.
-            Toggle(isOn: Binding(get: { showVersions }, set: { showVersions = $0; if $0 { showInfo = false } })) {
+            Toggle(isOn: Binding(get: { showVersions && saved }, set: { showVersions = $0; if $0 { showInfo = false } })) {
                 Label("Versions", systemImage: "clock.arrow.circlepath")
             }
-            .help("See earlier versions of this app, name them, and go back to one")
+            .disabled(!saved)
+            .help(saved ? "See earlier versions of this app, name them, and go back to one" : "No versions yet: each change Lamp makes is saved as one")
             Toggle(isOn: Binding(get: { showInfo }, set: { showInfo = $0; if $0 { showVersions = false } })) {
                 Label("App Info", systemImage: "info.circle")
             }
@@ -1072,7 +1115,8 @@ struct NewAppIntro: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            AppIcon(project: project, size: 112)
+            // Catches the light once the reveal has passed it.
+            AppIcon(project: project, size: 112).shine(delay: 0.4)
             TextField("Name", text: $name, prompt: Text(project.untitled ? "Untitled" : project.name))
                 .textFieldStyle(.plain)
                 .font(.title.weight(.semibold))
@@ -1083,14 +1127,11 @@ struct NewAppIntro: View {
                 .frame(maxWidth: 360)
                 .help("Rename this app")
             Text(project.untitled
-                 ? "Describe the app you want below. Lamp names it, designs an icon and builds it, unless you name it here first."
+                 ? "Describe the app you wish you had, and Lamp will build it."
                  : "Describe what \(project.name) should do. Lamp builds it and opens it for you.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 400)
-            Text("While using the app, press ⇧⌘E to come back here and ask for changes.")
-                .font(.callout).foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
             if fresh && draft.trimmed.isEmpty && !ideas.isEmpty {
                 StarterIdeas(ideas: ideas) { prompt in
                     draft = prompt
@@ -1101,7 +1142,8 @@ struct NewAppIntro: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 60)
+        .padding(.vertical, 24)
+        .sparkleReveal()
         .onAppear {
             name = project.untitled ? "" : project.name
             fresh = Template.isScaffold(project)
@@ -1388,17 +1430,35 @@ struct ApprovalCard: View {
 }
 
 /// Apps to start from, under a new app's empty chat. Choosing one fills in the request (it isn't sent) so the
-/// user can make it theirs first.
+/// user can make it theirs first. It opens on the six it's given; Show Me Others pages on from there.
 struct StarterIdeas: View {
-    let ideas: [Idea]
     let choose: (String) -> Void
+    @StateObject private var deck: IdeaDeck
     @State private var hovered: String?
+
+    init(ideas: [Idea], choose: @escaping (String) -> Void) {
+        self.choose = choose
+        _deck = StateObject(wrappedValue: IdeaDeck(first: ideas))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Need an idea? Pick one, then change it to suit you.").font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Text("Need an idea?").font(.callout).foregroundStyle(.secondary)
+                Spacer()
+                Button(action: deck.more) {
+                    HStack(spacing: 5) {
+                        Image(systemName: IdeaDeck.moreSymbol)
+                        Text("Show me others")
+                    }
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
-                ForEach(ideas) { example in
+                ForEach(Array(deck.ideas.enumerated()), id: \.element.id) { index, example in
                     Button { choose(example.prompt) } label: {
                         HStack(alignment: .top, spacing: 8) {
                             IdeaIcon(symbol: example.symbol, hue: example.hue, size: 22, lit: hovered == example.title)
@@ -1411,15 +1471,21 @@ struct StarterIdeas: View {
                         }
                         .padding(8)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                        // Just an outline, so the ideas stay quieter than what the user is writing.
+                        .overlay(RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color.primary.opacity(hovered == example.title ? 0.2 : 0.1), lineWidth: 1))
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .onHover { hovered = $0 ? example.title : (hovered == example.title ? nil : hovered) }
                     .help("Fills in the request so you can change it before sending")
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.94)).animation(.spring(response: 0.5, dampingFraction: 0.8).delay(Double(index) * 0.04)),
+                        removal: .opacity.animation(.easeOut(duration: 0.15))))
                 }
             }
         }
         .frame(maxWidth: 600)
+        .onAppear { deck.prefetch() }
     }
 }
