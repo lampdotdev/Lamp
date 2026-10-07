@@ -3544,6 +3544,8 @@ enum Template {
             let emails: [String]
             let phones: [String]
             let note: String?
+            /// The spelling apps built by earlier Lamps use; the same value.
+            var organisation: String? { organization }
         }
 
         private static let store = CNContactStore()
