@@ -5,6 +5,13 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## Unreleased
+
+- Lamp remembers, as an experiment you switch on in Settings → Building: it keeps short notes on how you
+  like things, so a new app starts out in your style, and on what you decided about each app and what you
+  turned down, so it isn't offered again. The notes carry over when you switch the agent or model, and the
+  AI opens them only when a request needs them. A Memory tab lists them, to read, change or clear.
+
 ## 0.10.3
 
 - A new app's first build ends with the app ready for you: the agent looks once to be sure it opens, then

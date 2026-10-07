@@ -223,17 +223,22 @@ struct SetupView: View {
 
 struct SettingsView: View {
     @AppStorage("settingsTab") private var tab = "building"
+    @AppStorage(Memory.switchKey) private var memory = false
 
     var body: some View {
         TabView(selection: $tab) {
             BuildingSettings().tabItem { Label("Building", systemImage: "hammer") }.tag("building")
             AppsSettings().tabItem { Label("Apps", systemImage: "square.grid.2x2") }.tag("apps")
             ProvidersSettings().tabItem { Label("Providers", systemImage: "cpu") }.tag("providers")
+            // Only while the experiment is on (Building → Experimental): off, there are no notes to show.
+            if memory {
+                MemorySettings().tabItem { Label("Memory", systemImage: "note.text") }.tag("memory")
+            }
         }
         .frame(width: 560)
         .onAppear {
             if tab == "local" { tab = "providers" }   // Local Models is now Native Mac AI, under Providers
-            if !["building", "apps", "providers"].contains(tab) { tab = "building" }
+            if !(["building", "apps", "providers"] + (memory ? ["memory"] : [])).contains(tab) { tab = "building" }
         }
     }
 }
@@ -657,6 +662,7 @@ struct AppsSettings: View {
 struct ExperimentalSettings: View {
     @EnvironmentObject private var store: Store
     @AppStorage("experimentIOSApps") private var iosApps = false
+    @AppStorage(Memory.switchKey) private var memory = false
     @AppStorage("appleTeam") private var team = ""
     @AppStorage("settingsTab") private var settingsTab = "building"
     @AppStorage("settingsSheet") private var settingsSheet = ""
@@ -695,6 +701,15 @@ struct ExperimentalSettings: View {
                 }
                 .padding(.leading, 20)
             }
+            VStack(alignment: .leading, spacing: 2) {
+                Toggle("Remember how I like things", isOn: $memory)
+                Text(memory ? "Lamp keeps short notes on your taste and on what you decided about each app, whichever AI is building. See and change them under Memory, above."
+                     : "Lamp keeps short notes on your taste and on what you decided about each app, so a new app starts out in your style, whichever AI is building.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .padding(.leading, 20)
+            }
+            .toggleStyle(.checkbox)
+            .frame(maxWidth: .infinity, alignment: .leading)
         } header: { Text("Experimental") }
         .task {
             teams = await Devices.knownTeams()

@@ -814,7 +814,7 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return old
         }
-        for path in [".lamp/chat.json", ".lamp/usage.json", Attachments.folder] {
+        for path in [".lamp/chat.json", ".lamp/usage.json", ".lamp/notes.md", Attachments.folder] {
             let from = old.dir.appendingPathComponent(path)
             if fm.fileExists(atPath: from.path) {
                 try? fm.copyItem(at: from, to: project.dir.appendingPathComponent(path))
@@ -1467,6 +1467,8 @@ final class Store: ObservableObject {
         // The tool call the model is writing at the moment, for the activity shown to the user.
         var streamingTool = ""
         var streamingArguments = ""
+        // Whether the agent has answered at all: the request, with any word on the notes in it, got through.
+        var answered = false
         guard let turn = turns[project.id] else { return false }   // only inside a turn (startQueued)
         turn.stopped = false
         let sessionFile = Self.sessionFile(for: project, engine: engine)
@@ -1477,6 +1479,7 @@ final class Store: ObservableObject {
                                      started: { turn.agent = $0 }) { [weak self] line in
             guard let self else { return }
             for event in Agent.parseLine(line) {
+                if case .raw = event {} else if case .failed = event {} else { answered = true }
                 switch event {
                 case .textPiece(let piece):
                     write(piece, for: project)
@@ -1503,6 +1506,8 @@ final class Store: ObservableObject {
                 case .plan(let parts):
                     progress[project.id]?.plan = parts
                     progress[project.id]?.tickWrittenParts()
+                case .compacted:
+                    Memory.compacted(project)
                 case .tool(let text, let fullCall):
                     log(project, .tool, text)
                     let call = ToolCall(text)
@@ -1521,11 +1526,16 @@ final class Store: ObservableObject {
                 case .cost(let amount): cost += amount
                 case .failed(let text): failure = text
                 case .raw(let text): log(project, .detail, text)
-                case .session(let id): if engine != .pi { try? id.write(to: sessionFile, atomically: true, encoding: .utf8) }
+                case .session(let id):
+                    if engine != .pi {
+                        try? id.write(to: sessionFile, atomically: true, encoding: .utf8)
+                        Memory.delivered(to: project, session: id)
+                    }
                 }
             }
         }
         turn.agent = nil
+        if answered { Memory.delivered(to: project) }
         endApprovals(for: project)
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
         showWritten(for: project)
@@ -1943,7 +1953,8 @@ final class Store: ObservableObject {
         case "ping":
             return reply([:])
         case "tools/list":
-            return reply(["tools": Self.mcpTools + (fileTools ? FileTools.definitions : [])])
+            let tools = Self.mcpTools.filter { Memory.isOn || !Memory.tools.contains($0["name"] as? String ?? "") }
+            return reply(["tools": tools + (fileTools ? FileTools.definitions : [])])
         case "tools/call":
             let params = message["params"] as? [String: Any] ?? [:]
             let name = params["name"] as? String ?? ""
@@ -1971,6 +1982,7 @@ final class Store: ObservableObject {
             case "list_versions": (status, answer) = await versions("", [:], of: project)
             case "name_version": (status, answer) = await versions("/name", arguments, of: project)
             case "restore_version": (status, answer) = await versions("/restore", arguments, of: project)
+            case "read_notes", "save_notes": (status, answer) = Memory.call(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -2935,7 +2947,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/mcp", "/pi/key"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/mcp", "/pi/key"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -3026,6 +3038,10 @@ final class Store: ObservableObject {
         if request.path.hasPrefix("/agent/versions") {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return await versions(String(request.path.dropFirst("/agent/versions".count)), body, of: project)
+        }
+        if route == "/agent/memory" {
+            let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+            return Memory.call(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/approve" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]

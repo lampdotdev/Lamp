@@ -117,6 +117,8 @@ struct TurnProgress {
         case .plan: return "Planning your app"
         case .look: return "Checking how it looks"
         case .use: return "Trying it out"
+        case .recall: return "Checking its notes"
+        case .remember: return "Taking notes for next time"
         case .delegate, .other: return "Working on your app"
         }
     }
