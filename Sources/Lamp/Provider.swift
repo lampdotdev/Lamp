@@ -94,7 +94,10 @@ enum Provider {
 /// which shared this folder until Lamp Dev got its own) moves its keys into the Keychain and removes it.
 /// Keys are read once per launch.
 enum KeyStore {
+    /// Serialises the Keychain and file work; `cacheLock` guards only the cache, so a look at it never waits
+    /// behind a Keychain prompt.
     private static let lock = NSLock()
+    private static let cacheLock = NSLock()
     nonisolated(unsafe) private static var cache: [String: String?] = [:]
 
     /// True when this copy of Lamp is signed with an Apple Team ID.
@@ -127,7 +130,7 @@ enum KeyStore {
     /// Until it's done, a read on the main thread says there's no key rather than ask.
     static func preload() {
         DispatchQueue.global(qos: .userInitiated).async {
-            if usesKeychain { for provider in Provider.apiProviders { _ = key(for: provider.id) } }
+            if usesKeychain { for provider in Provider.keyProviders { _ = key(for: provider.id) } }
             DispatchQueue.main.async {
                 preloaded = true
                 NotificationCenter.default.post(name: loaded, object: nil)
@@ -135,15 +138,26 @@ enum KeyStore {
         }
     }
 
+    private static func cached(_ provider: String) -> String?? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return cache[provider]
+    }
+
+    private static func remember(_ value: String?, for provider: String) {
+        cacheLock.lock()
+        cache[provider] = .some(value)
+        cacheLock.unlock()
+    }
+
     static func key(for provider: String) -> String? {
-        if usesKeychain, Thread.isMainThread, !preloaded {
-            lock.lock()
-            defer { lock.unlock() }
-            return cache[provider] ?? nil
-        }
+        if let cached = cached(provider) { return cached }
+        // Before the launch-time read is in, the main thread is told there's no key rather than made to ask,
+        // or to wait for a question being asked on the other thread.
+        if usesKeychain, Thread.isMainThread, !preloaded { return nil }
         lock.lock()
         defer { lock.unlock() }
-        if let cached = cache[provider] { return cached }
+        if let cached = cached(provider) { return cached }
         let value: String?
         if usesKeychain {
             _ = movedFileToKeychain
@@ -152,11 +166,11 @@ enum KeyStore {
             guard status == errSecSuccess || status == errSecItemNotFound else { return key }
             if let key { KeychainItem.adopt(key, provider) }
             // A key the Keychain wouldn't take stays in the file (moveToKeychain tries again each launch).
-            value = key ?? (status == errSecItemNotFound ? KeyFile.read()[provider] : nil)
+            value = key ?? (status == errSecItemNotFound ? KeyFile.stored()?[provider] : nil)
         } else {
             value = KeyFile.read()[provider]
         }
-        cache[provider] = .some(value)
+        remember(value, for: provider)
         return value
     }
 
@@ -164,7 +178,7 @@ enum KeyStore {
         lock.lock()
         defer { lock.unlock() }
         let key = key?.trimmed.nilIfEmpty
-        cache[provider] = .some(key)
+        remember(key, for: provider)
         if usesKeychain {
             _ = movedFileToKeychain
             KeychainItem.delete(provider)
@@ -202,7 +216,7 @@ enum KeyStore {
             KeyFile.write(all)
             guard KeyFile.read()[provider] == key else { return false }
         }
-        cache[provider] = .some(key)
+        remember(key, for: provider)
         return true
     }
 
@@ -241,9 +255,13 @@ enum KeyStore {
                   !partitions.contains("teamid:\(team)"), !partitions.contains("apple:") else { return }
             // The key is kept in the file, and read back, before the old item goes: if the new one can't be
             // added (or Lamp dies between the two), the file is what's read until it can be.
-            var all = KeyFile.read()
+            var all: [String: String] = [:]
+            if FileManager.default.fileExists(atPath: KeyFile.url.path) {
+                guard let stored = KeyFile.stored() else { return }   // a file that can't be read isn't written over
+                all = stored
+            }
             all[account] = key
-            guard KeyFile.write(all), KeyFile.read()[account] == key else { return }
+            guard KeyFile.write(all), KeyFile.stored()?[account] == key else { return }
             delete(account)
             if write(key, account) { KeyFile.forget(account) }
         }
@@ -282,9 +300,15 @@ enum KeyStore {
         static let url = folder.appendingPathComponent("keys.json")
         static let legacy = folder.appendingPathComponent("openrouter-key")
 
+        /// The file as it is: nil when there's none, or when it can't be read or decoded (which is left
+        /// alone, never written over).
+        static func stored() -> [String: String]? {
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            return try? JSONDecoder().decode([String: String].self, from: data)
+        }
+
         static func read() -> [String: String] {
-            if let data = try? Data(contentsOf: url),
-               let keys = try? JSONDecoder().decode([String: String].self, from: data) { return keys }
+            if let keys = stored() { return keys }
             var keys: [String: String] = [:]
             if let old = (try? String(contentsOf: legacy, encoding: .utf8))?.trimmed.nilIfEmpty {
                 keys["openrouter"] = old
