@@ -9,8 +9,10 @@ plain "Lamp x.y.z" line.
 
 - iPhone and iPad apps, as an experiment you switch on in Settings → Building: build an app and try it in
   the iPhone or iPad simulator on your Mac (needs Xcode). The agent sees the screen after each change and taps, types, scrolls and swipes on it to try what
-  it made (allow Lamp under Accessibility in System Settings when it asks). Putting the app on a real iPhone
-  comes later.
+  it made (allow Lamp under Accessibility in System Settings when it asks). The apps get the same icon and
+  the same building blocks as Mac apps: saved data that survives every change, AI and quick decisions,
+  behaviour written while the app runs, text read out of photos and documents, drops, calendar, reminders,
+  contacts and notifications. Putting the app on a real iPhone comes later.
 
 ## 0.7.0
 

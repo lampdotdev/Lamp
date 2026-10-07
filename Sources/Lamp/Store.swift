@@ -2207,6 +2207,7 @@ final class Store: ObservableObject {
             return message
         }
         note("Opening \(project.name) on the \(project.family.name) simulator…", for: project)
+        await finishSimulatorBundle(project)
         do {
             try await Simulator.boot(udid, show: inFront)
             await Simulator.terminate(project.bundleID, on: udid)
@@ -2249,6 +2250,50 @@ final class Store: ObservableObject {
         refreshOpenApps()
         stamps[project.id] = BuildStamp.read(project.builtURL)
         return nil
+    }
+
+    /// Finishes the bundle build.sh made, the way `deploy` finishes a Mac app's: the reasons iOS shows when
+    /// the app first asks for the microphone, photos or calendar (without which it's killed on the spot), the
+    /// icon, and the files attached in Lamp's chat, which LampAssets finds next to the executable. Then the
+    /// bundle is signed again, ad hoc, which is all the simulator asks for.
+    private func finishSimulatorBundle(_ project: LampProject) async {
+        let fm = FileManager.default
+        let app = project.builtURL
+        var script = """
+            P="$LAMP_APP/Info.plist"
+            plutil -replace CFBundleName -string "$LAMP_NAME" "$P" && \\
+            plutil -replace CFBundleDisplayName -string "$LAMP_NAME" "$P" && \\
+            plutil -replace NSMicrophoneUsageDescription -string "$LAMP_NAME listens to your microphone." "$P" && \\
+            plutil -replace NSSpeechRecognitionUsageDescription -string "$LAMP_NAME turns your speech into text." "$P" && \\
+            plutil -replace NSCameraUsageDescription -string "$LAMP_NAME uses your camera." "$P" && \\
+            plutil -replace NSPhotoLibraryUsageDescription -string "$LAMP_NAME uses your photos." "$P" && \\
+            plutil -replace NSCalendarsFullAccessUsageDescription -string "$LAMP_NAME reads and adds calendar events." "$P" && \\
+            plutil -replace NSRemindersFullAccessUsageDescription -string "$LAMP_NAME reads and adds reminders." "$P" && \\
+            plutil -replace NSContactsUsageDescription -string "$LAMP_NAME looks up people in your contacts." "$P"
+
+            """
+        // iOS reads icons by name and scale from the bundle itself when told to in Info.plist: the home screen
+        // sizes for iPhone (60pt at 2x and 3x) and iPad (76pt and 83.5pt at 2x), all cut from the one square.
+        if fm.fileExists(atPath: Icons.squareURL(project).path) {
+            let sizes = [("AppIcon60x60@2x", 120), ("AppIcon60x60@3x", 180), ("AppIcon76x76@2x", 152), ("AppIcon83.5x83.5@2x", 167)]
+            for (name, pixels) in sizes {
+                script += "sips -z \(pixels) \(pixels) \"$LAMP_ICON\" --out \"$LAMP_APP/\(name).png\" >/dev/null && \\\n"
+            }
+            script += """
+                plutil -replace CFBundleIcons -json '{"CFBundlePrimaryIcon":{"CFBundleIconFiles":["AppIcon60x60"]}}' "$P" && \\
+                plutil -replace 'CFBundleIcons~ipad' -json '{"CFBundlePrimaryIcon":{"CFBundleIconFiles":["AppIcon60x60","AppIcon76x76","AppIcon83.5x83.5"]}}' "$P"
+
+                """
+        }
+        _ = await Shell.run(script, cwd: project.dir,
+                            env: ["LAMP_APP": app.path, "LAMP_NAME": project.name, "LAMP_ICON": Icons.squareURL(project).path]) { _ in }
+        let attachments = project.dir.appendingPathComponent(Attachments.folder)
+        try? fm.removeItem(at: app.appendingPathComponent(Attachments.folder))
+        if fm.fileExists(atPath: attachments.path) {
+            try? fm.copyItem(at: attachments, to: app.appendingPathComponent(Attachments.folder))
+        }
+        _ = await Shell.run("xattr -cr \"$LAMP_APP\" && codesign --force -s - \"$LAMP_APP\"", cwd: project.dir,
+                            env: ["LAMP_APP": app.path]) { _ in }
     }
 
     /// iPhone apps running in the simulator: which simulator each was launched on, and its process id.
