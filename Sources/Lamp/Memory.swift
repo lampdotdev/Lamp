@@ -326,7 +326,10 @@ enum Memory {
                 // The summary is all the person sees in the list and all the agent is told: a word or two ("look")
                 // says nothing to either, so the agent is asked for a line.
                 let summary = (arguments["summary"] as? String ?? "").trimmed
-                if !text.trimmed.isEmpty, summary.split(whereSeparator: \.isWhitespace).count < 4 {
+                // Words as the system counts them for the text's language: Japanese and Chinese have no spaces.
+                var words = 0
+                summary.enumerateSubstrings(in: summary.startIndex..., options: [.byWords, .substringNotRequired]) { _, _, _, _ in words += 1 }
+                if !text.trimmed.isEmpty, words < 4 {
                     throw Failure(status: 400, message: """
                         The summary stands in for the notes, for the person and for you: write one plain line on what \
                         they cover, like “How my apps should look and sound, and how I write dates”, and save again.
