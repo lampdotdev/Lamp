@@ -665,6 +665,7 @@ struct ProjectView: View {
             loadDraft()
         }
         .onChange(of: store.draftUpdates[store.current(project)?.id ?? project.id]) { loadDraft() }
+        .onChange(of: project.platform) { PhoneSetup.shared.refreshIfVisible() }
         .onChange(of: draft) { saveDraft() }
         .onChange(of: attachments) { saveDraft() }
         .onChange(of: replacing) { saveDraft() }

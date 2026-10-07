@@ -10,6 +10,7 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         var family: DeviceFamily = .iphone
         var phone: String?
         var eitherSimulator = false
+        var requiresPhoneTools = true
     }
     private struct Request {
         let id = UUID()
@@ -74,7 +75,8 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         guard current.platform == .iphone else { then(current); return }
         perform(resolve: {
             guard let current = store.current(project) else { return nil }
-            return Context(family: current.family, phone: Experiments.iosApps ? current.device : nil)
+            return Context(family: current.family, phone: Experiments.iosApps ? current.device : nil,
+                           requiresPhoneTools: current.platform == .iphone)
         }, cancelled: cancelled) {
             if let current = store.current(project) { then(current) }
             else { cancelled() }
@@ -96,6 +98,13 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
             context = resolved
         } else {
             context = inspection
+        }
+        if !context.requiresPhoneTools {
+            report = PhoneTools.Report()
+            checkedContext = context
+            actionProblem = nil
+            completeActive()
+            return
         }
         checking = true
         actionProblem = nil

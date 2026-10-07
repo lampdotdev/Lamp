@@ -181,4 +181,36 @@ final class PhoneSetupTests: XCTestCase {
         XCTAssertEqual(completed, 1)
     }
 
+    func testChangingBlockedPhoneDraftToMacCompletesWithoutPhoneTools() async {
+        var current = PhoneSetup.Context()
+        var checks = 0, completed = 0
+        let model = PhoneSetup(presentsWindow: false) { _ in
+            checks += 1
+            return self.blocked(.xcode)
+        }
+        model.perform(resolve: { current }) { completed += 1 }
+        await settle(model)
+        XCTAssertEqual(completed, 0)
+        current.requiresPhoneTools = false
+        model.refreshIfVisible()
+        XCTAssertEqual(completed, 1)
+        XCTAssertEqual(checks, 1)
+    }
+
+    func testChangingToMacDuringSlowPhoneCheckIgnoresItsBlockedResult() async {
+        var current = PhoneSetup.Context()
+        var release: CheckedContinuation<PhoneTools.Report, Never>?
+        let model = PhoneSetup(presentsWindow: false) { _ in
+            await withCheckedContinuation { release = $0 }
+        }
+        var completed = 0
+        model.perform(resolve: { current }) { completed += 1 }
+        while release == nil { await Task.yield() }
+        current.requiresPhoneTools = false
+        release?.resume(returning: blocked(.xcode))
+        await settle(model)
+        XCTAssertEqual(completed, 1)
+        XCTAssertTrue(model.report?.ready == true)
+    }
+
 }
