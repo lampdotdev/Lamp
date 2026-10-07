@@ -1630,7 +1630,9 @@ final class Store: ObservableObject {
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         let report = await Simulator.Driver.perform(decoded, on: screen, picture: picture) { [weak self] in
             guard let self, exists(project), turns[project.id] === owner, !owner.stopped else { return false }
-            return Simulator.isRunning(pid: running.pid)
+            // Still this app's screen: it's running, and no other project's app has taken the device meanwhile.
+            guard simulatorApps[project.id]?.pid == running.pid, Simulator.isRunning(pid: running.pid) else { return false }
+            return !simulatorApps.contains { $0.key != project.id && $0.value.udid == running.udid && Simulator.isRunning(pid: $0.value.pid) }
         }
         if let data = try? JSONSerialization.data(withJSONObject: ["id": UUID().uuidString, "report": report]) {
             try? data.write(to: Runtime.folder(project).appendingPathComponent("use.json"))
@@ -2144,6 +2146,12 @@ final class Store: ObservableObject {
             await Simulator.terminate(project.bundleID, on: udid)
             try await Simulator.install(project.builtURL, on: udid)
             guard stillOwns() else { return "The app was deleted or stopped before it opened." }
+            // One Lamp app per simulator: another project's app on this device is closed first, so what the
+            // simulator shows is always the app being worked on (and that app's use_app batch, if any, stops).
+            for (other, launched) in simulatorApps where other != project.id && launched.udid == udid {
+                if let theirs = projects.first(where: { $0.id == other }) { await Simulator.terminate(theirs.bundleID, on: udid) }
+                simulatorApps[other] = nil
+            }
             Runtime.startLog(project)
             Simulator.Driver.forget(project.id)
             let pid = try await Simulator.launch(project.bundleID, on: udid, log: Runtime.logURL(project))
