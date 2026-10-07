@@ -148,10 +148,11 @@ enum KeyStore {
         if usesKeychain {
             _ = movedFileToKeychain
             let (status, key) = KeychainItem.read(provider)
-            value = key
             // Don't cache a denied or cancelled prompt, so the next use can ask again.
             guard status == errSecSuccess || status == errSecItemNotFound else { return key }
             if let key { KeychainItem.adopt(key, provider) }
+            // A key the Keychain wouldn't take stays in the file (moveToKeychain tries again each launch).
+            value = key ?? (status == errSecItemNotFound ? KeyFile.read()[provider] : nil)
         } else {
             value = KeyFile.read()[provider]
         }
@@ -238,13 +239,13 @@ enum KeyStore {
         static func adopt(_ key: String, _ account: String) {
             guard let team = teamID, let partitions = partitions(account),
                   !partitions.contains("teamid:\(team)"), !partitions.contains("apple:") else { return }
+            // The key is kept in the file, and read back, before the old item goes: if the new one can't be
+            // added (or Lamp dies between the two), the file is what's read until it can be.
+            var all = KeyFile.read()
+            all[account] = key
+            guard KeyFile.write(all), KeyFile.read()[account] == key else { return }
             delete(account)
-            if !write(key, account) {
-                // Never lose the key: the file is read when the Keychain has nothing.
-                var all = KeyFile.read()
-                all[account] = key
-                KeyFile.write(all)
-            }
+            if write(key, account) { KeyFile.forget(account) }
         }
 
         /// The partitions an item's access list admits ("apple-tool:", "teamid:…", "apple:"): a hex-encoded
@@ -342,18 +343,20 @@ enum KeyStore {
             if provider == "openrouter" { try? fm.removeItem(at: legacy) }
         }
 
-        static func write(_ keys: [String: String]) {
+        @discardableResult
+        static func write(_ keys: [String: String]) -> Bool {
             let fm = FileManager.default
             try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            guard let data = try? JSONEncoder().encode(keys) else { return }
+            guard let data = try? JSONEncoder().encode(keys) else { return false }
             // Written beside the file, private from the start, then put in its place in one step: the keys
             // are never readable by others, and a write that fails leaves the file as it was.
             let fresh = folder.appendingPathComponent("keys.json.\(UUID().uuidString)")
             guard fm.createFile(atPath: fresh.path, contents: data, attributes: [.posixPermissions: 0o600]),
                   rename(fresh.path, url.path) == 0 else {
                 try? fm.removeItem(at: fresh)
-                return
+                return false
             }
+            return true
         }
     }
 }
