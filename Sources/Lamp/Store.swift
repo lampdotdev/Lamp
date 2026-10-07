@@ -547,17 +547,22 @@ final class Store: ObservableObject {
         chatFocusRequest += 1
     }
 
-    /// Writes a draft's scaffold and makes its first version, before anything builds it. Returns the app as it is now.
-    private func materialize(_ project: LampProject) async -> LampProject {
+    /// Writes a draft's scaffold and makes its first version, before anything builds it. Nil, after saying so,
+    /// when that fails: the app is left a draft (no Package.swift, which is what marks it set up), so the next
+    /// request or Rebuild & Open writes it all again rather than building half a scaffold with no history.
+    private func materialize(_ project: LampProject) async -> LampProject? {
         guard !project.scaffolded else { return project }
+        var problem: String?
         do {
             try Template.fill(project)
+            if !(await initRepo(project, message: "Scaffold")) { problem = "Lamp couldn't save the app's first version." }
         } catch {
-            log(project, .error, "Couldn't set up the app: \(error.localizedDescription)")
-            return project
+            problem = error.localizedDescription
         }
-        await initRepo(project, message: "Scaffold")
-        return project
+        guard let problem else { return project }
+        try? FileManager.default.removeItem(at: project.dir.appendingPathComponent("Package.swift"))
+        log(project, .error, "Couldn't set up the app: \(problem) Try again in a moment.")
+        return nil
     }
 
     /// The app is for both devices: it opens on the preferred one, or on whichever this Mac can show. Nil,
@@ -592,9 +597,10 @@ final class Store: ObservableObject {
         projects[index] = changed
     }
 
-    private func initRepo(_ project: LampProject, message: String) async {
-        _ = await Shell.run("git init -q && git add -A && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: project.dir,
-                            env: ["LAMP_MESSAGE": message]) { _ in }
+    @discardableResult
+    private func initRepo(_ project: LampProject, message: String) async -> Bool {
+        await Shell.run("git init -q && git add -A && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: project.dir,
+                        env: ["LAMP_MESSAGE": message]) { _ in } == 0
     }
 
     /// Which simulator an iPhone & iPad app opens in. Takes effect at its next open; the app is quit first
@@ -1135,9 +1141,6 @@ final class Store: ObservableObject {
                 project = await bootstrap(project, brief: brief)
                 if project.id != untitled.id { progress[project.id] = progress.removeValue(forKey: untitled.id) }
             }
-            project = await materialize(project)   // named now, so the scaffold is written under its name
-            // Where the app is as the turn starts, so the request can be changed and sent again from here.
-            if let head = await Versions.head(project) { mark(asked, sentFrom: head, in: project) }
             var worked = false
             var result = TurnResult(end: .failed, watched: true)
             defer {
@@ -1153,6 +1156,11 @@ final class Store: ObservableObject {
                 if !result.watched, (queued[project.id] ?? []).isEmpty { notify(project, after: result.end) }
                 finish(project)
             }
+            // Named now, so the scaffold is written under its name. If it can't be, the turn ends here, failed.
+            guard let ready = await materialize(project) else { return }
+            project = ready
+            // Where the app is as the turn starts, so the request can be changed and sent again from here.
+            if let head = await Versions.head(project) { mark(asked, sentFrom: head, in: project) }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
             worked = result.end != .failed
             if newApp && result.end == .changed { await showResult(of: project) }
@@ -2065,7 +2073,7 @@ final class Store: ObservableObject {
     func run(_ project: LampProject) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
-        let project = await materialize(project)
+        guard let project = await materialize(project) else { return }
         if await build(project) == nil {
             await installReportingCrash(project)
         } else {

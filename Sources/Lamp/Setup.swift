@@ -286,9 +286,13 @@ struct BuildingSettings: View {
 
     private var selectedEngine: Engine { Engine(rawValue: engine) ?? .pi }
 
-    // Claude Code's or Codex's sign-in, checked whenever the agent changes: nil while checking.
-    @State private var signedIn: Bool?
+    // Claude Code's or Codex's sign-in, checked whenever the agent or where its tool was found changes. Kept
+    // with the engine it's about, so a check that finishes after the agent changed is never taken for this one's.
+    @State private var signIn: (engine: Engine, signedIn: Bool)?
     @State private var signingIn = false
+    private var signedIn: Bool? { signIn?.engine == selectedEngine ? signIn?.signedIn : nil }
+    /// Changes when the tool turns up (installed while Settings is open) or moves, as well as with the agent.
+    private var signInCheck: String { _ = revision; return "\(engine) \(ToolLocator.path(for: selectedEngine) ?? "")" }
 
     /// What stands between the chosen agent and building, if anything.
     private enum Readiness { case ready, checking, notInstalled, signedOut, problem(String) }
@@ -332,7 +336,7 @@ struct BuildingSettings: View {
                 if signingIn {
                     HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Finish in your browser…").foregroundStyle(.secondary) }
                 } else {
-                    Button("Sign In…") { Task { await signIn() } }
+                    Button("Sign In…") { Task { await startSignIn() } }
                 }
             }
         case .problem(let problem):
@@ -343,16 +347,21 @@ struct BuildingSettings: View {
     }
 
     private func checkSignIn() async {
-        guard selectedEngine != .pi, ToolLocator.path(for: selectedEngine) != nil else { return }
-        signedIn = nil
-        signedIn = await EngineSignIn.isSignedIn(selectedEngine) ?? true   // can't tell: don't hold it up
+        let engine = selectedEngine
+        guard engine != .pi, ToolLocator.path(for: engine) != nil else { return }
+        signIn = nil
+        let signedIn = await EngineSignIn.isSignedIn(engine) ?? true   // can't tell: don't hold it up
+        // The check's process outlives a cancelled task, so a late answer may belong to an agent no longer chosen.
+        guard !Task.isCancelled else { return }
+        signIn = (engine, signedIn)
     }
 
-    private func signIn() async {
+    private func startSignIn() async {
+        let engine = selectedEngine
         signingIn = true
-        _ = await EngineSignIn.signIn(selectedEngine)
-        signedIn = await EngineSignIn.isSignedIn(selectedEngine) ?? true
-        signingIn = false
+        defer { signingIn = false }
+        _ = await EngineSignIn.signIn(engine)
+        signIn = (engine, await EngineSignIn.isSignedIn(engine) ?? true)
     }
 
     /// The model Claude Code or Codex builds with ("" for the tool's default).
@@ -472,9 +481,10 @@ struct BuildingSettings: View {
         .task { notificationsDenied = await Notifier.shared.isDenied() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { notificationsDenied = await Notifier.shared.isDenied() }
+            revision += 1   // looks for the agent's tool again: it may have been installed meanwhile
         }
         .onChange(of: engine) { recheck() }
-        .task(id: engine) { await checkSignIn() }
+        .task(id: signInCheck) { await checkSignIn() }
         .onChange(of: provider) { model = Builder.piModel; recheck() }
         .onChange(of: model) { Builder.piModel = model; recheck() }
         .onAppear { revision += 1 }   // keys may have changed in the Providers tab
