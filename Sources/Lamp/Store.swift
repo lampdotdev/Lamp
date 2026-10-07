@@ -23,8 +23,13 @@ struct LampProject: Identifiable, Hashable {
     var untitled = false
     var platform: Platform = .mac
     var family: DeviceFamily = .iphone
+    /// The person's own iPhone or iPad that Play puts the app on (Devices), instead of the simulator.
+    var device: String?
 
     var bundleID: String { Edition.appBundlePrefix + id }
+    /// On a phone the app is registered with Apple under the person's team, so the id carries the team:
+    /// another team may have registered the plain one for the same app name.
+    func deviceBundleID(team: String) -> String { bundleID + "." + team.lowercased() }
     var builtURL: URL { dir.appendingPathComponent("build/\(exe).app") }
     /// Every successful build is copied here so it shows up in Spotlight and Launchpad.
     var installedURL: URL { Store.installDir.appendingPathComponent("\(name).app") }
@@ -36,6 +41,7 @@ struct ProjectMeta: Codable {
     var untitled: Bool?
     var platform: Platform?   // nil in apps made before iPhone apps existed: a Mac app
     var family: DeviceFamily?  // iOS apps: which simulator they open on; nil means iPhone
+    var device: String?        // iOS apps: the person's own phone (its udid) that Play puts the app on, if any
 }
 
 struct AppUsage: Codable {
@@ -267,6 +273,7 @@ final class Store: ObservableObject {
         selection = projects.first?.id
         startGateway()
         watchOpenApps()
+        refreshDevices()
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
@@ -340,7 +347,8 @@ final class Store: ObservableObject {
             guard let data = try? Data(contentsOf: dir.appendingPathComponent(".lamp/meta.json")),
                   let meta = try? JSONDecoder().decode(ProjectMeta.self, from: data) else { return nil }
             return LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
-                                untitled: meta.untitled ?? false, platform: meta.platform ?? .mac, family: meta.family ?? .iphone)
+                                untitled: meta.untitled ?? false, platform: meta.platform ?? .mac, family: meta.family ?? .iphone,
+                                device: meta.device)
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
@@ -558,12 +566,46 @@ final class Store: ObservableObject {
 
     /// Which simulator an iPhone & iPad app opens in. Takes effect at its next open; the app is quit first
     /// so the other device gets a fresh launch.
+    /// Which of the person's own phones Play puts the app on, or nil for the simulator. The agent keeps
+    /// looking at the simulator either way, since the phone's screen can't be photographed from here.
+    func setDevice(_ project: LampProject, _ udid: String?) {
+        guard project.platform == .iphone, project.device != udid, begin(project) != nil else { return }
+        var changed = project
+        changed.device = udid
+        try? JSONEncoder().encode(ProjectMeta(name: changed.name, exe: changed.exe, untitled: changed.untitled ? true : nil,
+                                              platform: changed.platform, family: changed.family, device: udid))
+            .write(to: changed.dir.appendingPathComponent(".lamp/meta.json"))
+        if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
+        let name = devices.first(where: { $0.udid == udid })?.name
+        log(changed, .status, name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
+                               ?? "\(changed.name) will open on the \(changed.family.name) simulator from now on.")
+        finish(changed)
+    }
+
+    /// The person's paired iPhones and iPads, for Try On. Looked up when the list is wanted (opening the
+    /// menu) and at startup; a phone that's gone stays chosen, and Play says so.
+    @Published var devices: [Devices.Device] = []
+
+    /// What Try On shows beside Play: the simulator's kind, or the chosen phone's name.
+    func tryOnName(_ project: LampProject) -> String {
+        guard Experiments.devices, let udid = project.device else { return project.family.name }
+        return devices.first(where: { $0.udid == udid })?.name ?? "Your phone"
+    }
+
+    func refreshDevices() {
+        guard Experiments.devices else { if !devices.isEmpty { devices = [] }; return }
+        Task {
+            let found = await Devices.list()
+            if found != devices { devices = found }
+        }
+    }
+
     func setFamily(_ project: LampProject, _ family: DeviceFamily) {
         guard project.platform == .iphone, project.family != family, begin(project) != nil else { return }
         var changed = project
         changed.family = family
         try? JSONEncoder().encode(ProjectMeta(name: changed.name, exe: changed.exe, untitled: changed.untitled ? true : nil,
-                                              platform: changed.platform, family: family))
+                                              platform: changed.platform, family: family, device: changed.device))
             .write(to: changed.dir.appendingPathComponent(".lamp/meta.json"))
         // In the list straight away, so nothing that starts meanwhile sees the old choice; the app itself is
         // quit so its next open is a fresh launch on the other device.
@@ -611,8 +653,9 @@ final class Store: ObservableObject {
         }
 
         let fm = FileManager.default
-        let renamed = LampProject(id: current.id, name: unique, exe: current.exe, dir: current.dir, platform: current.platform, family: current.family)
-        try? JSONEncoder().encode(ProjectMeta(name: unique, exe: current.exe, platform: current.platform, family: current.family))
+        let renamed = LampProject(id: current.id, name: unique, exe: current.exe, dir: current.dir, platform: current.platform,
+                                  family: current.family, device: current.device)
+        try? JSONEncoder().encode(ProjectMeta(name: unique, exe: current.exe, platform: current.platform, family: current.family, device: current.device))
             .write(to: current.dir.appendingPathComponent(".lamp/meta.json"))
         if fm.fileExists(atPath: current.installedURL.path) {
             try? fm.moveItem(at: current.installedURL, to: renamed.installedURL)
@@ -2141,6 +2184,11 @@ final class Store: ObservableObject {
         await prepareIcon(project)
         if project.platform == .iphone {
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
+            // The person's own phone gets the app when they press Play or a change is finished; the agent's
+            // looks (not in front) stay on the simulator, which is the only screen Lamp can see.
+            if inFront, Experiments.devices, let udid = project.device {
+                return await installOnDevice(project, owner: owner, udid: udid)
+            }
             return await installOnSimulator(project, owner: owner, inFront: inFront)
         }
         await quit(project)
@@ -2257,6 +2305,61 @@ final class Store: ObservableObject {
         stamps[project.id] = BuildStamp.read(project.builtURL)
         return nil
     }
+
+    /// Builds the app for the person's own phone with Xcode and puts it there (Devices). Signing is Xcode's
+    /// automatic kind for the team chosen in Settings, so the first time can take a while while Xcode
+    /// registers the phone and makes a certificate. What the app prints comes back to its log, as on the
+    /// simulator. Returns a plain message when it couldn't be done, which the chat shows.
+    private func installOnDevice(_ project: LampProject, owner: Turn, udid: String) async -> String? {
+        let team = Devices.team
+        if devices.first(where: { $0.udid == udid }) == nil { devices = await Devices.list() }
+        let device = devices.first(where: { $0.udid == udid })
+        // Nothing here is a crash for the agent to fix: a problem is told to the person and that's that.
+        if let problem = Devices.problem(device, team: team) {
+            log(project, .error, problem)
+            return nil
+        }
+        let name = device?.name ?? "your phone"
+        func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
+        do {
+            try Template.writeDeviceProject(for: project, team: team)
+        } catch {
+            log(project, .error, "Couldn't prepare the app for \(name): \(error.localizedDescription)")
+            return nil
+        }
+        log(project, .status, "Building for \(name)…")
+        var output: [String] = []
+        let app: URL
+        do {
+            app = try await Devices.build(project, team: team, udid: udid) { output.append($0) }
+        } catch {
+            // Xcode's own error lines when there are any; the end of its output when not.
+            let errors = output.filter { $0.contains("error: ") }.map { $0.replacingOccurrences(of: project.dir.path + "/", with: "") }
+            let tail = errors.isEmpty ? Devices.tail(output.joined(separator: "\n")) : errors.joined(separator: "\n")
+            let signing = tail.contains("signing") || tail.contains("provisioning") || tail.contains("No Account") || tail.contains("DEVELOPMENT_TEAM")
+            let problem = signing
+                ? "Xcode couldn't sign the app for \(name). Open Xcode → Settings → Accounts and sign in with the Apple account for team \(team), then try again.\n\n\(tail)"
+                : "The app built for the simulator but not for \(name):\n\n\(tail)"
+            log(project, .error, problem)
+            return nil   // not a crash for the agent to fix: the simulator build is what it works on
+        }
+        guard stillOwns() else { return "The app was stopped before it opened." }
+        log(project, .status, "Putting \(project.name) on \(name)…")
+        do {
+            try await Devices.install(app, on: udid)
+            guard stillOwns() else { return "The app was stopped before it opened." }
+            deviceApps[project.id]?.terminate()
+            Runtime.startLog(project)
+            deviceApps[project.id] = try Devices.launch(project.deviceBundleID(team: team), on: udid, log: Runtime.logURL(project))
+            log(project, .status, "\(project.name) is ready on \(name)")
+        } catch {
+            log(project, .error, error.localizedDescription)
+        }
+        return nil
+    }
+
+    /// For each app on a phone, the devicectl process attached to it: ending the process ends the app.
+    private var deviceApps: [String: Process] = [:]
 
     /// Finishes the bundle build.sh made, the way `deploy` finishes a Mac app's: the reasons iOS shows when
     /// the app first asks for the microphone, photos or calendar (without which it's killed on the spot), the
@@ -2545,6 +2648,10 @@ final class Store: ObservableObject {
 
     private func quit(_ project: LampProject) async {
         if project.platform == .iphone {
+            if let attached = deviceApps[project.id] {
+                if attached.isRunning { attached.terminate() }
+                deviceApps[project.id] = nil
+            }
             // On the simulator it was launched on, not whichever one would be picked now.
             if let running = simulatorApps[project.id] {
                 await Simulator.terminate(project.bundleID, on: running.udid)
@@ -2569,10 +2676,17 @@ final class Store: ObservableObject {
         let gateway = Gateway { request in await Store.shared.handleAI(request) }
         do {
             try gateway.start()
+            gateway.setLocalNetwork(Experiments.devices)
             self.gateway = gateway
         } catch {
             NSLog("Lamp AI gateway failed to start: \(error)")
         }
+    }
+
+    /// Whether apps on the person's phones may reach Lamp over the local network (Settings → Experimental).
+    func setLocalNetwork(_ on: Bool) {
+        gateway?.setLocalNetwork(on)
+        refreshDevices()
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
@@ -2586,7 +2700,6 @@ final class Store: ObservableObject {
         }
         // Only requests addressed to this Mac: a web page that resolved its own name to 127.0.0.1 (DNS
         // rebinding) arrives with that name as the host, and gets nothing. No Host at all gets nothing either.
-        guard Self.isLocalHost(request.headers["host"]) else { return (403, ["error": "Not for this host."]) }
         let token = request.headers["authorization"]?.replacingOccurrences(of: "Bearer ", with: "") ?? ""
         // pi collecting its provider's key (Agent.keyCommand). The ticket is the whole credential, and it's
         // good once.
@@ -2595,6 +2708,13 @@ final class Store: ObservableObject {
             return (200, ["key": key])
         }
         let agentRoute = route == "/mcp" || route.hasPrefix("/agent/")
+        if request.fromNetwork {
+            // An app on the person's phone: only the app routes, addressed to this Mac by its network name,
+            // with the app's own token like any other. The agent's routes never leave the Mac.
+            guard !agentRoute, Self.isMacHost(request.headers["host"]) else { return (403, ["error": "Not for this host."]) }
+        } else {
+            guard Self.isLocalHost(request.headers["host"]) else { return (403, ["error": "Not for this host."]) }
+        }
         if agentRoute {
             // The agent's routes take only the agent's token for the turn in progress.
             guard let id = agentTokens[token], let project = projects.first(where: { $0.id == id }) else {
@@ -2615,6 +2735,15 @@ final class Store: ObservableObject {
         }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
+    }
+
+    /// Whether a Host header is this Mac's name on the local network (what apps on phones are given), with
+    /// an optional port: "matts-macbook-pro.local:47811".
+    static func isMacHost(_ header: String?) -> Bool {
+        guard let host = header?.trimmed.lowercased(), !host.isEmpty else { return false }
+        let name = host.split(separator: ":", maxSplits: 1).first.map(String.init) ?? host
+        guard host.count == name.count || host.dropFirst(name.count + 1).allSatisfy(\.isNumber) else { return false }
+        return name == Devices.macHost.lowercased()
     }
 
     /// Whether a Host header names this Mac and nothing else: exactly a loopback name or address, with an

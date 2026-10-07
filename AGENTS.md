@@ -68,8 +68,22 @@ which `Icons.write` makes from the same tile as the Mac icon) and the chat's att
 iPhone's whole accessibility tree to the Mac, so Lamp finds what's under a point and presses it, sets a
 field's text, and sends real mouse events for swipes, scrolls and long presses. Pictures are made at point
 size, so a pixel in them is a point on the screen. That needs Lamp to be allowed in System Settings →
-Privacy & Security → Accessibility; the first `use_app` asks. Nothing puts an app on a real iPhone yet:
-that needs Apple's developer program and signing.
+Privacy & Security → Accessibility; the first `use_app` asks.
+
+**On the person's own phone** (Settings → Experimental → Put apps on your own iPhone or iPad,
+`Experiments.devices`): Try On also lists the iPhones and iPads paired with the Mac (`Devices.list`, through
+`devicectl`), and `LampProject.device` remembers the chosen one. Play and the end of a turn then go through
+`Store.installOnDevice`: `Template.writeDeviceProject` writes a small Xcode project under `.lamp/device`
+(one app target over the package's Sources as a synchronized group, the icon in an asset catalog, the
+attachments as a folder reference, a real Info.plist) and `Devices.build` runs `xcodebuild` with automatic
+signing for the team in Settings (`Devices.team`, found from the Mac's Apple Development certificates), so
+Xcode registers the phone and makes the certificate and profile with the account signed in to Xcode; Lamp
+never holds the account. The bundle id carries the team (`deviceBundleID(team:)`). `devicectl` installs and
+launches the app with `--console`, so what it prints reaches the app's log. The agent's looks stay on the
+simulator: the phone's screen can't be photographed. The app reaches Lamp's gateway at the Mac's Bonjour
+name (`Devices.macHost`, the `{{MACHOST}}` placeholder, chosen in LampSupport by `targetEnvironment`): the
+gateway also listens on the network while the switch is on (`Gateway.setLocalNetwork`), marks those
+requests, and admits them only to the app routes with the Mac's own name as Host (`Store.isMacHost`).
 
 ## Generated apps
 
