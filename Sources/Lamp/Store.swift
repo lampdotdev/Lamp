@@ -2092,9 +2092,16 @@ final class Store: ObservableObject {
             await Simulator.terminate(project.bundleID, on: udid)
             try await Simulator.install(project.builtURL, on: udid)
             // Delete or Stop may have come while the simulator was busy: nothing more is written or launched.
-            guard exists(project), turns[project.id]?.stopped != true else { return "The app was deleted or stopped before it opened." }
+            let turn = turns[project.id]
+            guard exists(project), turn?.stopped != true else { return "The app was deleted or stopped before it opened." }
             Runtime.startLog(project)
             let pid = try await Simulator.launch(project.bundleID, on: udid, log: Runtime.logURL(project))
+            // The same could have happened during the launch itself: then the app just started belongs to
+            // nobody, and is stopped before anything records it.
+            guard exists(project), turns[project.id] === turn, turn?.stopped != true else {
+                await Simulator.terminate(project.bundleID, on: udid)
+                return "The app was deleted or stopped before it opened."
+            }
             simulatorApps[project.id] = (udid, pid)
             try? await Task.sleep(for: .seconds(3))
             if !Simulator.isRunning(pid: pid) {
