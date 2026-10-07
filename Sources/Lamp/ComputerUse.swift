@@ -324,7 +324,8 @@ enum ComputerUse {
             guard enabled else { return false }
             if CodexComputerUse.read(elicitation) { return true }
             guard allowActions else { return false }
-            return await approve(CodexComputerUse.action(elicitation, intent: currentIntent))
+            let allowed = await approve(CodexComputerUse.action(elicitation, intent: currentIntent))
+            return allowed && enabled   // it may have been turned off during the dialog
         }
 
         /// What the model said the current `js` step is for, shown with each approval it raises.
@@ -650,6 +651,14 @@ final class MCPClient: @unchecked Sendable {
     private var buffer = Data()
     private var waiting: [Int: CheckedContinuation<[String: Any], Error>] = [:]
     private var nextID = 1
+    /// When each request in flight gives up, pushed back while the person is being asked about a step, and
+    /// again when they've answered, so the driver gets its full time after a slow dialog.
+    private var deadlines: [Int: Date] = [:]
+    private var asking = 0   // elicitations the handler is answering right now
+    /// Rises when a request gives up or the server stops: a question asked for a request that's gone is
+    /// declined when its answer comes, so a step approved late can't run after the model has moved on.
+    private var generation = 0
+    private static let patience: TimeInterval = 120
 
     init(executable: URL, arguments: [String], environment: [String: String] = [:]) throws {
         process.executableURL = executable
@@ -724,15 +733,34 @@ final class MCPClient: @unchecked Sendable {
             let id = nextID
             nextID += 1
             waiting[id] = continuation
+            deadlines[id] = Date().addingTimeInterval(Self.patience)
             lock.unlock()
             send(["jsonrpc": "2.0", "id": id, "method": method, "params": params])
-            DispatchQueue.global().asyncAfter(deadline: .now() + 120) { [weak self] in
-                guard let self else { return }
-                lock.lock()
-                let late = waiting.removeValue(forKey: id)
+            watch(id)
+        }
+    }
+
+    /// Gives up on a request at its deadline, unless the deadline has moved (the person was being asked
+    /// about a step) or the person is still being asked, in which case it looks again later.
+    private func watch(_ id: Int) {
+        lock.lock()
+        let deadline = deadlines[id] ?? Date()
+        lock.unlock()
+        DispatchQueue.global().asyncAfter(deadline: .now() + max(deadline.timeIntervalSinceNow, 0.1)) { [weak self] in
+            guard let self else { return }
+            lock.lock()
+            guard waiting[id] != nil else { lock.unlock(); return }
+            if asking > 0 { deadlines[id] = Date().addingTimeInterval(Self.patience) }
+            if let moved = deadlines[id], moved > Date() {
                 lock.unlock()
-                late?.resume(throwing: ComputerUse.Failure(message: "The computer-use driver didn't answer in two minutes."))
+                watch(id)
+                return
             }
+            let late = waiting.removeValue(forKey: id)
+            deadlines[id] = nil
+            generation += 1
+            lock.unlock()
+            late?.resume(throwing: ComputerUse.Failure(message: "The computer-use driver didn't answer in two minutes."))
         }
     }
 
@@ -780,17 +808,35 @@ final class MCPClient: @unchecked Sendable {
         let elicitation = Elicitation(message: params["message"] as? String ?? "", tool: meta["tool_name"] as? String ?? "",
                                       parameters: meta["tool_params"] as? [String: Any] ?? [:], display: display, risk: meta["riskLevel"] as? String)
         let handler = elicitationHandler
+        lock.lock()
+        let asked = generation
+        asking += 1
+        lock.unlock()
         Task.detached { [weak self] in
-            let accepted = await handler?(elicitation) ?? false
+            let answer = await handler?(elicitation) ?? false
+            guard let self else { return }
+            let accepted = answered(answer, askedIn: asked)
             let result: [String: Any] = accepted ? ["action": "accept", "content": [:] as [String: Any]] : ["action": "decline"]
-            self?.send(["jsonrpc": "2.0", "id": id, "result": result])
+            send(["jsonrpc": "2.0", "id": id, "result": result])
         }
+    }
+
+    /// Books the person's answer: the call this was asked for may have given up meanwhile, and then whatever
+    /// they said, the step doesn't run. The requests still waiting get their full time again.
+    private func answered(_ accepted: Bool, askedIn generation: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        asking -= 1
+        for id in waiting.keys { deadlines[id] = Date().addingTimeInterval(Self.patience) }
+        return accepted && generation == self.generation
     }
 
     private func failAll() {
         lock.lock()
         let pending = waiting
         waiting.removeAll()
+        deadlines.removeAll()
+        generation += 1
         lock.unlock()
         for continuation in pending.values {
             continuation.resume(throwing: ComputerUse.Failure(message: "The helper stopped unexpectedly."))
