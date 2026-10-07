@@ -760,7 +760,10 @@ final class MCPClient: @unchecked Sendable {
             deadlines[id] = nil
             generation += 1
             lock.unlock()
-            late?.resume(throwing: ComputerUse.Failure(message: "The computer-use driver didn't answer in two minutes."))
+            late?.resume(throwing: ComputerUse.Failure(message: "The computer-use driver didn't answer in two minutes, so it was stopped."))
+            // The call may still be running in the server, and could ask about a step later, while a newer
+            // call of ours is waiting: there's no telling the two apart, so the server goes with the call.
+            close()
         }
     }
 
