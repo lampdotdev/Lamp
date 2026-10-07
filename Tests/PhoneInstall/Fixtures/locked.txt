@@ -1,0 +1,2 @@
+ERROR: The developer disk image could not be mounted on this device. (com.apple.dt.CoreDeviceError error 12040 (0x2F08))
+               Error mounting image: 0xe80000e2 (kAMDMobileImageMounterDeviceLocked: The device is locked.) (com.apple.mobiledevice error -402652958 (0xE80000E2))

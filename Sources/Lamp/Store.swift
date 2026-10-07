@@ -64,6 +64,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var before: String? = nil          // for a request: the version the app was at when it was sent
     var replaced: String? = nil        // for a request sent again in other words: the request it took the place of
     var tookBack: [String]? = nil      // …and every request that left the chat for it, oldest first
+    var retryPhone: String? = nil     // a phone install failure: retry this destination without the agent
 
     /// Lamp knows where the app was before this request, so it can be changed and sent again from there.
     /// Not so for some requests from before that was noted.
@@ -180,6 +181,8 @@ final class Store: ObservableObject {
         var agent: Process?                 // the engine, while it runs
         var build: Process?                 // the app's build.sh, while it runs
         var stopped = false                 // the user pressed Stop (or deleted the app, or quit Lamp)
+        /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
+        var phoneReady: Bool?
         var allowAll = false                // "Allow all for this turn"
         var approving = false               // between the queue check and the approval card
         var look = Look()                   // what the agent's look_at_app has done
@@ -372,8 +375,8 @@ final class Store: ObservableObject {
         }
     }
 
-    func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil) {
-        logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments))
+    func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil) {
+        logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
         saveChat(project)
     }
@@ -570,6 +573,7 @@ final class Store: ObservableObject {
     /// looking at the simulator either way, since the phone's screen can't be photographed from here.
     func setDevice(_ project: LampProject, _ udid: String?) {
         guard project.platform == .iphone, project.device != udid, begin(project) != nil else { return }
+        clearPhoneRetry(project)
         var changed = project
         changed.device = udid
         try? JSONEncoder().encode(ProjectMeta(name: changed.name, exe: changed.exe, untitled: changed.untitled ? true : nil,
@@ -1075,7 +1079,7 @@ final class Store: ObservableObject {
                 // A new app's card stays, showing the result; a later turn's activity line goes away. So does a
                 // new app's card when the agent only asked questions: nothing was built, and the answers bring it back.
                 if newApp && result.end != .replied {
-                    progress[project.id]?.finish(worked: worked)
+                    progress[project.id]?.finish(worked: worked && turns[project.id]?.phoneReady != false)
                 } else {
                     progress[project.id] = nil
                 }
@@ -2368,60 +2372,88 @@ final class Store: ObservableObject {
         return nil
     }
 
+    /// Retry the phone operation alone: an account or device problem is never sent to the coding agent.
+    func retryPhone(_ project: LampProject, udid: String) async {
+        guard let current = projects.first(where: { $0.id == project.id }), current.device == udid,
+              Experiments.devices, let owner = begin(current) else { return }
+        defer { finish(current) }
+        _ = await installOnDevice(current, owner: owner, udid: udid)
+    }
+
+    private func clearPhoneRetry(_ project: LampProject) {
+        guard var lines = logs[project.id], lines.contains(where: { $0.retryPhone != nil }) else { return }
+        for index in lines.indices { lines[index].retryPhone = nil }
+        logs[project.id] = lines
+        saveChat(project)
+    }
+
     /// Builds the app for the person's own phone with Xcode and puts it there (Devices). Signing is Xcode's
     /// automatic kind for the team chosen in Settings, so the first time can take a while while Xcode
     /// registers the phone and makes a certificate. What the app prints comes back to its log, as on the
     /// simulator. Returns a plain message when it couldn't be done, which the chat shows.
     private func installOnDevice(_ project: LampProject, owner: Turn, udid: String) async -> String? {
+        func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
+        func failed(_ message: String, output: String = "") {
+            guard stillOwns() else { return }
+            if !output.isEmpty { log(project, .detail, output) }
+            log(project, .error, message, retryPhone: udid)
+        }
+        owner.phoneReady = false
+        if progress[project.id]?.finished != nil { progress[project.id]?.failed = true }
+        clearPhoneRetry(project)
         let team = Devices.team
-        if devices.first(where: { $0.udid == udid }) == nil { devices = await Devices.list() }
+        // Recheck after the person unlocks, trusts or restarts the phone; the menu's snapshot may be stale.
+        devices = await Devices.list()
+        guard stillOwns() else { return nil }
         let device = devices.first(where: { $0.udid == udid })
-        // Nothing here is a crash for the agent to fix: a problem is told to the person and that's that.
         if let problem = Devices.problem(device, team: team) {
-            log(project, .error, problem)
+            failed(problem)
             return nil
         }
         let name = device?.name ?? "your phone"
-        func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
         do {
             try Template.writeDeviceProject(for: project, team: team)
         } catch {
-            log(project, .error, "Couldn't prepare the app for \(name): \(error.localizedDescription)")
+            failed("Couldn't prepare the app for \(name). Retry; if it fails again, ask Lamp to fix the phone build.", output: error.localizedDescription)
             return nil
         }
         log(project, .status, "Building for \(name)…")
         var output: [String] = []
         let app: URL
         do {
-            // The turn's build while it runs, like the simulator's: Stop ends it, and quitting Lamp asks first.
             app = try await Devices.build(project, team: team, udid: udid, started: { owner.build = $0 }) { output.append($0) }
             owner.build = nil
         } catch {
             owner.build = nil
-            // Xcode's own error lines when there are any; the end of its output when not.
-            let errors = output.filter { $0.contains("error: ") }.map { $0.replacingOccurrences(of: project.dir.path + "/", with: "") }
-            let tail = errors.isEmpty ? Devices.tail(output.joined(separator: "\n")) : errors.joined(separator: "\n")
-            let signing = tail.contains("signing") || tail.contains("provisioning") || tail.contains("No Account") || tail.contains("DEVELOPMENT_TEAM")
-            let problem = signing
-                ? "Xcode couldn't sign the app for \(name). Open Xcode → Settings → Accounts and sign in with the Apple account for team \(team), then try again.\n\n\(tail)"
-                : "The app built for the simulator but not for \(name):\n\n\(tail)"
-            log(project, .error, problem)
-            return nil   // not a crash for the agent to fix: the simulator build is what it works on
+            let failure = PhoneFailure(stage: .build, output: output.joined(separator: "\n"))
+            failed(failure.message, output: failure.output.isEmpty ? error.localizedDescription : failure.output)
+            return nil
         }
-        guard stillOwns() else { return "The app was stopped before it opened." }
+        guard stillOwns() else { return nil }
         log(project, .status, "Putting \(project.name) on \(name)…")
         do {
             try await Devices.install(app, on: udid)
-            guard stillOwns() else { return "The app was stopped before it opened." }
+            guard stillOwns() else { return nil }
             deviceApps[project.id]?.terminate()
+            deviceApps[project.id] = nil
             Runtime.startLog(project)
-            let attached = try Devices.launch(project.deviceBundleID(team: team), on: udid, log: Runtime.logURL(project))
+            log(project, .status, "Opening \(project.name) on \(name)…")
+            let attached = try await Devices.launch(project.deviceBundleID(team: team), on: udid, log: Runtime.logURL(project),
+                                                    started: { owner.build = $0 }, cancelled: { !stillOwns() })
+            owner.build = nil
+            guard stillOwns() else { Subprocess.terminateTree(attached); return nil }
             deviceApps[project.id] = attached
-            // Open while attached: when the app quits on the phone, devicectl ends, and the list follows.
+            owner.phoneReady = true
+            if progress[project.id]?.finished != nil { progress[project.id]?.failed = false }
             attached.terminationHandler = { _ in Task { @MainActor in Store.shared.refreshOpenApps() } }
             log(project, .status, "\(project.name) is ready on \(name)")
         } catch {
-            log(project, .error, error.localizedDescription)
+            owner.build = nil
+            if let failure = error as? PhoneFailure { failed(failure.message, output: failure.output) }
+            else if !(error is CancellationError) {
+                let failure = PhoneFailure(stage: .launch, output: error.localizedDescription)
+                failed(failure.message, output: failure.output)
+            }
         }
         refreshOpenApps()
         return nil

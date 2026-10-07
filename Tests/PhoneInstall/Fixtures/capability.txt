@@ -1,0 +1,2 @@
+error: Cannot create a iOS App Development provisioning profile for "dev.example.test". Personal development teams, including "Test Person", do not support the Push Notifications capability. (in target 'test' from project 'test')
+error: No profiles for 'dev.example.test' were found: Xcode couldn't find any iOS App Development provisioning profiles matching 'dev.example.test'. (in target 'test' from project 'test')

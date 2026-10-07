@@ -1,0 +1,98 @@
+[
+  {
+    "file": "wrong-team.txt",
+    "stage": "build",
+    "cause": "team",
+    "provenance": "reported-output",
+    "source": "https://github.com/mobile-dev-inc/Maestro/issues/2560",
+    "note": "Project path and team redacted; diagnostic wording unchanged."
+  },
+  {
+    "file": "capability.txt",
+    "stage": "build",
+    "cause": "capability",
+    "provenance": "reported-output",
+    "source": "https://github.com/expo/expo/issues/18951",
+    "note": "Person and bundle ID redacted; diagnostic wording unchanged."
+  },
+  {
+    "file": "launch-security.txt",
+    "stage": "launch",
+    "cause": "launchSecurity",
+    "provenance": "reported-output",
+    "source": "https://github.com/flutter/flutter/issues/185312",
+    "note": "Flutter timing prefixes removed; devicectl refusal retained."
+  },
+  {
+    "file": "locked.txt",
+    "stage": "install",
+    "cause": "locked",
+    "provenance": "reported-output",
+    "source": "https://github.com/dotnet/macios/issues/21542",
+    "note": ""
+  },
+  {
+    "file": "unreachable.txt",
+    "stage": "launch",
+    "cause": "unreachable",
+    "provenance": "reported-output",
+    "source": "https://github.com/sweetpad-dev/sweetpad/issues/41",
+    "note": ""
+  },
+  {
+    "file": "launch-confirmed.txt",
+    "stage": "launch",
+    "cause": "",
+    "provenance": "reported-output",
+    "source": "https://github.com/dotnet/maui/issues/19553",
+    "note": "Reporter did not use --console. Replay deliberately keeps the process alive to test console waiting; that behavior is simulated."
+  },
+  {
+    "file": "no-account.txt",
+    "stage": "build",
+    "cause": "account",
+    "provenance": "reported-output",
+    "source": "https://stackoverflow.com/questions/79518930/what-is-the-correct-way-to-create-an-ios-ipa-on-remote-machine",
+    "note": "Only diagnostic excerpts; path and target removed and bundle ID replaced."
+  },
+  {
+    "file": "certificate.txt",
+    "stage": "build",
+    "cause": "certificate",
+    "provenance": "reported-output",
+    "source": "https://stackoverflow.com/questions/70666681/teamcity-ci-cd-ios-xcodebuild-signing-no-signing-certificate-ios-deve",
+    "note": ""
+  },
+  {
+    "file": "app-limit.txt",
+    "stage": "install",
+    "cause": "appLimit",
+    "provenance": "reported-output",
+    "source": "https://developer.apple.com/forums/thread/49304",
+    "note": "Xcode alert reported by the person, not a captured devicectl transcript."
+  },
+  {
+    "file": "id-limit.txt",
+    "stage": "build",
+    "cause": "idLimit",
+    "provenance": "reported-output",
+    "source": "https://developer.apple.com/forums/thread/701805",
+    "note": "Xcode message reported by the person, not a captured xcodebuild transcript."
+  },
+  {
+    "file": "expired-profile.txt",
+    "stage": "install",
+    "cause": "expiredProfile",
+    "provenance": "documentation-derived",
+    "source": "https://developer.apple.com/help/account/basics/about-your-developer-account",
+    "note": "Synthetic wording. Apple documents seven-day expiry; no captured expiry diagnostic available."
+  },
+  {
+    "file": "untrusted-developer.txt",
+    "stage": "launch",
+    "cause": "developerTrust",
+    "provenance": "documentation-derived",
+    "source": "https://support.apple.com/en-us/118254",
+    "note": "Synthetic input based on Apple trust instructions; actual launch output is ambiguous, covered by launch-security."
+  }
+]

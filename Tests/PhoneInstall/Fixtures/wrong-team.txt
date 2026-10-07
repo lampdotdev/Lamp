@@ -1,0 +1,2 @@
+<project>: error: No Account for Team "TESTTEAM01". Add a new account in Accounts settings or verify that your accounts have valid credentials. (in target 'maestro-driver-ios' from project 'maestro-driver-ios')
+<project>: error: No profiles for 'dev.mobile.maestro-driver-ios' were found: Xcode couldn't find any iOS App Development provisioning profiles matching 'dev.mobile.maestro-driver-ios'. (in target 'maestro-driver-ios' from project 'maestro-driver-ios')

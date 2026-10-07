@@ -127,24 +127,34 @@ enum Devices {
         let result = await Subprocess.run("/usr/bin/xcrun", ["devicectl", "device", "install", "app", "--device", udid, app.path],
                                           mergeErrors: true, timeout: 300)
         guard result.ok else {
-            throw Failure(message: "The app couldn't be put on the phone. Plug it in or put it on the same Wi‑Fi as this Mac, and unlock it.\n\n\(tail(result.output))")
+            throw PhoneFailure(stage: .install, output: result.output + "\n" + result.errors)
         }
     }
 
     /// Launches the app and stays attached: what it prints goes to the log until it quits, as on the
     /// simulator. The process is devicectl's, kept so a later launch or Stop can end it.
-    static func launch(_ bundleID: String, on udid: String, log: URL) throws -> Process {
+    @MainActor
+    static func launch(_ bundleID: String, on udid: String, log: URL, started: (Process) -> Void,
+                       cancelled: () -> Bool) async throws -> Process {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
         process.arguments = ["devicectl", "device", "process", "launch", "--device", udid, "--terminate-existing", "--console", bundleID]
         if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil) }
         let handle = try FileHandle(forWritingTo: log)
-        handle.seekToEndOfFile()
+        let offset = handle.seekToEndOfFile()
         process.standardOutput = handle
         process.standardError = handle
         process.standardInput = FileHandle.nullDevice
-        try process.run()
-        return process
+        defer { try? handle.close() }
+        do {
+            try process.run()
+            started(process)
+            try await PhoneLaunch.wait(process, bundleID: bundleID, output: log, offset: offset, cancelled: cancelled)
+            return process
+        } catch {
+            Subprocess.terminateTree(process)
+            throw error
+        }
     }
 
     /// The last lines of a tool's output, for a message: the reason is at the end, after the noise.
@@ -154,9 +164,9 @@ enum Devices {
 
     /// What's wrong before anything is tried, in plain words, or nil when the phone is ready.
     static func problem(_ device: Device?, team: String) -> String? {
-        guard let device else { return "That phone isn't paired with this Mac any more. Plug it in and choose it again under Try On." }
+        guard let device else { return "Lamp can't see that phone. Plug it in with a data cable and unlock it, then Retry. If it still doesn't appear, choose it again under Try On." }
         guard device.paired else { return "\(device.name) hasn't trusted this Mac yet. Choose Pair under Try On, and tap Trust on the phone." }
-        guard device.developerMode else { return "Turn on Developer Mode on \(device.name) (Settings → Privacy & Security → Developer Mode), then try again." }
+        guard device.developerMode else { return "Turn on Developer Mode on \(device.name) in Settings → Privacy & Security → Developer Mode. Restart, unlock it, and confirm Turn On, then Retry." }
         guard team.count == 10 else { return "Choose your Apple team in Lamp's Settings → Building → Experimental first." }
         let signedIn = xcodeTeams()
         guard signedIn.isEmpty || signedIn.contains(where: { $0.id == team }) else {

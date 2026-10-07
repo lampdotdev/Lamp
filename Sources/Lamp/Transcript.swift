@@ -185,6 +185,7 @@ struct Transcript: View {
     /// Takes a request back into the message box, to change it and send it again. Nil while the app is being
     /// worked on: that has to finish first.
     var sendAgain: ((LogLine) -> Void)?
+    var retryPhone: ((String) -> Void)?
 
     var body: some View {
         let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(lines) : lines)
@@ -195,7 +196,7 @@ struct Transcript: View {
             Group {
                 switch item {
                 case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack, sendAgain: sendAgain,
-                                             isLatestRequest: line.id == latestRequest).equatable()
+                                             retryPhone: retryPhone, isLatestRequest: line.id == latestRequest).equatable()
                 case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && !progressShown).equatable()
                 case .statuses(let lines): StatusGroup(lines: lines, running: isLast && busy && !progressShown)
                 }
@@ -236,6 +237,7 @@ struct LogRow: View, Equatable {
     var busy = false
     var goBack: ((LogLine, Bool) -> Void)?
     var sendAgain: ((LogLine) -> Void)?
+    var retryPhone: ((String) -> Void)?
     /// The latest request shows its Send Again button all the time, so there's one to find; earlier ones
     /// show it when pointed at.
     var isLatestRequest = false
@@ -243,7 +245,7 @@ struct LogRow: View, Equatable {
 
     static func == (a: LogRow, b: LogRow) -> Bool {
         a.line == b.line && a.busy == b.busy && a.dir == b.dir
-            && a.isLatestRequest == b.isLatestRequest && (a.sendAgain == nil) == (b.sendAgain == nil)
+            && (a.retryPhone == nil) == (b.retryPhone == nil) && a.isLatestRequest == b.isLatestRequest && (a.sendAgain == nil) == (b.sendAgain == nil)
     }
 
     var body: some View {
@@ -316,10 +318,16 @@ struct LogRow: View, Equatable {
                 Rectangle().fill(.separator).frame(height: 1)
             }
         case .error:
-            Label {
-                Text(line.text).textSelection(.enabled).lineSpacing(2)
-            } icon: {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 10) {
+                Label {
+                    Text(line.text).textSelection(.enabled).lineSpacing(2)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                if let udid = line.retryPhone, let retryPhone {
+                    Button("Retry") { retryPhone(udid) }
+                        .disabled(busy)
+                }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
