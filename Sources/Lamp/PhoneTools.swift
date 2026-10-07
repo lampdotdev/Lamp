@@ -21,17 +21,10 @@ enum PhoneTools {
         return report
     }
 
-    enum Step: String, CaseIterable {
-        case xcode = "Xcode installed"
-        case tools = "Lamp using Xcode"
-        case firstLaunch = "Xcode setup finished"
-        case platform = "iOS building tools installed"
-        case runtime = "iOS simulator installed"
-        case simulator = "Simulator ready"
-        case phone = "Phone software supported"
-    }
+    enum Step: CaseIterable { case xcode, tools, firstLaunch, platform, runtime, simulator, phone }
 
     enum Action { case installXcode, useXcode, openXcode, components, simulator, updatePhone, retry }
+    /// The message names the setup window's buttons, so each one says them exactly as `button` does.
     struct Issue {
         let step: Step
         let title: String
@@ -39,8 +32,8 @@ enum PhoneTools {
         let action: Action
         var button: String {
             switch action {
-            case .installXcode: return "Get Xcode"
-            case .useXcode: return "Use Xcode in Lamp"
+            case .installXcode: return "Open App Store"
+            case .useXcode: return "Use Xcode"
             case .openXcode: return "Open Xcode"
             case .components: return "Open Xcode"
             case .simulator: return "Open Simulator"
@@ -137,8 +130,8 @@ enum PhoneTools {
     }
 
     private static func updateIssue(name: String, version: String) -> Issue {
-        Issue(step: .phone, title: "Update your phone",
-              message: "\(name) has iOS \(version). Lamp's apps need iOS \(minimumIOS) or later. On the phone, open Settings → General → Software Update. If it can't update to iOS \(minimumIOS), use a newer iPhone or iPad, or try your app in the simulator.", action: .updatePhone)
+        Issue(step: .phone, title: "Update your iPhone or iPad",
+              message: "\(name) is on iOS \(version), and the apps Lamp makes need iOS \(minimumIOS) or later. On it, open Settings → General → Software Update. If iOS \(minimumIOS) isn't offered there, it's too old for these apps: use a newer iPhone or iPad, or try your app in the simulator.", action: .updatePhone)
     }
 
     /// Stop at the first failed check: later commands often fail only because an earlier step is missing.
@@ -150,17 +143,17 @@ enum PhoneTools {
             return report
         }
         guard let developer = probe.developer() else {
-            return stop(.xcode, "Install Xcode", "iPhone and iPad apps need Apple's full Xcode app. Install it from the Mac App Store, then come back to Lamp.", .installXcode)
+            return stop(.xcode, "Install Xcode", "Lamp makes iPhone and iPad apps with Xcode, and it isn't on this Mac yet. Click Open App Store and download it from there. It's free, and it's big, so it can take a while. Come back to Lamp when it has finished.", .installXcode)
         }
         report.developer = developer
         // The phone project Lamp writes uses Xcode 16's project format; older Xcode can still try apps
         // in the simulator, but must be updated before building for a physical phone.
         if phone != nil, let version = probe.xcodeVersion(developer), major(version) > 0, major(version) < 16 {
-            return stop(.xcode, "Update Xcode", "Putting Lamp's apps on a phone needs Xcode 16 or later. Update Xcode in the Mac App Store, then come back to Lamp.", .installXcode)
+            return stop(.xcode, "Update Xcode", "Putting an app on your own iPhone or iPad needs a newer Xcode than the one on this Mac. Click Open App Store and update Xcode there. Come back to Lamp when it has finished.", .installXcode)
         }
         report.passed.append(.xcode)
         guard probe.active() == developer else {
-            return stop(.tools, "Let Lamp use Xcode", "This Mac's selected tools don't include everything needed for iPhone apps. Lamp can use Xcode for its own work. Your Mac's tools setting stays as it is.", .useXcode)
+            return stop(.tools, "Let Lamp use Xcode", "Xcode is on this Mac, and Lamp needs your go-ahead to make iPhone and iPad apps with it. Click Use Xcode. Nothing else on your Mac changes.", .useXcode)
         }
         report.passed.append(.tools)
         let env = ["DEVELOPER_DIR": developer]
@@ -168,17 +161,17 @@ enum PhoneTools {
         let first = probe.run(xcodebuild, ["-checkFirstLaunchStatus"], env)
         guard first.ok else {
             if first.timedOut || first.status == -1 {
-                return stop(.firstLaunch, "Xcode isn't responding", "Open Xcode and let it finish starting, then come back and check again.", .openXcode)
+                return stop(.firstLaunch, "Xcode isn't responding", "Lamp asked Xcode whether it's ready and got no answer. Click Open Xcode and wait for its window to appear, then come back to Lamp.", .openXcode)
             }
             let license = (first.output + first.errors).lowercased().contains("license")
             return stop(.firstLaunch, license ? "Accept Xcode's agreements" : "Finish Xcode setup",
-                        license ? "Open Xcode and read and accept Apple's agreements, then let it install anything it asks for. Come back to Lamp when it's finished."
-                        : "Open Xcode and finish its welcome steps, including any agreements and additional tools it asks to install. Come back to Lamp when it's finished.", .openXcode)
+                        license ? "Xcode won't make anything until you agree to Apple's terms. Click Open Xcode and agree when it asks. If it then offers to install more, let it. Come back to Lamp when it has finished."
+                        : "Xcode has a few things to set up the first time it opens. Click Open Xcode and say yes to what it asks to install. Come back to Lamp when it has finished.", .openXcode)
         }
         report.passed.append(.firstLaunch)
         for sdk in ["iphoneos", "iphonesimulator"] {
             guard probe.run("/usr/bin/xcrun", ["--sdk", sdk, "--show-sdk-path"], env).ok else {
-                return stop(.platform, "Add iOS to Xcode", "In Xcode, open Settings → Components and install iOS. In older Xcode versions, this is called Platforms. Come back to Lamp when the download finishes.", .components)
+                return stop(.platform, "Add iOS to Xcode", "Xcode needs one more download before it can make iPhone and iPad apps. Click Open Xcode, choose Xcode → Settings from the menu bar, then click Components (Platforms in older versions of Xcode) and click Get beside iOS. Come back to Lamp when the download finishes.", .components)
             }
         }
         report.passed.append(.platform)
@@ -186,18 +179,18 @@ enum PhoneTools {
         guard runtimes.ok, let data = runtimes.output.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let list = json["runtimes"] as? [[String: Any]] else {
-            return stop(.runtime, "The simulator isn't responding", "Open Xcode and let it finish starting. If Simulator is open, quit it. Then come back and check again.", .openXcode)
+            return stop(.runtime, "The simulator isn't responding", "The simulator is the iPhone or iPad that appears on your Mac's screen, and Lamp got no answer from it. Click Open Xcode and wait for its window to appear. If the Simulator app is open, quit it. Then come back to Lamp.", .openXcode)
         }
         guard list.contains(where: { runtime in
             (runtime["identifier"] as? String ?? "").contains("SimRuntime.iOS-")
                 && major(runtime["version"] as? String) >= minimumIOS && runtime["isAvailable"] as? Bool == true
         }) else {
-            return stop(.runtime, "Download an iOS simulator", "In Xcode, open Settings → Components and download an iOS \(minimumIOS) or later simulator. In older Xcode versions, this is called Platforms. Lamp uses it to try your app before it goes on your phone.", .components)
+            return stop(.runtime, "Download iOS for the simulator", "Lamp tries your app in a simulator, an iPhone or iPad that appears on your Mac's screen, and that needs iOS \(minimumIOS) or later. Click Open Xcode, choose Xcode → Settings from the menu bar, then click Components (Platforms in older versions of Xcode) and click Get beside the newest iOS. Come back to Lamp when the download finishes.", .components)
         }
         report.passed.append(.runtime)
         let devices = probe.run("/usr/bin/xcrun", ["simctl", "list", "devices", "available", "-j"], env)
         guard devices.ok, Simulator.device(family, listing: devices.output) != nil else {
-            return stop(.simulator, "Add an \(family.name) simulator", "Open Simulator, then choose File → New Simulator. Choose an \(family.name) and an iOS \(minimumIOS) or later version, then come back to Lamp.", .simulator)
+            return stop(.simulator, "Add an \(family.name) simulator", "There's no \(family.name) for Lamp to try your app on yet. Click Open Simulator, then choose File → New Simulator from the menu bar. Pick any \(family.name) with iOS \(minimumIOS) or later, click Create, and come back to Lamp.", .simulator)
         }
         report.passed.append(.simulator)
         if let phone {
@@ -215,7 +208,7 @@ enum PhoneTools {
                     report.issue = updateIssue(name: old.name, version: old.version)
                     return report
                 }
-                return stop(.phone, "Check the phone's software", "Plug the chosen phone into this Mac and unlock it, then check again so Lamp can read its software version.", .retry)
+                return stop(.phone, "Plug in your iPhone or iPad", "Lamp couldn't reach it to see which iOS it has. Connect it to this Mac with its cable, unlock it, then click Check Again.", .retry)
             }
             guard major(version) >= minimumIOS else {
                 let name = properties["name"] as? String ?? "This phone"

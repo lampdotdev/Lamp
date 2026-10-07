@@ -138,6 +138,9 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
 
     func refreshIfVisible() { if presented { refresh() } }
 
+    /// Whether something is waiting on this setup (a new app, a send, a run), so closing the window cancels it.
+    var hasRequest: Bool { active != nil }
+
     func finish() {
         guard !checking, report?.ready == true else { return }
         guard let active else { closeWindow(); return }
@@ -150,7 +153,7 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         guard let request = active else { return }
         guard request.isReady() else {
             active?.waiting = true
-            actionProblem = "This app is still changing. Wait for it to finish, then press Continue."
+            actionProblem = "Lamp is still working on this app. When it has finished, click Continue."
             present()
             return
         }
@@ -198,11 +201,13 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         presented = true
         guard presentsWindow else { return }
         if window == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 640),
-                                  styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            // The window is as tall as what it says: the next step's instructions run from two lines to six.
+            let content = NSHostingController(rootView: PhoneSetupView(model: self))
+            content.sizingOptions = [.preferredContentSize]
+            let window = NSWindow(contentViewController: content)
+            window.styleMask = [.titled, .closable]
             window.delegate = self
             window.title = "iPhone & iPad Setup"
-            window.contentView = NSHostingView(rootView: PhoneSetupView(model: self))
             window.isReleasedWhenClosed = false
             window.center()
             self.window = window
@@ -242,7 +247,7 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         guard panel.runModal() == .OK, let app = panel.url else { return }
         let developer = app.appendingPathComponent("Contents/Developer").path
         guard PhoneTools.isXcode(developer) else {
-            actionProblem = "Choose Apple's full Xcode app."
+            actionProblem = "That isn't Xcode. Choose the app named Xcode."
             return
         }
         PhoneTools.use(developer)
@@ -250,57 +255,156 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     private func open(_ url: URL) {
-        if !NSWorkspace.shared.open(url) { actionProblem = "Couldn't open it. Please open it yourself, then come back and check again." }
+        if !NSWorkspace.shared.open(url) { actionProblem = "Lamp couldn't open that. Open it yourself, then come back and click Check Again." }
+    }
+}
+
+/// The checks as the few things a person would recognise, each with what it is. The detector's steps sit
+/// behind them: which agreement or download is missing is said in the step's own instructions.
+private enum PhoneSetupStage: CaseIterable {
+    case xcode, software, simulator, phone
+
+    var steps: [PhoneTools.Step] {
+        switch self {
+        case .xcode: return [.xcode, .tools, .firstLaunch]
+        case .software: return [.platform, .runtime]
+        case .simulator: return [.simulator]
+        case .phone: return [.phone]
+        }
+    }
+    var name: String {
+        switch self {
+        case .xcode: return "Xcode"
+        case .software: return "iOS for Xcode"
+        case .simulator: return "Simulator"
+        case .phone: return "Your iPhone or iPad"
+        }
+    }
+    var about: String {
+        switch self {
+        case .xcode: return "Apple's free app for making apps"
+        case .software: return "What Xcode needs to make iPhone and iPad apps"
+        case .simulator: return "An iPhone or iPad on your Mac's screen, where Lamp tries your app"
+        case .phone: return "On iOS \(PhoneTools.minimumIOS) or later"   // only shown once it has passed
+        }
     }
 }
 
 struct PhoneSetupView: View {
     @ObservedObject var model: PhoneSetup
 
+    /// The phone is only checked when one is chosen, so its row only shows then.
+    private var stages: [PhoneSetupStage] {
+        PhoneSetupStage.allCases.filter { $0 != .phone || model.report?.passed.contains(.phone) == true || model.report?.issue?.step == .phone }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Label("Get ready to build for iPhone & iPad", systemImage: "iphone")
-                .font(.title2).fontWeight(.semibold)
-            Text("Lamp checks each step before you start building.")
-                .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(PhoneTools.Step.allCases.filter { $0 != .phone || model.report?.passed.contains(.phone) == true || model.report?.issue?.step == .phone }, id: \.self) { step in
-                    let passed = model.report?.passed.contains(step) == true
-                    let failed = model.report?.issue?.step == step
-                    Label(step.rawValue, systemImage: passed ? "checkmark.circle.fill" : failed ? "exclamationmark.circle.fill" : "circle")
-                        .foregroundStyle(passed ? Color.green : failed ? Color.orange : Color.secondary)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "ipad.and.iphone")
+                    .font(.system(size: 30, weight: .light)).foregroundStyle(.secondary)
+                    .frame(width: 44)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Get ready for iPhone and iPad").font(.title2.weight(.semibold))
+                    Text("Lamp needs a few things from Apple before it can make iPhone and iPad apps. Here's what's done and what's next.")
+                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if model.checking {
-                HStack { ProgressView().controlSize(.small); Text("Checking your setup…") }
-            } else if let issue = model.report?.issue {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(issue.title).font(.headline)
-                    Text(issue.message).fixedSize(horizontal: false, vertical: true)
-                    Button(issue.button) { model.act() }.buttonStyle(.borderedProminent)
-                    if issue.step == .xcode || issue.step == .tools {
-                        Button("Choose Xcode…") { model.chooseXcode() }
-                    }
+            .padding(.bottom, 20)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(stages.enumerated()), id: \.element) { index, stage in
+                    if index > 0 { Divider().padding(.leading, 44) }
+                    row(stage)
                 }
-            } else if model.report != nil {
-                Text(model.report?.passed.contains(.phone) == true
-                     ? "The building tools and your phone's software are ready."
-                     : "The building tools are ready. To use your own phone, choose it under Try On; Lamp will check its software version too.")
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Continue") { model.finish() }.buttonStyle(.borderedProminent)
             }
-            if let problem = model.actionProblem { Text(problem).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
-            Spacer(minLength: 0)
-            HStack {
-                Button("Close") { model.finishWithoutContinuing() }
-                Spacer()
-                Button("Check Again") { model.refresh() }.disabled(model.checking)
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+            if model.report?.ready == true {
+                Text(summary).fixedSize(horizontal: false, vertical: true).padding(.top, 16)
             }
+            // A problem with the next step is said beside it; one with carrying on is said here.
+            if model.report?.issue == nil, let problem = model.actionProblem { self.problem(problem).padding(.top, 12) }
+            footer.padding(.top, 20)
         }
-        .padding(24)
-        .frame(width: 540, height: 640)
+        .padding(20)
+        .frame(width: 500)
+        .fixedSize(horizontal: false, vertical: true)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.refreshIfVisible()
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ stage: PhoneSetupStage) -> some View {
+        let passed = stage.steps.allSatisfy { model.report?.passed.contains($0) == true }
+        let issue = model.report?.issue.flatMap { stage.steps.contains($0.step) ? $0 : nil }
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: passed ? "checkmark.circle.fill" : issue != nil ? "arrow.forward.circle.fill" : "circle")
+                .font(.system(size: 16))
+                .foregroundStyle(passed ? AnyShapeStyle(Color.green) : issue != nil ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.tertiary))
+                .frame(width: 20)
+                .accessibilityLabel(passed ? "Done" : issue != nil ? "Next" : "Not yet")
+            if let issue {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(issue.title).font(.headline)
+                    Text(issue.message).fixedSize(horizontal: false, vertical: true)
+                    if issue.step == .xcode || issue.step == .tools {
+                        HStack(spacing: 4) {
+                            Text(issue.step == .tools ? "Want Lamp to use a different copy?" : "Already have it somewhere Lamp didn't look?")
+                                .foregroundStyle(.secondary)
+                            Button("Choose Xcode…") { model.chooseXcode() }.buttonStyle(.link).disabled(model.checking)
+                        }
+                        .font(.callout).padding(.top, 2)
+                    }
+                    if let problem = model.actionProblem { self.problem(problem).padding(.top, 2) }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(stage.name).fontWeight(.medium)
+                    Text(stage.about).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                .opacity(passed ? 1 : 0.6)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func problem(_ text: String) -> some View {
+        Label(text, systemImage: "exclamationmark.triangle")
+            .font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var summary: String {
+        if model.report?.passed.contains(.phone) == true { return "Everything's ready, your iPhone or iPad included." }
+        // An app that became a Mac app while this was open: nothing was checked, and nothing needs to be.
+        if model.report?.passed.isEmpty == true { return "This is a Mac app now, so there's nothing to set up." }
+        return "Everything's ready. To put an app on your own iPhone or iPad, choose it under Try On, beside the Play button, and Lamp will check that too."
+    }
+
+    /// One button row, the way a Mac dialog has it: the next thing to do on the right, where Return presses it.
+    private var footer: some View {
+        HStack(spacing: 10) {
+            let issue = model.report?.issue
+            let ready = model.report?.ready == true
+            if model.checking {
+                ProgressView().controlSize(.small)
+                Text("Checking…").foregroundStyle(.secondary)
+            } else if issue != nil, issue?.action != .retry {
+                Button("Check Again") { model.refresh() }
+            }
+            Spacer()
+            // With nothing waiting on it and nothing left to do, there's only one way out of the window.
+            if !ready || model.hasRequest {
+                Button(model.hasRequest ? "Cancel" : "Close") { model.finishWithoutContinuing() }
+                    .keyboardShortcut(.cancelAction)
+            }
+            if let issue {
+                Button(issue.button) { model.act() }.keyboardShortcut(.defaultAction).disabled(model.checking)
+            } else if ready {
+                Button(model.hasRequest ? "Continue" : "Done") { model.finish() }
+                    .keyboardShortcut(.defaultAction).disabled(model.checking)
+            }
         }
     }
 }
