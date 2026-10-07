@@ -146,6 +146,8 @@ Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.
 button goes to `https://updates.lamp.dev/download/latest`, so a new release needs nothing done here.
 
 - Run it locally with `cd site && npm install && npm run dev`.
-- The window picture under the headline is `site/src/assets/screenshot.png` (a 2× window capture with its
-  shadow, ⌘⇧4 then Space); replace that file when Lamp's look changes. Without it, the page shows the icon alone.
+- The pictures are real windows taken from Lamp Dev with made-up data (⌘⇧4 then Space, which keeps the
+  shadow): `site/src/assets/lamp.png` is Lamp under the headline, and `site/src/assets/apps/` holds the apps
+  the carousel cycles through, each centred on a canvas of the same size so the slides line up. Retake them
+  when Lamp's look changes.
 - Deploy with `cd site && vercel deploy --prod --scope roo-code`.

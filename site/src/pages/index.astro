@@ -1,34 +1,50 @@
 ---
 import { Image } from "astro:assets";
-import type { ImageMetadata } from "astro";
 import Base from "../layouts/Base.astro";
+import Carousel from "../components/Carousel.astro";
 import icon from "../assets/AppIcon.png";
 import anthropic from "../assets/logos/anthropic.png";
 import openai from "../assets/logos/openai.png";
 import openrouter from "../assets/logos/openrouter.png";
 import google from "../assets/logos/google.png";
 
-// The window screenshot is dropped in as src/assets/screenshot.png; until then the hero shows the icon alone.
-const shots = import.meta.glob<{ default: ImageMetadata }>("../assets/screenshot.png", { eager: true });
-const screenshot = Object.values(shots)[0]?.default;
+// Lamp's window just after building an app, and windows of apps it built, all taken from Lamp Dev with
+// made-up data (see RELEASING.md).
+import lampWindow from "../assets/lamp.png";
+import readingQueue from "../assets/apps/reading-queue.png";
+import neonBricks from "../assets/apps/neon-bricks.png";
+import habitStreaks from "../assets/apps/habit-streaks.png";
+import paletteStudio from "../assets/apps/palette-studio.png";
+
+const apps = [
+  {
+    image: readingQueue,
+    name: "Reading Queue",
+    request: "A reading queue. I drop in PDFs and web links, tell it what I'm working on, and it ranks them by what matters most, with a one-line summary and a reason for each.",
+    alt: "Reading Queue: articles ranked against what you're working on, with why each one matters",
+  },
+  {
+    image: neonBricks,
+    name: "Neon Bricks",
+    request: "A brick breaker arcade game with a glowing neon look: a paddle I move with the mouse or arrow keys, colourful bricks, a few levels, power-ups and a high score table.",
+    alt: "Neon Bricks: a glowing brick breaker game mid-play",
+  },
+  {
+    image: habitStreaks,
+    name: "Habit Streaks",
+    request: "A habit tracker: a handful of daily habits with streaks, a heat map of the last three months and a chart of each week.",
+    alt: "Habit Streaks: daily habits with streaks, a three-month heat map and a weekly chart",
+  },
+  {
+    image: paletteStudio,
+    name: "Palette Studio",
+    request: "A colour palette studio: describe a mood or drop in a photo and it makes a five-colour palette with names, hex codes and a contrast check for text.",
+    alt: "Palette Studio: a five-colour palette called Lisbon Afternoon with names, hex codes and contrast scores",
+  },
+];
 
 // The update server redirects this to the newest release's DMG.
 const download = "https://updates.lamp.dev/download/latest";
-
-const examples = [
-  {
-    name: "Downloads Tidy",
-    text: "A menu bar app that sorts your Downloads into receipts, installers and screenshots, suggests clear names, and moves nothing until you say so.",
-  },
-  {
-    name: "Screenshot Notes",
-    text: "Drop screenshots on it and it pulls out the text and the details that matter (who, what, when, how much) into a list you can search.",
-  },
-  {
-    name: "Reading Queue",
-    text: "Drop in PDFs and links, say what you're working on, and it ranks them by what matters, with a one-line summary and a reason for each.",
-  },
-];
 
 const points = [
   { title: "Real Mac apps", text: "Each one is an app of its own, in your Applications folder and in Spotlight. No browser tab, no subscription to someone else's tool." },
@@ -48,7 +64,7 @@ const providers = [
 const description = "Describe what you need, and Lamp builds a real Mac app that you can keep using, change whenever you like, and share.";
 ---
 
-<Base title="Lamp: the apps your work is missing" description={description} image={screenshot?.src ?? icon.src}>
+<Base title="Lamp: the apps your work is missing" description={description} image={lampWindow.src}>
   <main class="mx-auto max-w-5xl px-4 sm:px-6">
     <section class="flex flex-col items-center pt-20 pb-14 text-center sm:pt-28">
       <Image
@@ -80,34 +96,23 @@ const description = "Describe what you need, and Lamp builds a real Mac app that
       <p class="mt-3 text-sm text-muted">Free · Requires macOS 14 Sonoma or later</p>
     </section>
 
-    {
-      screenshot && (
-        <section class="pb-20">
-          <Image
-            src={screenshot}
-            alt="Lamp with a Reading Queue app it has just built: the request, the plan and a picture of the finished app"
-            widths={[640, 1024, 1600, 2048]}
-            sizes="(min-width: 1024px) 1024px, 100vw"
-            loading="eager"
-            class="mx-auto h-auto w-full"
-          />
-        </section>
-      )
-    }
+    <section class="pb-20">
+      <Image
+        src={lampWindow}
+        alt="Lamp having just built a Reading Queue app: the request, the plan and a picture of the finished app"
+        widths={[640, 1024, 1600, 2048]}
+        sizes="(min-width: 1024px) 1024px, 100vw"
+        loading="eager"
+        class="mx-auto h-auto w-full"
+      />
+    </section>
 
-    <section class="border-t border-rule py-20">
+    <section class="border-t border-rule pt-20">
       <h2 class="text-center font-display text-3xl font-semibold tracking-tight">Make a tool for the task that bugs you.</h2>
-      <p class="mx-auto mt-3 max-w-lg text-center text-lg text-muted">Then keep improving it until it works exactly your way. Some things people build with it:</p>
-      <div class="mt-12 grid gap-5 sm:grid-cols-3">
-        {
-          examples.map((example) => (
-            <div class="rounded-2xl bg-panel p-6">
-              <h3 class="font-display text-lg font-semibold">{example.name}</h3>
-              <p class="mt-2 leading-relaxed text-muted">{example.text}</p>
-            </div>
-          ))
-        }
-      </div>
+      <p class="mx-auto mt-3 max-w-lg text-center text-lg text-muted">
+        Or a game for when you're done. Each of these came from a single request.
+      </p>
+      <Carousel slides={apps} />
     </section>
 
     <section class="border-t border-rule py-20">
