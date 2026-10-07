@@ -17,7 +17,7 @@ struct LampApp: App {
             CheckForUpdatesCommand()
             LampHelpCommands()
             CommandGroup(replacing: .newItem) {
-                Button("New App") { store.create() }
+                Button(iosApps ? "New Mac App" : "New App") { store.create() }
                     .keyboardShortcut("n")
                 if iosApps {   // Settings → Building → Experimental
                     Button("New iPhone App") { store.create(platform: .iphone) }

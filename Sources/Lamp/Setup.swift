@@ -408,6 +408,7 @@ struct BuildingSettings: View {
                     }
                 }
             }
+            ExperimentalSettings()
         }
         .settingsPane()
         .onChange(of: notify) { Notifier.shared.setBadge(store.unread.count) }
@@ -464,7 +465,6 @@ struct AppsSettings: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             ComputerUseSettings()
-            ExperimentalSettings()
         }
         .settingsPane()
         .onAppear { revision += 1 }   // keys may have changed in the Providers tab

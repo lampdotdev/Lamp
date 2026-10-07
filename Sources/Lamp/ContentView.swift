@@ -165,9 +165,9 @@ struct AppSidebar: View {
             }
             Button { store.create() } label: {
                 Label {
-                    Text("New App")
+                    Text(iosApps ? "New Mac App" : "New App")   // beside the iPhone and iPad entries, say which
                 } icon: {
-                    Image(systemName: "plus").frame(width: 24, height: 24)
+                    Image(systemName: iosApps ? "macbook" : "plus").frame(width: 24, height: 24)
                 }
                 .contentShape(Rectangle())
             }
