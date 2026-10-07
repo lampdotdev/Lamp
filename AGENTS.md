@@ -64,6 +64,13 @@ assembled from `Agent.Rules`: one rule per block, a `mac…`/`iPhone…` pair wh
 block is described to both in one place. Before a launch, `Store.finishSimulatorBundle` does for the flat iOS
 bundle what `deploy` does for a Mac one: usage descriptions, the icon (cut from `.lamp/AppIcon-square.png`,
 which `Icons.write` makes from the same tile as the Mac icon) and the chat's attachments, then an ad hoc signature.
+Every iOS app carries every usage description (`Template.iosUsageDescriptions`, one list for the scaffold's
+build.sh, `finishSimulatorBundle` and the phone's Info.plist), so the agent only requests authorization.
+What needs more, the agent declares in `capabilities.json` at the app's root (`Template.Capabilities`:
+healthkit, nfc, siri, backgroundModes): Lamp turns it into an entitlements plist for the simulator's ad hoc
+signature and the phone project's `App.entitlements`, which Xcode's automatic signing registers, and
+`UIBackgroundModes` in Info.plist. `LampMotion` (iOS only, under `#if os(iOS)`) wraps Core Motion. The
+prompt's `iPhoneHardware` rule lists what a phone has and what the simulator can't do.
 `use_app` drives the simulator from outside the app (`Simulator.Driver`): the Simulator app shows the
 iPhone's whole accessibility tree to the Mac, so Lamp finds what's under a point and presses it, sets a
 field's text, and sends real mouse events for swipes, scrolls and long presses. Pictures are made at point

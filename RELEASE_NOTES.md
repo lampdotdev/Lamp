@@ -5,6 +5,13 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## Unreleased
+
+- iPhone and iPad apps use more of the phone: the agent knows about the motion sensors, the camera and
+  scanning, location, haptics, Face ID, Bluetooth, nearby phones, Health, NFC, Siri and Shortcuts, AR and
+  music, and asks for each one properly. Apps that need Health, NFC, Siri or work in the background are
+  signed for it. The agent says which parts need your phone rather than the simulator.
+
 ## 0.9.0
 
 - Your iPhone or iPad apps on your own phone: with the new switch in Settings → Building → Experimental

@@ -100,6 +100,7 @@ enum Agent {
         if mac { rules += [Rules.menuBar, Rules.permissions] }
         rules += [Rules.script, mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules.append(Rules.computer) }
+        if !mac { rules.append(Rules.iPhoneHardware) }
         rules += [Rules.store, mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
                   Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.attachments, Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
@@ -424,7 +425,34 @@ enum Agent {
         press, type into the field you tapped last, which replaces what it held, key return or escape, scroll, \
         swipe with a direction and \
         `item` to tap what the swipe uncovered), and tells you what each action landed on. There are no menus \
-        or keyboard shortcuts on an iPhone.
+        or keyboard shortcuts on an iPhone. The simulator has no camera, motion sensors, Bluetooth, NFC, Face ID \
+        or health data: try everything else there, and for those parts tell the user plainly that they're for \
+        their phone, never that they're broken.
+        """
+
+        static let iPhoneHardware = """
+        - The phone itself is the app's best material: use what it has, without being asked, whenever it fits \
+        what the user wants. Motion: `LampMotion` from LampSupport.swift (tilt, gravity, acceleration, rotation, \
+        compass heading, today's steps, a shake count) for anything that tilts, steers, shakes or counts. Camera: \
+        AVFoundation's AVCaptureSession in a UIViewRepresentable for live capture, UIImagePickerController or \
+        PhotosPicker to take or choose a picture, VisionKit's DataScannerViewController to read text and codes \
+        live and VNDocumentCameraViewController to scan documents. Location and maps: CoreLocation (ask for \
+        when-in-use) and MapKit. Haptics: `.sensoryFeedback` for taps and successes, CoreHaptics for patterns. \
+        Face ID or Touch ID: LocalAuthentication. Bluetooth devices: CoreBluetooth; nearby phones without a \
+        network: MultipeerConnectivity. Health (steps, heart rate, workouts, sleep): HealthKit. NFC tags: CoreNFC. \
+        Notifications at a time or place: UNUserNotificationCenter with a trigger. Siri and Shortcuts: App \
+        Intents. AR: ARKit with RealityKit. Music: MusicKit or MediaPlayer. The app already declares why it \
+        wants each of these (microphone, speech, camera, photos, location, motion, Bluetooth, Face ID, health, \
+        NFC, Siri, nearby devices, music), so just request authorization before use and handle denial in the \
+        interface. Health, NFC, Siri, nearby phones and background work need a declaration first: write \
+        `capabilities.json` at the app's root, e.g. `{"healthkit": true, "nfc": true, "siri": true, \
+        "backgroundModes": ["audio", "location"], "bonjourServices": ["_myapp._tcp", "_myapp._udp"], \
+        "backgroundTasks": ["com.example.refresh"]}`, and Lamp signs the app for them and declares them. Modes: \
+        audio, location, fetch, processing, remote-notification, bluetooth-central, bluetooth-peripheral. \
+        `bonjourServices` are the service types MultipeerConnectivity browses for (both _tcp and _udp of \
+        the same name, up to 15 characters); `backgroundTasks` are the identifiers BGTaskScheduler registers, \
+        needed with the fetch and processing modes. Not possible yet: widgets, Live Activities and other \
+        extensions, push notifications from a server, and in-app purchases; say so when asked.
         """
 
         static let appMd = """

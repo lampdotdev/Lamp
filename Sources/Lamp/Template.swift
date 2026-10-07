@@ -27,6 +27,7 @@ enum Template {
             let url = project.dir.appendingPathComponent(path)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             let contents = template
+                .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
                 .replacingOccurrences(of: "{{NAME}}", with: project.name)
                 .replacingOccurrences(of: "{{EXE}}", with: project.exe)
                 .replacingOccurrences(of: "{{SLUG}}", with: project.id)
@@ -172,19 +173,109 @@ enum Template {
       <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
       <key>DTPlatformName</key><string>iphonesimulator</string>
       <key>CFBundleSupportedPlatforms</key><array><string>iPhoneSimulator</string></array>
-      <key>NSMicrophoneUsageDescription</key><string>{{NAME}} listens to your microphone.</string>
-      <key>NSSpeechRecognitionUsageDescription</key><string>{{NAME}} turns your speech into text.</string>
-      <key>NSCameraUsageDescription</key><string>{{NAME}} uses your camera.</string>
-      <key>NSPhotoLibraryUsageDescription</key><string>{{NAME}} uses your photos.</string>
-      <key>NSCalendarsFullAccessUsageDescription</key><string>{{NAME}} reads and adds calendar events.</string>
-      <key>NSRemindersFullAccessUsageDescription</key><string>{{NAME}} reads and adds reminders.</string>
-      <key>NSContactsUsageDescription</key><string>{{NAME}} looks up people in your contacts.</string>
+    {{USAGE}}
     </dict></plist>
     PLIST
     codesign --force -s - "$APP"
     echo "Built $APP"
 
     """
+
+    /// Why the app wants each protected thing, in Info.plist: iOS kills an app on the spot that touches one
+    /// without its reason, so every app carries all of them and the agent only has to ask for authorization.
+    /// One list for the simulator's build.sh, the finishing of its bundle, and the phone's Info.plist.
+    static let iosUsageDescriptions: [(key: String, text: String)] = [
+        ("NSMicrophoneUsageDescription", "{{NAME}} listens to your microphone."),
+        ("NSSpeechRecognitionUsageDescription", "{{NAME}} turns your speech into text."),
+        ("NSCameraUsageDescription", "{{NAME}} uses your camera."),
+        ("NSPhotoLibraryUsageDescription", "{{NAME}} uses your photos."),
+        ("NSPhotoLibraryAddUsageDescription", "{{NAME}} saves pictures to your photos."),
+        ("NSCalendarsFullAccessUsageDescription", "{{NAME}} reads and adds calendar events."),
+        ("NSRemindersFullAccessUsageDescription", "{{NAME}} reads and adds reminders."),
+        ("NSContactsUsageDescription", "{{NAME}} looks up people in your contacts."),
+        ("NSLocationWhenInUseUsageDescription", "{{NAME}} uses your location."),
+        ("NSLocationAlwaysAndWhenInUseUsageDescription", "{{NAME}} uses your location, also in the background."),
+        ("NSMotionUsageDescription", "{{NAME}} uses the motion sensors and your step count."),
+        ("NSBluetoothAlwaysUsageDescription", "{{NAME}} connects to Bluetooth devices."),
+        ("NSFaceIDUsageDescription", "{{NAME}} unlocks with Face ID."),
+        ("NSHealthShareUsageDescription", "{{NAME}} reads your health data."),
+        ("NSHealthUpdateUsageDescription", "{{NAME}} saves health data."),
+        ("NFCReaderUsageDescription", "{{NAME}} reads NFC tags."),
+        ("NSSiriUsageDescription", "{{NAME}} works with Siri and Shortcuts."),
+        ("NSNearbyInteractionUsageDescription", "{{NAME}} finds nearby devices."),
+        ("NSLocalNetworkUsageDescription", "{{NAME}} talks to Lamp on your Mac for its AI features."),
+        ("NSAppleMusicUsageDescription", "{{NAME}} plays music from your library."),
+    ]
+
+    /// The usage descriptions as Info.plist lines, with the app's name in.
+    static func iosUsagePlistLines(name: String) -> String {
+        iosUsageDescriptions.map { "  <key>\($0.key)</key><string>\($0.text.replacingOccurrences(of: "{{NAME}}", with: name).xmlEscaped)</string>" }
+            .joined(separator: "\n")
+    }
+
+    /// What the agent declares in capabilities.json at the app's root when the app needs more than a usage
+    /// description: entitlements Xcode must put in the signing profile, and the kinds of background work.
+    struct Capabilities: Codable {
+        var healthkit: Bool?
+        var nfc: Bool?
+        var siri: Bool?
+        var backgroundModes: [String]?
+        /// Bonjour service types the app browses for (MultipeerConnectivity's "_<name>._tcp" and "_<name>._udp").
+        var bonjourServices: [String]?
+        /// BGTaskScheduler identifiers for background processing and refresh tasks.
+        var backgroundTasks: [String]?
+
+        static func load(_ project: LampProject) -> Capabilities {
+            let url = project.dir.appendingPathComponent("capabilities.json")
+            guard let data = try? Data(contentsOf: url), let caps = try? JSONDecoder().decode(Capabilities.self, from: data) else { return Capabilities() }
+            return caps
+        }
+
+        /// The background modes iOS knows, kept to those: a typo would make the app unlaunchable.
+        var modes: [String] {
+            let known = ["audio", "location", "fetch", "processing", "remote-notification", "bluetooth-central", "bluetooth-peripheral", "external-accessory", "nearby-interaction", "voip"]
+            return (backgroundModes ?? []).filter { known.contains($0) }
+        }
+
+        /// The entitlements plist for codesign and for Xcode's automatic signing, which registers each
+        /// capability with Apple. Empty when nothing is declared.
+        var entitlementsPlist: String {
+            var lines: [String] = []
+            if healthkit == true {
+                lines.append("  <key>com.apple.developer.healthkit</key><true/>")
+                lines.append("  <key>com.apple.developer.healthkit.access</key><array/>")
+            }
+            if nfc == true { lines.append("  <key>com.apple.developer.nfc.readersession.formats</key><array><string>NDEF</string><string>TAG</string></array>") }
+            if siri == true { lines.append("  <key>com.apple.developer.siri</key><true/>") }
+            return """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0"><dict>
+            \(lines.joined(separator: "\n"))
+            </dict></plist>
+
+            """
+        }
+
+        /// Plist keys that need a list of names: Bonjour service types (kept to the _name._tcp/_udp shape),
+        /// and the identifiers background tasks may register under. A dictionary of key to names.
+        var lists: [String: [String]] {
+            var lists: [String: [String]] = [:]
+            if !modes.isEmpty { lists["UIBackgroundModes"] = modes }
+            let services = (bonjourServices ?? []).filter { $0.range(of: #"^_[A-Za-z0-9-]{1,15}\._(tcp|udp)$"#, options: .regularExpression) != nil }
+            if !services.isEmpty { lists["NSBonjourServices"] = services }
+            let tasks = (backgroundTasks ?? []).filter { $0.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil }
+            if !tasks.isEmpty { lists["BGTaskSchedulerPermittedIdentifiers"] = tasks }
+            return lists
+        }
+
+        /// Those lists as Info.plist lines, or nothing.
+        var backgroundPlistLine: String {
+            lists.sorted { $0.key < $1.key }
+                .map { "  <key>\($0.key)</key><array>" + $0.value.map { "<string>\($0.xmlEscaped)</string>" }.joined() + "</array>" }
+                .joined(separator: "\n")
+        }
+    }
 
     static let iPhoneAppMd = """
     # {{NAME}}
@@ -218,8 +309,10 @@ enum Template {
         try? fm.removeItem(at: iconset.appendingPathComponent("AppIcon.png"))
         let hasIcon = fm.fileExists(atPath: Icons.squareURL(project).path)
         if hasIcon { try fm.copyItem(at: Icons.squareURL(project), to: iconset.appendingPathComponent("AppIcon.png")) }
+        let capabilities = Capabilities.load(project)
         let files: [(String, String)] = [
             ("\(project.exe).xcodeproj/project.pbxproj", devicePbxproj),
+            ("App.entitlements", capabilities.entitlementsPlist),
             ("\(project.exe).xcodeproj/xcshareddata/xcschemes/\(project.exe).xcscheme", deviceScheme),
             ("Info.plist", deviceInfoPlist),
             ("Assets.xcassets/Contents.json", #"{ "info": { "author": "xcode", "version": 1 } }"#),
@@ -229,6 +322,8 @@ enum Template {
         ]
         for (path, template) in files {
             let contents = template
+                .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
+                .replacingOccurrences(of: "{{BACKGROUND}}", with: capabilities.backgroundPlistLine)
                 .replacingOccurrences(of: "{{EXE}}", with: project.exe)
                 .replacingOccurrences(of: "{{NAME}}", with: project.name)
                 .replacingOccurrences(of: "{{BUNDLE}}", with: project.deviceBundleID(team: team))
@@ -258,14 +353,15 @@ enum Template {
     		A00000000000000000000006 /* {{EXE}}.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "{{EXE}}.app"; sourceTree = BUILT_PRODUCTS_DIR; };
     		A00000000000000000000007 /* Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; name = Sources; path = ../../Sources; sourceTree = "<group>"; };
     		A00000000000000000000008 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Attachments */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
+    		A00000000000000000000013 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
+    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Attachments */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
     		A0000000000000000000000A /* Products */ = {isa = PBXGroup; children = (A00000000000000000000006 /* {{EXE}}.app */); name = Products; sourceTree = "<group>"; };
     		A0000000000000000000000B /* {{EXE}} */ = {isa = PBXNativeTarget; buildConfigurationList = A0000000000000000000000C; buildPhases = (A0000000000000000000000D /* Sources */, A00000000000000000000008 /* Frameworks */, A0000000000000000000000E /* Resources */); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (A00000000000000000000007 /* Sources */); name = "{{EXE}}"; packageProductDependencies = (); productName = "{{EXE}}"; productReference = A00000000000000000000006 /* {{EXE}}.app */; productType = "com.apple.product-type.application"; };
     		A0000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {A0000000000000000000000B = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A00000000000000000000010; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000009; minimizedProjectReferenceProxies = 1; preferredProjectObjectVersion = 77; productRefGroup = A0000000000000000000000A /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A0000000000000000000000B /* {{EXE}} */); };
     		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Attachments in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
     		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
-    		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+    		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
     		A00000000000000000000010 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
     		A0000000000000000000000C /* Build configuration list for PBXNativeTarget */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
     	};
@@ -314,15 +410,8 @@ enum Template {
       <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
       <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
       <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
-      <key>NSLocalNetworkUsageDescription</key><string>{{NAME}} talks to Lamp on your Mac for its AI features.</string>
-      <key>NSMicrophoneUsageDescription</key><string>{{NAME}} listens to your microphone.</string>
-      <key>NSSpeechRecognitionUsageDescription</key><string>{{NAME}} turns your speech into text.</string>
-      <key>NSCameraUsageDescription</key><string>{{NAME}} uses your camera.</string>
-      <key>NSPhotoLibraryUsageDescription</key><string>{{NAME}} uses your photos.</string>
-      <key>NSCalendarsFullAccessUsageDescription</key><string>{{NAME}} reads and adds calendar events.</string>
-      <key>NSRemindersFullAccessUsageDescription</key><string>{{NAME}} reads and adds reminders.</string>
-      <key>NSContactsUsageDescription</key><string>{{NAME}} looks up people in your contacts.</string>
-      <key>NSLocationWhenInUseUsageDescription</key><string>{{NAME}} uses your location.</string>
+    {{USAGE}}
+    {{BACKGROUND}}
     </dict></plist>
 
     """
@@ -420,6 +509,7 @@ enum Template {
     typealias LampImage = NSImage
     #else
     import UIKit
+    import CoreMotion
     /// A picture: NSImage on the Mac, UIImage on iPhone and iPad.
     typealias LampImage = UIImage
     #endif
@@ -3307,6 +3397,101 @@ enum Template {
 
     #endif
 
+    #if os(iOS)
+    /// The phone's motion sensors as values a view can watch: tilt, gravity, acceleration, rotation, compass
+    /// heading, today's steps, and a count that rises on each shake. For anything that tilts, steers, shakes
+    /// or counts: a level, dice, a pedometer, a compass, a game steered by tilting.
+    ///
+    ///     @StateObject private var motion = LampMotion()
+    ///     .onAppear { motion.start() }.onDisappear { motion.stop() }
+    ///     motion.tilt.roll                 // radians; tilt.pitch, tilt.yaw
+    ///     motion.gravity.x                 // which way is down, -1…1 per axis
+    ///     motion.acceleration.z            // the person's own movement, in g, gravity taken out
+    ///     motion.heading                   // degrees from north, nil until the compass settles
+    ///     motion.steps                     // today, when the phone counts them
+    ///     .onChange(of: motion.shakes) { roll() }
+    ///
+    /// The simulator has no sensors: everything stays at zero there, and `isAvailable` is false.
+    @MainActor
+    final class LampMotion: ObservableObject {
+        struct Vector: Equatable { var x = 0.0, y = 0.0, z = 0.0 }
+        struct Attitude: Equatable { var pitch = 0.0, roll = 0.0, yaw = 0.0 }
+        @Published var tilt = Attitude()
+        @Published var gravity = Vector()
+        @Published var acceleration = Vector()
+        @Published var rotation = Vector()
+        @Published var heading: Double?
+        @Published var steps = 0
+        @Published var shakes = 0
+
+        static var isAvailable: Bool { CMMotionManager().isDeviceMotionAvailable }
+        private let manager = CMMotionManager()
+        private let pedometer = CMPedometer()
+        private var lastShake = Date.distantPast
+        private var countingFrom = Date.distantPast
+        private var dayWatch: Any?
+        /// Rises on each start and stop: work queued by an earlier run (a pedometer reading, the foreground
+        /// notice) sees it has changed and does nothing, so stopping stays stopped.
+        private var run = 0
+
+        /// Starts the sensors; `rate` is readings per second (30 suits a view, 60 a game).
+        func start(rate: Double = 30) {
+            guard manager.isDeviceMotionAvailable, !manager.isDeviceMotionActive else { return }
+            run += 1
+            let run = run
+            manager.deviceMotionUpdateInterval = 1 / max(rate, 1)
+            manager.startDeviceMotionUpdates(using: .xMagneticNorthZVertical, to: .main) { [weak self] data, _ in
+                guard let self, let data else { return }
+                tilt = Attitude(pitch: data.attitude.pitch, roll: data.attitude.roll, yaw: data.attitude.yaw)
+                gravity = Vector(x: data.gravity.x, y: data.gravity.y, z: data.gravity.z)
+                acceleration = Vector(x: data.userAcceleration.x, y: data.userAcceleration.y, z: data.userAcceleration.z)
+                rotation = Vector(x: data.rotationRate.x, y: data.rotationRate.y, z: data.rotationRate.z)
+                heading = data.heading >= 0 ? data.heading : nil
+                // A shake is a hard jolt, counted once however long it lasts.
+                let jolt = (data.userAcceleration.x * data.userAcceleration.x + data.userAcceleration.y * data.userAcceleration.y
+                            + data.userAcceleration.z * data.userAcceleration.z).squareRoot()
+                if jolt > 2.2, Date().timeIntervalSince(lastShake) > 0.6 {
+                    lastShake = Date()
+                    shakes += 1
+                }
+            }
+            countSteps(run: run)
+            // Midnight, and coming back to the app, start today's count over: the pedometer counts on from
+            // the day it was started otherwise.
+            dayWatch = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.countSteps(run: run) }
+            }
+        }
+
+        /// Today's steps, from the start of today; started over when today isn't the day it was started on.
+        /// Only for the run it was asked for: nothing from a run that has been stopped.
+        private func countSteps(run: Int) {
+            guard run == self.run, CMPedometer.isStepCountingAvailable() else { return }
+            let today = Calendar.current.startOfDay(for: Date())
+            guard today != countingFrom else { return }
+            countingFrom = today
+            pedometer.stopUpdates()
+            steps = 0
+            pedometer.startUpdates(from: today) { [weak self] data, _ in
+                guard let count = data?.numberOfSteps.intValue else { return }
+                Task { @MainActor in
+                    guard let self, run == self.run else { return }
+                    if Calendar.current.startOfDay(for: Date()) != self.countingFrom { self.countSteps(run: run) } else { self.steps = count }
+                }
+            }
+        }
+
+        func stop() {
+            run += 1
+            manager.stopDeviceMotionUpdates()
+            pedometer.stopUpdates()
+            countingFrom = .distantPast
+            if let dayWatch { NotificationCenter.default.removeObserver(dayWatch) }
+            dayWatch = nil
+        }
+    }
+    #endif
+
     /// Notifications. Asks permission the first time.
     ///
     ///     LampNotifications.send("Export finished", body: "Saved 12 files to Documents")
@@ -3998,4 +4183,11 @@ enum Template {
     - `build.sh`: builds `build/{{EXE}}.app`.
 
     """
+}
+
+private extension String {
+    /// Safe inside an XML text node.
+    var xmlEscaped: String {
+        replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+    }
 }
