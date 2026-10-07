@@ -315,7 +315,11 @@ enum Agent {
         // it before the model has said anything: a command the agent runs later finds it used.
         if let provider = Provider.apiProvider(Builder.piProvider), Builder.piProvider != Builder.myPiProvider {
             syncKeyFile()
-            if KeyStore.key(for: provider.id) != nil {
+            // No ticket unless pi is sure to spend it. It wouldn't if auth.json holds something else for
+            // this provider (a sign-in of pi's, or a key that couldn't be taken out yet), or if Lamp was
+            // started with the provider's key in its own environment, which pi inherits.
+            if KeyStore.key(for: provider.id) != nil, asksLampForKey(provider.id),
+               ProcessInfo.processInfo.environment[provider.envVar] == nil {
                 env["LAMP_KEY_TICKET"] = KeyTicket.issue(for: provider.id)
                 env["LAMP_KEY_URL"] = "http://127.0.0.1:\(Gateway.port)/pi/key"
             }
@@ -352,6 +356,13 @@ enum Agent {
                     ? ["type": "api_key", "key": keyCommand] : nil
             }
         }
+    }
+
+    /// Whether pi's auth.json has keyCommand for this provider, so pi will ask Lamp for the key.
+    private static func asksLampForKey(_ provider: String) -> Bool {
+        let url = URL(fileURLWithPath: configDir).appendingPathComponent("auth.json")
+        let auth = (try? JSONSerialization.jsonObject(with: Data(contentsOf: url))) as? [String: Any]
+        return (auth?[provider] as? [String: Any])?["key"] as? String == keyCommand
     }
 
     /// Reads pi's auth.json in Lamp's config folder, applies a change, and writes it back if anything differs.

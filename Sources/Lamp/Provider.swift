@@ -155,6 +155,10 @@ enum KeyStore {
             KeychainItem.write(key, provider)
             guard KeychainItem.read(provider).0 == errSecSuccess else { return false }
         } else {
+            // A keys file that's there but can't be read isn't an empty one: writing a new file over it
+            // would lose whatever it holds.
+            if FileManager.default.fileExists(atPath: KeyFile.url.path),
+               (try? JSONDecoder().decode([String: String].self, from: Data(contentsOf: KeyFile.url))) == nil { return false }
             var all = KeyFile.read()
             if all[provider] != nil { return true }
             all[provider] = key
