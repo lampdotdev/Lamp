@@ -436,6 +436,7 @@ struct ProjectView: View {
         return LogLine.visible(Array(all[..<hidden]) + (problem.map { [$0] } ?? []), details: showDetails)
     }
     private var busy: Bool { store.busy.contains(project.id) }
+    private var needsRecovery: Bool { store.interrupted[project.id] != nil }
     /// How much of its latest message the agent has written so far: a message being written grows without
     /// adding a line, and the chat follows it down.
     private func written(_ lines: [LogLine]) -> Int { busy ? lines.last?.text.count ?? 0 : 0 }
@@ -523,6 +524,23 @@ struct ProjectView: View {
                 }
             }
             Divider()
+            if let interrupted = store.interrupted[project.id], !busy {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("This change didn't finish", systemImage: "exclamationmark.circle")
+                        .font(.headline)
+                    Text(interrupted.label).lineLimit(2).foregroundStyle(.secondary)
+                    Text("Finish builds and saves the edits already made. Discard puts the app back to before this request. Your app's data and attachments stay safe.")
+                        .font(.callout)
+                    HStack {
+                        Button("Discard") { Task { await store.discardInterrupted(project) } }
+                        Spacer()
+                        Button("Finish") { Task { await store.finishInterrupted(project) } }
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+                .padding(16)
+                Divider()
+            }
             if let approval = store.approvals[project.id] {
                 ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation,
                              onAllow: { store.answerApproval(for: project, allow: true) },
@@ -586,7 +604,7 @@ struct ProjectView: View {
                 }
                 .buttonStyle(.plain)
                 // A request sent again starts from the app as it was, so it can't wait behind other work.
-                .disabled(draft.trimmed.isEmpty && attachments.isEmpty || replacing != nil && busy)
+                .disabled(needsRecovery && !busy || draft.trimmed.isEmpty && attachments.isEmpty || replacing != nil && busy)
                 .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
                 .frame(height: Composer.lineHeight)
             }
@@ -658,7 +676,7 @@ struct ProjectView: View {
     private func transcript(_ lines: [LogLine], busy: Bool, progressShown: Bool = false) -> some View {
         Transcript(lines: lines, dir: project.dir, busy: busy, progressShown: progressShown, goBack: { line, before in
             Task { await store.restore(project, toVersionOf: line, before: before) }
-        }, sendAgain: self.busy ? nil : takeBack)
+        }, sendAgain: self.busy || needsRecovery ? nil : takeBack)
     }
 
     private func saveDraft() {
@@ -708,6 +726,7 @@ struct ProjectView: View {
                 Button { Task { await store.open(project) } } label: {
                     Label("Open App", systemImage: "play.fill")
                 }
+                .disabled(needsRecovery && !busy)
                 .help("Open the app (right-click it in the sidebar to rebuild)")
             }
         }
@@ -716,7 +735,7 @@ struct ProjectView: View {
             Button { Task { await store.undo(project) } } label: {
                 Label("Undo Last Change", systemImage: "arrow.uturn.backward")
             }
-            .disabled(busy)
+            .disabled(busy || needsRecovery)
             .help("Go back to the version before this one")
             Button { store.deleting = project } label: {
                 Label("Delete App", systemImage: "trash")
@@ -786,6 +805,7 @@ struct ProjectView: View {
     }
 
     private func send() {
+        guard !needsRecovery || busy else { return }
         let text = draft.trimmed
         guard !text.isEmpty || !attachments.isEmpty else { return }
         dictation.cancel()

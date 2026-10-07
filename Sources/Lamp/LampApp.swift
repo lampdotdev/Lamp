@@ -74,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard Store.shared.isWorking else { return .terminateNow }
             let alert = NSAlert()
             alert.messageText = "An app is still being worked on. Quit anyway?"
-            alert.informativeText = "Quitting stops the work. Any changes made so far are kept; you can undo them later."
+            alert.informativeText = "Quitting stops the work. When you open Lamp again, you can finish the saved edits or discard the change."
             alert.addButton(withTitle: "Quit")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }

@@ -110,7 +110,7 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
             ]
         case .versions:
             [
-                HelpSection(title: "Undo a change", text: "Click Undo Last Change in the toolbar to go back to the version before the last change. Click it again to step further back. If a change was stopped or failed to build, Undo discards that unfinished change first. The agent keeps its conversation and is told to reread the app before its next change."),
+                HelpSection(title: "Undo a change", text: "Click Undo Last Change in the toolbar to go back to the version before the last change. Click it again to step further back. If a change did not finish, choose Finish to build and save the edits already made, or Discard to put the app back to before the request. Lamp offers this choice after Stop or a failure, and after reopening if it quit mid-change. Finish does not resume the interrupted agent conversation. The agent keeps its conversation and is told to reread the app before its next change."),
                 HelpSection(title: "Keep a version you like", text: "Choose File → Name This Version… (⌘S) to give the current version a name you will recognise later."),
                 HelpSection(title: "Return to an earlier version", text: "Click Versions in the toolbar to see earlier versions, name them and go back to one. You can also point at one of your requests in the chat and click the clock beside it to go back to before or after that change. Going back changes the app's code and keeps the data saved in the app. Later versions are kept, so you can undo it.")
             ]
@@ -129,7 +129,7 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
             ]
         case .troubleshooting:
             [
-                HelpSection(title: "A build or change failed", text: "Read the message in the chat. When an app does not build, Lamp sends the compiler errors back to the agent, up to three times. If it still fails, describe what you wanted and ask Lamp to fix it, or click Undo Last Change. Agent Details in the toolbar shows more of what happened."),
+                HelpSection(title: "A build or change failed", text: "Read the message in the chat. When an app does not build, Lamp sends the compiler errors back to the agent, up to three times. If it still fails, use Finish to retry the saved edits, or Discard to return to before the request and then describe a different change. Agent Details in the toolbar shows more of what happened."),
                 HelpSection(title: "Your key or sign-in does not work", text: "Double-click the provider in Settings → Providers to replace its key, and check that the account has credit or quota. For Claude Code or Codex, Settings → Building shows whether it is installed and signed in, with a Sign In… button if it is not. It also helps to open the Claude or ChatGPT app and check that it works there."),
                 HelpSection(title: "A local model will not start", text: "Try a smaller model; it may need more memory than your Mac has. Double-click Native Mac AI in Settings → Providers to see how much memory each model needs and to download another."),
                 HelpSection(title: "An app says it couldn't reach Lamp", text: "Open Lamp and try again. If the app still cannot reach Lamp, quit any extra copies of Lamp and reopen the one you want to use."),

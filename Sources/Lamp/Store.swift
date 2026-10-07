@@ -119,6 +119,7 @@ final class Store: ObservableObject {
     }
     @Published var logs: [String: [LogLine]] = [:]
     @Published var busy: Set<String> = []
+    @Published var interrupted: [String: InterruptedTurn] = [:]
     @Published var queued: [String: [QueuedMessage]] = [:]
     /// The turn in progress for each app. A new app's first turn stays here after it finishes, so its
     /// build card can show the result until the next message.
@@ -199,8 +200,8 @@ final class Store: ObservableObject {
     private var turns: [String: Turn] = [:]
 
     /// Takes the app for a span of work. Nil when something else has it.
-    private func begin(_ project: LampProject) -> Turn? {
-        guard turns[project.id] == nil else { return nil }
+    private func begin(_ project: LampProject, recovering: Bool = false) -> Turn? {
+        guard turns[project.id] == nil, recovering || interrupted[project.id] == nil else { return nil }
         let turn = Turn()
         turns[project.id] = turn
         agentTokens[turn.agentToken] = project.id
@@ -263,7 +264,7 @@ final class Store: ObservableObject {
         restoreWaiting()
         for project in projects { discardIfUnused(project.id) }
         Onboarding.settle(hasApps: !projects.isEmpty)
-        selection = projects.first?.id
+        selection = projects.first(where: { interrupted[$0.id] != nil })?.id ?? projects.first?.id
         startGateway()
         watchOpenApps()
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
@@ -348,6 +349,9 @@ final class Store: ObservableObject {
             if icons[project.id] == nil, let image = NSImage(contentsOf: Icons.previewURL(project)) {
                 icons[project.id] = image
             }
+        }
+        for project in projects where interrupted[project.id] == nil {
+            interrupted[project.id] = InterruptedTurn.load(in: project)
         }
         for project in projects { stamps[project.id] = BuildStamp.read(project.installedURL) }
         for project in projects where logs[project.id] == nil {
@@ -648,13 +652,18 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return old
         }
-        for path in [".lamp/chat.json", ".lamp/usage.json", Attachments.folder] {
+        for path in [".lamp/chat.json", ".lamp/usage.json", ".lamp/interrupted-turn.json", Attachments.folder] {
             let from = old.dir.appendingPathComponent(path)
             if fm.fileExists(atPath: from.path) {
                 try? fm.copyItem(at: from, to: project.dir.appendingPathComponent(path))
             }
         }
         await initRepo(project, message: "Scaffold")
+        if var record = interrupted.removeValue(forKey: old.id), let head = await Versions.head(project) {
+            record.before = head
+            do { try record.save(in: project) } catch { log(project, .error, "Lamp couldn't keep the unfinished change safe.") }
+            interrupted[project.id] = record
+        }
         await quit(old)
         try? fm.removeItem(at: old.installedURL)
         try? fm.removeItem(at: old.dir)
@@ -922,6 +931,7 @@ final class Store: ObservableObject {
             let designing = project
             iconDesigns[project.id] = Task {
                 let spec = await Icons.design(for: designing, brief: brief)
+                guard !Task.isCancelled, exists(designing) else { return }
                 if Icons.load(designing) == nil {
                     Icons.save(spec, for: designing)
                     await renderIcon(designing, spec: spec)
@@ -940,6 +950,67 @@ final class Store: ObservableObject {
         saveWaiting()
     }
 
+    @discardableResult private func clearInterrupted(_ project: LampProject) -> Bool {
+        do {
+            try InterruptedTurn.clear(in: project)
+            interrupted[project.id] = nil
+            return true
+        } catch {
+            log(project, .error, "Lamp couldn't save that the unfinished change was resolved. Please try again.")
+            return false
+        }
+    }
+
+    /// Builds the edits already on disk. This doesn't pretend to resume an agent that disappeared; the
+    /// usual repair loop can ask an agent to fix compiler errors if building those edits needs it.
+    func finishInterrupted(_ project: LampProject) async {
+        guard let record = interrupted[project.id], begin(project, recovering: true) != nil else { return }
+        defer { progress[project.id] = nil; finish(project) }
+        guard setup.hasBuildTools else {
+            log(project, .error, "Install the app-building tools before finishing this change.")
+            requestBuildTools()
+            return
+        }
+        progress[project.id] = TurnProgress(newApp: false)
+        log(project, .status, "Finishing the saved changes…")
+        let result = await turn([QueuedMessage(text: record.label)], attachments: record.attachments,
+                                asked: record.requests, on: project, finishingSaved: true)
+        if result.end != .failed {
+            guard clearInterrupted(project) else { return }
+            log(project, .status, result.end == .changed ? "Finished the saved change" : "No unfinished edits to save")
+        }
+    }
+
+    /// Restores the starting files, even if a crash happened after the interrupted turn committed. Any
+    /// version already saved stays in history; attachments, chat and the app's own data stay put.
+    func discardInterrupted(_ project: LampProject) async {
+        guard let record = interrupted[project.id], begin(project, recovering: true) != nil else { return }
+        defer { finish(project) }
+        iconDesigns.removeValue(forKey: project.id)?.cancel()
+        await quit(project)
+        guard let target = await Versions.list(project).first(where: { $0.id == record.before }),
+              await Versions.restoreFiles(project, to: target) else {
+            log(project, .error, "Lamp couldn't restore the app from before this request. The unfinished change is still kept.")
+            return
+        }
+        if await Versions.hasUnsavedChanges(project) {
+            guard await Versions.save(project, message: "Discarded the unfinished change") else {
+                log(project, .error, "Lamp couldn't save the restored app. Please try Discard again.")
+                return
+            }
+            versionsRevision += 1
+        }
+        Versions.remember(project, restoredTo: target.label, from: target.date)
+        guard clearInterrupted(project) else { return }
+        log(project, .status, "Discarded the unfinished change")
+        // A look_at_app may have installed the partial change before Lamp quit. Replace that too; a new
+        // app with no first version yet just returns to its scaffold, without opening an empty app.
+        if hasVersions(project), setup.hasBuildTools {
+            if await build(project) == nil { await installReportingCrash(project) }
+            else { log(project, .error, "The change was discarded, but the restored app couldn't be rebuilt.") }
+        }
+    }
+
     private func startQueued(_ project: LampProject) {
         guard setup.ready, let messages = queued[project.id], !messages.isEmpty,
               begin(project) != nil else { return }
@@ -953,6 +1024,23 @@ final class Store: ObservableObject {
             var project = project
             let saved = post(messages, to: project)
             let asked = (logs[project.id] ?? []).filter { $0.kind == .user }.suffix(messages.count).map(\.id)
+            // Before bootstrapping or starting an agent: no file edits without a durable way back.
+            guard let before = await Versions.head(project) else {
+                log(project, .error, "Lamp couldn't save where this change starts. Please try again.")
+                progress[project.id] = nil
+                finish(project)
+                return
+            }
+            let label = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n").nilIfEmpty
+                ?? Self.label(attachments: saved)
+            let record = InterruptedTurn(before: before, requests: asked, label: label, attachments: saved)
+            do { try record.save(in: project) } catch {
+                log(project, .error, "Lamp couldn't keep this change safe if it quits. Please try again.")
+                progress[project.id] = nil
+                finish(project)
+                return
+            }
+            interrupted[project.id] = record
             if first {
                 let untitled = project
                 let words = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
@@ -981,6 +1069,7 @@ final class Store: ObservableObject {
             }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
             worked = result.end != .failed
+            if worked { clearInterrupted(project) }
             if newApp && result.end == .changed { await showResult(of: project) }
         }
     }
@@ -1083,7 +1172,7 @@ final class Store: ObservableObject {
     /// One turn of the loop: agent edits → build (agent fixes failures) → commit → relaunch.
     /// `asked` are the chat lines of the requests, which are linked to the version the turn makes.
     private func turn(_ messages: [QueuedMessage], attachments saved: [String], asked: [UUID],
-                      on project: LampProject) async -> TurnResult {
+                      on project: LampProject, finishingSaved: Bool = false) async -> TurnResult {
         var prompt = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
         // Attachments with no words: usually a screenshot or mockup meaning "like this", or a file to use.
         if prompt.isEmpty {
@@ -1103,7 +1192,7 @@ final class Store: ObservableObject {
         let notes = Attachments.note(for: saved) + Versions.note(for: project)
             + (sentAgain ? "" : Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project))
         turns[project.id]?.request = prompt
-        let ran = await runAgent(prompt + notes, files: files, on: project)
+        let ran = finishingSaved ? true : await runAgent(prompt + notes, files: files, on: project)
         // The note about going back is the agent's only word of it, so it's kept until the agent has had it:
         // a turn that failed before reaching the agent leaves it for the next one.
         if let last = asked.last, Self.reachedAgent(last, in: logs[project.id] ?? []) { Versions.forgetNote(for: project) }
@@ -1112,23 +1201,30 @@ final class Store: ObservableObject {
         }
         // A new app the agent didn't touch: it only replied (say, with questions about a vague request).
         // There's nothing worth building or opening yet; the answers start the first build.
-        if !hasVersions(project), await !agentChangedFiles(project) {
+        if !finishingSaved, !hasVersions(project), await !agentChangedFiles(project) {
             return TurnResult(end: .replied, watched: isWatching(project.id))
         }
         // Only build when something changed: not after a question, and not again when the agent's last
         // look already built and opened exactly this code.
         try? Template.writeSupport(for: project)
-        let changed = Runtime.sourcesChanged(project)
+        let changed = finishingSaved || Runtime.sourcesChanged(project)
         if changed {
             guard await buildFixingErrors(project) else { return TurnResult(end: .failed, watched: isWatching(project.id)) }
         }
         // Opening the app brings it in front of Lamp, so whether the user was watching is decided first.
+        guard turns[project.id]?.stopped != true, exists(project) else {
+            return TurnResult(end: .failed, watched: isWatching(project.id))
+        }
         let watched = isWatching(project.id)
         // Nothing is committed when the agent changed no files.
         let label = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n").nilIfEmpty
             ?? Self.label(attachments: saved)
         var committed = await Shell.run("git add -A && \(Self.commit) -qm \"$LAMP_PROMPT\"", cwd: project.dir,
                                         env: ["LAMP_PROMPT": label]) { _ in } == 0
+        // A crash can come after the commit but before the request was linked or the app opened.
+        if finishingSaved, let record = interrupted[project.id], let head = await Versions.head(project), head != record.before {
+            committed = true
+        }
         let edited = changed || committed
         var crash: String?
         if changed {
@@ -1160,7 +1256,7 @@ final class Store: ObservableObject {
             crash = await install(project)
         }
         if crash != nil {
-            log(project, .error, "\(project.name) still quits right after opening. Try describing the change differently, or press Undo.")
+            log(project, .error, "\(project.name) still quits right after opening. Retry with Finish, or discard this change.")
         }
         // After the crash fixes, which amend the commit, so the name and the links stay on the version that's kept.
         if committed || turns[project.id]?.pendingName != nil, let head = await Versions.head(project) {
@@ -1175,7 +1271,7 @@ final class Store: ObservableObject {
             }
             versionsRevision += 1
         }
-        return TurnResult(end: crash != nil ? .failed : edited ? .changed : .replied, watched: watched)
+        return TurnResult(end: crash != nil || turns[project.id]?.stopped == true ? .failed : edited ? .changed : .replied, watched: watched)
     }
 
     /// Whether any request has made a version of this app yet (its messages are linked to the versions they made).
@@ -1208,7 +1304,7 @@ final class Store: ObservableObject {
         }
         guard turns[project.id]?.stopped != true, exists(project) else { return false }
         if errors != nil {
-            log(project, .error, "Sorry, I couldn't get that change working. Try describing it differently, or press Undo.")
+            log(project, .error, "I couldn't get that change working. Retry with Finish, or discard this change.")
         }
         return errors == nil
     }
@@ -1307,7 +1403,7 @@ final class Store: ObservableObject {
         recordAgent(project, cost: cost)
         if turn.stopped {
             turn.stopped = false
-            log(project, .status, "Stopped. Any changes made so far are kept; press Undo to discard them.")
+            log(project, .status, "Stopped. You can finish the changes made so far or discard them.")
             return false
         }
         if let failure, failure.hasPrefix("The model ") {
@@ -1368,6 +1464,7 @@ final class Store: ObservableObject {
         logs[project.id] = nil
         usage[project.id] = nil
         queued[project.id] = nil
+        interrupted[project.id] = nil
         icons[project.id] = nil
         release(project)
         unread.remove(project.id)
@@ -1541,6 +1638,7 @@ final class Store: ObservableObject {
     /// Opens the installed app, or brings it to the front if it's running. Only builds when there's
     /// nothing installed yet (or the installed copy was deleted).
     func open(_ project: LampProject) async {
+        guard interrupted[project.id] == nil || busy.contains(project.id) else { return }
         if project.platform == .iphone {
             // Running already: bring the simulator forward. Otherwise build (if needed) and launch.
             if let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id { await Simulator.show(); return }
@@ -1949,7 +2047,7 @@ final class Store: ObservableObject {
     /// `attachments` are the files to send with it: the request's own, already in the app's folder, and any added.
     /// False when the app couldn't be taken back, and nothing was sent.
     func sendAgain(_ line: LogLine, as text: String, attachments: [URL], in project: LampProject) async -> Bool {
-        guard busy.insert(project.id).inserted else { return false }
+        guard interrupted[project.id] == nil, busy.insert(project.id).inserted else { return false }
         defer { finish(project) }   // which starts the turn queued below
         let versions = await Versions.list(project)
         // Requests from before Lamp noted where they were sent from: the version one made follows that point.
