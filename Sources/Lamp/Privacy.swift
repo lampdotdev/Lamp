@@ -93,9 +93,13 @@ enum Privacy {
                 // A search pattern like /api/ looks like a path: only something whose top folder exists is one.
                 guard let top = path.split(separator: "/").first,
                       FileManager.default.fileExists(atPath: "/" + top) else { return false }
-            } else if !path.hasPrefix("~"), !path.contains("..") {
+            } else if path == "~" || path.hasPrefix("~/") || path == ".." || path.hasPrefix("../") || path.contains("/../") {
+                // The home folder, or a step up out of the app's folder: a path wherever it leads.
+            } else {
                 // Any other word is a path only if something by that name is in the app's folder. That includes
-                // a bare name: it can be a link that leads out, which the rule works out below.
+                // a bare name: it can be a link that leads out, which the rule works out below. Code written
+                // through the shell is full of words that only look like paths (`0..<n`, `~=`, `...`): they
+                // aren't, so they're judged by whether they exist like everything else.
                 guard FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(path).path) else { return false }
             }
             // Outside the app's folder, whether that means asking (another folder) or never (sign-ins and keys):
