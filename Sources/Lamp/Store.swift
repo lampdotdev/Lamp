@@ -3071,12 +3071,7 @@ final class Store: ObservableObject {
         guard project.platform == .iphone, Experiments.iosApps else { return (403, ["error": "Not for this app."]) }
         guard let key = KeyStore.openRouterKey else { return (404, ["error": "There's no OpenRouter key to keep."]) }
         let models = AppModels.load(project)
-        // Away from the Mac only Jev through OpenRouter or TypeSafe can answer: the choice when it's one of
-        // those (with its key), OpenRouter otherwise.
-        var decision = AppAI.decisionModels.first { $0.id == models.decision } ?? AppAI.decisionModel
-        if !["openrouter", "typesafe"].contains(decision.provider) || KeyStore.key(for: decision.provider) == nil {
-            decision = AppAI.decisionModels[0]
-        }
+        let decision = AppAI.awayDecisionModel(for: models.awayDecision)
         var keys: [String: Any] = [
             "openrouter": key,
             "text_model": AppAI.awayModel(for: models.away).openRouter,
@@ -3084,7 +3079,6 @@ final class Store: ObservableObject {
         ]
         // The cloud image model chosen for away from the Mac (the Mac's own model can't travel).
         keys["image_model"] = AppAI.awayImageModel(for: models.awayImage)
-        if decision.provider == "typesafe", let typesafe = KeyStore.key(for: "typesafe") { keys["typesafe"] = typesafe }
         // Sealed with the secret that went to the phone inside its build, never over the network: the token
         // in the request is on the air too, so it can't be what protects the key.
         guard let json = try? JSONSerialization.data(withJSONObject: keys),
@@ -3356,6 +3350,7 @@ struct AppModels: Codable, Equatable {
     var decision: String?   // an id from AppAI.decisionModels
     var away: String?       // iPhone apps: an id from AppAI.anthropicModels, for when the phone can't reach the Mac
     var awayImage: String?  // iPhone apps: an id from Icons.artModels, likewise
+    var awayDecision: String?  // iPhone apps: an id from AppAI.awayDecisionModels, likewise
 
     private static func url(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/models.json") }
 

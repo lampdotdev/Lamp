@@ -655,6 +655,9 @@ enum Template {
                 let text = try await complete(body, key: key, model: keys["text_model"] as? String ?? "anthropic/claude-sonnet-5.5")
                 return ["text": text]
             case "/ai/decide":
+                if keys["decision_provider"] as? String == "text" {
+                    return ["answers": try await decideByText(body, key: key, model: keys["text_model"] as? String ?? "anthropic/claude-sonnet-5.5")]
+                }
                 return ["answers": try await decide(body, keys: keys)]
             case "/ai/image":
                 return ["image": try await image(body, key: key, model: keys["image_model"] as? String ?? "google/gemini-nano-banana-2.1"),
@@ -718,11 +721,85 @@ enum Template {
             throw LampAI.Failure(message: "The AI didn't answer.")
         }
 
+        /// Decisions without a decision model: the questions go to the text model as JSON, and its answers
+        /// come back in the shape Jev's would, checked against each question as Lamp checks them.
+        private static func decideByText(_ body: [String: Any], key: String, model: String) async throws -> [String: Any] {
+            let questions = body["questions"] as? [String: Any] ?? [:]
+            let stateJSON = (try? JSONSerialization.data(withJSONObject: body["state"] ?? NSNull(), options: [.sortedKeys, .fragmentsAllowed]))
+                .map { String(decoding: $0, as: UTF8.self) } ?? ""
+            let questionsJSON = (try? JSONSerialization.data(withJSONObject: questions, options: [.sortedKeys]))
+                .map { String(decoding: $0, as: UTF8.self) } ?? ""
+            let system = """
+            You answer typed questions about some state, like a calibrated classifier. The questions are JSON, keyed \
+            by id; reply with one JSON object with the same keys and nothing else.
+
+            For a question of type "noul", the value is {"noul": p}: p is the probability, from 0 to 1, that the \
+            answer to its instructions is yes, judged against its criteria ("true" describes a yes, "false" a no). \
+            A clear no is 0.0, a clear yes 1.0.
+
+            For a question of type "choice", the criteria are the options (a description of when each applies, or \
+            null). The value is {"choice": option, "probabilities": {option: p, ...}, "confidence": c}: one \
+            probability per option, summing to 1; choice is the most likely option; confidence (0 to 1) is how \
+            concentrated the probabilities are.
+
+            For a question of type "score", the criteria are ordered levels, lowest first, each describing a \
+            situation. The value is {"score": s, "probabilities": {"0": p, "1": p, ...}, "confidence": c}: one \
+            probability per level index, summing to 1; s is the probability-weighted index; confidence (0 to 1) is \
+            how concentrated the probabilities are.
+            """
+            let text = try await complete(["prompt": "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)", "system": system, "json": true], key: key, model: model)
+            guard let raw = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
+                throw LampAI.Failure(message: "The model's decision wasn't valid JSON.")
+            }
+            var answers: [String: Any] = [:]
+            for (id, question) in questions {
+                guard let q = question as? [String: Any], let type = q["type"] as? String else { continue }
+                let given = raw[id] as? [String: Any] ?? [:]
+                func clamp(_ value: Any?) -> Double? { (value as? NSNumber).map { min(max($0.doubleValue, 0), 1) } }
+                switch type {
+                case "noul":
+                    guard let p = clamp(given["noul"]) else { throw LampAI.Failure(message: "The model didn't answer \"\(id)\".") }
+                    answers[id] = ["noul": p]
+                case "choice":
+                    let options = (q["criteria"] as? [String: Any])?.keys.map { $0 } ?? (q["criteria"] as? [String] ?? [])
+                    var probabilities = (given["probabilities"] as? [String: Any] ?? [:]).reduce(into: [String: Double]()) {
+                        if options.contains($1.key), let p = clamp($1.value) { $0[$1.key] = p }
+                    }
+                    var choice = given["choice"] as? String
+                    if choice == nil || !options.contains(choice!) { choice = probabilities.max { $0.value < $1.value }?.key }
+                    guard let choice else { throw LampAI.Failure(message: "The model didn't pick an option for \"\(id)\".") }
+                    if probabilities.isEmpty { probabilities = [choice: 1] }
+                    let total = probabilities.values.reduce(0, +)
+                    if total > 0 { probabilities = probabilities.mapValues { $0 / total } }
+                    answers[id] = ["choice": choice, "probabilities": probabilities,
+                                   "confidence": clamp(given["confidence"]) ?? probabilities[choice] ?? 1]
+                case "score":
+                    let levels = (q["criteria"] as? [Any])?.count ?? 0
+                    let top = Double(max(levels - 1, 0))
+                    var probabilities = (given["probabilities"] as? [String: Any] ?? [:]).reduce(into: [String: Double]()) {
+                        if let index = Int($1.key), index >= 0, Double(index) <= top, let p = clamp($1.value) { $0[$1.key] = p }
+                    }
+                    let total = probabilities.values.reduce(0, +)
+                    if total > 0 {
+                        probabilities = probabilities.mapValues { $0 / total }
+                    } else if let given = (given["score"] as? NSNumber).map({ min(max($0.doubleValue, 0), top) }) {
+                        probabilities = [String(Int(given.rounded())): 1]
+                    } else {
+                        throw LampAI.Failure(message: "The model didn't rate \"\(id)\".")
+                    }
+                    let score = probabilities.reduce(0) { $0 + Double($1.key)! * $1.value }
+                    answers[id] = ["score": score, "probabilities": probabilities,
+                                   "confidence": clamp(given["confidence"]) ?? probabilities.values.max() ?? 1]
+                default:
+                    throw LampAI.Failure(message: "Unknown question type \"\(type)\".")
+                }
+            }
+            return answers
+        }
+
         private static func decide(_ body: [String: Any], keys: [String: Any]) async throws -> [String: Any] {
-            let typesafe = keys["decision_provider"] as? String == "typesafe" ? keys["typesafe"] as? String : nil
-            let key = typesafe ?? (keys["openrouter"] as? String ?? "")
-            let endpoint = typesafe != nil ? "https://api.typesafe.ai/v1/systemone" : "https://openrouter.ai/api/v1/systemone"
-            var request = URLRequest(url: URL(string: endpoint)!)
+            let key = keys["openrouter"] as? String ?? ""
+            var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/systemone")!)
             request.httpMethod = "POST"
             request.timeoutInterval = 60
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")

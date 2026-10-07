@@ -499,6 +499,7 @@ struct AppsSettings: View {
     @AppStorage("appModel") private var appModel = AppAI.defaultRoute.id
     @AppStorage("awayModel") private var awayModel = ""
     @AppStorage("awayImageModel") private var awayImageModel = ""
+    @AppStorage("awayDecisionModel") private var awayDecisionModel = ""
     @ObservedObject private var local = LocalModels.shared
     @AppStorage("experimentIOSApps") private var iosApps = false
     @AppStorage("settingsTab") private var settingsTab = "building"
@@ -574,8 +575,11 @@ struct AppsSettings: View {
                     Picker("Image generation", selection: Binding(get: { AppAI.awayImageModel }, set: { awayImageModel = $0 })) {
                         ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
                     }
+                    Picker("Decision model", selection: Binding(get: { AppAI.awayDecisionModel.id }, set: { awayDecisionModel = $0 })) {
+                        ForEach(AppAI.awayDecisionModels, id: \.id) { Text($0.label).tag($0.id) }
+                    }
                     if Provider.hasKey {
-                        Text("When an app can't reach this Mac it goes to OpenRouter with your key: these for text and pictures, and Jev for decisions. What it spends then isn't shown in Lamp.")
+                        Text("When an app can't reach this Mac it goes to OpenRouter with your key. What it spends then isn't shown in Lamp.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
                         KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")

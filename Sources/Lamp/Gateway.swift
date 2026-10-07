@@ -173,7 +173,12 @@ enum AppAI {
         for model in Builder.claudeModels where !model.id.isEmpty {
             routes.append(.make(id: "engine:claude:\(model.id)", label: "\(model.label) via Claude Code", kind: .engine(.claude, model: model.id)))
         }
-        for model in Builder.codexModels where !model.id.isEmpty {
+        // Codex lists its models once it has run; until then its default, with no model named, is the route.
+        let codexModels = Builder.codexModels.filter { !$0.id.isEmpty }
+        if codexModels.isEmpty {
+            routes.append(.make(id: "engine:codex", label: "Codex's default model via Codex", kind: .engine(.codex, model: "")))
+        }
+        for model in codexModels {
             routes.append(.make(id: "engine:codex:\(model.id)", label: "\(model.label) via Codex", kind: .engine(.codex, model: model.id)))
         }
         if Builder.piProvider == Builder.myPiProvider {
@@ -200,7 +205,7 @@ enum AppAI {
     @MainActor static func canonicalRoute(_ id: String) -> String {
         switch id {
         case "engine:claude": return "engine:claude:sonnet"
-        case "engine:codex": return "engine:codex:\(Builder.codexModels.dropFirst().first?.id ?? "")"
+        case "engine:codex": return Builder.codexModels.first { !$0.id.isEmpty }.map { "engine:codex:\($0.id)" } ?? id
         default: return id
         }
     }
@@ -229,7 +234,7 @@ enum AppAI {
         let own: String
         switch Builder.engine {
         case .claude: own = "engine:claude:sonnet"
-        case .codex: own = "engine:codex:\(Builder.codexModels.dropFirst().first?.id ?? "")"
+        case .codex: own = canonicalRoute("engine:codex")
         case .pi: own = "engine:pi"
         }
         if let route = route(own) { return route }
@@ -261,6 +266,23 @@ enum AppAI {
 
     @MainActor static func awayImageModel(for choice: String?) -> String {
         Icons.artModels.contains { $0.id == choice } ? choice! : awayImageModel
+    }
+
+    /// What a phone can decide with on its own, through the OpenRouter key it carries: Jev, or the text
+    /// model it uses away, asked the questions as JSON. The Mac's own model, TypeSafe and OpenAI stay here.
+    static var awayDecisionModels: [(id: String, label: String, provider: String, model: String)] {
+        [("openrouter:jev-latest", "Jev", "openrouter", "jev-latest"), ("text", "By text, through the text model above", "text", "")]
+    }
+
+    /// The decision model an app on the phone uses away from the Mac: Settings' choice, else by text when
+    /// that's the Mac's choice too, else Jev.
+    @MainActor static var awayDecisionModel: (id: String, label: String, provider: String, model: String) {
+        let saved = UserDefaults.standard.string(forKey: "awayDecisionModel") ?? ""
+        return awayDecisionModels.first { $0.id == saved } ?? awayDecisionModels.first { $0.id == decisionModel.id } ?? awayDecisionModels[0]
+    }
+
+    @MainActor static func awayDecisionModel(for choice: String?) -> (id: String, label: String, provider: String, model: String) {
+        awayDecisionModels.first { $0.id == choice } ?? awayDecisionModel
     }
 
     /// The route Settings chose for apps, when it can still answer; else the default.

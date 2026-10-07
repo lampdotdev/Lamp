@@ -21,6 +21,8 @@ plain "Lamp x.y.z" line.
 - "Text generation" lists every way an app's AI can be answered, by name: OpenRouter's models, each model
   your Claude Code or Codex sign-in offers (Sonnet via Claude Code, say), or a model on this
   Mac. An app built with a model on this Mac keeps using it even once you add a key.
+- iOS apps away from this Mac also choose their decision model: Jev, or by text through the text model
+  they use away. Settings and an app's info panel both offer it.
 - Wherever Settings says something needs an OpenRouter key, an Add a Key… button sits at the right. When a
   cloud picture model is chosen without a key, the note says what makes the pictures meanwhile and why.
 - Decisions can be made on this Mac: H2O Lightning 4B, a free 2.5 GB decision model about as good as Jev,
