@@ -7,6 +7,7 @@ import DownloadButton from "../components/DownloadButton.astro";
 import QuickLook from "../components/QuickLook.astro";
 import UsesYourMac from "../components/visuals/UsesYourMac.astro";
 import BeautifulByDefault from "../components/visuals/BeautifulByDefault.astro";
+import WorksWithYourMac from "../components/visuals/WorksWithYourMac.astro";
 import icon from "../assets/AppIcon.png";
 import anthropic from "../assets/logos/anthropic.png";
 import openai from "../assets/logos/openai.png";
@@ -61,45 +62,48 @@ const shelf = [
   "mine-4", "neon-bricks", "mine-10", "mine-9", "mine-5", "mine-7", "reading-queue",
 ].flatMap((name) => icons[`../assets/icons/${name}.png`] ?? []);
 
-// The rest of the features as a bento box: wide and narrow tiles in turn, a couple in colour. A tile with a
-// `visual` shows that illustration across its top, running off its edges, with the words beneath.
-const points: { title: string; text: string; tile: string; visual?: (props: object) => unknown }[] = [
+// The rest of the features as a bento box on ten columns: rows split 4/6, 6/4 or 5/5, a few tiles in colour. A tile with a
+// `visual` shows that illustration across its top, running off its edges, with the words beneath; with
+// `below`, the words come first and the illustration sits at the bottom, for variety.
+const points: { title: string; text: string; tile: string; visual?: (props: object) => unknown; below?: boolean }[] = [
   {
     title: "Change it any time",
     text: "Always finding ways to improve? No worries, continue making changes to your apps. Saved versions let you try new things and roll back if it doesn't work out.",
-    tile: "sm:col-span-2 bg-panel",
+    tile: "sm:col-span-4 bg-panel",
   },
   {
     title: "Apps that use your Mac",
     text: "An app can use your other apps to get things done, browser included, with whatever you're already signed in to.",
-    tile: "sm:col-span-3 bg-night text-white",
+    tile: "sm:col-span-6 bg-night text-white",
     visual: UsesYourMac,
   },
   {
     title: "Works with what's on your Mac",
     text: "Apps can read and add to your calendar, reminders and contacts, find and send mail, and send you notifications. Through your other apps, they can reach Notes, Messages and more.",
-    tile: "sm:col-span-3 bg-panel",
+    tile: "sm:col-span-5 bg-panel",
+    visual: WorksWithYourMac,
+    below: true,
   },
   {
     title: "Beautiful by default",
     text: "Unless you ask for something different, every app looks and feels made in Cupertino: native controls, proper menus and keyboard shortcuts, and an icon of its own.",
-    tile: "sm:col-span-2 bg-glow",
+    tile: "sm:col-span-5 bg-glow",
     visual: BeautifulByDefault,
   },
   {
     title: "Made for Apple silicon",
     text: "Apps use what's built into your Mac, like reading text in pictures, understanding speech and translating, instantly and privately. Lamp can also run AI models on your Mac's own chip, both to build your apps and inside them.",
-    tile: "sm:col-span-2 bg-graphite text-white",
+    tile: "sm:col-span-4 bg-graphite text-white",
   },
   {
     title: "Your data stays put",
     text: "What an app keeps is kept safe through every change you make to it, so trying something new never costs you your stuff.",
-    tile: "sm:col-span-3 bg-panel",
+    tile: "sm:col-span-6 bg-panel",
   },
   {
     title: "Share with anyone",
     text: "Send an app to a friend by AirDrop, Messages or Mail. They get their own copy to make their own, and Lamp shows them what it does before it opens.",
-    tile: "sm:col-span-5 bg-panel",
+    tile: "sm:col-span-10 bg-panel",
   },
 ];
 
@@ -168,8 +172,8 @@ const description = "Describe what you want, and Lamp builds a real Mac app, wit
     </section>
 
     <section class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-      <div class="grid gap-4 sm:grid-cols-5">
-        <div class="overflow-hidden rounded-[28px] bg-panel pt-12 text-center sm:col-span-5 sm:pt-16">
+      <div class="grid gap-4 sm:grid-cols-10">
+        <div class="overflow-hidden rounded-[28px] bg-panel pt-12 text-center sm:col-span-10 sm:pt-16">
           <h3 class="px-8 font-display text-3xl font-semibold tracking-tight sm:text-5xl">Real Mac apps</h3>
           <p class="mx-auto mt-4 max-w-[50rem] px-8 text-lg leading-relaxed text-muted">
             Each one is an app of its own, in your Applications folder and in Spotlight. No browser tab, no subscription
@@ -194,12 +198,13 @@ const description = "Describe what you want, and Lamp builds a real Mac app, wit
         </div>
         {
           points.map((point) => (
-            <div class:list={["flex min-h-56 flex-col justify-end overflow-hidden rounded-[28px]", point.tile]}>
-              {point.visual && <point.visual />}
-              <div class="p-8 sm:p-10">
+            <div class:list={["flex min-h-56 flex-col overflow-hidden rounded-[28px]", point.below ? "justify-between" : "justify-end", point.tile]}>
+              {point.visual && !point.below && <point.visual />}
+              <div class:list={["p-8 sm:p-10", point.below && "pb-2 sm:pb-4"]}>
                 <h3 class="font-display text-2xl font-semibold tracking-tight sm:text-3xl">{point.title}</h3>
                 <p class="mt-3 text-lg leading-relaxed opacity-75">{point.text}</p>
               </div>
+              {point.visual && point.below && <point.visual />}
             </div>
           ))
         }

@@ -4,12 +4,12 @@ import habitStreaks from "../../assets/apps/habit-streaks.png";
 ---
 
 <!--
-  For "Beautiful by default": the real Habit Streaks window at actual size, running off the tile's edges, under a
-  Mac menu bar with its Habit menu open (View is left out of the bar so the open menu fits the narrow tile). The menu's items and shortcuts are the app's own (App.swift in the
-  Habit Streaks that Lamp Dev built). In the screenshot the window's top-left corner sits 76px across and 38px
-  down at actual size, which the picture's offsets account for.
+  For "Beautiful by default": the real Habit Streaks window at actual size, running off the tile's right and
+  bottom edges. In the screenshot the window's top-left corner sits 76px across and 38px down at actual size,
+  which the picture's offsets account for, leaving the window 36px in from the tile's edges. As tall as the
+  illustration beside it, so the pair lines up.
 -->
-<div aria-hidden="true" class="relative h-72 overflow-hidden select-none sm:h-80">
+<div aria-hidden="true" class="relative h-[300px] overflow-hidden select-none">
   <!-- On a phone the scene is drawn at the desktop tile's size and shrunk, keeping the same arrangement. -->
   <div class="absolute inset-0 h-[127%] w-[127%] origin-top-left scale-[0.79] sm:h-full sm:w-full sm:scale-100">
     <Image
@@ -17,27 +17,7 @@ import habitStreaks from "../../assets/apps/habit-streaks.png";
       alt=""
       width={1152}
       densities={[1, 2]}
-      class="absolute top-[22px] left-[-40px] w-[1152px] max-w-none"
+      class="absolute top-[-2px] left-[-40px] w-[1152px] max-w-none"
     />
-
-    <!-- The menu bar, with Habit open -->
-    <div class="absolute inset-x-0 top-0 flex h-7 items-center gap-4 border-b border-black/5 bg-white/70 px-5 text-[13px] text-ink backdrop-blur-xl">
-      <span class="font-bold">Habit Streaks</span>
-      <span>File</span>
-      <span>Edit</span>
-      <span class="relative -mx-2 rounded-md bg-black/10 px-2">
-        Habit
-        <span class="absolute top-[calc(100%+6px)] -left-1 w-52 rounded-xl bg-white/85 p-1.5 shadow-[0_18px_40px_rgba(0,0,0,0.22)] ring-1 ring-black/10 backdrop-blur-xl">
-          <span class="flex justify-between rounded-md bg-[#0a84ff] px-2.5 py-1 text-white">
-            Mark Done Today <span class="opacity-90">⌘D</span>
-          </span>
-          <span class="flex justify-between px-2.5 py-1">
-            Edit Habit… <span class="text-black/45">⌘E</span>
-          </span>
-        </span>
-      </span>
-      <span>Window</span>
-      <span>Help</span>
-    </div>
   </div>
 </div>
