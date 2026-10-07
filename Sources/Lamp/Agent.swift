@@ -10,6 +10,7 @@ enum AgentEvent {
     case failed(String)
     case raw(String)
     case session(String)   // an external engine's conversation id, to resume next turn
+    case position(String)  // Claude Code: the id of the message its conversation now ends with
     case step(String)      // the model has started on a tool call (its name), or on text ("")
     case stepArgs(String)  // a piece of that call's arguments, as they stream in
     case plan([PlanPart])  // the agent's checklist for the build card

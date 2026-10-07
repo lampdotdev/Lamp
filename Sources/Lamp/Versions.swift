@@ -184,11 +184,11 @@ enum Versions {
         try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
     }
 
-    /// Remembers that a request was taken back and sent again in other words, so the agent hears about it
-    /// with the new one. Its conversation still holds the old request and everything that followed it.
-    static func remember(_ project: LampProject, tookBack request: String) {
+    /// What the agent is told with a request that was sent again in other words, when its conversation
+    /// couldn't be taken back to before the old one (`Cut`) and so still holds it and everything that followed.
+    static func tookBackNote(_ request: String) -> String {
         let old = request.count > 400 ? String(request.prefix(400)) + "…" : request
-        let note = """
+        return """
 
 
         Note from Lamp: the message above replaces an earlier one. The user went back to this message of \
@@ -200,7 +200,6 @@ enum Versions {
         longer count, and the app's files are back to how they were just before it. Don't bring any of that \
         back unless the message above asks for it, and read the files again before editing.
         """
-        try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
     }
 
     /// The note about a restore since the last request. It stays until the agent has had it (`forgetNote`).

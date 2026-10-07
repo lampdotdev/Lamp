@@ -291,9 +291,11 @@ extension Agent {
     static let userConfigDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".pi/agent").path
 
     /// Builds the command for one turn with the chosen engine. `files` are attachment paths
-    /// relative to the app folder; `session` is the engine's saved conversation id, if any; `token` is the
-    /// agent's own token for this turn (Store.agentTokens), never the app's.
-    static func run(prompt: String, files: [String], project: LampProject, session: String?, token: String) -> AgentRun {
+    /// relative to the app folder; `session` is the engine's saved conversation id, if any; `cut` is the
+    /// message Claude Code's conversation is to end at before this turn ("" for none of it), when a request
+    /// was taken back (`Cut`); `token` is the agent's own token for this turn (Store.agentTokens), never the app's.
+    static func run(prompt: String, files: [String], project: LampProject, session: String?, cut: String? = nil,
+                    token: String) -> AgentRun {
         var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt, "LAMP_DIR": project.dir.path,
                                      "PATH": ToolLocator.userPath]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
@@ -393,7 +395,14 @@ extension Agent {
               --settings "$LAMP_CLAUDE_SETTINGS" \\
               --append-system-prompt "$LAMP_SYSTEM"
             """
-            if session != nil { command += " --resume \"$LAMP_SESSION\"" }
+            // A cut: carry on from a copy of the conversation that ends at that message, leaving the
+            // conversation itself as it is. Nothing of it is from before: a new conversation.
+            if session != nil, let cut {
+                env["LAMP_CUT"] = cut
+                if !cut.isEmpty { command += " --resume \"$LAMP_SESSION\" --resume-session-at \"$LAMP_CUT\" --fork-session" }
+            } else if session != nil {
+                command += " --resume \"$LAMP_SESSION\""
+            }
             let model = Builder.engineModel(.claude)
             if !model.isEmpty {
                 env["LAMP_MODEL"] = model
@@ -505,7 +514,10 @@ extension Agent {
             if obj["subtype"] as? String == "init", let id = obj["session_id"] as? String { return [.session(id)] }
         case "assistant":
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
-            return content.compactMap { block in
+            // Each finished message has an id, which the conversation can later be taken back to.
+            // (Not a helper agent's: those aren't part of this conversation.)
+            let position = obj["parent_tool_use_id"] is String ? [] : (obj["uuid"] as? String).map { [AgentEvent.position($0)] } ?? []
+            return position + content.compactMap { block in
                 switch block["type"] as? String {
                 case "text": (block["text"] as? String)?.trimmed.nilIfEmpty.map(AgentEvent.text)
                 case "tool_use":

@@ -42,6 +42,9 @@ struct LogLine: Identifiable, Codable, Equatable {
     var before: String? = nil          // for a request: the version the app was at when it was sent
     var replaced: String? = nil        // for a request sent again in other words: the request it took the place of
     var tookBack: [String]? = nil      // …and every request that left the chat for it, oldest first
+    var sent: Date? = nil              // for a request: when it went to the agent
+    var claudeEnd: String? = nil       // …the last message Claude Code's conversation had then ("" for none)
+    var carried: String? = nil         // …and what Lamp told the agent with it about going back (see `Cut`)
 
     /// Lamp knows where the app was before this request, so it can be changed and sent again from there.
     /// Not so for some requests from before that was noted.
@@ -909,7 +912,7 @@ final class Store: ObservableObject {
                 if project.id != untitled.id { progress[project.id] = progress.removeValue(forKey: untitled.id) }
             }
             // Where the app is as the turn starts, so the request can be changed and sent again from here.
-            if let head = await Versions.head(project) { mark(asked, sentFrom: head, in: project) }
+            await mark(asked, sentFrom: Versions.head(project), in: project)
             var worked = false
             var result = TurnResult(end: .failed, watched: true)
             defer {
@@ -1046,13 +1049,22 @@ final class Store: ObservableObject {
         // After a request is sent again the build on disk is still of the code that was just taken back, so
         // its picture and its crashes say nothing about the files the agent has now.
         let sentAgain = messages.contains { $0.replaces != nil || !$0.tookBack.isEmpty }
-        let notes = Attachments.note(for: saved) + Versions.note(for: project)
+        // A request that was taken back leaves the agent's conversation before this one goes out. Where it
+        // can't, the agent is told about it instead.
+        let engine = Builder.engine
+        let back = Versions.note(for: project) + (await cutConversation(of: project, for: engine))
+        mark(asked, carried: back, in: project)
+        let notes = Attachments.note(for: saved) + back
             + (sentAgain ? "" : Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project))
         turns[project.id]?.request = prompt
         let ran = await runAgent(prompt + notes, files: files, on: project)
         // The note about going back is the agent's only word of it, so it's kept until the agent has had it:
-        // a turn that failed before reaching the agent leaves it for the next one.
-        if let last = asked.last, Self.reachedAgent(last, in: logs[project.id] ?? []) { Versions.forgetNote(for: project) }
+        // a turn that failed before reaching the agent leaves it for the next one. So is a cut in its
+        // conversation, which is made again then (and finds nothing more to leave out, if it was made).
+        if let last = asked.last, Self.reachedAgent(last, in: logs[project.id] ?? []) {
+            Versions.forgetNote(for: project)
+            Cut.forget(for: project, engine: engine)
+        }
         guard ran else {
             return TurnResult(end: .failed, watched: isWatching(project.id))
         }
@@ -1189,9 +1201,16 @@ final class Store: ObservableObject {
         guard let turn = turns[project.id] else { return false }   // only inside a turn (startQueued)
         turn.stopped = false
         let sessionFile = Self.sessionFile(for: project, engine: engine)
+        // Claude Code makes a cut in its conversation as it starts the turn: it carries on from a copy that
+        // ends at `cut`. The copy is only there to go back to once it has a message of this turn in it, so
+        // until then Lamp keeps pointing at the conversation it was made from.
+        let cut = engine == .claude ? Cut.pending(for: project, engine: .claude).flatMap { $0.canCut(.claude) ? $0.claudeEnd : nil } : nil
+        var copy: String?
+        var copied = false
+        var cutRefused = false
         let run = Agent.run(prompt: prompt, files: files, project: project,
                             session: engine == .pi ? Self.piSession(for: project) : Self.savedSession(sessionFile),
-                            token: turn.agentToken)
+                            cut: cut, token: turn.agentToken)
         let status = await Shell.run(run.command, cwd: project.dir, env: run.env,
                                      started: { turn.agent = $0 }) { [weak self] line in
             guard let self else { return }
@@ -1239,8 +1258,20 @@ final class Store: ObservableObject {
                     }
                 case .cost(let amount): cost += amount
                 case .failed(let text): failure = text
-                case .raw(let text): log(project, .detail, text)
-                case .session(let id): if engine != .pi { try? id.write(to: sessionFile, atomically: true, encoding: .utf8) }
+                case .raw(let text):
+                    if cut != nil, text.contains("No message found with message.uuid") { cutRefused = true }
+                    log(project, .detail, text)
+                case .session(let id):
+                    // Claude Code names a new conversation before anything of it is saved; one that's stopped
+                    // right then can't be found again. Its id is kept once it has said something (`.position`).
+                    if engine == .claude { copy = id } else if engine != .pi { try? id.write(to: sessionFile, atomically: true, encoding: .utf8) }
+                case .position(let message):
+                    if let id = copy {
+                        try? id.write(to: sessionFile, atomically: true, encoding: .utf8)
+                        copy = nil
+                    }
+                    copied = true
+                    try? message.write(to: Self.claudeEndFile(for: project), atomically: true, encoding: .utf8)
                 }
             }
         }
@@ -1272,13 +1303,29 @@ final class Store: ObservableObject {
             log(project, .status, "Claude Code's auto mode isn't available, so Lamp will ask before every command.")
             return await runAgent(prompt, files: files, on: project)
         }
+        // The turn ended before Claude Code had made its copy of the conversation. A cut it can't make (the
+        // message to end at isn't in the conversation) is given up at once, and so is one that has now failed
+        // twice: from then on the turn runs on the whole conversation, with the note about what was taken back.
+        if cut != nil, !copied, var waiting = Cut.pending(for: project, engine: .claude) {
+            waiting.tries = cutRefused ? 2 : waiting.tries + 1
+            Cut.save(waiting, for: project, engine: .claude)
+            if cutRefused {
+                log(project, .detail, "Claude Code couldn't go back to before the message that was changed, so it's told about it instead.")
+                return await runAgent(prompt + (waiting.note ?? ""), files: files, on: project)
+            }
+        }
         log(project, .error, Provider.friendlyError(failure))
         return false
     }
 
+    /// Where Lamp keeps which conversation an engine carries on from, for this app.
+    private static func conversationFile(for project: LampProject, engine: Engine) -> URL {
+        engine == .pi ? project.dir.appendingPathComponent(".lamp/pi-session") : sessionFile(for: project, engine: engine)
+    }
+
     /// One pi conversation per app, so the agent remembers earlier requests, including ones that were undone.
     private static func piSession(for project: LampProject) -> String {
-        let url = project.dir.appendingPathComponent(".lamp/pi-session")
+        let url = conversationFile(for: project, engine: .pi)
         if let id = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !id.isEmpty { return id }
         let id = "lamp-" + UUID().uuidString.lowercased()
         try? id.write(to: url, atomically: true, encoding: .utf8)
@@ -1292,6 +1339,38 @@ final class Store: ObservableObject {
 
     private static func savedSession(_ url: URL) -> String? {
         (try? String(contentsOf: url, encoding: .utf8))?.trimmed.nilIfEmpty
+    }
+
+    /// The last message of Claude Code's conversation, which a later request can be taken back to.
+    private static func claudeEndFile(for project: LampProject) -> URL {
+        project.dir.appendingPathComponent(".lamp/session-claude-end")
+    }
+
+    /// Before a turn: makes the cut waiting for this engine's conversation, if a request was taken back since
+    /// it last ran (`Cut`). Returns what the agent has to be told with the request: what the taken-back
+    /// request had been told, when its conversation now ends before it, or else that it was taken back.
+    private func cutConversation(of project: LampProject, for engine: Engine) async -> String {
+        guard let cut = Cut.pending(for: project, engine: engine) else { return "" }
+        guard cut.canCut(engine) else { return cut.note ?? "" }
+        switch engine {
+        case .claude:
+            break   // made by the turn itself (`runAgent`)
+        case .pi:
+            let file = Self.conversationFile(for: project, engine: .pi)
+            guard let session = Self.savedSession(file), let sent = cut.sent else { break }
+            guard let copy = await Cut.pi(session, in: project, from: sent) else { return cut.note ?? "" }
+            if copy != session { try? copy.write(to: file, atomically: true, encoding: .utf8) }
+        case .codex:
+            let file = Self.conversationFile(for: project, engine: .codex)
+            guard let thread = Self.savedSession(file), let sent = cut.sent else { break }
+            switch await Cut.codex(thread, in: project, from: sent) {
+            case nil: return cut.note ?? ""
+            case .unchanged: break
+            case .copy(let copy): try? copy.write(to: file, atomically: true, encoding: .utf8)
+            case .empty: try? FileManager.default.removeItem(at: file)
+            }
+        }
+        return cut.carried ?? ""
     }
 
     /// Deletes an app: quits it, stops its agent, and moves its source and built app to the Trash.
@@ -1819,8 +1898,9 @@ final class Store: ObservableObject {
     /// Sends a request again in other words, from where the app was when it was first sent. The app's files
     /// go back to that point (as a new version, like any restore, so what came later is still in Versions),
     /// the request and everything after it leave the chat, and the new words go out as an ordinary turn.
-    /// The agent keeps its conversation, as it does after Undo, and is told what was taken back: the three
-    /// engines can't all be wound back to an earlier message, and a note works the same for each of them.
+    /// The agent's conversation goes back with it: it carries on from a copy of its conversation that ends
+    /// just before the request (`Cut`), so it knows nothing of what was taken back. Only when that copy can't
+    /// be made does it keep its conversation, as it does after Undo, and get told what was taken back.
     /// `attachments` are the files to send with it: the request's own, already in the app's folder, and any added.
     /// False when the app couldn't be taken back, and nothing was sent.
     func sendAgain(_ line: LogLine, as text: String, attachments: [URL], in project: LampProject) async -> Bool {
@@ -1865,7 +1945,17 @@ final class Store: ObservableObject {
         logs[project.id] = Array(chat[..<first])
         saveChat(project)
         progress[project.id] = nil   // a new app's build card belongs to the request that's gone
-        if let replaces { Versions.remember(project, tookBack: replaces) }
+        // The agent's own conversation is to end where the chat now does. Each engine that has one for this
+        // app makes that cut before its next turn here (`cutConversation`); the note is for one that can't.
+        let from = chat[first]
+        if replaces != nil { Versions.forgetNote(for: project) }
+        if replaces != nil || from.sent != nil {
+            let cut = Cut(sent: from.sent, claudeEnd: from.claudeEnd, carried: replaces == nil ? nil : from.carried,
+                          note: replaces.map(Versions.tookBackNote))
+            for engine in Engine.allCases where Self.savedSession(Self.conversationFile(for: project, engine: engine)) != nil {
+                Cut.keep(cut, for: project, engine: engine)
+            }
+        }
         queued[project.id, default: []].insert(contentsOf: again, at: 0)
         return true
     }
@@ -1949,10 +2039,29 @@ final class Store: ObservableObject {
         saveChat(project)
     }
 
-    /// Notes on requests the version the app was at when they were sent.
-    private func mark(_ lines: [UUID], sentFrom version: String, in project: LampProject) {
+    /// Notes on requests the version the app was at when they were sent, and where the agent's conversation
+    /// was: the moment itself, which pi's and Codex's conversations can be found by, and Claude Code's last
+    /// message. A request that's changed and sent again starts over from both.
+    private func mark(_ lines: [UUID], sentFrom version: String?, in project: LampProject) {
         guard var chat = logs[project.id] else { return }
-        for index in chat.indices where lines.contains(chat[index].id) { chat[index].before = version }
+        let now = Date()
+        // A cut Claude Code is still to make is where its conversation will end when these go out.
+        let waiting = Cut.pending(for: project, engine: .claude).flatMap { $0.canCut(.claude) ? $0.claudeEnd : nil }
+        let claudeEnd = waiting ?? (Self.savedSession(Self.sessionFile(for: project, engine: .claude)) == nil ? ""
+            : Self.savedSession(Self.claudeEndFile(for: project)))
+        for index in chat.indices where lines.contains(chat[index].id) {
+            if let version { chat[index].before = version }
+            chat[index].sent = now
+            chat[index].claudeEnd = claudeEnd
+        }
+        logs[project.id] = chat
+        saveChat(project)
+    }
+
+    /// Notes on requests what Lamp told the agent with them about going back.
+    private func mark(_ lines: [UUID], carried: String, in project: LampProject) {
+        guard !carried.isEmpty, var chat = logs[project.id] else { return }
+        for index in chat.indices where lines.contains(chat[index].id) { chat[index].carried = carried }
         logs[project.id] = chat
         saveChat(project)
     }
