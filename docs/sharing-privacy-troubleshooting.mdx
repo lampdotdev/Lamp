@@ -55,9 +55,21 @@ To build and change an app, Lamp sends the AI you chose:
 - pictures of the app's windows, and what the app reports while it runs, so
   the AI can find and fix problems
 
-It goes to the company behind the AI you picked in
-[Choose your AI](/choose-your-ai), under your account with them. If you chose a
-model on this Mac, it stays on your Mac.
+The builder sends this to the company behind the AI you picked in
+[Choose your AI](/choose-your-ai), under your account with them. A model on
+this Mac does the building locally.
+
+Lamp also uses AI to name your app, design its icon and suggest your next
+message. If you have an OpenRouter key saved, these text helpers use cloud
+models through OpenRouter, even when the builder is a model on your Mac.
+Your first request goes into naming and icon design, and recent chat messages
+go into follow-up suggestions.
+
+To have these text helpers use your local builder, remove the OpenRouter key:
+open **Settings → Providers**, select **OpenRouter**, click the minus button
+and confirm **Remove**. This doesn't make every AI feature local; pictures
+and AI inside your apps have their own choices. See
+[AI inside your apps](/choose-your-ai#ai-inside-your-apps).
 
 To stop sending pictures of windows and what apps report, open **Lamp →
 Settings** (⌘,) **→ Building** and turn off the two switches there. That's
