@@ -2814,6 +2814,8 @@ final class Store: ObservableObject {
                 let art = try await Icons.generateBestArt(spec, appName: project.name) { [weak self] in
                     self?.log(project, .detail, $0)
                 }
+                // A picture picked in Image Playground while these were being drawn is the person's choice: it stays.
+                guard Icons.cachedArt(project, spec: spec) == nil else { return }
                 let url = Icons.artURL(project, spec: spec)
                 try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 guard let tiff = art.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?
@@ -2875,6 +2877,13 @@ final class Store: ObservableObject {
                 }
                 return png
             }.value
+            // Nothing owned the app during the cut-out: it may have been deleted meanwhile, or a turn may have
+            // redesigned its icon, and the picture was made for the design it replaced.
+            guard exists(project) else { return }
+            guard Icons.load(project) == spec else {
+                log(project, .status, "\(project.name)'s icon changed while that picture was being prepared, so it wasn't used.")
+                return
+            }
             let url = Icons.artURL(project, spec: spec)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try png.write(to: url)
