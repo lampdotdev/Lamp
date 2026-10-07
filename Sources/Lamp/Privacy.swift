@@ -1,6 +1,6 @@
 import Foundation
 
-/// What the agent may see beyond the code it's writing (Settings → Building → Privacy).
+/// What the agent may see beyond the code it's writing (Settings → Building → Permissions and Privacy).
 enum Privacy {
     /// Ask before the agent reads or changes a file outside the app's folder.
     static var asksOutsideFolder: Bool { UserDefaults.standard.object(forKey: "askOutsideFolder") as? Bool ?? true }

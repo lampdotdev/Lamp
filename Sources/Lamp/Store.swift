@@ -1599,7 +1599,7 @@ final class Store: ObservableObject {
         return probability >= 0.85
     }
 
-    /// Applies Settings → Building → Privacy to one of the agent's file tools, about to touch `path`: pi's own
+    /// Applies Settings → Building → Permissions and Privacy to one of the agent's file tools, about to touch `path`: pi's own
     /// tools ask through its extension, Codex's come from Lamp's MCP endpoint. The reason is for the agent.
     private func fileAccess(tool: String, path: String, for project: LampProject) async -> (allowed: Bool, reason: String?) {
         switch Privacy.verdict(tool: tool, path: path, project: project) {
