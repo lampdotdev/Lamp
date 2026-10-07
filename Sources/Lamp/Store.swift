@@ -1610,6 +1610,9 @@ final class Store: ObservableObject {
         }
         // The owner, before any wait; and one Lamp app per simulator, so actions can't land on another's screen.
         guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        guard simulatorLeases[running.udid] == project.id else {
+            return (200, ["text": "Another of the user's apps has taken this simulator since. Call look_at_app to open this app again."])
+        }
         if let other = simulatorApps.first(where: { $0.key != project.id && $0.value.udid == running.udid && Simulator.isRunning(pid: $0.value.pid) }),
            let name = projects.first(where: { $0.id == other.key })?.name {
             return (200, ["text": "Another of the user's apps, \(name), is open on the same simulator, so the screen may not be this app's. Ask the user to quit it, or wait and try again."])
@@ -1630,8 +1633,9 @@ final class Store: ObservableObject {
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         let report = await Simulator.Driver.perform(decoded, on: screen, picture: picture) { [weak self] in
             guard let self, exists(project), turns[project.id] === owner, !owner.stopped else { return false }
-            // Still this app's screen: it's running, and no other project's app has taken the device meanwhile.
-            guard simulatorApps[project.id]?.pid == running.pid, Simulator.isRunning(pid: running.pid) else { return false }
+            // Still this app's screen: it's running, the device is still leased to this project (a launch by
+            // another project takes the lease before anything else), and no other app of Lamp's is running there.
+            guard simulatorLeases[running.udid] == project.id, simulatorApps[project.id]?.pid == running.pid, Simulator.isRunning(pid: running.pid) else { return false }
             return !simulatorApps.contains { $0.key != project.id && $0.value.udid == running.udid && Simulator.isRunning(pid: $0.value.pid) }
         }
         if let data = try? JSONSerialization.data(withJSONObject: ["id": UUID().uuidString, "report": report]) {
@@ -2139,7 +2143,10 @@ final class Store: ObservableObject {
         // The turn that owns the app now, taken before anything waits: Delete or Stop can come during any of
         // the waits below, and then nothing more is written or launched for it.
         guard let owner = turns[project.id] else { return "Lamp isn't working on this app." }
-        func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
+        // The device is this project's from here: a later launch by another project takes the lease
+        // (before any of its own waits), and this one, finding it gone, goes no further.
+        simulatorLeases[udid] = project.id
+        func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped && simulatorLeases[udid] == project.id }
         note("Opening \(project.name) on the iPhone simulator…", for: project)
         do {
             try await Simulator.boot(udid, show: inFront)
@@ -2152,6 +2159,7 @@ final class Store: ObservableObject {
                 if let theirs = projects.first(where: { $0.id == other }) { await Simulator.terminate(theirs.bundleID, on: udid) }
                 simulatorApps[other] = nil
             }
+            guard stillOwns() else { return "The app was deleted or stopped before it opened." }
             Runtime.startLog(project)
             Simulator.Driver.forget(project.id)
             let pid = try await Simulator.launch(project.bundleID, on: udid, log: Runtime.logURL(project))
@@ -2186,6 +2194,9 @@ final class Store: ObservableObject {
 
     /// iPhone apps running in the simulator: which simulator each was launched on, and its process id.
     private var simulatorApps: [String: (udid: String, pid: Int32)] = [:]
+    /// Which project each simulator belongs to right now: taken before a launch's first wait, so two launches
+    /// on one device can't both go ahead, and checked before every action the driver takes.
+    private var simulatorLeases: [String: String] = [:]
 
     /// For Open App and Undo, where no agent is running to fix a crash.
     private func installReportingCrash(_ project: LampProject) async {
@@ -2425,7 +2436,10 @@ final class Store: ObservableObject {
     private func quit(_ project: LampProject) async {
         if project.platform == .iphone {
             // On the simulator it was launched on, not whichever one would be picked now.
-            if let running = simulatorApps[project.id] { await Simulator.terminate(project.bundleID, on: running.udid) }
+            if let running = simulatorApps[project.id] {
+                await Simulator.terminate(project.bundleID, on: running.udid)
+                if simulatorLeases[running.udid] == project.id { simulatorLeases[running.udid] = nil }
+            }
             simulatorApps[project.id] = nil
             refreshOpenApps()
             return
