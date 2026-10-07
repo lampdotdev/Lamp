@@ -5,6 +5,14 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.10.1
+
+- No more Keychain password prompts: a key that was put in the Keychain by something other than Lamp made
+  macOS ask for your login password at every read. Lamp now makes such a key its own after the first read,
+  and reads keys once at launch, in the background, rather than while drawing a view; that also ends a crash
+  when the prompt appeared as an app was being created.
+- Attaching files: the chat waits for the file picker to close before updating the attachments.
+
 ## 0.10.0
 
 - New apps start by choosing Mac, iPhone or iPad (with iOS apps on). Apps on your own iPhone or iPad work
