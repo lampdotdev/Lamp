@@ -117,7 +117,30 @@ enum KeyStore {
 
     static var openRouterKey: String? { key(for: "openrouter") }
 
+    /// Posted on the main thread once the keys have been read at launch: what was drawn without them draws again.
+    static let loaded = Notification.Name("LampKeysLoaded")
+    nonisolated(unsafe) private static var preloaded = false
+
+    /// Reads every provider's key once, off the main thread, so the Keychain's questions (a password, when
+    /// an item isn't Lamp's own) come at launch and not in the middle of drawing a view: a Keychain prompt
+    /// inside a layout pass runs the event loop inside the layout, which AppKit answers by crashing.
+    /// Until it's done, a read on the main thread says there's no key rather than ask.
+    static func preload() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            if usesKeychain { for provider in Provider.apiProviders { _ = key(for: provider.id) } }
+            DispatchQueue.main.async {
+                preloaded = true
+                NotificationCenter.default.post(name: loaded, object: nil)
+            }
+        }
+    }
+
     static func key(for provider: String) -> String? {
+        if usesKeychain, Thread.isMainThread, !preloaded {
+            lock.lock()
+            defer { lock.unlock() }
+            return cache[provider] ?? nil
+        }
         lock.lock()
         defer { lock.unlock() }
         if let cached = cache[provider] { return cached }

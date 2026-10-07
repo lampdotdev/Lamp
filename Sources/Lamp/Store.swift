@@ -277,7 +277,16 @@ final class Store: ObservableObject {
 
     private init() {
         Migration.fromForge()
-        Agent.syncKeyFile()   // keys an earlier Lamp left in pi's auth file come out of it
+        // The keys are read off the main thread first; what needs them (pi's auth file, the setup check, the
+        // views drawn meanwhile) follows once they're in.
+        KeyStore.preload()
+        NotificationCenter.default.addObserver(forName: KeyStore.loaded, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                Agent.syncKeyFile()   // keys an earlier Lamp left in pi's auth file come out of it
+                self?.objectWillChange.send()
+                Task { await self?.recheckSetup() }
+            }
+        }
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         reload()
         restoreWaiting()
