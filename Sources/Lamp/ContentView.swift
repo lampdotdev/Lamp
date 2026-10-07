@@ -607,20 +607,25 @@ struct ProjectView: View {
         /// nothing to open, share or look back on. Read from the app's files, not its versions' messages: a
         /// request is saved in its own words, which can look like one of Lamp's own notes ("Rename to …").
         var made: Bool
+        /// There's more saved than the version the app started as. Apart from `made`: an Undo back to the
+        /// empty app keeps the build it undid, and Versions is how to get it back.
+        var saved: Bool
 
         static func read(_ project: LampProject) async -> History {
             let versions = await Versions.list(project)
             let made = !Template.isScaffold(project)
             let undoable = Versions.undoTarget(in: versions) != nil
-            return History(undoable: undoable ? true : await Versions.hasUnsavedChanges(project), made: made)
+            return History(undoable: undoable ? true : await Versions.hasUnsavedChanges(project), made: made,
+                           saved: made || versions.count > 1)
         }
     }
     /// The history is read again whenever a turn starts or ends and whenever the chat changes (a rename, an Undo).
     private var historyKey: String { "\(project.id) \(busy) \(store.logs[project.id]?.count ?? 0)" }
     private var undoable: Bool { history?.undoable ?? true }
     private var made: Bool { history?.made ?? true }
+    private var saved: Bool { history?.saved ?? true }
     private var inspectorShown: Binding<Bool> {
-        Binding(get: { showInfo || (showVersions && made) }, set: { if !$0 { showInfo = false; showVersions = false } })
+        Binding(get: { showInfo || (showVersions && saved) }, set: { if !$0 { showInfo = false; showVersions = false } })
     }
 
     var body: some View {
@@ -655,7 +660,7 @@ struct ProjectView: View {
         .background(Color(nsColor: .textBackgroundColor))
         .inspector(isPresented: inspectorShown) {
             Group {
-                if showVersions && made { VersionsView(project: project) } else { AppInfoView(project: project) }
+                if showVersions && saved { VersionsView(project: project) } else { AppInfoView(project: project) }
             }
             .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
         }
@@ -815,11 +820,11 @@ struct ProjectView: View {
             }
             .help("Agent details")
             // Versions and App Info share the side panel: showing one hides the other.
-            Toggle(isOn: Binding(get: { showVersions && made }, set: { showVersions = $0; if $0 { showInfo = false } })) {
+            Toggle(isOn: Binding(get: { showVersions && saved }, set: { showVersions = $0; if $0 { showInfo = false } })) {
                 Label("Versions", systemImage: "clock.arrow.circlepath")
             }
-            .disabled(!made)
-            .help(made ? "See earlier versions of this app, name them, and go back to one" : "No versions yet: each change Lamp makes is saved as one")
+            .disabled(!saved)
+            .help(saved ? "See earlier versions of this app, name them, and go back to one" : "No versions yet: each change Lamp makes is saved as one")
             Toggle(isOn: Binding(get: { showInfo }, set: { showInfo = $0; if $0 { showVersions = false } })) {
                 Label("App Info", systemImage: "info.circle")
             }
