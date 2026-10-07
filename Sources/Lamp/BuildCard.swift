@@ -228,7 +228,7 @@ struct BuildCard: View {
     }
 
     private static let symbols: [TurnProgress.PartState: String] = [
-        .open: "circle", .started: "circle.lefthalf.filled", .active: "circle.dotted", .done: "checkmark.circle.fill",
+        .open: "circle", .started: "circle.dotted", .active: "circle.dotted", .done: "checkmark.circle.fill",
     ]
 
     /// The agent's plan with ticks, what it has worked on when there's no plan, or what Lamp is doing before either.
