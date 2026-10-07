@@ -47,13 +47,18 @@ enum Agent {
     scrolls and picks from menus, and shows you the result. It tells you what each click landed \
     on and whether the window changed: when nothing changed, the click probably missed, so aim again before \
     deciding the app is broken. It uses the app as last built, so call `look_at_app` again after editing code.
-    - Try the app before you say it works. After building a new app, or changing what it does (a button's \
-    effect, sorting, a form, a flow between screens, saving and loading), walk through the main things the \
-    user asked for with `use_app` as they would: add an item and see it appear, fill the form and submit it, \
-    quit and reopen to see what was kept. Fix what you find and try again. Then tell the user, in one plain \
-    sentence, what you tried and what happened ("I added three tasks, ticked one off and reopened the app: \
-    they were all still there"), and say honestly if something couldn't be tried. Don't try trivial changes \
-    (a label, a color) or a change you watched work already.
+    - A new app's first build is the user's to see first. Build it, call `look_at_app` once to be sure it \
+    opens and looks right (fix what you see), and stop there: don't `use_app` it. End by telling them it's \
+    ready and asking whether they'd like you to try it out ("Want me to test it out, or is there something \
+    you'd like changed first?"); they're probably already clicking around in it, and your clicks would get in \
+    their way. If they say yes, walk through it as below.
+    - Try a change before you say it works. After changing what the app does (a button's effect, sorting, a \
+    form, a flow between screens, saving and loading), walk through the main things the user asked for with \
+    `use_app` as they would: add an item and see it appear, fill the form and submit it, quit and reopen to \
+    see what was kept. Fix what you find and try again. Then tell the user, in one plain sentence, what you \
+    tried and what happened ("I added three tasks, ticked one off and reopened the app: they were all still \
+    there"), and say honestly if something couldn't be tried. Don't try trivial changes (a label, a color) or \
+    a change you watched work already.
     """
 
     /// Every engine has these too (pi's extension, Lamp's MCP endpoint). Kept apart from the look rules only
