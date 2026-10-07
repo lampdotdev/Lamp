@@ -538,7 +538,7 @@ struct ComputerUseSettings: View {
             if let problem {
                 Text(problem).font(.caption).foregroundStyle(.orange)
             }
-            Text("Lets your apps read and use your other apps, such as Slack, Mail, or Gmail and LinkedIn in your browser, with the accounts you're already signed in to. Turning it on adds CuaDriver (from Cua, open source) to Applications, and macOS asks you to allow it Accessibility and Screen Recording. Apps ask before every click or keystroke. Works with whatever builds your apps: an OpenRouter key, a local model, or your Claude Code or Codex sign-in.")
+            Text("Lets your apps read and use your other apps, such as Slack, Mail, or Gmail and LinkedIn in your browser, with the accounts you're already signed in to. Turning it on adds CuaDriver (from Cua, open source) to Applications, and macOS asks you to allow it Accessibility and Screen Recording. Apps ask before every click or keystroke.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .task { status = await ComputerUse.status() }
