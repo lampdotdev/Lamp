@@ -612,7 +612,7 @@ enum ComputerUse {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200, let message = ((obj["choices"] as? [[String: Any]])?.first?["message"]) as? [String: Any] else {
             let detail = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-            throw Failure(message: Provider.friendlyError("\(status) \(detail)"))
+            throw Failure(message: Provider.friendlyError("\(status) \(detail)", service: "OpenRouter"))
         }
         var kept: [String: Any] = ["role": "assistant", "content": message["content"] as? String ?? ""]
         if let calls = message["tool_calls"] { kept["tool_calls"] = calls }

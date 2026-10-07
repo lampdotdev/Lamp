@@ -298,10 +298,11 @@ enum AppAI {
         return defaultRoute
     }
 
-    struct Failure: Error {
+    struct Failure: LocalizedError {
         let message: String
         /// What was billed before the failure (both JSON attempts, say), so the app's usage still counts it.
         var cost: Double = 0
+        var errorDescription: String? { message }
     }
 
     /// Whether apps' text AI can answer: an OpenRouter key, or whatever builds apps.
@@ -584,7 +585,7 @@ enum AppAI {
                 let error = obj["error"] as? [String: Any]
                 let detail = error?["message"] as? String ?? obj["detail"].map { "\($0)" } ?? "HTTP \(status)"
                 throw Failure(message: status == 422 ? "The decision request was invalid: \(detail)"
-                                                     : Provider.friendlyError("\(status) \(detail)"))
+                                                     : Provider.friendlyError("\(status) \(detail)", service: choice.provider == "typesafe" ? "TypeSafe" : "OpenRouter"))
             }
             let usage = obj["usage"] as? [String: Any] ?? [:]
             // Jev charges per input token ($0.042 per million); OpenRouter may report the exact cost.
@@ -654,7 +655,7 @@ enum AppAI {
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         guard status == 200, let given = obj["answers"] as? [[String: Any]] else {
             let detail = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-            throw Failure(message: Provider.friendlyError("\(status) \(detail)"))
+            throw Failure(message: Provider.friendlyError("\(status) \(detail)", service: "OpenAI"))
         }
         // Each answer is checked against its question: the API can refuse one (type "refusal", in a 200),
         // and an app must never be handed a choice outside the options it gave, so anything that doesn't
@@ -957,8 +958,14 @@ enum AppAI {
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else {
-            let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-            throw Failure(message: Provider.friendlyError("\(status) \(message)"))
+            let error = obj["error"] as? [String: Any]
+            let message = error?["message"] as? String ?? "HTTP \(status)"
+            // OpenRouter relays the model's own provider's limits (Google's for Nano Banana): say whose.
+            if status == 429, let upstream = (error?["metadata"] as? [String: Any])?["provider_name"] as? String {
+                let model = Icons.artModels.first { $0.id == imageModel }?.label ?? imageModel
+                throw Failure(message: "\(upstream), which makes \(model) pictures for OpenRouter, is over its limit right now. Try again in a while, or pick another image model in Settings.")
+            }
+            throw Failure(message: Provider.friendlyError("\(status) \(message)", service: "OpenRouter"))
         }
         guard let base64 = (obj["data"] as? [[String: Any]])?.first?["b64_json"] as? String,
               let decoded = Data(base64Encoded: base64), NSImage(data: decoded) != nil else {
@@ -1054,7 +1061,7 @@ enum AppAI {
             cost += (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0
             guard status == 200, let choice else {
                 let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-                throw Failure(message: Provider.friendlyError("\(status) \(message)"))
+                throw Failure(message: Provider.friendlyError("\(status) \(message)", service: "OpenRouter"))
             }
             let text = (choice["message"] as? [String: Any])?["content"] as? String ?? ""
             if choice["finish_reason"] as? String == "content_filter" {

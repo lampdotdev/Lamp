@@ -63,17 +63,21 @@ enum Provider {
         return defaultModel
     }
 
-    static func friendlyError(_ raw: String) -> String {
+    /// A provider's error in plain words. `service` is who answered (OpenRouter, TypeSafe, OpenAI): without
+    /// it, the builder is assumed, since that's what a build's errors come from.
+    static func friendlyError(_ raw: String, service: String? = nil) -> String {
         let text = raw.lowercased()
-        let name = Builder.engine == .pi ? (apiProvider(Builder.piProvider)?.name ?? "AI provider") : Builder.engine.title
+        let name = service ?? (Builder.engine == .pi ? (apiProvider(Builder.piProvider)?.name ?? "AI provider") : Builder.engine.title)
         if text.contains("401") || text.contains("authenticat") || text.contains("api key") || text.contains("unauthorized") {
             return ErrorMessages.authenticationFailed(name)
         }
-        if text.contains("402") || text.contains("credit") || text.contains("insufficient") || text.contains("quota") {
-            return ErrorMessages.quotaExceeded(name)
-        }
+        // A 429 is a limit for now, whatever the provider's words (Google says "quota" for its rate limits);
+        // an empty account is a 402.
         if text.contains("429") || text.contains("rate limit") {
             return ErrorMessages.providerBusy
+        }
+        if text.contains("402") || text.contains("credit") || text.contains("insufficient") || text.contains("quota") {
+            return ErrorMessages.quotaExceeded(name)
         }
         if text.contains("connection refused") || text.contains("econnrefused") {
             return ErrorMessages.localServerUnreachable
