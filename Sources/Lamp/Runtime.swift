@@ -24,7 +24,7 @@ enum Runtime {
     /// a build is needed, including for an edit made while the last build was running.
     static func fingerprint(_ project: LampProject) -> String {
         var hasher = SHA256()
-        let roots = ["Sources", "Package.swift", "icon.json"].map { project.dir.appendingPathComponent($0) }
+        let roots = ["Sources", "Package.swift", "icon.json", "capabilities.json"].map { project.dir.appendingPathComponent($0) }
         for root in roots {
             let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])
                 .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }

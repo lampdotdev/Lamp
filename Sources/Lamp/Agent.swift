@@ -444,11 +444,15 @@ enum Agent {
         Intents. AR: ARKit with RealityKit. Music: MusicKit or MediaPlayer. The app already declares why it \
         wants each of these (microphone, speech, camera, photos, location, motion, Bluetooth, Face ID, health, \
         NFC, Siri, nearby devices, music), so just request authorization before use and handle denial in the \
-        interface. Health, NFC, Siri and background work need a declaration first: write `capabilities.json` \
-        at the app's root, e.g. `{"healthkit": true, "nfc": true, "siri": true, "backgroundModes": ["audio", \
-        "location"]}` (modes: audio, location, fetch, processing, remote-notification, bluetooth-central, \
-        bluetooth-peripheral), and Lamp signs the app for them. Not possible yet: widgets, Live Activities and \
-        other extensions, push notifications from a server, and in-app purchases; say so when asked.
+        interface. Health, NFC, Siri, nearby phones and background work need a declaration first: write \
+        `capabilities.json` at the app's root, e.g. `{"healthkit": true, "nfc": true, "siri": true, \
+        "backgroundModes": ["audio", "location"], "bonjourServices": ["_myapp._tcp", "_myapp._udp"], \
+        "backgroundTasks": ["com.example.refresh"]}`, and Lamp signs the app for them and declares them. Modes: \
+        audio, location, fetch, processing, remote-notification, bluetooth-central, bluetooth-peripheral. \
+        `bonjourServices` are the service types MultipeerConnectivity browses for (both _tcp and _udp of \
+        the same name, up to 15 characters); `backgroundTasks` are the identifiers BGTaskScheduler registers, \
+        needed with the fetch and processing modes. Not possible yet: widgets, Live Activities and other \
+        extensions, push notifications from a server, and in-app purchases; say so when asked.
         """
 
         static let appMd = """

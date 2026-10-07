@@ -220,6 +220,10 @@ enum Template {
         var nfc: Bool?
         var siri: Bool?
         var backgroundModes: [String]?
+        /// Bonjour service types the app browses for (MultipeerConnectivity's "_<name>._tcp" and "_<name>._udp").
+        var bonjourServices: [String]?
+        /// BGTaskScheduler identifiers for background processing and refresh tasks.
+        var backgroundTasks: [String]?
 
         static func load(_ project: LampProject) -> Capabilities {
             let url = project.dir.appendingPathComponent("capabilities.json")
@@ -253,9 +257,23 @@ enum Template {
             """
         }
 
-        /// The UIBackgroundModes line for an Info.plist, or nothing.
+        /// Plist keys that need a list of names: Bonjour service types (kept to the _name._tcp/_udp shape),
+        /// and the identifiers background tasks may register under. A dictionary of key to names.
+        var lists: [String: [String]] {
+            var lists: [String: [String]] = [:]
+            if !modes.isEmpty { lists["UIBackgroundModes"] = modes }
+            let services = (bonjourServices ?? []).filter { $0.range(of: #"^_[A-Za-z0-9-]{1,15}\._(tcp|udp)$"#, options: .regularExpression) != nil }
+            if !services.isEmpty { lists["NSBonjourServices"] = services }
+            let tasks = (backgroundTasks ?? []).filter { $0.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil }
+            if !tasks.isEmpty { lists["BGTaskSchedulerPermittedIdentifiers"] = tasks }
+            return lists
+        }
+
+        /// Those lists as Info.plist lines, or nothing.
         var backgroundPlistLine: String {
-            modes.isEmpty ? "" : "  <key>UIBackgroundModes</key><array>" + modes.map { "<string>\($0)</string>" }.joined() + "</array>"
+            lists.sorted { $0.key < $1.key }
+                .map { "  <key>\($0.key)</key><array>" + $0.value.map { "<string>\($0.xmlEscaped)</string>" }.joined() + "</array>" }
+                .joined(separator: "\n")
         }
     }
 
@@ -3410,6 +3428,8 @@ enum Template {
         private let manager = CMMotionManager()
         private let pedometer = CMPedometer()
         private var lastShake = Date.distantPast
+        private var countingFrom = Date.distantPast
+        private var dayWatch: Any?
 
         /// Starts the sensors; `rate` is readings per second (30 suits a view, 60 a game).
         func start(rate: Double = 30) {
@@ -3430,10 +3450,27 @@ enum Template {
                     shakes += 1
                 }
             }
-            if CMPedometer.isStepCountingAvailable() {
-                pedometer.startUpdates(from: Calendar.current.startOfDay(for: Date())) { [weak self] data, _ in
-                    guard let count = data?.numberOfSteps.intValue else { return }
-                    Task { @MainActor in self?.steps = count }
+            countSteps()
+            // Midnight, and coming back to the app, start today's count over: the pedometer counts on from
+            // the day it was started otherwise.
+            dayWatch = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.countSteps() }
+            }
+        }
+
+        /// Today's steps, from the start of today; started over when today isn't the day it was started on.
+        private func countSteps() {
+            guard CMPedometer.isStepCountingAvailable() else { return }
+            let today = Calendar.current.startOfDay(for: Date())
+            guard today != countingFrom else { return }
+            countingFrom = today
+            pedometer.stopUpdates()
+            steps = 0
+            pedometer.startUpdates(from: today) { [weak self] data, _ in
+                guard let count = data?.numberOfSteps.intValue else { return }
+                Task { @MainActor in
+                    guard let self else { return }
+                    if Calendar.current.startOfDay(for: Date()) != self.countingFrom { self.countSteps() } else { self.steps = count }
                 }
             }
         }
@@ -3441,6 +3478,9 @@ enum Template {
         func stop() {
             manager.stopDeviceMotionUpdates()
             pedometer.stopUpdates()
+            countingFrom = .distantPast
+            if let dayWatch { NotificationCenter.default.removeObserver(dayWatch) }
+            dayWatch = nil
         }
     }
     #endif

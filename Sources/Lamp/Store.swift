@@ -2451,9 +2451,10 @@ final class Store: ObservableObject {
         // What the agent declared in capabilities.json: background work in Info.plist, the rest as
         // entitlements the ad hoc signature carries (the simulator checks them for Health and the like).
         let capabilities = Template.Capabilities.load(project)
-        if !capabilities.modes.isEmpty, let json = try? JSONSerialization.data(withJSONObject: capabilities.modes),
-           let text = String(data: json, encoding: .utf8) {
-            script += "plutil -replace UIBackgroundModes -json '\(text)' \"$P\"\n"
+        for (key, names) in capabilities.lists.sorted(by: { $0.key < $1.key }) {
+            if let json = try? JSONSerialization.data(withJSONObject: names), let text = String(data: json, encoding: .utf8) {
+                script += "plutil -replace \(key) -json '\(text)' \"$P\"\n"
+            }
         }
         let entitlements = project.dir.appendingPathComponent(".lamp/entitlements.plist")
         try? capabilities.entitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8)
