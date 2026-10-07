@@ -866,7 +866,7 @@ enum AppAI {
             case "score":
                 let levels = (q["criteria"] as? [Any])?.count ?? 0
                 let top = Double(max(levels - 1, 0))
-                // One normalised distribution is the truth; the score is derived from it, so the two can't
+                // One normalized distribution is the truth; the score is derived from it, so the two can't
                 // disagree. The model's own score only stands in when it gave no usable probabilities.
                 var probabilities = (given["probabilities"] as? [String: Any] ?? [:]).reduce(into: [String: Double]()) {
                     if let index = Int($1.key), index >= 0, Double(index) <= top, let p = clamp($1.value) { $0[$1.key] = p }

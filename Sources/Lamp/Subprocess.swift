@@ -97,7 +97,7 @@ enum Subprocess {
     /// Stops a process and everything it started. Terminating only the shell leaves its children (the agent's
     /// build, a clone, an approval request waiting an hour) running and holding the output pipe open, so the
     /// turn would never end. Each gets a chance to quit cleanly, then whatever is left is killed. Returns the
-    /// processes signalled, for a caller that has to wait for them to be gone (`alive`).
+    /// processes signaled, for a caller that has to wait for them to be gone (`alive`).
     @discardableResult
     static func terminateTree(_ process: Process) -> [pid_t] {
         guard process.isRunning else { return [] }

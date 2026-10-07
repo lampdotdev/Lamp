@@ -137,7 +137,7 @@ struct TurnProgress {
 
     /// In order: "SettingsView" is the settings, not just any part of the interface.
     private static let areas: [(activity: String, words: Set<String>)] = [
-        ("Making your app look nice", ["theme", "style", "color", "colour", "font", "appearance", "design",
+        ("Making your app look nice", ["theme", "style", "color", "color", "font", "appearance", "design",
                                        "animation", "effect", "background", "gradient"]),
         ("Working on the settings", ["setting", "preference"]),
         ("Working on the interface", ["view", "screen", "window", "sidebar", "toolbar", "row", "cell", "panel",

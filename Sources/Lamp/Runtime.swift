@@ -202,7 +202,7 @@ enum Runtime {
     private static let reports = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/DiagnosticReports")
 
-    /// The newest crash of the current build, summarised: what killed the app and the calls that led there.
+    /// The newest crash of the current build, summarized: what killed the app and the calls that led there.
     static func crash(of project: LampProject) -> String? {
         guard let built = (try? builtURL(project).resourceValues(forKeys: [.contentModificationDateKey]))?
             .contentModificationDate else { return nil }

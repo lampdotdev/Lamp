@@ -233,7 +233,7 @@ private enum Inventor {
 }
 #endif
 
-/// An idea's icon: its symbol on a squircle, like an app icon. Quiet grey until it's `lit` (hovered or
+/// An idea's icon: its symbol on a squircle, like an app icon. Quiet gray until it's `lit` (hovered or
 /// chosen), when it takes its own color.
 struct IdeaIcon: View {
     let symbol: String

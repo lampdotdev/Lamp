@@ -159,7 +159,7 @@
   {
     "name": "name_version",
     "label": "Name version",
-    "description": "Gives a version a short name the user will recognise, e.g. “Before the redesign” or “First working sync”. Without `version`, it names the version this request makes, once Lamp saves it. With a version id from list_versions, it names that one: use the current one before a big or risky change.",
+    "description": "Gives a version a short name the user will recognize, e.g. “Before the redesign” or “First working sync”. Without `version`, it names the version this request makes, once Lamp saves it. With a version id from list_versions, it names that one: use the current one before a big or risky change.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

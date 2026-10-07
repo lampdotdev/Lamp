@@ -82,7 +82,7 @@ plain "Lamp x.y.z" line.
   agent sees the screen after each change and taps, types, scrolls and swipes on it to try what it made
   (allow Lamp under Accessibility in System Settings when it asks). The apps get the same icon and the
   same building blocks as Mac apps: saved data that survives every change, AI and quick decisions,
-  behaviour written while the app runs, text read out of photos and documents, drops, calendar, reminders,
+  behavior written while the app runs, text read out of photos and documents, drops, calendar, reminders,
   contacts and notifications. Putting the app on a real iPhone comes later.
 - Change a message you already sent and send it again: a pencil on your message opens it for editing,
   and Escape puts it back.
@@ -104,7 +104,7 @@ plain "Lamp x.y.z" line.
   with anything sensitive marked; opening such an app takes a deliberate click.
 - Apps keep their saved data more reliably: a change that fails is undone as a whole, dates read back
   exactly, and a number that couldn't be saved before is kept now. A reply that quits the agent, a crash
-  when recognising text in a picture, and a crash when dropping several files at once are fixed.
+  when recognizing text in a picture, and a crash when dropping several files at once are fixed.
 - Mail in your apps: message dates are right in every time zone, and accounts whose inbox has another
   name are included.
 - A question with a screenshot attached no longer rebuilds and relaunches the app, and an edit made

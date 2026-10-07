@@ -46,7 +46,7 @@ enum AppSigning {
         return identity
     }
 
-    /// What macOS checks an app against before honouring a permission it was given: its bundle ID and the
+    /// What macOS checks an app against before honoring a permission it was given: its bundle ID and the
     /// certificate it's signed with ("designated => identifier … and certificate leaf = H"…""), or for an
     /// ad-hoc signature the hash of that one build. Nil when there's no signed app there.
     static func requirement(of app: URL) async -> String? {
