@@ -18,9 +18,11 @@ plain "Lamp x.y.z" line.
   Code and Codex sign-ins) apart from the providers you've added a key for, and says on each row what it's
   doing: building apps, answering inside them, making pictures, deciding. A note says a key can go with an
   app to your iPhone while a sign-in can't.
-- "Inside your apps" lists every way an app's AI can be answered, by name: OpenRouter's models, your Claude
-  Code or Codex sign-in, or a model on this Mac. An app built with a model on this Mac keeps using it even
-  once you add a key.
+- "Inside your apps" lists every way an app's AI can be answered, by name: OpenRouter's models, each model
+  your Claude Code or Codex sign-in offers (Sonnet via your Claude Code sign-in, say), or a model on this
+  Mac. An app built with a model on this Mac keeps using it even once you add a key.
+- Wherever Settings says something needs an OpenRouter key, an Add a Key… button sits at the right. When a
+  cloud picture model is chosen without a key, the note says what makes the pictures meanwhile and why.
 - Decisions can be made on this Mac: H2O Lightning 4B, a free 2.5 GB decision model about as good as Jev,
   downloaded from Settings → Apps and run privately. OpenAI's new Decisions API (Luna) is a choice too, with
   an OpenAI key, as is answering by text through whatever answers your apps. Jev preview is gone.

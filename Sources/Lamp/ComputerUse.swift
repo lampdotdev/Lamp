@@ -404,7 +404,7 @@ enum ComputerUse {
                 throw Failure(message: "Using other apps needs an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,).")
             }
             return try await loop(task, endpoint: "https://openrouter.ai/api/v1/chat/completions", key: key, model: model)
-        case .engine(.pi), .localModel:
+        case .engine(.pi, _), .localModel:
             guard Agent.executable != nil else { throw Failure(message: "Lamp's AI builder is missing. Download Lamp again.") }
             // A local model's server is started, and Ollama's or LM Studio's models are registered with pi,
             // as before a build turn.
@@ -413,11 +413,11 @@ enum ComputerUse {
                 if LocalModels.externalIDs.contains(provider) { await LocalModels.shared.detectExternal() }
             }
             return try await viaEngine(.pi, task, token: token, model: nil, piRoute: route)
-        case .engine(let engine):
+        case .engine(let engine, let model):
             guard ToolLocator.path(for: engine) != nil else {
                 throw Failure(message: "Using other apps needs an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,).")
             }
-            return try await viaEngine(engine, task, token: token, model: Builder.engineModel(engine))
+            return try await viaEngine(engine, task, token: token, model: model)
         }
     }
 

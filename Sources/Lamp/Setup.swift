@@ -510,7 +510,7 @@ struct AppsSettings: View {
     var body: some View {
         Form {
             Section("Models used in apps") {
-                Picker("Inside your apps", selection: $appModel) {
+                Picker("Inside your apps", selection: Binding(get: { AppAI.canonicalRoute(appModel) }, set: { appModel = $0 })) {
                     ForEach(AppAI.textRoutes(including: appModel)) { Text($0.label).tag($0.id) }
                 }
                 Picker("Images (icons and in-app)", selection: $imageModel) {
@@ -518,19 +518,15 @@ struct AppsSettings: View {
                 }
                 let _ = revision   // re-read KeyStore after keys change
                 if AppAI.allTextRoutes.first(where: { $0.id == appModel })?.available == false {
-                    Text("That model needs an OpenRouter key. Until there is one, text inside apps goes through \(AppAI.defaultRoute.label.replacingOccurrences(of: "Your ", with: "your ")).")
-                        .font(.caption).foregroundStyle(.orange)
+                    KeyNote(text: "That model needs an OpenRouter key. Until there is one, text inside apps goes through \(AppAI.defaultRoute.label.replacingOccurrences(of: "Your ", with: "your ")).")
                 }
                 if let maker = AppAI.imageRouteName {
-                    if !Provider.hasKey {
-                        Text("Pictures come from \(maker).").font(.caption).foregroundStyle(.secondary)
+                    // A cloud model chosen with no key behind it isn't what makes the pictures: say what does, and why.
+                    if !Provider.hasKey, imageModel != Icons.localArt {
+                        KeyNote(text: "\(Icons.artModels.first { $0.id == imageModel }?.label ?? "That model") needs an OpenRouter key. Until there is one, pictures come from \(maker).")
                     }
                 } else {
-                    HStack(spacing: 8) {
-                        Text("Pictures need an OpenRouter key or a picture model on this Mac: a \(Builder.engine == .pi ? "builder's" : Builder.engine.title) sign-in can't make them.")
-                            .font(.caption).foregroundStyle(.orange)
-                        Button("Add a Key…") { settingsSheet = "openrouter"; settingsTab = "providers" }.controlSize(.small)
-                    }
+                    KeyNote(text: "Pictures need an OpenRouter key or a picture model on this Mac: a \(Builder.engine == .pi ? "builder's" : Builder.engine.title) sign-in can't make them.")
                 }
 
                 Picker("Decision model", selection: $decisionModel) {
@@ -547,9 +543,10 @@ struct AppsSettings: View {
                         if let progress = local.progress[spec.id] {
                             ProgressView(value: progress) { Text("Downloading \(spec.name)…") }.font(.caption)
                         } else {
-                            HStack(spacing: 8) {
+                            HStack(alignment: .top, spacing: 8) {
                                 Text("\(spec.name) isn't on this Mac yet (\(spec.sizeGB, specifier: "%.1f") GB). Until it is, decisions are made by \(AppAI.fastModelName).")
-                                    .font(.caption).foregroundStyle(.orange)
+                                    .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
                                 Button("Download") { local.download(spec) }.controlSize(.small)
                             }
                         }
@@ -559,13 +556,12 @@ struct AppsSettings: View {
                         .font(.caption).foregroundStyle(.secondary)
                 default:
                     if KeyStore.openRouterKey == nil {
-                        Text(AppAI.canAnswer
-                             ? "No key for this yet, so decisions are made by \(AppAI.fastModelName) instead: slower and less exact than Jev. Add an OpenRouter key in Providers, or pick another."
-                             : "Add an OpenRouter key in Providers, or pick another.")
-                            .font(.caption).foregroundStyle(.orange)
+                        KeyNote(text: AppAI.canAnswer
+                                ? "Needs an OpenRouter key. Until there is one, decisions are made by \(AppAI.fastModelName) instead: slower and less exact than Jev."
+                                : "Needs an OpenRouter key, or pick another.")
                     }
                 }
-                Text("Fast, cheap typed judgments for apps: yes/no probabilities, picking from options, and rating on a scale, each with a calibrated confidence. Text in, decisions out.")
+                Text("Fast, cheap typed judgments for apps: yes/no probabilities, picking from options, and rating on a scale, each with a calibrated confidence.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if iosApps {
@@ -582,11 +578,7 @@ struct AppsSettings: View {
                         Text("When an app can't reach this Mac it goes to OpenRouter with your key: these for text and pictures, and Jev for decisions as above. What it spends then isn't shown in Lamp.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
-                        HStack(spacing: 8) {
-                            Text("Needs an OpenRouter key: without one, apps on your phone only work near this Mac.")
-                                .font(.caption).foregroundStyle(.orange)
-                            Button("Add a Key…") { settingsSheet = "openrouter"; settingsTab = "providers" }.controlSize(.small)
-                        }
+                        KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")
                     }
                 }
             }
@@ -633,8 +625,7 @@ struct ExperimentalSettings: View {
                     Text("For putting an app on your own iPhone or iPad: sign in to your Apple account in Xcode, plug the phone in, and Try On offers to pair it. What the app uses away from this Mac is chosen under Apps.")
                         .font(.caption).foregroundStyle(.secondary)
                     if !Provider.hasKey {
-                        Text("No OpenRouter key yet, so away from this Mac an app's AI won't work: see Apps → Away from this Mac.")
-                            .font(.caption).foregroundStyle(.orange)
+                        KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")
                     }
                 }
                 .padding(.leading, 20)
@@ -786,8 +777,8 @@ struct ProvidersSettings: View {
         let answers: String
         switch AppAI.model.kind {
         case .openRouter: answers = "openrouter"
-        case .engine(.pi): answers = Builder.piProvider
-        case .engine(let engine): answers = "engine:\(engine.rawValue)"
+        case .engine(.pi, _): answers = Builder.piProvider
+        case .engine(let engine, _): answers = "engine:\(engine.rawValue)"
         case .localModel(let provider, _): answers = provider
         }
         if answers == id { jobs.append("Answers apps") }
@@ -1173,6 +1164,22 @@ struct ProviderLogo: View {
 }
 
 /// API key for one provider: shows "saved" with a Remove button, or a field to add one.
+/// A note that something needs an OpenRouter key, with the way to add one at its right: the same wherever
+/// Settings asks for a key, so the person always has the button to hand.
+struct KeyNote: View {
+    let text: String
+    @AppStorage("settingsTab") private var settingsTab = "building"
+    @AppStorage("settingsSheet") private var settingsSheet = ""
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(text).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button("Add a Key…") { settingsSheet = "openrouter"; settingsTab = "providers" }.controlSize(.small)
+        }
+    }
+}
+
 struct KeyRow: View {
     let provider: PiProvider
     var label: String?

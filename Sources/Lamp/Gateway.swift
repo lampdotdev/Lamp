@@ -119,7 +119,7 @@ enum AppAI {
     struct TextRoute: Identifiable, Equatable {
         enum Kind: Equatable {
             case openRouter(model: String)
-            case engine(Engine)
+            case engine(Engine, model: String)   // Claude Code or Codex with one of its models; pi with its builder's
             case localModel(provider: String, model: String)   // Native Mac AI, Ollama or LM Studio
         }
         let id: String
@@ -140,11 +140,11 @@ enum AppAI {
             let available: Bool
             switch kind {
             case .openRouter: available = Provider.hasKey
-            case .engine(.pi):
+            case .engine(.pi, _):
                 // pi with the person's own setup (their sign-ins), or with a key provider that has its key.
                 available = Agent.executable != nil && (Builder.piProvider == Builder.myPiProvider
                     || (Provider.apiProvider(Builder.piProvider) != nil && KeyStore.key(for: Builder.piProvider) != nil))
-            case .engine(let engine): available = ToolLocator.path(for: engine) != nil
+            case .engine(let engine, _): available = ToolLocator.path(for: engine) != nil
             case .localModel(let provider, let model):
                 available = provider == Builder.localProvider ? LocalModels.shared.installed.contains { $0.id == model }
                                                               : LocalModels.shared.external[provider]?.contains(model) == true
@@ -169,12 +169,17 @@ enum AppAI {
     /// plus whatever is chosen.
     @MainActor static var allTextRoutes: [TextRoute] {
         var routes = anthropicModels.map { TextRoute.make(id: $0.id, label: $0.label + " via OpenRouter", kind: .openRouter(model: $0.openRouter)) }
-        routes.append(.make(id: "engine:claude", label: "Your Claude Code sign-in", kind: .engine(.claude)))
-        routes.append(.make(id: "engine:codex", label: "Your Codex sign-in", kind: .engine(.codex)))
+        // The sign-ins, one route per model they offer (Claude Code's short names; the models Codex lists).
+        for model in Builder.claudeModels where !model.id.isEmpty {
+            routes.append(.make(id: "engine:claude:\(model.id)", label: "\(model.label) via your Claude Code sign-in", kind: .engine(.claude, model: model.id)))
+        }
+        for model in Builder.codexModels where !model.id.isEmpty {
+            routes.append(.make(id: "engine:codex:\(model.id)", label: "\(model.label) via your Codex sign-in", kind: .engine(.codex, model: model.id)))
+        }
         if Builder.piProvider == Builder.myPiProvider {
-            routes.append(.make(id: "engine:pi", label: "Your own pi setup (its sign-ins)", kind: .engine(.pi)))
+            routes.append(.make(id: "engine:pi", label: "\(Builder.piModel) via your own pi setup", kind: .engine(.pi, model: Builder.piModel)))
         } else if let provider = Provider.apiProvider(Builder.piProvider), provider.id != "openrouter" {
-            routes.append(.make(id: "engine:pi", label: "Your \(provider.name) key, through the builder", kind: .engine(.pi)))
+            routes.append(.make(id: "engine:pi", label: "\(Builder.piModel) via your \(provider.name) key", kind: .engine(.pi, model: Builder.piModel)))
         }
         for model in LocalModels.shared.installed where !LocalModels.isDecisionModel(model.id) {
             routes.append(.make(id: "local:\(model.id)", label: "\(model.name) on this Mac", kind: .localModel(provider: Builder.localProvider, model: model.id)))
@@ -190,8 +195,19 @@ enum AppAI {
 
     /// What the pickers offer: the routes that can answer now, and the chosen one even if it can't (so a
     /// choice isn't silently lost when a key or model goes), in that order.
+    /// A route id as saved by an earlier Lamp, when the sign-ins were one route each with no model, read as
+    /// today's: Sonnet through Claude Code, Codex's first model.
+    @MainActor static func canonicalRoute(_ id: String) -> String {
+        switch id {
+        case "engine:claude": return "engine:claude:sonnet"
+        case "engine:codex": return "engine:codex:\(Builder.codexModels.dropFirst().first?.id ?? "")"
+        default: return id
+        }
+    }
+
     @MainActor static func textRoutes(including chosen: String?) -> [TextRoute] {
         let routes = allTextRoutes.filter(\.available)
+        let chosen = chosen.map(canonicalRoute)
         if let chosen, !routes.contains(where: { $0.id == chosen }), let kept = allTextRoutes.first(where: { $0.id == chosen }) {
             return routes + [kept]
         }
@@ -209,7 +225,14 @@ enum AppAI {
             return local
         }
         if let sonnet = route("sonnet") { return sonnet }
-        if let own = route("engine:\(Builder.engine.rawValue)") { return own }
+        // The builder's own sign-in: Sonnet through Claude Code (never Haiku unasked), Codex's best model, pi's.
+        let own: String
+        switch Builder.engine {
+        case .claude: own = "engine:claude:sonnet"
+        case .codex: own = "engine:codex:\(Builder.codexModels.dropFirst().first?.id ?? "")"
+        case .pi: own = "engine:pi"
+        }
+        if let route = route(own) { return route }
         return routes.first(where: \.available) ?? routes.first { $0.id == "sonnet" }!
     }
 
@@ -246,8 +269,9 @@ enum AppAI {
     /// The text route for one app: its own choice (info panel), or Settings', when it can answer; else the
     /// default.
     @MainActor static func route(for choice: String?) -> TextRoute {
+        let choice = choice.map(canonicalRoute)
         if let choice, let route = allTextRoutes.first(where: { $0.id == choice }), route.available { return route }
-        if let saved = UserDefaults.standard.string(forKey: "appModel"), saved != choice,
+        if let saved = UserDefaults.standard.string(forKey: "appModel").map(canonicalRoute), saved != choice,
            let route = allTextRoutes.first(where: { $0.id == saved }), route.available { return route }
         return defaultRoute
     }
@@ -313,11 +337,10 @@ enum AppAI {
         case .openRouter(let model):
             guard Provider.hasKey else { throw Failure(message: "Apps' AI features need an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,).") }
             return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json)
-        case .engine(.pi):
+        case .engine(.pi, _):
             return try await viaPi(prompt: prompt, images: images, system: system)
-        case .engine(let engine):
-            return try await viaEngine(engine, prompt: prompt, images: images, system: system,
-                                       model: engineModel ?? Builder.engineModel(engine))
+        case .engine(let engine, let model):
+            return try await viaEngine(engine, prompt: prompt, images: images, system: system, model: engineModel ?? model)
         case .localModel(let provider, let model):
             let base: String
             if provider == Builder.localProvider {
