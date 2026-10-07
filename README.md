@@ -14,7 +14,7 @@ Some things people build with it:
 
 Each one is a real `.app` in `~/Applications/Lamp Apps`, with **Edit with Lamp (⇧⌘E)** in its menu for when you want it to work differently. Its data is kept safe through every change, and you can send it to a coworker, who gets their own copy to adapt.
 
-[Download the latest release](https://github.com/RooCodeInc/Lamp/releases/latest) and open it. The welcome asks for your first idea, then has you sign in with Claude or ChatGPT (or add a key for Lamp's own agent), and starts building.
+[Download Lamp](https://lamp.dev) and open it. The welcome asks for your first idea, then has you sign in with Claude or ChatGPT (or add a key for Lamp's own agent), and starts building.
 
 ## Requirements
 
@@ -30,7 +30,7 @@ Nothing else needs installing. The coding agent ([pi](https://github.com/badlogi
 
 ## Download
 
-Signed, notarized builds are on [GitHub Releases](https://github.com/RooCodeInc/Lamp/releases): open the DMG and drag Lamp to Applications. To cut a release, see [RELEASING.md](RELEASING.md).
+Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every release is also on [GitHub Releases](https://github.com/RooCodeInc/Lamp/releases)): open the DMG and drag Lamp to Applications. To cut a release, see [RELEASING.md](RELEASING.md).
 
 ## Setup
 
@@ -167,6 +167,7 @@ Local models are slower and much less capable than the best cloud models for who
 | `Resources/lamp-tools.ts` | The agent's `look_at_app`, `use_app`, `plan` and `delete_file` tools (a pi extension) |
 | `Sources/Lamp/Updater.swift` | Updates for release builds (Sparkle); the feed is served by `updates/` (see RELEASING.md) |
 | `updates/` | The Vercel app that serves the update feed and downloads from the private GitHub releases |
+| `site/` | The website at lamp.dev: one static Astro page (see RELEASING.md) |
 | `Resources/Icon/` | Lamp's own icon as an Icon Composer document: a lamp in silhouette against a setting sun over desert dunes, as one full-bleed picture. It's compiled into `Resources/Assets.car` (Liquid Glass on macOS 26) and drawn into `Resources/AppIcon.icns` and `Resources/AppIcon.png` on Apple's grid |
 | `Resources/THIRD_PARTY_NOTICES.md` | Licences for the bundled pi agent and llama.cpp (both MIT) |
 

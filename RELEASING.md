@@ -133,7 +133,38 @@ Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.
 - **Signing:** every update is signed with an Ed25519 key. The release workflow runs `scripts/sparkle-sign.swift` on the DMG, using the `SPARKLE_PRIVATE_KEY` secret in the `release` environment, and attaches the result to the release as `sparkle.json`. Sparkle checks the signature against `SUPublicEDKey` in `build.sh`, and it also requires the new app to be signed by the same Developer ID team. A local backup of the private key is in `~/Library/Application Support/Lamp/Signing/sparkle-private-key` on Matt's Mac; keep a copy in 1Password. Losing the key means shipping a new public key in a release that users install by hand.
 - **The feed:** `updates/` is a small Vercel app (project `forge-updates` on the Roo Code team, served at `updates.lamp.dev`; `lamp.dev` itself is kept for the site) that keeps the repo private:
   - `/appcast.xml` builds the feed from the GitHub releases that have a `sparkle.json`, with each release's notes.
-  - `/download/<tag>` redirects to GitHub's short-lived download link for that release's DMG.
+  - `/download/<tag>` redirects to GitHub's short-lived download link for that release's DMG; `/download/latest`
+    picks the newest published release, which is where the website's Download button points.
   - It reads the releases with `GITHUB_TOKEN`, a fine-grained token with **Contents: read-only** on `RooCodeInc/Lamp` only.
   - Deploy with `cd updates && vercel deploy --prod --scope roo-code`.
 - **Only newer releases appear:** releases before the first one with `sparkle.json` aren't in the feed, because Sparkle couldn't verify them. Copies of Lamp from before Sparkle was added need one manual update to a release that includes it.
+
+## Website
+
+`site/` is the page at `lamp.dev`: one static Astro page styled with Tailwind, in its own Vercel project
+(`lamp-site` on the Roo Code team). `lamp.dev` is registered through Vercel on that team, with its DNS there
+too, and `updates.lamp.dev` belongs to `forge-updates`. The page has nothing release-specific: its Download
+button goes to `https://updates.lamp.dev/download/latest`, so a new release needs nothing done here.
+
+- Run it locally with `cd site && npm install && npm run dev`, or `npm run build && npx astro preview` for
+  exactly what gets deployed (the dev server can miss styles from a page added while it's running).
+- `site/vercel.json` sets the framework, caches the fingerprinted files under `/_astro/` for a year, and adds
+  a few security headers. `public/og.png` is the 1200×630 card shown where the link is shared.
+- The pictures are real windows taken from Lamp Dev with made-up data (⌘⇧4 then Space, which keeps the
+  shadow): `site/src/assets/lamp.png` is Lamp under the headline, and `site/src/assets/apps/` holds the apps
+  the carousel cycles through, each centred on a canvas of the same size so the slides line up. Retake them
+  when Lamp's look changes.
+
+**First deploy** (once): deploy the update server first, so the Download button's `/download/latest` exists,
+then create the site's project from `site/` and give it the domain.
+
+```
+cd updates && vercel deploy --prod --scope roo-code
+cd ../site && vercel link --scope roo-code --project lamp-site     # answer yes to create it
+vercel deploy --prod
+vercel domains add lamp.dev
+vercel domains add www.lamp.dev                                     # then redirect www to lamp.dev in the project's Domains settings
+```
+
+**Later deploys:** `cd site && vercel deploy --prod --scope roo-code`. If the project is ever connected to the
+GitHub repo instead, set its Root Directory to `site`.

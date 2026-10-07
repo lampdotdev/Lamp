@@ -1,0 +1,144 @@
+---
+import { Image, getImage } from "astro:assets";
+import type { ImageMetadata } from "astro";
+
+interface Props {
+  slides: { image: ImageMetadata; name: string; request: string; alt: string }[];
+}
+
+const { slides } = Astro.props;
+// The full-size picture Quick Look swaps in.
+const large = await Promise.all(slides.map((slide) => getImage({ src: slide.image, width: slide.image.width, format: "webp" })));
+const chevron = "M10.5 3.5 6 8l4.5 4.5";
+---
+
+<!--
+  Window pictures of apps Lamp has built, in the manner of the Mac's own galleries: a strip that swipes on a
+  trackpad or phone, round frosted arrows, and page dots like the Mac app's welcome screens. It moves on by itself
+  until someone touches it, and not at all for people who've asked for less motion.
+-->
+<section
+  data-carousel
+  data-requests={JSON.stringify(slides.map((slide) => slide.request))}
+  aria-roledescription="carousel" aria-label="Apps made with Lamp" class="mt-12 pb-20">
+  <div class="group relative">
+    <div
+      data-track
+      class="flex snap-x snap-mandatory overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    >
+      {
+        slides.map((slide, index) => (
+          <div
+            role="group"
+            aria-roledescription="slide"
+            aria-label={`${index + 1} of ${slides.length}: ${slide.name}`}
+            class="w-full shrink-0 snap-center"
+          >
+            <Image
+              src={slide.image}
+              alt={slide.alt}
+              widths={[640, 1024, 1600, 2048]}
+              sizes="(min-width: 1152px) 1104px, 100vw"
+              loading={index === 0 ? "eager" : "lazy"}
+              data-quicklook={large[index].src}
+              class="mx-auto h-auto w-full"
+            />
+          </div>
+        ))
+      }
+    </div>
+
+    {
+      [
+        { side: "left-2 sm:left-4", label: "Previous app", step: -1, path: chevron },
+        { side: "right-2 sm:right-4", label: "Next app", step: 1, path: "M5.5 3.5 10 8l-4.5 4.5" },
+      ].map((arrow) => (
+        <button
+          type="button"
+          data-step={arrow.step}
+          aria-label={arrow.label}
+          class:list={[
+            arrow.side,
+            "absolute top-1/2 grid size-9 -translate-y-1/2 place-items-center rounded-full bg-white/85 text-ink shadow-[0_2px_10px_rgba(0,0,0,0.18)] ring-1 ring-black/10 backdrop-blur-md transition hover:bg-white sm:size-10 focus-visible:outline-2 focus-visible:outline-graphite sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100",
+          ]}
+        >
+          <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4 fill-none stroke-current stroke-2 [stroke-linecap:round] [stroke-linejoin:round]">
+            <path d={arrow.path} />
+          </svg>
+        </button>
+      ))
+    }
+  </div>
+
+  <div class="mt-5 flex justify-center">
+    <div role="tablist" aria-label="Choose an app" class="flex items-center">
+      {
+        slides.map((slide, index) => (
+          <button
+            type="button"
+            role="tab"
+            data-index={index}
+            aria-selected={index === 0 ? "true" : "false"}
+            aria-label={slide.name}
+            class="group/dot grid h-6 place-items-center rounded-full px-[3.5px] focus-visible:outline-2 focus-visible:outline-graphite"
+          >
+            <span class="h-[7px] w-[7px] rounded-full bg-black/15 transition-all duration-300 group-hover/dot:bg-black/30 group-aria-selected/dot:w-5 group-aria-selected/dot:bg-graphite" />
+          </button>
+        ))
+      }
+    </div>
+  </div>
+
+  <p data-caption aria-live="polite" class="mx-auto mt-4 max-w-3xl px-2 text-center leading-relaxed text-muted">
+    “{slides[0].request}”
+  </p>
+</section>
+
+<script>
+  for (const carousel of document.querySelectorAll<HTMLElement>("[data-carousel]")) {
+    const track = carousel.querySelector<HTMLElement>("[data-track]")!;
+    const tabs = [...carousel.querySelectorAll<HTMLButtonElement>("[role=tab]")];
+    const caption = carousel.querySelector<HTMLElement>("[data-caption]")!;
+    const requests: string[] = JSON.parse(carousel.dataset.requests!);
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let current = 0;
+
+    const show = (index: number) => {
+      const next = (index + tabs.length) % tabs.length;
+      track.scrollTo({ left: next * track.clientWidth, behavior: still ? "auto" : "smooth" });
+    };
+
+    // The strip's position is the truth, whether it got there by a swipe, an arrow or a tab.
+    track.addEventListener("scroll", () => {
+      const index = Math.round(track.scrollLeft / track.clientWidth);
+      if (index === current || !tabs[index]) return;
+      current = index;
+      tabs.forEach((tab, i) => tab.setAttribute("aria-selected", String(i === index)));
+      caption.textContent = `“${requests[index]}”`;
+    }, { passive: true });
+
+    // Moving on by itself stops for good once someone picks a slide, and waits while they're looking.
+    let paused = false;
+    let timer = still ? 0 : window.setInterval(() => {
+      if (!paused && !document.hidden) show(current + 1);
+    }, 6000);
+    const stop = () => { clearInterval(timer); timer = 0; };
+
+    tabs.forEach((tab, index) => tab.addEventListener("click", () => { stop(); show(index); }));
+    carousel.querySelectorAll<HTMLButtonElement>("[data-step]").forEach((button) =>
+      button.addEventListener("click", () => { stop(); show(current + Number(button.dataset.step)); }));
+    track.addEventListener("pointerdown", stop);
+    carousel.addEventListener("quicklook", stop);
+    track.addEventListener("wheel", (event) => { if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) stop(); }, { passive: true });
+    carousel.addEventListener("pointerenter", () => (paused = true));
+    carousel.addEventListener("pointerleave", () => (paused = false));
+    carousel.addEventListener("focusin", () => (paused = true));
+    carousel.addEventListener("focusout", () => (paused = false));
+    carousel.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      stop();
+      show(current + (event.key === "ArrowRight" ? 1 : -1));
+    });
+  }
+</script>

@@ -1,0 +1,183 @@
+---
+import { Image, getImage } from "astro:assets";
+import Base from "../layouts/Base.astro";
+import Carousel from "../components/Carousel.astro";
+import DownloadButton from "../components/DownloadButton.astro";
+import QuickLook from "../components/QuickLook.astro";
+import icon from "../assets/AppIcon.png";
+import anthropic from "../assets/logos/anthropic.png";
+import openai from "../assets/logos/openai.png";
+import openrouter from "../assets/logos/openrouter.png";
+import ollama from "../assets/logos/ollama.png";
+import lmstudio from "../assets/logos/lmstudio.png";
+
+// Lamp's window just after building an app, and windows of apps it built, all taken from Lamp Dev with
+// made-up data (see RELEASING.md).
+import lampWindow from "../assets/lamp.png";
+import readingQueue from "../assets/apps/reading-queue.png";
+import neonBricks from "../assets/apps/neon-bricks.png";
+import habitStreaks from "../assets/apps/habit-streaks.png";
+import paletteStudio from "../assets/apps/palette-studio.png";
+
+const lampWindowLarge = await getImage({ src: lampWindow, width: lampWindow.width, format: "webp" });
+
+const apps = [
+  {
+    image: readingQueue,
+    name: "Reading Queue",
+    request: "A reading queue. I drop in PDFs and web links, tell it what I'm working on, and it ranks them by what matters most, with a one-line summary and a reason for each.",
+    alt: "Reading Queue: articles ranked against what you're working on, with why each one matters",
+  },
+  {
+    image: neonBricks,
+    name: "Neon Bricks",
+    request: "A brick breaker arcade game with a glowing neon look: a paddle I move with the mouse or arrow keys, colourful bricks, a few levels, power-ups and a high score table.",
+    alt: "Neon Bricks: a glowing brick breaker game mid-play",
+  },
+  {
+    image: habitStreaks,
+    name: "Habit Streaks",
+    request: "A habit tracker: a handful of daily habits with streaks, a heat map of the last three months and a chart of each week.",
+    alt: "Habit Streaks: daily habits with streaks, a three-month heat map and a weekly chart",
+  },
+  {
+    image: paletteStudio,
+    name: "Palette Studio",
+    request: "A colour palette studio: describe a mood or drop in a photo and it makes a five-colour palette with names, hex codes and a contrast check for text.",
+    alt: "Palette Studio: a five-colour palette called Lisbon Afternoon with names, hex codes and contrast scores",
+  },
+];
+
+// The features as a bento box: wide and narrow tiles in turn, a couple in colour.
+const points = [
+  {
+    title: "Real Mac apps",
+    text: "Each one is an app of its own, in your Applications folder and in Spotlight. No browser tab, no subscription to someone else's tool. No server or security to worry about.",
+    tile: "sm:col-span-3 bg-panel",
+  },
+  {
+    title: "Change it any time",
+    text: "Always finding ways to improve? No worries, continue making changes to your apps. Saved versions let you try new things and roll back if it doesn't work out.",
+    tile: "sm:col-span-2 bg-glow",
+  },
+  {
+    title: "Your data stays put",
+    text: "What an app keeps is kept safe through every change you make to it, so trying something new never costs you your stuff.",
+    tile: "sm:col-span-2 bg-panel",
+  },
+  {
+    title: "Share with anyone",
+    text: "Send an app to a friend by AirDrop, Messages or Mail. They get their own copy to make their own, and Lamp shows them what it does before it opens.",
+    tile: "sm:col-span-3 bg-night text-white",
+  },
+];
+
+// Signed-in subscriptions first, then a key, then the models that run on the Mac itself, in the app's own
+// order. Lamp's built-in models (Native Mac AI) run on Metal; they get a chip, like the app's Providers tab,
+// since Apple's logo isn't ours to use.
+const providers = [
+  { logo: anthropic, name: "Claude" },
+  { logo: openai, name: "ChatGPT" },
+  { logo: openrouter, name: "OpenRouter" },
+  { name: "Apple Metal" },
+  { logo: ollama, name: "Ollama" },
+  { logo: lmstudio, name: "LM Studio" },
+];
+
+const description = "Describe what you want, and Lamp builds a real Mac app, with AI inside when it helps. Keep using it, change it whenever you like, and share it. No need to know how to code or deploy anything.";
+---
+
+<Base title="Lamp: wish Mac apps into existence" description={description} image="/og.png">
+  <main class="mx-auto max-w-6xl px-4 sm:px-6">
+    <section class="flex flex-col items-center pt-20 pb-14 text-center sm:pt-28">
+      <Image
+        src={icon}
+        alt="Lamp"
+        width={176}
+        height={176}
+        densities={[1, 2]}
+        loading="eager"
+        class="size-36 drop-shadow-[0_14px_30px_rgba(217,122,6,0.28)] sm:size-44"
+      />
+      <h1 class="mt-6 font-display text-5xl font-bold tracking-tight sm:text-6xl">Lamp</h1>
+      <p class="mt-4 font-display text-3xl leading-tight font-semibold tracking-tight sm:text-4xl sm:whitespace-nowrap">
+        Wish Mac apps into existence.
+      </p>
+      <p class="mt-5 max-w-[50rem] text-lg leading-relaxed text-muted">{description}</p>
+      <div class="mt-9"><DownloadButton /></div>
+    </section>
+
+    <section class="pb-20">
+      <Image
+        src={lampWindow}
+        alt="Lamp having just built a Reading Queue app: the request, the plan and a picture of the finished app"
+        widths={[640, 1024, 1600, 2048]}
+        sizes="(min-width: 1152px) 1104px, 100vw"
+        loading="eager"
+        data-quicklook={lampWindowLarge.src}
+        class="mx-auto h-auto w-full"
+      />
+    </section>
+
+    <section class="pt-8">
+      <h2 class="text-center font-display text-3xl font-semibold tracking-tight">Make a tool for the task that bugs you.</h2>
+      <p class="mx-auto mt-3 max-w-[50rem] text-center text-lg text-muted">
+        Or a game for when you're done. Each of these came from a single request.
+      </p>
+      <Carousel slides={apps} />
+    </section>
+
+    <section class="border-t border-rule py-20">
+      <div class="grid gap-4 sm:grid-cols-5">
+        {
+          points.map((point) => (
+            <div class:list={["flex min-h-56 flex-col justify-end rounded-[28px] p-8 sm:p-10", point.tile]}>
+              <h3 class="font-display text-2xl font-semibold tracking-tight sm:text-3xl">{point.title}</h3>
+              <p class="mt-3 text-lg leading-relaxed opacity-75">{point.text}</p>
+            </div>
+          ))
+        }
+      </div>
+    </section>
+
+    <section class="border-t border-rule py-20 text-center">
+      <h2 class="font-display text-3xl font-semibold tracking-tight">Bring the AI you already pay for.</h2>
+      <p class="mx-auto mt-3 max-w-[50rem] text-lg text-muted">
+        Lamp is free. It builds with your Claude or ChatGPT subscription, a key from more than a dozen AI providers, or
+        a model that runs right on your Mac.
+      </p>
+      <ul class="mt-10 flex flex-wrap items-center justify-center gap-x-10 gap-y-6">
+        {
+          providers.map((provider) => (
+            <li class="flex items-center gap-2.5 text-muted">
+              {
+                provider.logo ? (
+                  <Image src={provider.logo} alt="" width={24} height={24} densities={[1, 2]} class="size-6 opacity-70" />
+                ) : (
+                  <svg aria-hidden="true" viewBox="0 0 24 24" class="size-6 fill-none stroke-current stroke-[1.6] opacity-90">
+                    <rect x="6" y="6" width="12" height="12" rx="2.5" />
+                    <rect x="9.5" y="9.5" width="5" height="5" rx="1" />
+                    <path d="M9 2.5v3.5M12 2.5v3.5M15 2.5v3.5M9 18v3.5M12 18v3.5M15 18v3.5M2.5 9H6M2.5 12H6M2.5 15H6M18 9h3.5M18 12h3.5M18 15h3.5" stroke-linecap="round" />
+                  </svg>
+                )
+              }
+              <span class="font-medium">{provider.name}</span>
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+
+    <section class="border-t border-rule py-20 text-center">
+      <Image src={icon} alt="" width={72} height={72} densities={[1, 2]} class="mx-auto size-18" />
+      <h2 class="mt-5 font-display text-3xl font-semibold tracking-tight">Try Lamp. Let your genie out.</h2>
+      <div class="mt-7"><DownloadButton /></div>
+    </section>
+  </main>
+
+  <QuickLook />
+
+  <footer class="border-t border-rule py-10 text-center text-sm text-muted">
+    <p>Made by <a href="https://roocode.com" class="text-ink hover:underline">Roo Code</a> · © {new Date().getFullYear()}</p>
+  </footer>
+</Base>

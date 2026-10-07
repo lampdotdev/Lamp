@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+/* The Mac's own type, and the icon's colours: a night sky and the lamp's warm glow. */
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+
+  --color-page: #ffffff;
+  --color-ink: #1d1d1f;
+  --color-muted: #6e6e73;
+  --color-rule: #e5e5ea;
+  --color-panel: #f5f5f7;
+  --color-glow: #fdf0d8;
+  --color-night: #1c1f3f;
+  /* The Mac app's own buttons (Onboarding.swift's Palette.accent and accentDeep). */
+  --color-graphite: #33302e;
+  --color-graphite-deep: #141311;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background: var(--color-page);
+    color: var(--color-ink);
+  }
+}

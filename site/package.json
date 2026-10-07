@@ -1,0 +1,19 @@
+{
+  "name": "lamp-site",
+  "private": true,
+  "description": "lamp.dev: the one-page website for Lamp.",
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "astro": "^7.3.6",
+    "tailwindcss": "^4.3.3"
+  }
+}
