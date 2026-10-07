@@ -50,8 +50,19 @@
   };
   const resting = "translate(-50%, -50%)";
 
+  // Plays a move and waits for it, but never longer than it should take: a page in the background holds its
+  // animations, and Quick Look mustn't be left stuck open or half-closed because of that.
+  const move = (keyframes: Keyframe[], duration: number, easing: string) =>
+    Promise.race([
+      picture.animate(keyframes, { duration, easing }).finished.catch(() => {}),
+      new Promise((done) => setTimeout(done, duration + 60)),
+    ]);
+
   const open = async (from: HTMLImageElement) => {
     source = from;
+    // Lets whatever holds the picture know it's being looked at (the carousel stops moving on), however it
+    // was opened: a key press doesn't reach the carousel, and focus leaves it for the dialog.
+    from.dispatchEvent(new CustomEvent("quicklook", { bubbles: true }));
     picture.src = from.currentSrc || from.src;
     picture.alt = from.alt;
     panel.showModal();
@@ -60,7 +71,7 @@
     veil.toggleAttribute("data-open", true);
     await picture.decode().catch(() => {});
     if (!still) {
-      await picture.animate([{ transform: fromSource(from) }, { transform: resting }], { duration: 420, easing: spring }).finished;
+      await move([{ transform: fromSource(from) }, { transform: resting }], 420, spring);
     }
     // The full-size picture comes in once it's ready, without a flash.
     const full = from.dataset.quicklook;
@@ -78,7 +89,7 @@
     const visible = source.getBoundingClientRect();
     const onScreen = visible.bottom > 0 && visible.top < innerHeight;
     if (!still && onScreen) {
-      await picture.animate([{ transform: resting }, { transform: fromSource(source) }], { duration: 300, easing: "cubic-bezier(.4,0,.2,1)" }).finished;
+      await move([{ transform: resting }, { transform: fromSource(source) }], 300, "cubic-bezier(.4,0,.2,1)");
     }
     source.style.visibility = "";
     source.focus({ preventScroll: true });

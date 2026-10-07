@@ -128,6 +128,7 @@ const chevron = "M10.5 3.5 6 8l4.5 4.5";
     carousel.querySelectorAll<HTMLButtonElement>("[data-step]").forEach((button) =>
       button.addEventListener("click", () => { stop(); show(current + Number(button.dataset.step)); }));
     track.addEventListener("pointerdown", stop);
+    carousel.addEventListener("quicklook", stop);
     track.addEventListener("wheel", (event) => { if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) stop(); }, { passive: true });
     carousel.addEventListener("pointerenter", () => (paused = true));
     carousel.addEventListener("pointerleave", () => (paused = false));
