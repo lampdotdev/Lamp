@@ -473,6 +473,23 @@ final class Store: ObservableObject {
     }
 
     private var drafts: [String: Draft] = [:]
+    /// Changes made outside the current editor must reach whichever chat view is now on screen, even
+    /// when a submission begins and finishes in the same event (as it does for Mac apps).
+    @Published private(set) var draftUpdates: [String: UUID] = [:]
+
+    func updateDraft(_ draft: Draft, for project: LampProject) {
+        saveDraft(draft, for: project)
+        draftUpdates[project.id] = UUID()
+    }
+
+    /// A drop can finish loading after its original chat view has gone away. Add its files to the
+    /// latest saved input rather than writing that view's old words and replacement state back.
+    func attach(_ files: [URL], to project: LampProject) {
+        guard let current = current(project), !files.isEmpty else { return }
+        var latest = draft(for: current)
+        latest.attachments.append(contentsOf: files)
+        updateDraft(latest, for: current)
+    }
 
     /// Each app keeps its own draft, so it's still there after switching apps. The text also survives a
     /// restart (.lamp/draft.txt), and so do the request it replaces and the text that was set aside for it;

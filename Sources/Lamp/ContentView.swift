@@ -664,7 +664,7 @@ struct ProjectView: View {
             focusRequest += 1
             loadDraft()
         }
-        .onChange(of: submissionPending) { if !submissionPending { loadDraft() } }
+        .onChange(of: store.draftUpdates[store.current(project)?.id ?? project.id]) { loadDraft() }
         .onChange(of: draft) { saveDraft() }
         .onChange(of: attachments) { saveDraft() }
         .onChange(of: replacing) { saveDraft() }
@@ -908,14 +908,13 @@ struct ProjectView: View {
     private func finishSubmission(_ token: UUID, captured: Store.Draft, sent: Bool) {
         if let current = store.current(project) {
             let kept = store.draft(for: current).afterSubmission(captured, sent: sent)
-            store.saveDraft(kept, for: current)
+            store.updateDraft(kept, for: current)
         }
         store.endSubmission(token)
     }
 
     private func attach(_ files: [URL]) {
-        attachments.append(contentsOf: files)
-        saveDraft()
+        store.attach(files, to: project)
     }
 
     private func chooseFiles() {
