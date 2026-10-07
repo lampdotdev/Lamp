@@ -2,11 +2,11 @@ import SceneKit
 import SceneKit.ModelIO
 import ModelIO
 
-// Export the production geometry, so the offline artwork starts with the same silhouette.
+// Export only geometry; Blender supplies the ceramic material and lighting.
 @main struct ExportLamp {
     static func main() throws {
-        let stage = LampStage()
-        let lamp = stage.scene.rootNode.childNodes[0]
+        let lamp = LampModel.node(material: SCNMaterial())
+        lamp.eulerAngles.y = -0.35
         let url = URL(fileURLWithPath: CommandLine.arguments[1])
         FileManager.default.createFile(atPath: url.path, contents: nil)
         let file = try FileHandle(forWritingTo: url)
