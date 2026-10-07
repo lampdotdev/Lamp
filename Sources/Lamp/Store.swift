@@ -2217,11 +2217,12 @@ final class Store: ObservableObject {
     private func build(_ project: LampProject) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         log(project, .status, "Building…")
-        try? Template.writeSupport(for: project)
-        Template.writeBuildScript(for: project)
-        // The agent may edit Package.swift, but not into something that fetches or runs code at build time.
-        if let problem = Template.packageProblem(for: project) {
-            log(project, .detail, "Build failed:\n" + problem)
+        // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
+        do {
+            try Template.writeOwnedFiles(for: project)
+        } catch {
+            let problem = "Lamp couldn't write the app's build files: \(error.localizedDescription)"
+            log(project, .error, problem)
             return problem
         }
         // Taken before the build, so an edit made while it runs still counts as a change afterwards.

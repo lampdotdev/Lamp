@@ -108,12 +108,11 @@ requests, and admits them only to the app routes with the Mac's own name as Host
 
 ## Generated apps
 
-Lamp owns three files in every app and never trusts what's in them: `Sources/LampSupport.swift` and `build.sh`
-are written afresh before every build (`Template.writeSupport`, `Template.writeBuildScript`), and
-`Package.swift` is checked (`Template.packageProblem`) and refused when it declares dependencies, plugins,
-binary targets, unsafe flags or system libraries, since those fetch or run code at build time outside every
-approval. The agent's file tools may write all three without a card; this is what makes that safe. Shared
-apps never carry them: import writes its own.
+Lamp owns three files in every app and never trusts what's in them: `Sources/LampSupport.swift`, `build.sh`
+and `Package.swift` are written afresh before every build (`Template.writeOwnedFiles`), and the build stops if
+that fails. The last two are what the build runs (the shell runs build.sh; SwiftPM compiles and executes
+Package.swift as a program), so they're replaced rather than checked: nothing the agent's file tools wrote
+into them, with no card, can run. Shared apps never carry them: import writes its own.
 
 `Sources/Lamp/Template.swift` holds `LampSupport.swift`, the support code copied into every generated
 app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_app`). It is a Swift

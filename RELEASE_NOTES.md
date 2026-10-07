@@ -7,9 +7,8 @@ plain "Lamp x.y.z" line.
 
 ## Unreleased
 
-- The build script of every app is Lamp's own again at each build, and an app whose package file reaches for
-  outside packages, plugins or unsafe compiler flags isn't built, with a plain word to the agent. Nothing the
-  agent writes into those files can run around your approval.
+- The build script and package file of every app are Lamp's own again at each build, so nothing the agent
+  writes into them can run around your approval.
 - Opening a shared app: the check no longer warns about Lamp's own building blocks, and says which of your
   data an app hands to the AI.
 

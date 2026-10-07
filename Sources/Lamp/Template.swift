@@ -55,38 +55,31 @@ enum Template {
         return token
     }
 
-    /// Lamp owns build.sh and writes it afresh before every build, as it does LampSupport.swift: it's the one
-    /// file Lamp runs, so nothing the agent (or something the agent read) put in it ever runs. That also keeps
-    /// older apps current (optimized builds, this Lamp's bundle id, the usage descriptions) with no patching.
-    static func writeBuildScript(for project: LampProject) {
-        let template = project.platform == .iphone ? iPhoneBuildSh : buildSh
+    /// The three files Lamp owns in every app, written afresh before every build: LampSupport.swift, build.sh
+    /// and Package.swift. The last two are what the build runs (the shell runs build.sh, and SwiftPM compiles
+    /// and executes Package.swift as a program before building anything), so nothing the agent, or something
+    /// the agent read, put in them ever runs: they're replaced, not checked. A failure to write any of them is
+    /// a failure to build, since the old file would be what runs.
+    static func writeOwnedFiles(for project: LampProject) throws {
+        try writeSupport(for: project)
+        let iphone = project.platform == .iphone
+        try write(iphone ? iPhoneBuildSh : buildSh, to: "build.sh", for: project, executable: true)
+        try write(iphone ? iPhonePackageSwift : packageSwift, to: "Package.swift", for: project)
+    }
+
+    private static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
         let contents = template
             .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
             .replacingOccurrences(of: "{{NAME}}", with: project.name)
             .replacingOccurrences(of: "{{EXE}}", with: project.exe)
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{BUNDLE}}", with: project.bundleID)
-        let url = project.dir.appendingPathComponent("build.sh")
+        let url = project.dir.appendingPathComponent(path)
+        // Left alone when it's already right, so its date only moves when the app needs a rebuild.
         if (try? String(contentsOf: url, encoding: .utf8)) != contents {
-            try? contents.write(to: url, atomically: true, encoding: .utf8)
+            try contents.write(to: url, atomically: true, encoding: .utf8)
         }
-        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
-    }
-
-    /// Why Package.swift can't be built as it is, or nil. The agent may change the target's settings, but
-    /// a dependency, a plugin, a binary target or unsafe compiler flags would fetch or run code at build
-    /// time, outside every approval; apps are built from Apple's frameworks only.
-    static func packageProblem(for project: LampProject) -> String? {
-        guard let text = try? String(contentsOf: project.dir.appendingPathComponent("Package.swift"), encoding: .utf8) else {
-            return "Package.swift is missing."
-        }
-        let banned: [(String, String)] = [
-            ("dependencies", "a dependency"), (".package(", "a package"), ("plugin", "a plugin"),
-            ("binaryTarget", "a binary target"), ("unsafeFlags", "unsafe compiler flags"), ("systemLibrary", "a system library"),
-        ]
-        guard let (_, what) = banned.first(where: { text.contains($0.0) }) else { return nil }
-        return "Package.swift declares \(what). Apps are built from Apple's frameworks only, with no packages, plugins, "
-            + "binary targets or unsafe flags: take it out of Package.swift and do without."
+        if executable { try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path) }
     }
 
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,
