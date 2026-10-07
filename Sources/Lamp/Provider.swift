@@ -157,6 +157,7 @@ enum KeyStore {
         lock.lock()
         defer { lock.unlock() }
         if usesKeychain {
+            _ = movedFileToKeychain   // the keys file first: its key is the saved one, pi's copy may be older
             let status = KeychainItem.read(provider).0
             if status == errSecSuccess { return true }
             guard status == errSecItemNotFound else { return false }
