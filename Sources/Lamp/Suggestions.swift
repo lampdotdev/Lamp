@@ -20,6 +20,8 @@ enum NextStep {
     - Make it specific to this conversation (reference the actual app and work).
     - Prefer a concrete next step: taking up a suggestion Lamp just made, fixing something it mentioned, \
     extending the change, or polishing how the app looks and feels.
+    - Where the conversation says the user took a request back, they decided against it: never suggest that \
+    request again, or anything that amounts to it.
 
     Respond with JSON: {"suggestion": "..."}
     """
@@ -62,7 +64,11 @@ enum NextStep {
         for line in lines.reversed() {
             let text = line.text.trimmed
             guard !text.isEmpty else { continue }
-            let part = "\(line.kind == .user ? "User" : "Lamp"): \(text)\n\n"
+            let tookBack = (line.tookBack?.suffix(6)).map { requests in
+                " (the user sent this in place of earlier requests, which they took back: "
+                    + requests.map { "“\($0.prefix(200))”" }.joined(separator: ", ") + ")"
+            } ?? ""
+            let part = "\(line.kind == .user ? "User" : "Lamp")\(tookBack): \(text)\n\n"
             if total + part.count > maxConversationChars { break }
             parts.insert(part, at: 0)
             total += part.count
