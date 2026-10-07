@@ -1507,7 +1507,7 @@ final class Store: ObservableObject {
     func open(_ project: LampProject) async {
         if project.platform == .iphone {
             // Running already: bring the simulator forward. Otherwise build (if needed) and launch.
-            if let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid) { await Simulator.show(); return }
+            if let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id { await Simulator.show(); return }
             if FileManager.default.fileExists(atPath: project.builtURL.path), stamps[project.id]?.isOutdated != true {
                 guard begin(project) != nil else { return }
                 defer { finish(project) }
@@ -2140,26 +2140,47 @@ final class Store: ObservableObject {
             log(project, .error, problem)
             return problem
         }
+        // Launches on one device go one after another: a launch already under way finishes (and is then
+        // closed, below) before the next starts, so two apps can't be racing onto the same screen.
+        let previous = simulatorWork[udid]
+        let mine = Task<String?, Never> { [self] in
+            await previous?.value
+            return await launchOnSimulator(project, udid: udid, inFront: inFront)
+        }
+        simulatorWork[udid] = Task { _ = await mine.value }
+        return await mine.value
+    }
+
+    /// The launch in progress on each simulator, for the next one to wait for.
+    private var simulatorWork: [String: Task<Void, Never>] = [:]
+
+    private func launchOnSimulator(_ project: LampProject, udid: String, inFront: Bool) async -> String? {
         // The turn that owns the app now, taken before anything waits: Delete or Stop can come during any of
         // the waits below, and then nothing more is written or launched for it.
         guard let owner = turns[project.id] else { return "Lamp isn't working on this app." }
-        // The device is this project's from here: a later launch by another project takes the lease
-        // (before any of its own waits), and this one, finding it gone, goes no further.
+        // The device is this project's from here: the driver acts only while the lease is held.
+        let before = simulatorLeases[udid]
         simulatorLeases[udid] = project.id
         func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped && simulatorLeases[udid] == project.id }
+        // A launch that doesn't come off gives the device back to whoever had it, so their look_at_app can
+        // carry on (and theirs rechecks the lease, so it reopens the app if need be).
+        func giveBack(_ message: String) -> String {
+            if simulatorLeases[udid] == project.id { simulatorLeases[udid] = before.flatMap { simulatorApps[$0] != nil ? $0 : nil } }
+            return message
+        }
         note("Opening \(project.name) on the iPhone simulator…", for: project)
         do {
             try await Simulator.boot(udid, show: inFront)
             await Simulator.terminate(project.bundleID, on: udid)
             try await Simulator.install(project.builtURL, on: udid)
-            guard stillOwns() else { return "The app was deleted or stopped before it opened." }
+            guard stillOwns() else { return giveBack("The app was deleted or stopped before it opened.") }
             // One Lamp app per simulator: another project's app on this device is closed first, so what the
             // simulator shows is always the app being worked on (and that app's use_app batch, if any, stops).
             for (other, launched) in simulatorApps where other != project.id && launched.udid == udid {
                 if let theirs = projects.first(where: { $0.id == other }) { await Simulator.terminate(theirs.bundleID, on: udid) }
                 simulatorApps[other] = nil
             }
-            guard stillOwns() else { return "The app was deleted or stopped before it opened." }
+            guard stillOwns() else { return giveBack("The app was deleted or stopped before it opened.") }
             Runtime.startLog(project)
             Simulator.Driver.forget(project.id)
             let pid = try await Simulator.launch(project.bundleID, on: udid, log: Runtime.logURL(project))
@@ -2167,7 +2188,7 @@ final class Store: ObservableObject {
             // nobody, and is stopped before anything records it.
             guard stillOwns() else {
                 await Simulator.terminate(project.bundleID, on: udid)
-                return "The app was deleted or stopped before it opened."
+                return giveBack("The app was deleted or stopped before it opened.")
             }
             simulatorApps[project.id] = (udid, pid)
             try? await Task.sleep(for: .seconds(3))
@@ -2185,7 +2206,7 @@ final class Store: ObservableObject {
             // A failure to boot, install or launch is reported like a crash: the agent must hear about it.
             log(project, .error, "Couldn't open the app: \(error.localizedDescription)")
             refreshOpenApps()
-            return "Couldn't open the app in the simulator: \(error.localizedDescription)"
+            return giveBack("Couldn't open the app in the simulator: \(error.localizedDescription)")
         }
         refreshOpenApps()
         stamps[project.id] = BuildStamp.read(project.builtURL)
@@ -2764,7 +2785,8 @@ final class Store: ObservableObject {
         var screenshots: [URL] = []
         if project.platform == .iphone {
             // The simulator photographs the screen; nothing in the app has to cooperate.
-            let running = simulatorApps[project.id].map { Simulator.isRunning(pid: $0.pid) } ?? false
+            // Open, and the device still this app's: otherwise it's opened again (which takes the device back).
+            let running = simulatorApps[project.id].map { Simulator.isRunning(pid: $0.pid) && simulatorLeases[$0.udid] == project.id } ?? false
             if changed || !running {
                 let crash = await install(project, inFront: false)
                 turn.look.installed = true
