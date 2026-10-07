@@ -378,9 +378,10 @@ private struct SetupStep: View {
         }
     }
 
+    /// A check that can't tell counts as signed out: the Sign In button is then the way to find out.
     private func refreshSignIns() async {
         for engine in [Engine.claude, .codex] where ToolLocator.path(for: engine) != nil && signingIn != engine {
-            signedIn[engine] = await EngineSignIn.isSignedIn(engine)
+            signedIn[engine] = await EngineSignIn.isSignedIn(engine) ?? false
         }
     }
 }
@@ -493,10 +494,12 @@ private struct BuilderCard: View {
                         .font(.system(size: 13)).foregroundStyle(.secondary)
                 }
                 HStack(spacing: 10) {
-                    Option(selected: choice == .claude, title: "Claude Code", detail: "Uses your Claude subscription") {
+                    Option(selected: choice == .claude, title: "Claude Code",
+                           detail: ToolLocator.path(for: .claude) != nil ? "Uses your Claude subscription" : "Not installed yet") {
                         ProviderLogo(id: "anthropic", size: 30)
                     } action: { pick(.claude) }
-                    Option(selected: choice == .chatGPT, title: "ChatGPT", detail: "Uses your ChatGPT subscription") {
+                    Option(selected: choice == .chatGPT, title: "ChatGPT",
+                           detail: ToolLocator.path(for: .codex) != nil ? "Uses your ChatGPT subscription" : "Not installed yet") {
                         ProviderLogo(id: "openai", size: 30)
                     } action: { pick(.chatGPT) }
                     Option(selected: choice?.isForge == true, title: "Lamp Agent", detail: "You choose the AI") {
@@ -519,16 +522,28 @@ private struct BuilderCard: View {
         }
     }
 
+    /// Choosing a card is choosing the agent: a sign-in picks its tool straight away, and only what's
+    /// missing (the app, or a sign-in) is asked for underneath.
     private func pick(_ new: Builder.Choice) {
         problem = nil
         choice = new
+        let which: Engine? = new == .claude ? .claude : new == .chatGPT ? .codex : nil
+        guard let which else { return }
+        // Saved whether or not the app is there yet: once it's installed and signed in, the choice stands.
+        Builder.engine = which
+        engine = which.rawValue
+        guard ToolLocator.path(for: which) != nil else { return }
+        Task {
+            if signedIn[which] == nil { signedIn[which] = await EngineSignIn.isSignedIn(which) ?? false }
+            await store.recheckSetup()
+        }
     }
 
-    /// Claude Code or ChatGPT: get the app if it's missing, then sign in.
+    /// Claude Code or ChatGPT: get the app if it's missing, sign in if not yet.
     @ViewBuilder
     private func account(_ which: Engine, app: String, download: String) -> some View {
         let installed = ToolLocator.path(for: which) != nil
-        let using = engine == which.rawValue
+        let name = which == .claude ? "Claude Code" : app
         HStack(spacing: 10) {
             if !installed {
                 Image(systemName: "arrow.down.circle").foregroundStyle(.secondary)
@@ -537,36 +552,35 @@ private struct BuilderCard: View {
                 Spacer()
                 Link("Get \(app)", destination: URL(string: download)!)
                     .font(.system(size: 13, weight: .medium))
-            } else if using && signedIn[which] == true {
+            } else if signedIn[which] == true {
                 Done()
-                Text("\(which == .claude ? "Claude Code" : app) will make your apps.").font(.system(size: 13, weight: .medium))
+                Text("\(name) will make your apps.").font(.system(size: 13, weight: .medium))
                 Spacer()
             } else if signingIn == which {
                 ProgressView().controlSize(.small)
                 Text("Finish signing in to \(app) in your browser…").font(.system(size: 13)).foregroundStyle(.secondary)
                 Spacer()
+            } else if signedIn[which] == nil {
+                ProgressView().controlSize(.small)
+                Text("Checking your \(app) sign-in…").font(.system(size: 13)).foregroundStyle(.secondary)
+                Spacer()
             } else {
-                Text(problem ?? "Sign in with your \(app) account.")
+                Text(problem ?? "Sign in to \(app) so \(name) can build.")
                     .font(.system(size: 13)).foregroundStyle(problem == nil ? Color.secondary : Color.orange)
                 Spacer()
-                Button("Use \(which == .claude ? "Claude Code" : app)") { use(which) }
+                Button("Sign In…") { signIn(which) }
             }
         }
         .padding(.top, 2)
     }
 
-    private func use(_ which: Engine) {
+    private func signIn(_ which: Engine) {
         problem = nil
-        Builder.engine = which
-        engine = which.rawValue
         Task {
-            var ok = await EngineSignIn.isSignedIn(which) == true
-            if !ok {
-                signingIn = which
-                ok = await EngineSignIn.signIn(which)
-                signingIn = nil
-                NSApp.activate()
-            }
+            signingIn = which
+            let ok = await EngineSignIn.signIn(which)
+            signingIn = nil
+            NSApp.activate()
             signedIn[which] = ok
             if !ok { problem = "Signing in didn't finish. Try again." }
             await store.recheckSetup()
