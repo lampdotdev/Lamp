@@ -24,6 +24,9 @@ enum Privacy {
     /// Places that hold nothing personal: the system, developer tools and installed packages.
     private static let publicRoots = ["/System", "/usr", "/Library/Developer", "/Applications/Xcode.app", "/opt/homebrew"]
     private static let scratchRoots = ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"]
+    /// `2>/dev/null` in a command names the one device with nothing in it. Other devices (terminals, disks)
+    /// are files like any other to this rule.
+    private static let nothing = "/dev/null"
 
     /// Whether one of the agent's file tools may touch `path` (as the agent gave it, relative to the app's folder).
     static func verdict(tool: String, path raw: String, project: LampProject) -> Verdict {
@@ -44,6 +47,7 @@ enum Privacy {
             return .deny("That belongs to Lamp or to another of the user's apps, and isn't yours to open.")
         }
         guard asksOutsideFolder else { return .allow }
+        if path == nothing { return .allow }
         if scratchRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) { return .allow }
         if readers.contains(tool), publicRoots.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) { return .allow }
         return .ask
@@ -89,15 +93,28 @@ enum Privacy {
                 // A search pattern like /api/ looks like a path: only something whose top folder exists is one.
                 guard let top = path.split(separator: "/").first,
                       FileManager.default.fileExists(atPath: "/" + top) else { return false }
-            } else if !path.hasPrefix("~"), !path.contains("..") {
+            } else if isHomePath(path) || path == ".." || path.hasPrefix("../") || path.contains("/../") {
+                // A home folder (the user's or a named user's), or a step up out of the app's folder: a path
+                // wherever it leads.
+            } else {
                 // Any other word is a path only if something by that name is in the app's folder. That includes
-                // a bare name: it can be a link that leads out, which the rule works out below.
+                // a bare name: it can be a link that leads out, which the rule works out below. Code written
+                // through the shell is full of words that only look like paths (`0..<n`, `~=`, `...`): they
+                // aren't, so they're judged by whether they exist like everything else.
                 guard FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(path).path) else { return false }
             }
             // Outside the app's folder, whether that means asking (another folder) or never (sign-ins and keys):
             // either way the command isn't routine and needs the user's say-so.
             return verdict(tool: "read", path: path, project: project) != .allow
         }
+    }
+
+    /// `~`, `~/Documents`, `~matt` or `~matt/Documents`: the shell's home-folder shorthand. Not `~=` or other
+    /// code that happens to start with a tilde.
+    private static func isHomePath(_ word: String) -> Bool {
+        guard word.hasPrefix("~") else { return false }
+        let user = word.dropFirst().prefix { $0 != "/" }
+        return user.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" || $0 == "." }
     }
 
     /// The words of a shell line, with quotes and escapes worked out, so a quoted path with a space in it

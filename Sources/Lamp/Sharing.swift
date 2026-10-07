@@ -25,6 +25,8 @@ enum Sharing {
 
     /// Writes `<Name>.lampapp` to a temporary folder and returns its URL.
     static func export(_ project: LampProject) throws -> URL {
+        // Another Lamp would open the file as a Mac app; iPhone apps keep to this Mac until import knows them.
+        guard project.platform == .mac else { throw ImportError("Sharing iPhone apps isn't available yet.") }
         let fm = FileManager.default
         let work = fm.temporaryDirectory.appendingPathComponent("forge-share-\(UUID().uuidString)")
         let stage = work.appendingPathComponent("app")

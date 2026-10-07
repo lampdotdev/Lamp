@@ -42,6 +42,17 @@ enum Runtime {
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Starts a new log for a launch the simulator makes (a Mac app does this itself in LampRuntime.start):
+    /// the last one becomes previous-log.txt.
+    static func startLog(_ project: LampProject) {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: folder(project), withIntermediateDirectories: true)
+        let log = logURL(project), previous = folder(project).appendingPathComponent("previous-log.txt")
+        try? fm.removeItem(at: previous)
+        try? fm.moveItem(at: log, to: previous)
+        fm.createFile(atPath: log.path, contents: nil)
+    }
+
     // MARK: - Launch
 
     /// Waits a few seconds after launch. True when the app is already gone: it crashed or quit by itself.

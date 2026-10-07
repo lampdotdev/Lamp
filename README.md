@@ -93,6 +93,7 @@ High-risk apps default to **Cancel**. When imported, the shared code is rebuilt 
 
 **Lamp → Settings (⌘,) → AI** chooses what builds your apps:
 
+- **iPhone and iPad apps (experimental).** Switch them on in **Settings → Building → Experimental**: **New iPhone & iPad App** builds one SwiftUI app for both, tried in the simulator on your Mac (right-click the app to choose iPhone or iPad), which needs Xcode installed. It has the same icon and building blocks as a Mac app (saved data, AI, text from photos and documents, calendar, reminders, contacts, notifications). The agent builds and opens it in the simulator, looks at the screen after each change, and taps, types, scrolls and swipes on it to try what it made (which needs Lamp allowed under System Settings → Privacy & Security → Accessibility; Lamp asks once). The app can't go on a real iPhone yet (that needs Apple's developer program).
 - **Lamp's built-in agent (pi)** with any of these:
   - **An API key** for OpenRouter, Anthropic, OpenAI, Google Gemini, DeepSeek, Mistral, xAI, Groq, Cerebras, Together, Fireworks, Hugging Face, Vercel AI Gateway, Moonshot, Z.ai, MiniMax or NVIDIA. Pick any model from that provider's list; it's searchable.
   - **On this Mac (local models).** **Native Mac AI** in **Settings → Providers** lists every model Lamp can run. These include models already in the shared Hugging Face cache (`~/.cache/huggingface/hub`) or in Local's folder, so models downloaded for Local show up without downloading again. Lamp's own downloads (a list sized to your Mac's memory, or any GGUF repo) go into that same cache, in the standard `huggingface_hub` layout.
@@ -114,7 +115,7 @@ Local models are slower and much less capable than the best cloud models for who
 - **Builds fail with "plugin for module 'SwiftUIMacros' not found"**: the macOS 27 SDK needs a compiler plugin that only ships with full Xcode. With just the Command Line Tools, Lamp builds against the newest older SDK they include, so this only happens when there isn't one. Install Xcode, or an older Command Line Tools SDK.
 - **`Downloading pi` fails during `./build.sh`**: GitHub must be reachable. The download is cached in `vendor/` afterwards.
 - **Build errors mentioning the SDK, with Xcode installed**: point at it explicitly with `sudo xcode-select -s /Applications/Xcode.app`.
-- **Keychain asks "Lamp wants to access key dev.lamp.host"**: Lamp is moving an OpenRouter key saved by an older build out of the Keychain. Allow it once. Local builds don't use the Keychain after that.
+- **Keychain asks "Lamp wants to access key dev.lamp.host"**: a build without an Apple signature is copying an OpenRouter key that a signed Lamp saved in the Keychain. Allow it once. Local builds don't use the Keychain after that.
 - **A local model won't start**: check `~/Library/Logs/Lamp/llama-server.log` (GGUF) or `mlx-server.log` (MLX). The model may need more memory than the Mac has; pick a smaller one.
 - **Claude Code or Codex errors**: Lamp shows their message. Make sure the tool works on its own in Terminal first: you're signed in, and it's up to date (an old Codex can't use new models).
 - **Apps can't use AI ("Couldn't reach Lamp")**: Lamp must be running, and port `47811` must be free (check with `lsof -i :47811`).

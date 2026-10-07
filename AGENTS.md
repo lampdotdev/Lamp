@@ -47,6 +47,30 @@ generated apps get it through the `{{SCHEME}}`, `{{NOTE}}`, `{{HOST}}` and `{{AP
 Lamp rebuilds them. `scripts/dev-data.sh` copies your apps, keys, settings and the agent's sign-ins from the
 installed Lamp into Lamp Dev, so the development build has something to work on.
 
+## iPhone apps
+
+**New iPhone & iPad App** (behind Settings → Building → Experimental, `Experiments.iosApps`) makes one app for both devices, as Apple has it; the app's right-click menu's **Try On** picks which simulator it opens in (`LampProject.family`). It runs in the iPhone or iPad simulator on this Mac (`LampProject.platform == .iphone`,
+kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools: `Simulator`
+(`Sources/Lamp/Simulator.swift`) picks a booted or available iPhone with `simctl`, installs the built bundle,
+launches it with its output going to the app's log, and photographs the screen for `look_at_app`. The
+scaffold is a Swift package built for the simulator SDK by its own `build.sh` (no Xcode project, no signing
+beyond ad hoc). It gets the same `LampSupport.swift` as a Mac app: the library is one source with the Mac-only
+blocks (windows, `LampDriver`, `LampComputer`, folders and shortcuts, the clipboard, Mail, permissions, the menu
+bar) under `#if os(macOS)`, `LampImage` standing for NSImage or UIImage, and the rest (`LampStore`, `LampAI`
+and decisions, `LampScript`, `LampText`, drops, calendar, reminders, contacts, notifications, `LampAssets`)
+shared. Type-check it for both SDKs after editing (`swiftc -typecheck`, once with `-target
+arm64-apple-ios17.0-simulator -sdk $(xcrun --sdk iphonesimulator --show-sdk-path)`). The system prompt is
+assembled from `Agent.Rules`: one rule per block, a `mac…`/`iPhone…` pair where the two kinds differ, so a new
+block is described to both in one place. Before a launch, `Store.finishSimulatorBundle` does for the flat iOS
+bundle what `deploy` does for a Mac one: usage descriptions, the icon (cut from `.lamp/AppIcon-square.png`,
+which `Icons.write` makes from the same tile as the Mac icon) and the chat's attachments, then an ad hoc signature.
+`use_app` drives the simulator from outside the app (`Simulator.Driver`): the Simulator app shows the
+iPhone's whole accessibility tree to the Mac, so Lamp finds what's under a point and presses it, sets a
+field's text, and sends real mouse events for swipes, scrolls and long presses. Pictures are made at point
+size, so a pixel in them is a point on the screen. That needs Lamp to be allowed in System Settings →
+Privacy & Security → Accessibility; the first `use_app` asks. Nothing puts an app on a real iPhone yet:
+that needs Apple's developer program and signing.
+
 ## Generated apps
 
 `Sources/Lamp/Template.swift` holds `LampSupport.swift`, the support code copied into every generated
