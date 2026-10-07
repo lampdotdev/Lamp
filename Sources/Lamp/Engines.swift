@@ -296,7 +296,7 @@ extension Agent {
     /// was taken back (`Cut`); `token` is the agent's own token for this turn (Store.agentTokens), never the app's.
     static func run(prompt: String, files: [String], project: LampProject, session: String?, cut: String? = nil,
                     token: String) -> AgentRun {
-        var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt, "LAMP_DIR": project.dir.path,
+        var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt(for: project), "LAMP_DIR": project.dir.path,
                                      "PATH": ToolLocator.userPath]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
         let fileArgs = (0..<files.count).map { "\"$LAMP_FILE_\($0)\"" }
@@ -310,7 +310,7 @@ extension Agent {
             env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve"
             env["LAMP_TOKEN"] = token
             return AgentRun(command: command(fileCount: files.count),
-                            env: env.merging(environment(prompt: prompt, files: files, session: session ?? "",
+                            env: env.merging(environment(prompt: prompt, files: files, project: project, session: session ?? "",
                                                          sessionDir: project.dir.appendingPathComponent(".lamp/pi-sessions").path)) { $1 })
         case .claude:
             // Lamp builds the app itself. Attachments are listed in the prompt; Claude reads them.
@@ -321,7 +321,7 @@ extension Agent {
             // Shell commands go through a PreToolUse hook that asks Lamp and waits for the user's answer; Lamp
             // replies in Claude Code's hook format. If Lamp can't be reached the hook fails and the command is denied.
             env["LAMP_TOKEN"] = token
-            env["LAMP_SYSTEM"] = systemPrompt + tryRules
+            env["LAMP_SYSTEM"] = systemPrompt(for: project) + tryRules
             // How commands are approved (Settings → Building):
             // - auto: Claude Code's own classifier (--permission-mode auto) runs routine commands; when it would
             //   ask, its PermissionRequest hook sends the request to Lamp's approval card.
@@ -413,7 +413,7 @@ extension Agent {
             // Isolated from the user's own Codex setup (--ignore-user-config --ignore-rules: their model, MCP
             // servers, features and rules), keeping their sign-in. Lamp's rules go in as developer instructions.
             env["LAMP_TOOL"] = ToolLocator.path(for: .codex) ?? "codex"
-            env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt + tryRules + Self.codexNote)
+            env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt(for: project) + tryRules + Self.codexNote)
             // Approvals (Settings → Building): a PreToolUse hook sends each shell command to Lamp before it runs,
             // and Lamp applies the setting: the decision model, then the in-app model's risk rating, then the
             // user (Only when risky, Anything unusual), or the user every time (Always). "Never" has no hook. In

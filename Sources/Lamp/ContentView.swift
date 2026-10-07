@@ -113,6 +113,7 @@ struct AppSidebar: View {
     enum Layout: String { case list, tiles }
 
     @EnvironmentObject private var store: Store
+    @AppStorage("experimentIOSApps") private var iosApps = false
     @AppStorage("sidebarLayout") private var layout = Layout.list
 
     var body: some View {
@@ -164,15 +165,28 @@ struct AppSidebar: View {
             }
             Button { store.create() } label: {
                 Label {
-                    Text("New App")
+                    Text(iosApps ? "New Mac App" : "New App")   // beside the iPhone and iPad entries, say which
                 } icon: {
-                    Image(systemName: "plus").frame(width: 24, height: 24)
+                    Image(systemName: iosApps ? "macbook" : "plus").frame(width: 24, height: 24)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .padding(.top, store.projects.isEmpty ? 0 : 12)
+            if iosApps {   // Settings → Building → Experimental
+                // One kind of app for both devices, as Apple has it; which one it's tried on is the app's choice.
+                Button { store.create(platform: .iphone) } label: {
+                    Label {
+                        Text("New iPhone & iPad App")
+                    } icon: {
+                        Image(systemName: "iphone").frame(width: 24, height: 24)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
         }
         .listStyle(.sidebar)
         .environment(\.sidebarRowSize, .large)
@@ -341,6 +355,15 @@ struct AppMenu: View {
             .disabled(busy)
         Button("Quit") { Task { await store.quitApp(project) } }
             .disabled(!store.openApps.contains(project.id))
+        if project.platform == .iphone {
+            // Which simulator the app opens in; it's built for both.
+            Picker("Try On", selection: Binding(get: { project.family }, set: { store.setFamily(project, $0) })) {
+                Text("iPhone").tag(DeviceFamily.iphone)
+                Text("iPad").tag(DeviceFamily.ipad)
+            }
+            .pickerStyle(.menu)
+            .disabled(busy)
+        }
         Divider()
         Button("Rename…") { store.renaming = project }
             .disabled(busy)
@@ -350,11 +373,13 @@ struct AppMenu: View {
             NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
         }
         Divider()
-        Button("Copy App File") { store.copyAppFile(project) }
-        ShareLink("Share…", item: SharedApp(project: project),
-                  preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
-        Button("Export…") { store.chooseExport(project) }
-        Divider()
+        if store.canShare(project) {
+            Button("Copy App File") { store.copyAppFile(project) }
+            ShareLink("Share…", item: SharedApp(project: project),
+                      preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
+            Button("Export…") { store.chooseExport(project) }
+            Divider()
+        }
         Button("Delete…", role: .destructive) { store.deleting = project }
     }
 }
@@ -398,6 +423,9 @@ struct ProjectView: View {
     @State private var sendProblem: UUID?
     /// A request on its way out again: what it replaces stays out of sight until the chat has let go of it.
     @State private var sendingAgain: UUID?
+    /// The end of the chat has been on screen. Only the rows in view are made, so this is how the chat
+    /// knows it opened on its latest messages (see `body`).
+    @State private var endShown = false
 
     /// Worked out once per body (see `body`): it filters the whole chat, and body runs on every streamed token.
     private var lines: [LogLine] {
@@ -461,6 +489,7 @@ struct ProjectView: View {
                                     .padding(.top, lines.isEmpty ? 0 : 32)
                             }
                             Color.clear.frame(height: 1).id("bottom")
+                                .onAppear { endShown = true }
                         }
                         // A readable line length; wide windows get margins instead of longer lines.
                         .frame(maxWidth: 640)
@@ -472,6 +501,20 @@ struct ProjectView: View {
                     // A chat opens on its latest messages: the scroll view starts at the bottom, with
                     // no scrolling to get there.
                     .defaultScrollAnchor(.bottom)
+                    // That start is worked out from a guess at the height of the rows that aren't made yet,
+                    // and in a long chat the guess can land anywhere: the top, the middle, past the end. So
+                    // the chat then goes to its last row, which it can only do once it has been laid out:
+                    // sooner does nothing, and there's no telling when that is but by the end showing up.
+                    // It tries for half a second, and once more when the end is there, to land on it exactly.
+                    .task {
+                        for attempt in 0..<10 {
+                            if attempt == 0 { await Task.yield() } else { try? await Task.sleep(for: .milliseconds(50)) }
+                            guard !Task.isCancelled else { return }
+                            let done = endShown
+                            proxy.scrollTo("bottom", anchor: .bottom)
+                            if done { return }
+                        }
+                    }
                     .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: written(lines)) { proxy.scrollTo("bottom", anchor: .bottom) }
                     .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
@@ -679,15 +722,17 @@ struct ProjectView: View {
                 Label("Delete App", systemImage: "trash")
             }
             .help("Delete this app")
-            Menu {
-                Button("Copy App File") { store.copyAppFile(project) }
-                ShareLink("Share…", item: SharedApp(project: project),
-                          preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
-                Button("Export…") { store.chooseExport(project) }
-            } label: {
-                Label("Share App", systemImage: "square.and.arrow.up")
+            if store.canShare(project) {
+                Menu {
+                    Button("Copy App File") { store.copyAppFile(project) }
+                    ShareLink("Share…", item: SharedApp(project: project),
+                              preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
+                    Button("Export…") { store.chooseExport(project) }
+                } label: {
+                    Label("Share App", systemImage: "square.and.arrow.up")
+                }
+                .help("Send this app to someone with Lamp")
             }
-            .help("Send this app to someone with Lamp")
         }
         gap
         ToolbarItemGroup {
