@@ -491,11 +491,6 @@ struct ProjectView: View {
                 // Part of the bottom panel, set off from the message box the way the chat is.
                 Divider()
             }
-            if replacing != nil {
-                SendingAgainMark(onCancel: putBack)
-                    .padding(.horizontal, 12).padding(.top, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
             if !attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -584,9 +579,10 @@ struct ProjectView: View {
             replacing = saved.replacing
             setAside = saved.replacing == nil ? nil
                 : Store.Draft(text: saved.setAsideText, attachments: saved.setAsideAttachments)
+            putBackIfEmptied()
         }
-        .onChange(of: draft) { saveDraft() }
-        .onChange(of: attachments) { saveDraft() }
+        .onChange(of: draft) { putBackIfEmptied(); saveDraft() }
+        .onChange(of: attachments) { putBackIfEmptied(); saveDraft() }
         .onChange(of: replacing) { saveDraft() }
         .onAppear { hasMicrophone = Dictation.hasMicrophone }
         // A microphone plugged in (or taken away) while the chat is open shows or hides the button.
@@ -637,6 +633,12 @@ struct ProjectView: View {
     }
 
     /// Not sending it again after all: the chat is as it was, and so is the message box.
+    /// Nothing marks the message box while a request from the chat is in it, so there's nothing to click to
+    /// call it off: emptying the box does that. Otherwise the chat would stay cut short with nothing to say why.
+    private func putBackIfEmptied() {
+        if replacing != nil, draft.isEmpty, attachments.isEmpty { putBack() }
+    }
+
     private func putBack() {
         replacing = nil
         sendProblem = nil
