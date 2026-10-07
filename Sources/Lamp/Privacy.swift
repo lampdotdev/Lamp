@@ -85,28 +85,41 @@ enum Privacy {
     /// would open: the models still judge those.
     static func reachesOutside(_ command: String, project: LampProject) -> Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return words(in: command).contains { word in
+        // Relative paths are read from where the command is by then: a `cd` into a subfolder (the agent's
+        // commands mostly start with one) moves that, so `../icon.json` after `cd Sources` is the app's own.
+        var cwd = project.dir
+        let words = words(in: command)
+        for (index, word) in words.enumerated() {
             // `--from=/path` and `VAR=/path` carry a path after the sign.
             var path = word.split(separator: "=", maxSplits: 1).last.map(String.init) ?? word
             for name in ["${HOME}", "$HOME"] where path.hasPrefix(name) { path = home + path.dropFirst(name.count) }
+            let relative: Bool
             if path.hasPrefix("/") {
                 // A search pattern like /api/ looks like a path: only something whose top folder exists is one.
                 guard let top = path.split(separator: "/").first,
-                      FileManager.default.fileExists(atPath: "/" + top) else { return false }
-            } else if isHomePath(path) || path == ".." || path.hasPrefix("../") || path.contains("/../") {
-                // A home folder (the user's or a named user's), or a step up out of the app's folder: a path
-                // wherever it leads.
+                      FileManager.default.fileExists(atPath: "/" + top) else { continue }
+                relative = false
+            } else if isHomePath(path) {
+                relative = false
+            } else if path == ".." || path.hasPrefix("../") || path.contains("/../") {
+                // A step up: a path wherever it leads, read from where the command is.
+                relative = true
             } else {
-                // Any other word is a path only if something by that name is in the app's folder. That includes
-                // a bare name: it can be a link that leads out, which the rule works out below. Code written
-                // through the shell is full of words that only look like paths (`0..<n`, `~=`, `...`): they
-                // aren't, so they're judged by whether they exist like everything else.
-                guard FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(path).path) else { return false }
+                // Any other word is a path only if something by that name is where the command is. That
+                // includes a bare name: it can be a link that leads out, which the rule works out below. Code
+                // written through the shell is full of words that only look like paths (`0..<n`, `~=`, `...`):
+                // they aren't, so they're judged by whether they exist like everything else.
+                guard FileManager.default.fileExists(atPath: cwd.appendingPathComponent(path).path) else { continue }
+                relative = true
             }
+            let full = relative ? resolved(path, in: cwd) : path
             // Outside the app's folder, whether that means asking (another folder) or never (sign-ins and keys):
             // either way the command isn't routine and needs the user's say-so.
-            return verdict(tool: "read", path: path, project: project) != .allow
+            if verdict(tool: "read", path: full, project: project) != .allow { return true }
+            // Inside it, and the command moves there: what follows is read from there.
+            if index > 0, words[index - 1] == "cd" { cwd = URL(fileURLWithPath: full) }
         }
+        return false
     }
 
     /// `~`, `~/Documents`, `~matt` or `~matt/Documents`: the shell's home-folder shorthand. Not `~=` or other
