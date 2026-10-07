@@ -809,6 +809,13 @@ final class MCPClient: @unchecked Sendable {
                                       parameters: meta["tool_params"] as? [String: Any] ?? [:], display: display, risk: meta["riskLevel"] as? String)
         let handler = elicitationHandler
         lock.lock()
+        // A question with no call of ours waiting is the server carrying on after a call gave up: nobody
+        // is asked, and the step doesn't run.
+        guard !waiting.isEmpty else {
+            lock.unlock()
+            send(["jsonrpc": "2.0", "id": id, "result": ["action": "decline"]])
+            return
+        }
         let asked = generation
         asking += 1
         lock.unlock()
