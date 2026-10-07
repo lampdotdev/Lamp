@@ -34,8 +34,9 @@ Double-click the file (its name ends in **.lampapp**), or choose **File →
 Import Shared App…** (⌘O).
 
 Before building anything, Lamp shows you a review: a list of what the app can
-access, a short description of what it does, any concerns, and a risk rating.
-Read it, then click **Build & Open** or **Cancel**.
+access. When AI is set up and its check succeeds, it also describes what the
+app does, raises any concerns and rates the risk. Read it, then click
+**Build & Open** or **Cancel**.
 
 <Warning>
   Lamp's review is a guide, not a guarantee. Only open apps from people you
@@ -77,9 +78,11 @@ say-so:
 - **Running a command on your Mac.** Lamp asks first when a command looks
   risky. In **Settings → Building** you can make it ask more often (**Anything
   unusual** or **Always**) or **Never**.
-- **Opening files outside the app's folder.** Lamp's own agent and ChatGPT ask
-  before reading or changing anything else on your Mac. Claude Code follows its
-  own rules for files.
+- **Opening files outside the app's folder.** All three agents ask before
+  reading or changing your files outside the app's folder. System files,
+  app-building tools and temporary folders are exceptions. You can turn this
+  check off in **Settings → Building**. Lamp's keys, sign-ins and your other
+  Lamp apps stay off limits.
 
 A request appears above the message box, saying in plain words what the AI
 wants to do. Choose **Allow** or **Deny**. Lower-risk requests also offer
@@ -89,8 +92,12 @@ the chat why it needs it.
 ### Apps that use your other apps
 
 Lamp can let the apps you build read and use your other apps, such as Mail or
-Slack. This is off until you turn it on in **Settings → Apps**, and everything an app
-does in another app waits for your OK.
+Slack. This needs an OpenRouter key and is off until you turn on **Let apps use your
+other apps** in **Settings → Apps**. Lamp installs a helper and guides you
+through the permissions it needs in System Settings.
+
+Reading needs no further approval. Each click, keystroke or key press waits
+for your OK, unless you choose **Allow All for This Task** for that task.
 
 ## Troubleshooting
 
@@ -116,7 +123,7 @@ does in another app waits for your OK.
   <Accordion title="Apple's app-building tools need attention">
     After a macOS update, the tools can go missing. Lamp shows its welcome
     again and opens Apple's installer. Click **Install**, then **Agree**. If
-    the installer doesn't appear, click **Show Installer** in Lamp.
+    the installer doesn't appear, click **Show Installer Again** in Lamp.
   </Accordion>
   <Accordion title="An app says it couldn't reach Lamp">
     Open Lamp and try again. If the app still can't reach Lamp, quit any extra
