@@ -511,7 +511,11 @@ struct ProjectView: View {
                 Composer(text: $draft, height: $composerHeight,
                          placeholder: busy ? "Working… describe the next change"
                             : lines.isEmpty ? "Describe an app…" : "Describe a change…",
-                         suggestion: shownSuggestion, onDismissSuggestion: { dismissedSuggestion = suggestion },
+                         // No suggestion while a request from the chat is in the box: it would be about a turn
+                         // that's on its way out, and Escape, which dismisses one, puts the request back instead.
+                         suggestion: replacing == nil ? shownSuggestion : nil,
+                         onDismissSuggestion: { dismissedSuggestion = suggestion },
+                         onEscape: replacing == nil ? nil : putBack,
                          isEnabled: true, focusRequest: focusRequest,
                          onSubmit: send, onFiles: { attachments.append(contentsOf: $0) })
                     .frame(height: composerHeight)
@@ -579,10 +583,9 @@ struct ProjectView: View {
             replacing = saved.replacing
             setAside = saved.replacing == nil ? nil
                 : Store.Draft(text: saved.setAsideText, attachments: saved.setAsideAttachments)
-            putBackIfEmptied()
         }
-        .onChange(of: draft) { putBackIfEmptied(); saveDraft() }
-        .onChange(of: attachments) { putBackIfEmptied(); saveDraft() }
+        .onChange(of: draft) { saveDraft() }
+        .onChange(of: attachments) { saveDraft() }
         .onChange(of: replacing) { saveDraft() }
         .onAppear { hasMicrophone = Dictation.hasMicrophone }
         // A microphone plugged in (or taken away) while the chat is open shows or hides the button.
@@ -633,12 +636,8 @@ struct ProjectView: View {
     }
 
     /// Not sending it again after all: the chat is as it was, and so is the message box.
-    /// Nothing marks the message box while a request from the chat is in it, so there's nothing to click to
-    /// call it off: emptying the box does that. Otherwise the chat would stay cut short with nothing to say why.
-    private func putBackIfEmptied() {
-        if replacing != nil, draft.isEmpty, attachments.isEmpty { putBack() }
-    }
-
+    /// Escape in the message box does this. Emptying the box doesn't: that's how someone starts the request
+    /// over in new words.
     private func putBack() {
         replacing = nil
         sendProblem = nil

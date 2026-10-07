@@ -283,7 +283,7 @@ struct LogRow: View, Equatable {
                         .help("Go back to how the app was around this request")
                     }
                     if let sendAgain, line.canSendAgain {
-                        Button { sendAgain(line) } label: { Image(systemName: "arrow.clockwise") }
+                        Button { sendAgain(line) } label: { Image(systemName: "pencil") }
                             .buttonStyle(.plain)
                             .foregroundStyle(.secondary)
                             .opacity(hovered || isLatestRequest ? 1 : 0)
