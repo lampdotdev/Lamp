@@ -351,7 +351,7 @@ struct LogRow: View, Equatable {
                     .font(.caption)
             }
         case .needsKey:
-            KeyCard(reason: line.text)
+            KeyCard(reason: line.text, dir: dir)
         }
     }
 
@@ -375,6 +375,10 @@ struct LogRow: View, Equatable {
 /// key is saved (here or in Settings) the card just says so.
 struct KeyCard: View {
     let reason: String
+    /// The folder of the app whose chat this is, for the one offer that's about that app alone.
+    let dir: URL
+    /// Nothing on this Mac can make pictures right now (no key, no model here, no ChatGPT sign-in).
+    @State private var noPictureMaker = false
     @State private var key = ""
     @State private var checking = false
     @State private var problem: String?
@@ -420,12 +424,23 @@ struct KeyCard: View {
                         .buttonStyle(.link).font(.caption)
                     }
                 }
+                // The backup for when nothing else can draw: Apple's own picture maker, which only the person
+                // can work, so it's for this app's icon and not for pictures inside apps.
+                if noPictureMaker, Icons.playgroundAvailable,
+                   let app = Store.shared.projects.first(where: { $0.dir == dir }), !app.untitled, Icons.load(app) != nil {
+                    HStack(spacing: 4) {
+                        Text("Or, for this app's icon alone, make one yourself, free:").font(.caption).foregroundStyle(.secondary)
+                        Button("Open Image Playground…") { Store.shared.iconFromPlayground(app) }
+                            .buttonStyle(.link).font(.caption)
+                    }
+                }
             }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
         .onAppear { saved = Provider.hasKey }
+        .task { noPictureMaker = await AppAI.imageRoute() == nil }
     }
 
     private func save() {

@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import AVFoundation
 import QuickLook
+import ImagePlayground
 
 struct ContentView: View {
     @EnvironmentObject private var store: Store
@@ -29,6 +30,7 @@ struct ContentView: View {
         .sheet(item: $store.pendingImport) { pending in
             ImportReviewView(pending: pending)
         }
+        .modifier(PlaygroundIconSheet())
     }
 
     private var main: some View {
@@ -332,6 +334,25 @@ struct ReadyDot: View {
     }
 }
 
+/// Image Playground, opened from an app's menu to make its icon. The person picks a picture there and Lamp
+/// takes it from there; on a Mac without Image Playground there's nothing to open and no menu item for it.
+struct PlaygroundIconSheet: ViewModifier {
+    @EnvironmentObject private var store: Store
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15.1, *) {
+            content.imagePlaygroundSheet(isPresented: $store.showingPlayground,
+                                         concepts: [.text(store.playgroundPrompt)]) { url in
+                // The file is Image Playground's own and temporary, so it's read before anything else happens.
+                guard let project = store.playgroundIcon, let picture = try? Data(contentsOf: url) else { return }
+                Task { await store.useIconPicture(picture, for: project) }
+            }
+        } else {
+            content
+        }
+    }
+}
+
 struct AppMenu: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
@@ -353,6 +374,11 @@ struct AppMenu: View {
             .disabled(busy)
         Button("New Icon") { Task { await store.newIcon(project) } }
             .disabled(busy || project.untitled)
+        if Icons.playgroundAvailable {
+            // The sheet opens with the icon's own description, so there has to be one.
+            Button("Icon from Image Playground…") { store.iconFromPlayground(project) }
+                .disabled(project.untitled || Icons.load(project) == nil)
+        }
         Button("Show in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
         }
