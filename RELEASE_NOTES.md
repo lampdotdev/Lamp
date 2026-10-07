@@ -5,6 +5,11 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## Unreleased
+
+- Pictures are made with Nano Banana 2 again unless you pick another: Nano Banana 2.1 stays on the list, but its
+  provider has been turning requests away.
+
 ## 0.10.1
 
 - No more Keychain password prompts: a key that was put in the Keychain by something other than Lamp made

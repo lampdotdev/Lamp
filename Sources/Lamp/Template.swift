@@ -660,7 +660,7 @@ enum Template {
                 }
                 return ["answers": try await decide(body, keys: keys)]
             case "/ai/image":
-                return ["image": try await image(body, key: key, model: keys["image_model"] as? String ?? "google/gemini-nano-banana-2.1"),
+                return ["image": try await image(body, key: key, model: keys["image_model"] as? String ?? "google/gemini-3.1-flash-image"),
                         "media_type": "image/png"]
             default:
                 throw LampAI.Failure(message: "Using the Mac's other apps needs this phone to reach Lamp. Try again on the same Wi‑Fi as the Mac.")
