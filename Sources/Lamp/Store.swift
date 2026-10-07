@@ -548,6 +548,20 @@ final class Store: ObservableObject {
                             env: ["LAMP_MESSAGE": message]) { _ in }
     }
 
+    /// Which simulator an iPhone & iPad app opens in. Takes effect at its next open; the app is quit first
+    /// so the other device gets a fresh launch.
+    func setFamily(_ project: LampProject, _ family: DeviceFamily) {
+        guard project.platform == .iphone, project.family != family else { return }
+        try? JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
+                                              platform: project.platform, family: family))
+            .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
+        Task {
+            await quit(project)
+            reload()
+            log(project, .status, "\(project.name) will open on the \(family.name) simulator from now on.")
+        }
+    }
+
     /// An untitled app you left without ever using is deleted, so trying New App leaves nothing behind.
     private func discardIfUnused(_ id: String) {
         guard let project = projects.first(where: { $0.id == id }), project.untitled,

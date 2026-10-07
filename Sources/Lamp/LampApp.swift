@@ -20,10 +20,8 @@ struct LampApp: App {
                 Button(iosApps ? "New Mac App" : "New App") { store.create() }
                     .keyboardShortcut("n")
                 if iosApps {   // Settings → Building → Experimental
-                    Button("New iPhone App") { store.create(platform: .iphone) }
+                    Button("New iPhone & iPad App") { store.create(platform: .iphone) }
                         .keyboardShortcut("n", modifiers: [.command, .option])
-                    Button("New iPad App") { store.create(platform: .iphone, family: .ipad) }
-                        .keyboardShortcut("n", modifiers: [.command, .option, .shift])
                 }
             }
             CommandGroup(after: .newItem) {

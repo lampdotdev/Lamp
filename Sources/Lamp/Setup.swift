@@ -478,7 +478,7 @@ struct ExperimentalSettings: View {
     var body: some View {
         Section {
             Toggle("iPhone and iPad apps (simulator only)", isOn: $iosApps)
-            Text("Adds New iPhone App and New iPad App. Lamp builds the app and tries it in the iPhone or iPad simulator on this Mac: that needs Xcode (free on the Mac App Store) and, the first time it tries an app, permission to control this computer. The apps run in the simulator only; putting one on a real iPhone or iPad isn't possible yet.")
+            Text("Adds New iPhone & iPad App. Lamp builds the app and tries it in the iPhone or iPad simulator on this Mac (right-click the app for Try On): that needs Xcode (free on the Mac App Store) and, the first time it tries an app, permission to control this computer. The apps run in the simulator only; putting one on a real iPhone or iPad isn't possible yet.")
                 .font(.caption).foregroundStyle(.secondary)
         } header: { Text("Experimental") }
     }

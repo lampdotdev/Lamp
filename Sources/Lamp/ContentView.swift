@@ -175,21 +175,12 @@ struct AppSidebar: View {
             .foregroundStyle(.secondary)
             .padding(.top, store.projects.isEmpty ? 0 : 12)
             if iosApps {   // Settings → Building → Experimental
+                // One kind of app for both devices, as Apple has it; which one it's tried on is the app's choice.
                 Button { store.create(platform: .iphone) } label: {
                     Label {
-                        Text("New iPhone App")
+                        Text("New iPhone & iPad App")
                     } icon: {
                         Image(systemName: "iphone").frame(width: 24, height: 24)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                Button { store.create(platform: .iphone, family: .ipad) } label: {
-                    Label {
-                        Text("New iPad App")
-                    } icon: {
-                        Image(systemName: "ipad").frame(width: 24, height: 24)
                     }
                     .contentShape(Rectangle())
                 }
@@ -364,6 +355,15 @@ struct AppMenu: View {
             .disabled(busy)
         Button("Quit") { Task { await store.quitApp(project) } }
             .disabled(!store.openApps.contains(project.id))
+        if project.platform == .iphone {
+            // Which simulator the app opens in; it's built for both.
+            Picker("Try On", selection: Binding(get: { project.family }, set: { store.setFamily(project, $0) })) {
+                Text("iPhone").tag(DeviceFamily.iphone)
+                Text("iPad").tag(DeviceFamily.ipad)
+            }
+            .pickerStyle(.menu)
+            .disabled(busy)
+        }
         Divider()
         Button("Rename…") { store.renaming = project }
             .disabled(busy)
