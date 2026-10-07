@@ -15,6 +15,7 @@ struct BugReportView: View {
     @State private var report = ""
     @State private var copied = false
     @State private var confirmNewReport = false
+    @State private var delivery = BugReportDelivery.State.ready
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -22,11 +23,13 @@ struct BugReportView: View {
                 Text("Report a bug").font(.title2.bold())
                 Spacer()
                 Button("New Report…") { confirmNewReport = true }
+                    .disabled(delivery.isSending)
             }
-            Text("Send this to the person who invited you to Lamp, or reply to your invitation.")
-            Text("Describe the problem below. Review and edit the entire report before copying or sharing it. Nothing is sent automatically.")
+            Text("Send this report to the Lamp team via lamp.dev.")
+            Text("Describe the problem below. Review and edit the entire report before clicking Send. Nothing is sent automatically. If sending fails, copy or share it with the person who invited you.")
                 .foregroundStyle(.secondary)
             TextEditor(text: $report)
+                .disabled(delivery.isSending)
                 .font(.system(.body, design: .monospaced))
                 .padding(8)
                 .background(.background, in: RoundedRectangle(cornerRadius: 8))
@@ -35,11 +38,17 @@ struct BugReportView: View {
             Text("Includes versions, your selected engine, and activity labels. Log text, keys, chat and app code are left out unless you add them yourself.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            HStack {
-                Text(copied ? "Copied. Paste it into your message to send." : "Only the text above will be copied or shared.")
+            HStack(alignment: .top) {
+                if delivery.isSending { ProgressView().controlSize(.small) }
+                Text(report.utf8.count > BugReportDelivery.maxBytes
+                     ? "The report is too long to send (limit 16 KB). Shorten it, or copy or share it."
+                     : delivery.message)
                     .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel(copied ? "Report copied. Paste it into your message to send." : "Only the text above will be copied or shared.")
+                    .foregroundStyle(deliveryFailed ? Color.red : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                if copied { Text("Copied.").font(.callout).foregroundStyle(.secondary) }
                 Spacer()
                 ShareLink(item: report) { Text("Share…") }
                     .disabled(report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -49,6 +58,17 @@ struct BugReportView: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button(delivery.isSending ? "Sending…" : "Send") {
+                    let reviewed = report
+                    delivery = .sending
+                    Task {
+                        do {
+                            try await BugReportDelivery.send(reviewed)
+                            delivery = .sent
+                        } catch { delivery = .failed(error.localizedDescription) }
+                    }
+                }
+                .disabled(delivery.isSending || delivery == .sent || report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || report.utf8.count > BugReportDelivery.maxBytes)
             }
         }
         .padding(24)
@@ -57,13 +77,22 @@ struct BugReportView: View {
             // Keep an unfinished report when the window is brought forward again.
             if report.isEmpty { report = snapshot() }
         }
-        .onChange(of: report) { copied = false }
+        .onChange(of: report) { copied = false; delivery = .ready }
         .alert("Start a new report?", isPresented: $confirmNewReport) {
-            Button("Start New Report", role: .destructive) { report = snapshot() }
+            Button("Start New Report", role: .destructive) {
+                report = snapshot()
+                copied = false
+                delivery = .ready
+            }
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("Copy or share this report first if you want to keep it. Starting a new report replaces your text and captures the current diagnostics.")
         }
+    }
+
+    private var deliveryFailed: Bool {
+        if case .failed = delivery { return true }
+        return false
     }
 
     private func snapshot() -> String {
