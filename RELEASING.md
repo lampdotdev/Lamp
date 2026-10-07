@@ -142,12 +142,29 @@ Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.
 ## Website
 
 `site/` is the page at `lamp.dev`: one static Astro page styled with Tailwind, in its own Vercel project
-(`lamp-site` on the Roo Code team, root directory `site`). It has no release-specific content: its Download
+(`lamp-site` on the Roo Code team). `lamp.dev` is registered through Vercel on that team, with its DNS there
+too, and `updates.lamp.dev` belongs to `forge-updates`. The page has nothing release-specific: its Download
 button goes to `https://updates.lamp.dev/download/latest`, so a new release needs nothing done here.
 
-- Run it locally with `cd site && npm install && npm run dev`.
+- Run it locally with `cd site && npm install && npm run dev`, or `npm run build && npx astro preview` for
+  exactly what gets deployed (the dev server can miss styles from a page added while it's running).
+- `site/vercel.json` sets the framework, caches the fingerprinted files under `/_astro/` for a year, and adds
+  a few security headers. `public/og.png` is the 1200×630 card shown where the link is shared.
 - The pictures are real windows taken from Lamp Dev with made-up data (⌘⇧4 then Space, which keeps the
   shadow): `site/src/assets/lamp.png` is Lamp under the headline, and `site/src/assets/apps/` holds the apps
   the carousel cycles through, each centred on a canvas of the same size so the slides line up. Retake them
   when Lamp's look changes.
-- Deploy with `cd site && vercel deploy --prod --scope roo-code`.
+
+**First deploy** (once): deploy the update server first, so the Download button's `/download/latest` exists,
+then create the site's project from `site/` and give it the domain.
+
+```
+cd updates && vercel deploy --prod --scope roo-code
+cd ../site && vercel link --scope roo-code --project lamp-site     # answer yes to create it
+vercel deploy --prod
+vercel domains add lamp.dev
+vercel domains add www.lamp.dev                                     # then redirect www to lamp.dev in the project's Domains settings
+```
+
+**Later deploys:** `cd site && vercel deploy --prod --scope roo-code`. If the project is ever connected to the
+GitHub repo instead, set its Root Directory to `site`.
