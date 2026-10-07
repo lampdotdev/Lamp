@@ -1364,7 +1364,7 @@ final class Store: ObservableObject {
             "criteria": [
                 "true": "Routine and low-risk for building this app: listing, reading or searching files"
                     + (asks ? " inside the working folder, in system or developer folders (/usr, /System, /Library/Developer, Xcode, Homebrew) or in temporary folders" : "")
-                    + "; git status, log, diff, or cloning a repository the user mentioned; inspecting or converting files inside the working folder; fetching a public web page; running the app's own build or tests.",
+                    + "; git status, log, diff, or cloning a repository the user mentioned; creating, editing, converting or deleting files inside the working folder (what the agent's own file tools do anyway, and every change is kept in the app's history); fetching a public web page; running the app's own build or tests.",
                 "false": "Could cause harm or surprise: "
                     + (asks ? "reading, listing, searching or copying anything else outside the working folder (the user's home folder, documents, keys, settings, other apps' data), even when the user asked for it; " : "")
                     + "reading sign-ins, keys, passwords, tokens or browser data wherever they are, even when the user asked for it; "
@@ -1401,7 +1401,8 @@ final class Store: ObservableObject {
         Reply as JSON: {"summary": "<one plain sentence, under 20 words, saying what it does and why it might \
         help, without jargon or command names>", "risk": "low" | "medium" | "high", "why": "<under 15 words: \
         the main reason for that risk level, e.g. what it could change, delete, install or send>"}
-        low: only reads, or changes files inside the app's own folder. medium: downloads things, installs tools for \
+        low: only reads, or creates, edits or deletes files inside the app's own folder (the agent's file tools do \
+        the same without asking, and every change is kept in the app's history). medium: downloads things, installs tools for \
         this project, or changes files elsewhere that are easy to restore. high: deletes or overwrites files outside \
         the app's folder, needs administrator rights, changes system settings, sends personal data somewhere, reads \
         sign-ins, keys, passwords or browser data, or runs code downloaded from the internet.
