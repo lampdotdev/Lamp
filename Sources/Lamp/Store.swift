@@ -2134,8 +2134,14 @@ final class Store: ObservableObject {
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
     private func install(_ project: LampProject, inFront: Bool = true) async -> String? {
         guard exists(project) else { return nil }
+        // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
+        // and start the next one's, which must not inherit this launch.
+        let owner = turns[project.id]
         await prepareIcon(project)
-        if project.platform == .iphone { return await installOnSimulator(project, inFront: inFront) }
+        if project.platform == .iphone {
+            guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
+            return await installOnSimulator(project, owner: owner, inFront: inFront)
+        }
         await quit(project)
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
         do {
@@ -2170,16 +2176,15 @@ final class Store: ObservableObject {
 
     /// The iPhone counterpart of `install`: the built app goes into the booted simulator and is launched there,
     /// with what it prints going to the same log the Mac apps use. Returns what's known if it died at once.
-    private func installOnSimulator(_ project: LampProject, inFront: Bool) async -> String? {
+    private func installOnSimulator(_ project: LampProject, owner: Turn, inFront: Bool) async -> String? {
         guard let udid = Simulator.device(project.family) else {
             let problem = "No \(project.family.name) simulator with iOS \(Simulator.minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components."
             log(project, .error, problem)
             return problem
         }
-        // The turn that owns the app now, taken before anything waits: Delete or Stop can come during any of
-        // the waits below, and then nothing more is written or launched for it (not even by a later turn of
-        // the same app, which would have a launch of its own).
-        guard let owner = turns[project.id] else { return "Lamp isn't working on this app." }
+        // `owner` is the turn the app belongs to, taken by `install` before anything waited: Delete or Stop
+        // can come during any of the waits, and then nothing more is written or launched for it (not even by
+        // a later turn of the same app, which would have a launch of its own).
         // Launches on one device go one after another: a launch already under way finishes (and is then
         // closed, below) before the next starts, so two apps can't be racing onto the same screen.
         let previous = simulatorWork[udid]
