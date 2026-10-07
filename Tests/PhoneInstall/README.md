@@ -38,3 +38,15 @@ Those are temporary made-up provider/model preferences to let the signed-out VM 
 there is no server, API key or signed-in builder. Clicking Retry runs the real Store phone path and
 reports that the fictional phone is absent. This checks the button and its route, not successful
 installation. The fixtures do not include generated-app sources or an installed phone bundle.
+
+After review, `Tests/PhoneInstall/run-store-review.sh` extracts the current Store's actual Stop, Retry,
+phone install, notification and turn-completion code into an isolated Swift harness. Device discovery,
+build/install/launch, logging storage and the system notifier are inert substitutes. Fourteen checks
+cover Stop while discovery has no subprocess, stopping before launch acknowledgement, unsuccessful
+turn completion, suppressed notifications and normal Mac/simulator/acknowledged-phone completion.
+This is regression evidence for Store's control flow, not an end-to-end phone or notification trial.
+
+Agent Details still collapses long output to twelve display lines initially; Show Full Output removes
+that limit and Show Less restores it. The revised packaged build compiled this UI. Both available VM
+slots were in use during the review follow-up, so the expansion control and a main/PR screenshot pair
+were not clicked/captured in that follow-up.

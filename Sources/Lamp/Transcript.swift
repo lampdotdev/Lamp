@@ -242,6 +242,7 @@ struct LogRow: View, Equatable {
     /// show it when pointed at.
     var isLatestRequest = false
     @State private var hovered = false
+    @State private var expandedDetail = false
 
     static func == (a: LogRow, b: LogRow) -> Bool {
         a.line == b.line && a.busy == b.busy && a.dir == b.dir
@@ -333,11 +334,16 @@ struct LogRow: View, Equatable {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
         case .detail:
-            Text(line.text)
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .lineLimit(12)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(line.text)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(expandedDetail ? nil : 12)
+                Button(expandedDetail ? "Show Less" : "Show Full Output") { expandedDetail.toggle() }
+                    .buttonStyle(.link)
+                    .font(.caption)
+            }
         case .needsKey:
             KeyCard(reason: line.text)
         }

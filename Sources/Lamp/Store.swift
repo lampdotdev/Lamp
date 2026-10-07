@@ -1051,7 +1051,7 @@ final class Store: ObservableObject {
 
     private func startQueued(_ project: LampProject) {
         guard setup.ready, let messages = queued[project.id], !messages.isEmpty,
-              begin(project) != nil else { return }
+              let owner = begin(project) else { return }
         queued[project.id] = nil
         let first = !(logs[project.id] ?? []).contains { $0.kind == .user }
         // Still a new app until a request has made its first version: after the agent only asked questions,
@@ -1085,7 +1085,7 @@ final class Store: ObservableObject {
                 }
                 if selection != project.id || !NSApp.isActive { unread.insert(project.id) }
                 // Messages queued meanwhile start the next turn straight away; tell the user once it's all done.
-                if !result.watched, (queued[project.id] ?? []).isEmpty { notify(project, after: result.end) }
+                if !owner.stopped, !result.watched, (queued[project.id] ?? []).isEmpty { notify(project, after: result.end) }
                 finish(project)
             }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
@@ -1106,6 +1106,7 @@ final class Store: ObservableObject {
     /// Posts a notification for a turn that ended while the user was looking elsewhere.
     /// Nothing for a turn the user stopped: it ends without an error.
     private func notify(_ project: LampProject, after end: TurnEnd) {
+        guard turns[project.id]?.stopped != true else { return }
         let turnLines = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }
         // An error wins: even a turn that otherwise worked (say, the app couldn't be installed) needs the user.
         if let error = turnLines.first(where: { $0.kind == .error }) {
@@ -1193,6 +1194,7 @@ final class Store: ObservableObject {
     /// `asked` are the chat lines of the requests, which are linked to the version the turn makes.
     private func turn(_ messages: [QueuedMessage], attachments saved: [String], asked: [UUID],
                       on project: LampProject) async -> TurnResult {
+        guard let owner = turns[project.id] else { return TurnResult(end: .failed, watched: true) }
         var prompt = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
         // Attachments with no words: usually a screenshot or mockup meaning "like this", or a file to use.
         if prompt.isEmpty {
@@ -1284,7 +1286,8 @@ final class Store: ObservableObject {
             }
             versionsRevision += 1
         }
-        return TurnResult(end: crash != nil ? .failed : edited ? .changed : .replied, watched: watched)
+        let failed = crash != nil || owner.stopped || owner.phoneReady == false
+        return TurnResult(end: failed ? .failed : edited ? .changed : .replied, watched: watched)
     }
 
     /// Whether any request has made a version of this app yet (its messages are linked to the versions they made).
@@ -1642,7 +1645,8 @@ final class Store: ObservableObject {
 
     /// Stops the agent working on an app, and the build if one is going.
     func stop(_ project: LampProject) {
-        guard let turn = turns[project.id], turn.isWorking else { return }
+        // A turn still owns the app while awaiting a device check, even without a running subprocess.
+        guard let turn = turns[project.id], !turn.stopped else { return }
         endApprovals(for: project)   // a command waiting for approval counts as denied
         turn.cancel()
     }
