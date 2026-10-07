@@ -2,6 +2,12 @@ import http from "node:http";
 import { Readable } from "node:stream";
 import { createReportHandler } from "../lib/bug-report.js";
 
+export function displayedReport(payload) {
+  // Slack's documented single decoding pass; this is a stand-in, not a real Slack rendering check.
+  return payload.blocks.map((block) => block.text.text.replace(/&amp;|&lt;|&gt;/g,
+    (entity) => ({ "&amp;": "&", "&lt;": "<", "&gt;": ">" })[entity])).join("");
+}
+
 export async function listen(handler, port = 0) {
   const server = http.createServer(async (req, res) => {
     try {

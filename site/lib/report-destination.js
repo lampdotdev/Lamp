@@ -4,8 +4,11 @@ export function slackPayload(report) {
   let chunk = "";
   const append = () => blocks.push({ type: "section", text: { type: "plain_text", text: chunk, emoji: false } });
   for (const character of report) {
-    if (chunk.length + character.length > 3000) { append(); chunk = ""; }
-    chunk += character;
+    // Slack decodes these entities even in plain text. Encode once, and split only between tokens,
+    // so literal entities, mentions and Unicode display as the person reviewed them.
+    const encoded = { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[character] ?? character;
+    if (chunk.length + encoded.length > 3000) { append(); chunk = ""; }
+    chunk += encoded;
   }
   if (chunk) append();
   return { text: "Lamp bug report", blocks, mrkdwn: false, unfurl_links: false, unfurl_media: false };

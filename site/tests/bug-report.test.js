@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createReportHandler, MAX_REPORT_BYTES } from "../lib/bug-report.js";
 import { slackPayload } from "../lib/report-destination.js";
 import { limitScript } from "../lib/report-limit.js";
-import { standIn } from "./receivers.js";
+import { standIn, displayedReport } from "./receivers.js";
 
 function request(text = "A reviewed report", ip = "192.0.2.1", headers = {}) {
   return new Request("https://lamp.dev/api/bug-report", { method: "POST",
@@ -16,14 +16,15 @@ function request(text = "A reviewed report", ip = "192.0.2.1", headers = {}) {
 test("HTTP stand-in gets exactly the reviewed Unicode text, without mention parsing or unfurls", async () => {
   const receiver = await standIn();
   try {
-    const report = "\uFEFF  My edited report → café 🪔\n<!channel> <@U123> https://example.com\n";
+    const report = "\uFEFF  My edited report → café 🪔\n<!channel> <@U123> &lt;button&gt; &amp; https://example.com\n";
     const response = await fetch(`${receiver.url}/api/bug-report`, {
       method: "POST", headers: { "content-type": "text/plain; charset=utf-8" }, body: report,
     });
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { sent: true });
     const payload = receiver.payloads[0];
-    assert.equal(payload.blocks.map((b) => b.text.text).join(""), report);
+    assert.equal(displayedReport(payload), report);
+    assert.ok(payload.blocks[0].text.text.includes("&amp;lt;button&amp;gt;"));
     assert.ok(payload.blocks.every((b) => b.text.type === "plain_text" && b.text.emoji === false));
     assert.equal(payload.mrkdwn, false);
     assert.equal(payload.unfurl_links, false);
@@ -32,10 +33,14 @@ test("HTTP stand-in gets exactly the reviewed Unicode text, without mention pars
 });
 
 test("long Unicode reports split safely inside Slack's block limits", () => {
-  const report = "a".repeat(2999) + "🪔".repeat(2000) + "終わり";
+  const report = "a".repeat(2999) + "<&>" + "🪔".repeat(2000) + "終わり";
   const payload = slackPayload(report);
-  assert.equal(payload.blocks.map((b) => b.text.text).join(""), report);
+  assert.equal(displayedReport(payload), report);
   assert.ok(payload.blocks.every((b) => b.text.text.length <= 3000 && b.text.text.isWellFormed()));
+  assert.ok(payload.blocks.every((b) => !/&(?:a|am|amp|l|lt|g|gt)?$/.test(b.text.text)), "Partial entity at a block boundary");
+  const worstCase = slackPayload("&".repeat(MAX_REPORT_BYTES));
+  assert.equal(displayedReport(worstCase), "&".repeat(MAX_REPORT_BYTES));
+  assert.ok(worstCase.blocks.length <= 50 && worstCase.blocks.every((b) => b.text.text.length <= 3000));
 });
 
 test("method, origin, encoding, empty and oversize requests never reach forwarding", async () => {
@@ -97,8 +102,12 @@ test("per-IP quota rejects the fourth attempt with Retry-After", async () => {
   } finally { await receiver.close(); }
 });
 
-const redisServer = process.env.REDIS_SERVER;
-const redisCLI = process.env.REDIS_CLI;
+function redisBinary(variable, name) {
+  if (process.env[variable]) return process.env[variable];
+  try { execFileSync(name, ["--version"], { stdio: "ignore" }); return name; } catch { return undefined; }
+}
+const redisServer = redisBinary("REDIS_SERVER", "redis-server");
+const redisCLI = redisBinary("REDIS_CLI", "redis-cli");
 test("actual Redis Lua: concurrent IP/global quotas, expiry and persistence across handlers", { skip: !redisServer || !redisCLI }, async () => {
   const socket = net.createServer();
   await new Promise((resolve) => socket.listen(0, "127.0.0.1", resolve));

@@ -41,8 +41,9 @@ receiver and separate test Redis configuration, never the real webhook.
   report contents. Preview and Production have separate counter namespaces.
 - The endpoint is anonymous; quotas bound channel volume, rather than pretending an app-embedded key
   proves identity. Someone can exhaust the shared quota; Copy/Share remains available to real testers.
-- Slack receives the reviewed text in `plain_text` blocks, split without breaking Unicode. Message
-  formatting, mentions and link/media unfurls are disabled. The webhook is fixed by server configuration;
+- Slack receives the reviewed text in `plain_text` blocks, split without breaking Unicode or encoded
+  entities. Slack control characters are escaped so decoding preserves literal text such as `&lt;`.
+  Formatting, mentions and link/media unfurls are disabled. The webhook is fixed by server configuration;
   a request cannot choose a channel or destination. Reports/credentials are not logged by this code.
 - Network calls have timeouts and refuse redirects. A success response is returned only after Slack
   acknowledges `ok`. If the acknowledgement is lost, delivery is uncertain; no automatic retry occurs.
