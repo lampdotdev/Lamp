@@ -208,6 +208,20 @@ enum AppAI {
         return routes.first(where: \.available) ?? routes.first { $0.id == "sonnet" }!
     }
 
+    /// The OpenRouter model an app on the person's phone uses away from the Mac, where only OpenRouter can
+    /// answer: Settings' choice, else the chosen route's own model when that's through OpenRouter, else Sonnet.
+    @MainActor static var awayModel: (id: String, label: String, openRouter: String) {
+        let saved = UserDefaults.standard.string(forKey: "awayModel") ?? ""
+        if let chosen = anthropicModels.first(where: { $0.id == saved }) { return chosen }
+        if case .openRouter(let name) = model.kind, let same = anthropicModels.first(where: { $0.openRouter == name }) { return same }
+        return anthropicModels.first { $0.id == "sonnet" }!
+    }
+
+    /// The same for one app: its own choice (info panel), else Settings'.
+    @MainActor static func awayModel(for choice: String?) -> (id: String, label: String, openRouter: String) {
+        anthropicModels.first { $0.id == choice } ?? awayModel
+    }
+
     /// The route Settings chose for apps, when it can still answer; else the default.
     @MainActor static var model: TextRoute { route(for: UserDefaults.standard.string(forKey: "appModel")) }
 

@@ -936,6 +936,11 @@ struct AppInfoView: View {
                 Picker("Decisions", selection: choice(\.decision, default: AppAI.decisionModel.id)) {
                     ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }
                 }
+                if project.platform == .iphone {
+                    Picker("Away from this Mac", selection: choice(\.away, default: AppAI.awayModel.id)) {
+                        ForEach(AppAI.anthropicModels, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
+                    }
+                }
             } header: {
                 Text("AI inside this app")
             } footer: {

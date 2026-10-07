@@ -497,6 +497,10 @@ struct BuildingSettings: View {
 /// The AI, images and decisions that apps use while they run.
 struct AppsSettings: View {
     @AppStorage("appModel") private var appModel = AppAI.defaultRoute.id
+    @AppStorage("awayModel") private var awayModel = ""
+    @AppStorage("experimentIOSApps") private var iosApps = false
+    @AppStorage("settingsTab") private var settingsTab = "building"
+    @AppStorage("settingsSheet") private var settingsSheet = ""
     @AppStorage("imageModel") private var imageModel = Icons.artModels[0].id
     @AppStorage("decisionModel") private var decisionModel = AppAI.decisionModel.id
     @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore
@@ -534,6 +538,25 @@ struct AppsSettings: View {
                 }
                 Text("Fast, cheap typed judgments for apps: yes/no probabilities, picking from options, and rating on a scale, each with a calibrated confidence. Text in, decisions out.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            if iosApps {
+                // An app on the person's phone can only reach OpenRouter when it can't reach this Mac, so the
+                // choice here is among OpenRouter's models, and it's the one thing a phone needs a key for.
+                Section("Away from this Mac") {
+                    Picker("Apps on your iPhone or iPad", selection: Binding(get: { AppAI.awayModel.id }, set: { awayModel = $0 })) {
+                        ForEach(AppAI.anthropicModels, id: \.id) { Text($0.label).tag($0.id) }
+                    }
+                    if Provider.hasKey {
+                        Text("When an app can't reach this Mac it goes to OpenRouter with your key: this model for text, \(Icons.artModels.first { $0.id == Icons.artModel }?.label ?? "the image model above") for pictures, Jev for decisions. What it spends then isn't shown in Lamp.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        HStack(spacing: 8) {
+                            Text("Needs an OpenRouter key: without one, apps on your phone only work near this Mac.")
+                                .font(.caption).foregroundStyle(.orange)
+                            Button("Add a Key…") { settingsSheet = "openrouter"; settingsTab = "providers" }.controlSize(.small)
+                        }
+                    }
+                }
             }
             ComputerUseSettings()
         }
@@ -575,14 +598,11 @@ struct ExperimentalSettings: View {
                             if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
                         }
                     }
-                    Text("For putting an app on your own iPhone or iPad: sign in to your Apple account in Xcode, plug the phone in, and Try On offers to pair it. Away from this Mac the app uses your OpenRouter key itself; what it spends then isn't shown here.")
+                    Text("For putting an app on your own iPhone or iPad: sign in to your Apple account in Xcode, plug the phone in, and Try On offers to pair it. What the app uses away from this Mac is chosen under Apps.")
                         .font(.caption).foregroundStyle(.secondary)
                     if !Provider.hasKey {
-                        HStack(spacing: 8) {
-                            Text("No OpenRouter key yet, so away from this Mac an app's AI won't work.")
-                                .font(.caption).foregroundStyle(.orange)
-                            Button("Add a Key…") { settingsSheet = "openrouter"; settingsTab = "providers" }.controlSize(.small)
-                        }
+                        Text("No OpenRouter key yet, so away from this Mac an app's AI won't work: see Apps → Away from this Mac.")
+                            .font(.caption).foregroundStyle(.orange)
                     }
                 }
                 .padding(.leading, 20)

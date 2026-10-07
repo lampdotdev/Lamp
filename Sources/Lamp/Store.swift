@@ -3074,7 +3074,7 @@ final class Store: ObservableObject {
         let decision = AppAI.decisionModels.first { $0.id == models.decision } ?? AppAI.decisionModel
         var keys: [String: Any] = [
             "openrouter": key,
-            "text_model": AppAI.route(for: models.text).openRouter,
+            "text_model": AppAI.awayModel(for: models.away).openRouter,
             "decision_model": decision.model, "decision_provider": decision.provider,
         ]
         // The image model the gateway itself would use for this app; none when that's the Mac's own model,
@@ -3358,6 +3358,7 @@ struct AppModels: Codable, Equatable {
     var text: String?       // an AppAI.TextRoute id
     var image: String?      // an id from Icons.artModels
     var decision: String?   // an id from AppAI.decisionModels
+    var away: String?       // iPhone apps: an id from AppAI.anthropicModels, for when the phone can't reach the Mac
 
     private static func url(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/models.json") }
 
