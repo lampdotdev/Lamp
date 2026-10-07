@@ -133,7 +133,19 @@ Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.
 - **Signing:** every update is signed with an Ed25519 key. The release workflow runs `scripts/sparkle-sign.swift` on the DMG, using the `SPARKLE_PRIVATE_KEY` secret in the `release` environment, and attaches the result to the release as `sparkle.json`. Sparkle checks the signature against `SUPublicEDKey` in `build.sh`, and it also requires the new app to be signed by the same Developer ID team. A local backup of the private key is in `~/Library/Application Support/Lamp/Signing/sparkle-private-key` on Matt's Mac; keep a copy in 1Password. Losing the key means shipping a new public key in a release that users install by hand.
 - **The feed:** `updates/` is a small Vercel app (project `forge-updates` on the Roo Code team, served at `updates.lamp.dev`; `lamp.dev` itself is kept for the site) that keeps the repo private:
   - `/appcast.xml` builds the feed from the GitHub releases that have a `sparkle.json`, with each release's notes.
-  - `/download/<tag>` redirects to GitHub's short-lived download link for that release's DMG.
+  - `/download/<tag>` redirects to GitHub's short-lived download link for that release's DMG; `/download/latest`
+    picks the newest published release, which is where the website's Download button points.
   - It reads the releases with `GITHUB_TOKEN`, a fine-grained token with **Contents: read-only** on `RooCodeInc/Lamp` only.
   - Deploy with `cd updates && vercel deploy --prod --scope roo-code`.
 - **Only newer releases appear:** releases before the first one with `sparkle.json` aren't in the feed, because Sparkle couldn't verify them. Copies of Lamp from before Sparkle was added need one manual update to a release that includes it.
+
+## Website
+
+`site/` is the page at `lamp.dev`: one static Astro page styled with Tailwind, in its own Vercel project
+(`lamp-site` on the Roo Code team, root directory `site`). It has no release-specific content: its Download
+button goes to `https://updates.lamp.dev/download/latest`, so a new release needs nothing done here.
+
+- Run it locally with `cd site && npm install && npm run dev`.
+- The window picture under the headline is `site/src/assets/screenshot.png` (a 2× window capture with its
+  shadow, ⌘⇧4 then Space); replace that file when Lamp's look changes. Without it, the page shows the icon alone.
+- Deploy with `cd site && vercel deploy --prod --scope roo-code`.
