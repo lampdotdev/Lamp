@@ -454,6 +454,19 @@ struct ProjectView: View {
         return suggestion
     }
 
+    /// The files going with the next message, above the message box.
+    private var pendingAttachments: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(attachments, id: \.self) { url in
+                    AttachmentChip(url: url, siblings: attachments) { attachments.removeAll { $0 == url } }
+                }
+            }
+            .padding(.horizontal, 12)
+        }
+        .padding(.top, 8)
+    }
+
     var body: some View {
         let lines = self.lines
         return VStack(spacing: 0) {
@@ -534,17 +547,7 @@ struct ProjectView: View {
                 // Part of the bottom panel, set off from the message box the way the chat is.
                 Divider()
             }
-            if !attachments.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(attachments, id: \.self) { url in
-                            AttachmentChip(url: url) { attachments.removeAll { $0 == url } }
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                }
-                .padding(.top, 8)
-            }
+            if !attachments.isEmpty { pendingAttachments }
             HStack(alignment: .bottom, spacing: 8) {
                 Button(action: chooseFiles) { Image(systemName: "paperclip").font(.title3) }
                     .buttonStyle(.borderless)
@@ -1013,7 +1016,7 @@ struct QueuedRow: View {
         VStack(alignment: .trailing, spacing: 6) {
             if !message.attachments.isEmpty {
                 HStack(spacing: 6) {
-                    ForEach(message.attachments, id: \.self) { AttachmentChip(url: $0) }
+                    ForEach(message.attachments, id: \.self) { AttachmentChip(url: $0, siblings: message.attachments) }
                 }
             }
             HStack(spacing: 6) {

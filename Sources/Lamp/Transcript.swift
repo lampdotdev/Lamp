@@ -251,18 +251,14 @@ struct LogRow: View, Equatable {
         case .user:
             VStack(alignment: .trailing, spacing: 6) {
                 if let names = line.attachments, !names.isEmpty {
+                    let urls = names.map { dir.appendingPathComponent(Attachments.folder).appendingPathComponent($0) }
                     HStack(spacing: 6) {
-                        ForEach(names, id: \.self) { name in
-                            let url = dir.appendingPathComponent(Attachments.folder).appendingPathComponent(name)
-                            Button { NSWorkspace.shared.open(url) } label: {
-                                if Attachments.isImage(url) {
-                                    AttachmentThumbnail(url: url, size: 72)
-                                } else {
-                                    AttachmentChip(url: url)
-                                }
+                        ForEach(urls, id: \.self) { url in
+                            if Attachments.isImage(url) {
+                                AttachmentPreview(url: url, siblings: urls) { AttachmentThumbnail(url: url, size: 72) }
+                            } else {
+                                AttachmentChip(url: url, siblings: urls)
                             }
-                            .buttonStyle(.plain)
-                            .help(name)
                         }
                     }
                 }
