@@ -280,6 +280,7 @@ struct BuildingSettings: View {
     @AppStorage("askOutsideFolder") private var askOutsideFolder = true
     @AppStorage("shareAppLog") private var shareLog = true
     @AppStorage("shareAppPictures") private var sharePictures = true
+    @AppStorage("iconModel") private var iconModel = Icons.artModels[0].id
     @State private var model = Builder.piModel
     @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore
     @State private var notificationsDenied = false
@@ -385,10 +386,10 @@ struct BuildingSettings: View {
     var body: some View {
         Form {
             Section("AI settings for Lamp") {
-                LabeledContent("Agent") {
+                LabeledContent("Text generation") {
                     HStack(spacing: 10) {
                         agentStatus
-                        Picker("Agent", selection: $engine) {
+                        Picker("Text generation", selection: $engine) {
                             ForEach(Engine.allCases) { option in
                                 let missing = option != .pi && ToolLocator.path(for: option) == nil
                                 Text(option.title + (missing ? " (not installed)" : "")).tag(option.rawValue)
@@ -438,6 +439,9 @@ struct BuildingSettings: View {
                             TextField("Model", text: engineModel(.codex), prompt: Text("ChatGPT Codex's default"))
                         }
                     }
+                }
+                Picker("Image generation", selection: $iconModel) {
+                    ForEach(Icons.imageChoices, id: \.id) { Text($0.label).tag($0.id) }
                 }
             }
             Section {

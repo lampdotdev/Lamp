@@ -63,7 +63,6 @@ enum Icons {
         ("google/gemini-3.1-flash-lite-image", "Nano Banana 2 Lite (fastest, cheapest)"),
     ]
 
-    /// The OpenRouter image model for icon artwork and for images inside apps (Settings → "Images").
     /// The id that means the picture model on this Mac, offered alongside the cloud models once one is installed.
     static let localArt = "local"
 
@@ -73,8 +72,15 @@ enum Icons {
         return artModels + [(localArt, "\(name) on this Mac (free, private)")]
     }
 
-    static var artModel: String {
-        let saved = UserDefaults.standard.string(forKey: "imageModel") ?? ""
+    /// The image model for pictures inside apps (Settings → Apps → Image generation).
+    static var artModel: String { choice("imageModel") }
+
+    /// The image model for icon artwork (Settings → Building → Icon artwork): the builder's business, so it
+    /// has its own choice; an app that makes pictures needn't pay for the model that draws icons best.
+    static var iconModel: String { choice("iconModel") }
+
+    private static func choice(_ key: String) -> String {
+        let saved = UserDefaults.standard.string(forKey: key) ?? ""
         if saved == localArt, ImageModels.ready { return localArt }
         return artModels.contains { $0.id == saved } ? saved : artModels[0].id
     }
@@ -427,7 +433,7 @@ enum Icons {
         70% of the frame, on a plain flat light grey background. No scene, no ground, no cast shadow, no \
         background elements, no text, no letters, no border, no frame, no rounded square tile, no app icon shape.
         """
-        return try await AppAI.image(prompt: prompt, references: [], aspectRatio: "1:1").0
+        return try await AppAI.image(prompt: prompt, references: [], aspectRatio: "1:1", model: iconModel).0
     }
 
     /// Lifts the object off its background with Vision's subject isolation (on-device, free).
