@@ -927,8 +927,8 @@ struct AppInfoView: View {
             }
             Section {
                 let _ = settingsRevision
-                Picker("Text and pictures", selection: choice(\.text, default: AppAI.model.id)) {
-                    ForEach(AppAI.models, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
+                Picker("Text", selection: choice(\.text, default: AppAI.model.id)) {
+                    ForEach(AppAI.textRoutes(including: models.text)) { Text(Self.short($0.label)).tag($0.id) }
                 }
                 Picker("Making images", selection: choice(\.image, default: Icons.artModel)) {
                     ForEach(Icons.imageChoices, id: \.id) { Text(Self.short($0.label)).tag($0.id) }

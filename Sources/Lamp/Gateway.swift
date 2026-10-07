@@ -114,7 +114,47 @@ final class Gateway: @unchecked Sendable {
 
 /// Runs an in-app AI request with whatever Lamp is connected to.
 enum AppAI {
-    /// The in-app text models with an OpenRouter key (or Claude Code answering without one).
+    /// Where an app's text AI goes: a model through OpenRouter, the Claude Code or Codex sign-in, pi with its
+    /// key provider, or a model running on this Mac. Settings and an app's own choice keep the id.
+    struct TextRoute: Identifiable, Equatable {
+        enum Kind: Equatable {
+            case openRouter(model: String)
+            case engine(Engine)
+            case localModel(provider: String, model: String)   // Native Mac AI, Ollama or LM Studio
+        }
+        let id: String
+        let label: String
+        let kind: Kind
+        /// Whether this route can answer right now: the key, the tool or the model it needs is there.
+        /// Worked out when the list is made, on the main thread, where the local models live.
+        let available: Bool
+
+        /// The OpenRouter model that stands in for this route where only OpenRouter can answer (an app on a
+        /// phone away from the Mac): the route's own model, else the usual default.
+        var openRouter: String {
+            if case .openRouter(let model) = kind { return model }
+            return AppAI.anthropicModels.first { $0.id == "sonnet" }!.openRouter
+        }
+
+        @MainActor static func make(id: String, label: String, kind: Kind) -> TextRoute {
+            let available: Bool
+            switch kind {
+            case .openRouter: available = Provider.hasKey
+            case .engine(.pi): available = Agent.executable != nil && Provider.apiProvider(Builder.piProvider) != nil && KeyStore.key(for: Builder.piProvider) != nil
+            case .engine(let engine): available = ToolLocator.path(for: engine) != nil
+            case .localModel(let provider, let model):
+                available = provider == Builder.localProvider ? LocalModels.shared.installed.contains { $0.id == model }
+                                                              : LocalModels.shared.external[provider]?.contains(model) == true
+            }
+            return TextRoute(id: id, label: label, kind: kind, available: available)
+        }
+    }
+
+    /// Sonnet through OpenRouter: what Lamp's own calls use when there's a key.
+    static var defaultOpenRouterModel: String { anthropicModels.first { $0.id == "sonnet" }!.openRouter }
+
+    /// The models OpenRouter offers for apps; Sonnet is the default among them (Haiku is cheaper but
+    /// noticeably worse, so it's only used when someone picks it).
     static let anthropicModels: [(id: String, label: String, openRouter: String)] = [
         ("claude-fable-5-1", "Smartest, priciest (Claude Fable)", "anthropic/claude-fable-5.1"),
         ("opus", "Best at coding (Claude Opus)", "anthropic/claude-opus-5.5"),
@@ -122,28 +162,62 @@ enum AppAI {
         ("haiku", "Fastest, cheapest (Claude Haiku)", "anthropic/claude-haiku-4.5"),
     ]
 
-    /// Without an OpenRouter key, Codex answers for apps with its own models, so those are the choices.
-    static var answersViaCodex: Bool { !Provider.hasKey && Builder.engine == .codex }
-
-    static var models: [(id: String, label: String, openRouter: String)] {
-        guard answersViaCodex else { return anthropicModels }
-        let codex = Builder.codexModels.dropFirst().map { (id: $0.id, label: $0.label, openRouter: "") }
-        return codex.isEmpty ? [("", "ChatGPT Codex's default", "")] : Array(codex)
+    /// Every route there is, whether or not it can answer right now; the pickers show the ones that can,
+    /// plus whatever is chosen.
+    @MainActor static var allTextRoutes: [TextRoute] {
+        var routes = anthropicModels.map { TextRoute.make(id: $0.id, label: $0.label + " via OpenRouter", kind: .openRouter(model: $0.openRouter)) }
+        routes.append(.make(id: "engine:claude", label: "Your Claude Code sign-in", kind: .engine(.claude)))
+        routes.append(.make(id: "engine:codex", label: "Your Codex sign-in", kind: .engine(.codex)))
+        if let provider = Provider.apiProvider(Builder.piProvider), provider.id != "openrouter" {
+            routes.append(.make(id: "engine:pi", label: "Your \(provider.name) key, through the builder", kind: .engine(.pi)))
+        }
+        for model in LocalModels.shared.installed {
+            routes.append(.make(id: "local:\(model.id)", label: "\(model.name) on this Mac", kind: .localModel(provider: Builder.localProvider, model: model.id)))
+        }
+        for (provider, models) in LocalModels.shared.external.sorted(by: { $0.key < $1.key }) {
+            for model in models {
+                routes.append(.make(id: "\(provider):\(model)", label: "\(model) (\(LocalModels.externalName(provider)))",
+                                    kind: .localModel(provider: provider, model: model)))
+            }
+        }
+        return routes
     }
 
-    /// Sonnet: Haiku is cheaper but noticeably worse, so it's only used when someone picks it.
-    static var defaultModel: (id: String, label: String, openRouter: String) {
-        answersViaCodex ? models[0] : anthropicModels.first { $0.id == "sonnet" }!
+    /// What the pickers offer: the routes that can answer now, and the chosen one even if it can't (so a
+    /// choice isn't silently lost when a key or model goes), in that order.
+    @MainActor static func textRoutes(including chosen: String?) -> [TextRoute] {
+        let routes = allTextRoutes.filter(\.available)
+        if let chosen, !routes.contains(where: { $0.id == chosen }), let kept = allTextRoutes.first(where: { $0.id == chosen }) {
+            return routes + [kept]
+        }
+        return routes
     }
 
-    static var model: (id: String, label: String, openRouter: String) {
-        let id = UserDefaults.standard.string(forKey: "appModel") ?? defaultModel.id
-        return models.first { $0.id == id } ?? defaultModel
+    /// The route apps use when nothing was chosen: what builds apps when that's a model on this Mac (someone
+    /// who chose to stay local keeps staying local), else OpenRouter's Sonnet with a key, else the builder's
+    /// own sign-in, else the first thing that can answer.
+    @MainActor static var defaultRoute: TextRoute {
+        let routes = allTextRoutes
+        func route(_ id: String) -> TextRoute? { routes.first { $0.id == id && $0.available } }
+        if Builder.engine == .pi, Builder.piProvider == Builder.localProvider || LocalModels.externalIDs.contains(Builder.piProvider),
+           let local = route("\(Builder.piProvider):\(Builder.piModel)") ?? route("local:\(Builder.piModel)") {
+            return local
+        }
+        if let sonnet = route("sonnet") { return sonnet }
+        if let own = route("engine:\(Builder.engine.rawValue)") { return own }
+        return routes.first(where: \.available) ?? routes.first { $0.id == "sonnet" }!
     }
 
-    /// The text model for one app: its own choice (info panel), or the default from Settings.
-    static func model(for choice: String?) -> (id: String, label: String, openRouter: String) {
-        models.first { $0.id == choice } ?? model
+    /// The route Settings chose for apps, when it can still answer; else the default.
+    @MainActor static var model: TextRoute { route(for: UserDefaults.standard.string(forKey: "appModel")) }
+
+    /// The text route for one app: its own choice (info panel), or Settings', when it can answer; else the
+    /// default.
+    @MainActor static func route(for choice: String?) -> TextRoute {
+        if let choice, let route = allTextRoutes.first(where: { $0.id == choice }), route.available { return route }
+        if let saved = UserDefaults.standard.string(forKey: "appModel"), saved != choice,
+           let route = allTextRoutes.first(where: { $0.id == saved }), route.available { return route }
+        return defaultRoute
     }
 
     struct Failure: Error {
@@ -168,7 +242,7 @@ enum AppAI {
     /// `appModel` is an app's own text model (an id from `models`), when it has one.
     static func complete(prompt: String, images: [Image], system: String, json: Bool,
                          model: String? = nil, appModel: String? = nil) async throws -> (String, Double) {
-        let chosen = Self.model(for: appModel)
+        let chosen = await route(for: appModel)
         var system = system
         if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
         var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen)
@@ -195,35 +269,32 @@ enum AppAI {
         return (reply, cost)
     }
 
-    /// One request through whichever provider the app's AI is set up with.
+    /// One request along the route: `model` names an OpenRouter model to use instead of the route's own, for
+    /// Lamp's own calls (the icon judge, suggestions) when there's a key.
     private static func dispatch(prompt: String, images: [Image], system: String, json: Bool, model: String?,
-                                 chosen: (id: String, label: String, openRouter: String)) async throws -> (String, Double) {
-        var (text, cost): (String, Double)
-        if Provider.hasKey {
-            (text, cost) = try await viaOpenRouter(prompt: prompt, images: images, system: system,
-                                                   model: model ?? chosen.openRouter, json: json)
-        } else if Builder.engine == .pi {
-            // No OpenRouter key: use whatever builds apps.
-            switch Builder.piProvider {
-            case Builder.localProvider:
-                let base = try await LocalModels.shared.ensureServer(for: Builder.piModel)
-                (text, cost) = try await viaOpenAICompatible("\(base)/v1/chat/completions", key: nil,
-                                                             prompt: prompt, images: images, system: system, model: Builder.piModel)
-            case "ext-ollama", "ext-lmstudio":
-                let port = Builder.piProvider == "ext-ollama" ? 11434 : 1234
-                (text, cost) = try await viaOpenAICompatible("http://127.0.0.1:\(port)/v1/chat/completions", key: nil,
-                                                             prompt: prompt, images: images, system: system, model: Builder.piModel)
-            default:
-                (text, cost) = try await viaPi(prompt: prompt, images: images, system: system)
-            }
-        } else if ToolLocator.path(for: Builder.engine) != nil {
-            // No OpenRouter key: use the Claude Code or Codex sign-in that builds apps.
-            (text, cost) = try await viaEngine(Builder.engine, prompt: prompt, images: images, system: system,
-                                               model: chosen.id)
-        } else {
-            throw Failure(message: "Apps' AI features need an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,).")
+                                 chosen: TextRoute) async throws -> (String, Double) {
+        if let model, Provider.hasKey {
+            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json)
         }
-        return (text, cost)
+        switch chosen.kind {
+        case .openRouter(let model):
+            guard Provider.hasKey else { throw Failure(message: "Apps' AI features need an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,).") }
+            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json)
+        case .engine(.pi):
+            return try await viaPi(prompt: prompt, images: images, system: system)
+        case .engine(let engine):
+            return try await viaEngine(engine, prompt: prompt, images: images, system: system,
+                                       model: engine == .claude ? Builder.engineModel(.claude) : Builder.engineModel(.codex))
+        case .localModel(let provider, let model):
+            let base: String
+            if provider == Builder.localProvider {
+                base = try await LocalModels.shared.ensureServer(for: model)
+            } else {
+                base = "http://127.0.0.1:\(provider == "ext-ollama" ? 11434 : 1234)"
+            }
+            return try await viaOpenAICompatible("\(base)/v1/chat/completions", key: nil,
+                                                 prompt: prompt, images: images, system: system, model: model)
+        }
     }
 
     private static func isJSON(_ text: String) -> Bool {

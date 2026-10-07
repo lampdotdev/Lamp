@@ -12,6 +12,16 @@ plain "Lamp x.y.z" line.
   Lamp as before, and elsewhere they use your OpenRouter key themselves, kept in the phone's Keychain since
   they last saw Lamp.
 
+## Unreleased
+
+- Settings → Providers now shows what's on this Mac (Native Mac AI, Ollama, LM Studio, and your Claude
+  Code and Codex sign-ins) apart from the providers you've added a key for, and says on each row what it's
+  doing: building apps, answering inside them, making pictures, deciding. A note says a key can go with an
+  app to your iPhone while a sign-in can't.
+- "Inside your apps" lists every way an app's AI can be answered, by name: OpenRouter's models, your Claude
+  Code or Codex sign-in, or a model on this Mac. An app built with a model on this Mac keeps using it even
+  once you add a key.
+
 ## 0.9.3
 
 - Report a bug from Help: Lamp gathers what happened, shows you the report to check, and sends it through
