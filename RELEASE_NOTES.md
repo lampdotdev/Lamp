@@ -5,6 +5,14 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.10.3
+
+- A new app's first build ends with the app ready for you: the agent looks once to be sure it opens, then
+  asks whether you'd like it to test the app or change something first, instead of clicking around in it
+  while you're trying it. For later changes it still tries them out before saying they work.
+- With a model on this Mac chosen for text, Lamp's own quick calls (an app's name and parts, the suggested
+  next message, version titles) use it too, rather than going to OpenRouter.
+
 ## 0.10.2
 
 - Pictures are made with Nano Banana 2 again unless you pick another: Nano Banana 2.1 stays on the list, but its
