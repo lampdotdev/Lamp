@@ -615,6 +615,7 @@ final class Store: ObservableObject {
                                               platform: changed.platform, family: changed.family, device: udid))
             .write(to: changed.dir.appendingPathComponent(".lamp/meta.json"))
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
+        updateLocalNetwork()
         let name = devices.first(where: { $0.udid == udid })?.name
         log(changed, .status, name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
                                ?? "\(changed.name) will open on the \(changed.family.name) simulator from now on.")
@@ -634,7 +635,7 @@ final class Store: ObservableObject {
 
     /// What Try On shows beside Play: the simulator's kind, or the chosen phone's name.
     func tryOnName(_ project: LampProject) -> String {
-        guard Experiments.devices, let udid = project.device else { return project.family.name }
+        guard Experiments.iosApps, let udid = project.device else { return project.family.name }
         return devices.first(where: { $0.udid == udid })?.name ?? "Your phone"
     }
 
@@ -673,7 +674,7 @@ final class Store: ObservableObject {
     @Published var pairing: Set<String> = []
 
     func refreshDevices() {
-        guard Experiments.devices else { if !devices.isEmpty { devices = [] }; return }
+        guard Experiments.iosApps else { if !devices.isEmpty { devices = [] }; return }
         Task {
             let found = await Devices.list()
             if found != devices { devices = found }
@@ -1725,7 +1726,7 @@ final class Store: ObservableObject {
     func open(_ project: LampProject) async {
         if project.platform == .iphone {
             // Running already: bring the simulator forward. Otherwise build (if needed) and launch.
-            let toSimulator = !(Experiments.devices && project.device != nil)
+            let toSimulator = !(Experiments.iosApps && project.device != nil)
             if toSimulator, let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id { await Simulator.show(); return }
             if FileManager.default.fileExists(atPath: project.builtURL.path), stamps[project.id]?.isOutdated != true {
                 guard begin(project) != nil else { return }
@@ -2332,7 +2333,7 @@ final class Store: ObservableObject {
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
             // The person's own phone gets the app when they press Play or a change is finished; the agent's
             // looks (not in front) stay on the simulator, which is the only screen Lamp can see.
-            if inFront, Experiments.devices, let udid = project.device {
+            if inFront, Experiments.iosApps, let udid = project.device {
                 return await installOnDevice(project, owner: owner, udid: udid)
             }
             return await installOnSimulator(project, owner: owner, inFront: inFront)
@@ -2839,16 +2840,17 @@ final class Store: ObservableObject {
         let gateway = Gateway { request in await Store.shared.handleAI(request) }
         do {
             try gateway.start()
-            gateway.setLocalNetwork(Experiments.devices)
+            gateway.setLocalNetwork(Experiments.iosApps && projects.contains { $0.platform == .iphone && $0.device != nil })
             self.gateway = gateway
         } catch {
             NSLog("Lamp AI gateway failed to start: \(error)")
         }
     }
 
-    /// Whether apps on the person's phones may reach Lamp over the local network (Settings → Experimental).
-    func setLocalNetwork(_ on: Bool) {
-        gateway?.setLocalNetwork(on)
+    /// The gateway answers on the local network only while an app is set to open on the person's own phone:
+    /// checked whenever that can change (startup, Try On, the experiment's switch).
+    func updateLocalNetwork() {
+        gateway?.setLocalNetwork(Experiments.iosApps && projects.contains { $0.platform == .iphone && $0.device != nil })
         refreshDevices()
     }
 
@@ -3061,7 +3063,7 @@ final class Store: ObservableObject {
     /// iPhone apps, only while the switch is on; a Mac app or the simulator never needs it, and the key stays
     /// in the phone's Keychain, put there by the app itself.
     private func keysForPhone(_ project: LampProject) -> (Int, [String: Any]) {
-        guard project.platform == .iphone, Experiments.keyOnPhone else { return (403, ["error": "Not for this app."]) }
+        guard project.platform == .iphone, Experiments.iosApps else { return (403, ["error": "Not for this app."]) }
         guard let key = KeyStore.openRouterKey else { return (404, ["error": "There's no OpenRouter key to keep."]) }
         let models = AppModels.load(project)
         let decision = AppAI.decisionModels.first { $0.id == models.decision } ?? AppAI.decisionModel

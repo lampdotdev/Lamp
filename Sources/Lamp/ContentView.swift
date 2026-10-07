@@ -1498,7 +1498,6 @@ struct StarterIdeas: View {
 /// Play puts the app.
 private struct TryOnChoices: View {
     @EnvironmentObject private var store: Store
-    @AppStorage("experimentDevices") private var devices = false
     let project: LampProject
 
     var body: some View {
@@ -1508,7 +1507,7 @@ private struct TryOnChoices: View {
             Label("iPad", systemImage: "ipad").tag(Optional(DeviceFamily.ipad))
         }
         .pickerStyle(.inline)
-        if devices {
+        do {
             let paired = store.devices.filter(\.paired), unpaired = store.devices.filter { !$0.paired }
             Picker("Your Devices", selection: Binding(get: { project.device }, set: { store.setDevice(project, $0) })) {
                 ForEach(paired) { device in

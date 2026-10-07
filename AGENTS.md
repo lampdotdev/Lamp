@@ -91,8 +91,7 @@ field's text, and sends real mouse events for swipes, scrolls and long presses. 
 size, so a pixel in them is a point on the screen. That needs Lamp to be allowed in System Settings →
 Privacy & Security → Accessibility; the first `use_app` asks.
 
-**On the person's own phone** (Settings → Experimental → Load iOS apps onto my device,
-`Experiments.devices`): Try On also lists the iPhones and iPads the Mac can see (`Devices.list`, through
+**On the person's own phone** (part of Build iOS apps; nothing more to switch on): Try On also lists the iPhones and iPads the Mac can see (`Devices.list`, through
 `devicectl`): paired ones to choose, and plugged-in ones that haven't trusted the Mac yet, which it offers
 to pair (`Devices.pair`, `devicectl manage pair`, which puts the Trust prompt on the phone) before telling
 the person about Developer Mode. `LampProject.device` remembers the chosen one. Play and the end of a turn then go through
@@ -105,13 +104,13 @@ never holds the account. The bundle id carries the team (`deviceBundleID(team:)`
 launches the app with `--console`, so what it prints reaches the app's log. The agent's looks stay on the
 simulator: the phone's screen can't be photographed. The app reaches Lamp's gateway at the Mac's Bonjour
 name (`Devices.macHost`, the `{{MACHOST}}` placeholder, chosen in LampSupport by `targetEnvironment`): the
-gateway also listens on the network while the switch is on (`Gateway.setLocalNetwork`), marks those
+gateway also listens on the network while some app is set to open on a phone (`Store.updateLocalNetwork`), marks those
 requests, and admits them only to the app routes with the Mac's own name as Host (`Store.isMacHost`).
 Away from the Mac, a phone app answers for itself (`LampDirect` in LampSupport, device builds only): `post`
 first asks `/ai/keys` with a four-second timeout, at most every half minute; while the Mac answers, the
 call goes through Lamp as ever and the reply (the OpenRouter key, the TypeSafe key when decisions go there,
-and the app's model choices, served by `Store.keysForPhone` only for iPhone apps while
-`Experiments.keyOnPhone` is on) is kept in the phone's Keychain; when it doesn't, `LampDirect.handle` does
+and the app's model choices, served by `Store.keysForPhone` only for iPhone apps) is kept in the
+phone's Keychain; when it doesn't, `LampDirect.handle` does
 what the gateway would with the provider directly (chat completions with the JSON retry, systemone
 decisions, images). The prompt's fencing and dates are made in the library either way. What's spent this
 way isn't recorded in Lamp, and `/ai/computer` says it needs the Mac.
