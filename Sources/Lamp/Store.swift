@@ -1023,7 +1023,7 @@ final class Store: ObservableObject {
         if project.untitled {
             let suggestion = await AppName.suggest(for: brief)
             progress[project.id]?.sketch = suggestion?.sketch ?? []
-            progress[project.id]?.named = true
+            progress[project.id]?.naming = false
             if let name = suggestion?.name { project = await performRename(project, to: name) }
         }
         if Icons.load(project) == nil {
@@ -1057,6 +1057,9 @@ final class Store: ObservableObject {
         // the answers start the build and get the build card. An imported app has already been built.
         let newApp = Template.isScaffold(project) && !hasVersions(project)
         progress[project.id] = TurnProgress(newApp: newApp)
+        // Only the first message names the app (bootstrap). A later one, after the agent only asked questions,
+        // finds it untitled if that naming failed, and mustn't show a naming that isn't happening.
+        progress[project.id]?.naming = first && project.untitled
         Task {
             var project = project
             let saved = post(messages, to: project)

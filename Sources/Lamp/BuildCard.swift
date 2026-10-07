@@ -32,8 +32,8 @@ struct TurnProgress {
     var steps: [String] = []
     /// The app's window once it has opened: the card's last frame.
     var screenshot: NSImage?
-    /// Lamp has tried naming the app from the request, whether or not a name came of it.
-    var named = false
+    /// Lamp is naming the app from the request right now.
+    var naming = false
     /// Lamp's own guess at the app's parts, made with its name: shown, unticked, while the agent thinks
     /// (which can take minutes) and replaced by the agent's plan when it gives one.
     var sketch: [String] = []
@@ -206,7 +206,7 @@ struct BuildCard: View {
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
         .animation(.easeInOut(duration: 0.35), value: progress.plan)
         .animation(.easeInOut(duration: 0.35), value: progress.sketch)
-        .animation(.easeInOut(duration: 0.35), value: progress.named)
+        .animation(.easeInOut(duration: 0.35), value: progress.naming)
         .animation(.easeInOut(duration: 0.35), value: progress.showsFinishing)
         .animation(.easeInOut(duration: 0.35), value: store.icons[project.id] != nil)
         .animation(.easeInOut(duration: 0.5), value: progress.screenshot != nil)
@@ -270,7 +270,7 @@ struct BuildCard: View {
         let working = progress.finished == nil
         let iconReady = store.icons[project.id] != nil
         return VStack(alignment: .leading, spacing: 7) {
-            if project.untitled && !progress.named {
+            if progress.naming {
                 Self.step("Naming your app", done: false, working: working)
             } else {
                 if !project.untitled { Self.step("Called it \(project.name)", done: true, working: working) }
