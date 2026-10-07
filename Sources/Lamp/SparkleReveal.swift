@@ -44,10 +44,10 @@ private struct SparkleReveal: ViewModifier {
                         GeometryReader { area in
                             let y = (Self.edge(progress) * (1 + Self.feather) - Self.feather / 2) * area.size.height
                             ZStack(alignment: .topLeading) {
-                                // A faint warm glow along the edge while it moves.
+                                // A faint silver glow along the edge while it moves.
                                 if progress < 1 {
                                     Ellipse()
-                                        .fill(RadialGradient(colors: [SparkleEmitter.gold.opacity(0.26 * (1 - progress)), .clear],
+                                        .fill(RadialGradient(colors: [SparkleEmitter.glow.opacity(0.3 * (1 - progress)), .clear],
                                                              center: .center, startRadius: 0, endRadius: area.size.width * 0.4))
                                         .frame(width: area.size.width * 0.8, height: 28)
                                         .position(x: area.size.width / 2, y: y)
@@ -108,7 +108,8 @@ private struct SparkleEmitter: NSViewRepresentable {
     /// Still giving off sparkles; once it stops, the ones already out finish on their own.
     let pouring: Bool
 
-    static let gold = Color(red: 0.98, green: 0.68, blue: 0.18)
+    /// The edge's glow: a cool, pale silver.
+    static let glow = Color(red: 0.72, green: 0.76, blue: 0.84)
 
     func makeNSView(context: Context) -> EmitterView {
         let view = EmitterView()
@@ -169,9 +170,7 @@ private struct SparkleEmitter: NSViewRepresentable {
         cell.scaleRange = 0.04
         cell.alphaRange = 0.4
         cell.alphaSpeed = -0.7
-        cell.color = NSColor(red: 0.95, green: 0.72, blue: 0.32, alpha: 0.9).cgColor
-        cell.redRange = 0.05
-        cell.greenRange = 0.08
+        silver(cell, alpha: 0.9)
         return cell
     }
 
@@ -187,7 +186,7 @@ private struct SparkleEmitter: NSViewRepresentable {
         cell.scaleRange = 0.16
         cell.scaleSpeed = -1.1           // a flash that shrinks to nothing
         cell.alphaSpeed = -2.5
-        cell.color = NSColor(red: 0.98, green: 0.78, blue: 0.4, alpha: 1).cgColor
+        silver(cell, alpha: 1)
         return cell
     }
 
@@ -203,8 +202,17 @@ private struct SparkleEmitter: NSViewRepresentable {
         cell.scale = 0.5
         cell.scaleRange = 0.25
         cell.alphaSpeed = -0.12
-        cell.color = NSColor(red: 0.98, green: 0.8, blue: 0.5, alpha: 0.14).cgColor
+        silver(cell, alpha: 0.16, lighter: 0.08)
         return cell
+    }
+
+    /// Silver: a cool grey, dark enough to show on a white page, with red and blue each nudged a little either
+    /// way for every particle, so some lean warm and yellow and some cool and blue.
+    private static func silver(_ cell: CAEmitterCell, alpha: CGFloat, lighter: CGFloat = 0) {
+        cell.color = NSColor(red: 0.68 + lighter, green: 0.69 + lighter, blue: 0.71 + lighter, alpha: alpha).cgColor
+        cell.redRange = 0.1
+        cell.greenRange = 0.03
+        cell.blueRange = 0.13
     }
 
     // The particles are white, tinted by each cell's colour.
