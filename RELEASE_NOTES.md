@@ -18,7 +18,7 @@ plain "Lamp x.y.z" line.
   Code and Codex sign-ins) apart from the providers you've added a key for, and says on each row what it's
   doing: building apps, answering inside them, making pictures, deciding. A note says a key can go with an
   app to your iPhone while a sign-in can't.
-- "Inside your apps" lists every way an app's AI can be answered, by name: OpenRouter's models, each model
+- "Text generation" lists every way an app's AI can be answered, by name: OpenRouter's models, each model
   your Claude Code or Codex sign-in offers (Sonnet via Claude Code, say), or a model on this
   Mac. An app built with a model on this Mac keeps using it even once you add a key.
 - Wherever Settings says something needs an OpenRouter key, an Add a Key… button sits at the right. When a

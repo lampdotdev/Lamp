@@ -510,10 +510,10 @@ struct AppsSettings: View {
     var body: some View {
         Form {
             Section("Models used in apps") {
-                Picker("Inside your apps", selection: Binding(get: { AppAI.canonicalRoute(appModel) }, set: { appModel = $0 })) {
+                Picker("Text generation", selection: Binding(get: { AppAI.canonicalRoute(appModel) }, set: { appModel = $0 })) {
                     ForEach(AppAI.textRoutes(including: appModel)) { Text($0.label).tag($0.id) }
                 }
-                Picker("Images (icons and in-app)", selection: $imageModel) {
+                Picker("Image generation", selection: $imageModel) {
                     ForEach(Icons.imageChoices, id: \.id) { Text($0.label).tag($0.id) }
                 }
                 let _ = revision   // re-read KeyStore after keys change
