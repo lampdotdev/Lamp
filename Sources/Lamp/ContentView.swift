@@ -173,6 +173,16 @@ struct AppSidebar: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .padding(.top, store.projects.isEmpty ? 0 : 12)
+            Button { store.create(platform: .iphone) } label: {
+                Label {
+                    Text("New iPhone App")
+                } icon: {
+                    Image(systemName: "iphone").frame(width: 24, height: 24)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
         }
         .listStyle(.sidebar)
         .environment(\.sidebarRowSize, .large)

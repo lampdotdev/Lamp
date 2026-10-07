@@ -47,6 +47,18 @@ generated apps get it through the `{{SCHEME}}`, `{{NOTE}}`, `{{HOST}}` and `{{AP
 Lamp rebuilds them. `scripts/dev-data.sh` copies your apps, keys, settings and the agent's sign-ins from the
 installed Lamp into Lamp Dev, so the development build has something to work on.
 
+## iPhone apps
+
+**New iPhone App** makes an app for the iPhone simulator on this Mac (`LampProject.platform == .iphone`,
+kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools: `Simulator`
+(`Sources/Lamp/Simulator.swift`) picks a booted or available iPhone with `simctl`, installs the built bundle,
+launches it with its output going to the app's log, and photographs the screen for `look_at_app`. The
+scaffold is a Swift package built for the simulator SDK by its own `build.sh` (no Xcode project, no signing
+beyond ad hoc), with a small `LampSupport.swift` of its own (`Template.iPhoneSupportSwift`: AI through
+Lamp's gateway, which the simulator reaches as 127.0.0.1) and a prompt of its own (`Agent.iPhonePrompt`).
+`use_app` doesn't drive the simulator yet, and nothing puts an app on a real iPhone: that needs Apple's
+developer program and signing, which is the next step if this direction holds.
+
 ## Generated apps
 
 `Sources/Lamp/Template.swift` holds `LampSupport.swift`, the support code copied into every generated

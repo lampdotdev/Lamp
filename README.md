@@ -93,6 +93,7 @@ High-risk apps default to **Cancel**. When imported, the shared code is rebuilt 
 
 **Lamp → Settings (⌘,) → AI** chooses what builds your apps:
 
+- **iPhone apps (early).** **New iPhone App** builds a SwiftUI app for the iPhone simulator on your Mac, which needs Xcode installed. The agent builds and opens it in the simulator and looks at the screen after each change; it can't tap it yet, and the app can't go on a real iPhone yet (that needs Apple's developer program).
 - **Lamp's built-in agent (pi)** with any of these:
   - **An API key** for OpenRouter, Anthropic, OpenAI, Google Gemini, DeepSeek, Mistral, xAI, Groq, Cerebras, Together, Fireworks, Hugging Face, Vercel AI Gateway, Moonshot, Z.ai, MiniMax or NVIDIA. Pick any model from that provider's list; it's searchable.
   - **On this Mac (local models).** **Native Mac AI** in **Settings → Providers** lists every model Lamp can run. These include models already in the shared Hugging Face cache (`~/.cache/huggingface/hub`) or in Local's folder, so models downloaded for Local show up without downloading again. Lamp's own downloads (a list sized to your Mac's memory, or any GGUF repo) go into that same cache, in the standard `huggingface_hub` layout.

@@ -18,6 +18,8 @@ struct LampApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("New App") { store.create() }
                     .keyboardShortcut("n")
+                Button("New iPhone App") { store.create(platform: .iphone) }
+                    .keyboardShortcut("n", modifiers: [.command, .option])
             }
             CommandGroup(after: .newItem) {
                 Button("Import Shared App…") { store.chooseImport() }

@@ -5,6 +5,12 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## Unreleased
+
+- New iPhone App: an early way to build an iPhone app and try it in the iPhone simulator on your Mac (needs
+  Xcode). The agent sees the screen after each change; tapping it, and putting the app on a real iPhone,
+  come later.
+
 ## 0.7.0
 
 - Stop really stops: it ends everything the agent started, including a build in progress, and quitting

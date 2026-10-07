@@ -21,13 +21,19 @@ struct BuildStamp: Equatable {
 
     /// The stamp on a built app, or nil when there's no app there. An app without a stamp reads as empty.
     static func read(_ app: URL) -> BuildStamp? {
-        guard let info = NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist")) else { return nil }
+        guard let info = NSDictionary(contentsOf: infoPlist(of: app)) else { return nil }
         return BuildStamp(lamp: info[lampKey] as? String, support: info[supportKey] as? String)
     }
 
     /// Stamps a freshly built app, before it's signed.
+    /// A Mac bundle keeps its Info.plist under Contents; an iPhone bundle at its top.
+    private static func infoPlist(of app: URL) -> URL {
+        let mac = app.appendingPathComponent("Contents/Info.plist")
+        return FileManager.default.fileExists(atPath: mac.path) ? mac : app.appendingPathComponent("Info.plist")
+    }
+
     static func write(to app: URL) {
-        let url = app.appendingPathComponent("Contents/Info.plist")
+        let url = infoPlist(of: app)
         guard let info = NSMutableDictionary(contentsOf: url) else { return }
         info[lampKey] = current.lamp
         info[supportKey] = current.support
