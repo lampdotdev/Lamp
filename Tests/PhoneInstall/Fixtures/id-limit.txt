@@ -1,0 +1,1 @@
+Communication with Apple failed. Your maximum App ID limit has been reached. You may create up to 10 App IDs every 7 days.

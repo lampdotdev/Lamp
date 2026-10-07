@@ -1,4 +1,6 @@
 import Foundation
+import Security
+import CryptoKit
 
 /// The person's own iPhone or iPad: plugged in or on the same Wi‑Fi and paired with this Mac, found and
 /// driven with Xcode's devicectl. An app goes on it signed with the person's Apple account, which Xcode
@@ -49,19 +51,46 @@ enum Devices {
         return teams.sorted { $0.name < $1.name }
     }
 
-    /// The teams to offer: those signed in to Xcode first, then any the Mac has an Apple Development
-    /// certificate for from earlier ("Matt Rubens (Z925397W9T)" → ("Z925397W9T", "Matt Rubens")).
+    /// Prefer Xcode's signed-in teams, then teams with a valid development signing identity on this Mac.
     static func knownTeams() async -> [(id: String, name: String)] {
         let output = await Subprocess.run("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"], timeout: 20).output
-        var teams: [(id: String, name: String)] = xcodeTeams()
-        for line in output.split(separator: "\n") where line.contains("\"Apple Development: ") {
-            guard let open = line.lastIndex(of: "("), let close = line.lastIndex(of: ")"), open < close else { continue }
-            let id = String(line[line.index(after: open)..<close])
-            let start = line.range(of: "Apple Development: ")!.upperBound
-            let name = String(line[start..<open]).trimmed
-            if id.count == 10, !teams.contains(where: { $0.id == id }) { teams.append((id, name)) }
+        let fingerprints = Set(output.split(separator: "\n").compactMap { line -> String? in
+            line.split(whereSeparator: \.isWhitespace).first {
+                $0.range(of: #"^[0-9A-Fa-f]{40}$"#, options: .regularExpression) != nil
+            }.map { String($0).uppercased() }
+        })
+        var teams = xcodeTeams()
+        var found: CFTypeRef?
+        let query: [String: Any] = [kSecClass as String: kSecClassCertificate,
+                                   kSecMatchSubjectContains as String: "Apple Development",
+                                   kSecMatchLimit as String: kSecMatchLimitAll, kSecReturnRef as String: true]
+        guard SecItemCopyMatching(query as CFDictionary, &found) == errSecSuccess,
+              let certificates = found as? [SecCertificate] else { return teams }
+        for certificate in certificates {
+            let fingerprint = Insecure.SHA1.hash(data: SecCertificateCopyData(certificate) as Data)
+                .map { String(format: "%02X", $0) }.joined()
+            guard fingerprints.contains(fingerprint), let team = certificateTeam(certificate),
+                  !teams.contains(where: { $0.id == team.id }) else { continue }
+            teams.append(team)
         }
         return teams
+    }
+
+    /// The common name's parenthesised ID identifies the developer, not necessarily their team. The
+    /// certificate's subject organizational unit is the signing Team ID, as Xcode writes into projects.
+    static func certificateTeam(_ certificate: SecCertificate) -> (id: String, name: String)? {
+        guard let values = SecCertificateCopyValues(certificate, [kSecOIDX509V1SubjectName] as CFArray, nil) as? [String: Any],
+              let subject = values[kSecOIDX509V1SubjectName as String] as? [String: Any],
+              let fields = subject[kSecPropertyKeyValue as String] as? [[String: Any]] else { return nil }
+        func field(_ oid: CFString) -> String? {
+            fields.first { $0[kSecPropertyKeyLabel as String] as? String == oid as String }?[kSecPropertyKeyValue as String] as? String
+        }
+        guard let id = field(kSecOIDOrganizationalUnitName)?.uppercased(),
+              id.range(of: #"^[A-Z0-9]{10}$"#, options: .regularExpression) != nil,
+              let commonName = field(kSecOIDCommonName), commonName.hasPrefix("Apple Development: ") else { return nil }
+        let name = commonName.dropFirst("Apple Development: ".count)
+            .replacingOccurrences(of: #" \([A-Z0-9]{10}\)$"#, with: "", options: .regularExpression)
+        return (id, name)
     }
 
     /// The iPhones and iPads the Mac can see: paired ones, and plugged-in ones that haven't yet trusted
@@ -127,24 +156,34 @@ enum Devices {
         let result = await Subprocess.run("/usr/bin/xcrun", ["devicectl", "device", "install", "app", "--device", udid, app.path],
                                           mergeErrors: true, timeout: 300)
         guard result.ok else {
-            throw Failure(message: "The app couldn't be put on the phone. Plug it in or put it on the same Wi‑Fi as this Mac, and unlock it.\n\n\(tail(result.output))")
+            throw PhoneFailure(stage: .install, output: result.output + "\n" + result.errors)
         }
     }
 
     /// Launches the app and stays attached: what it prints goes to the log until it quits, as on the
     /// simulator. The process is devicectl's, kept so a later launch or Stop can end it.
-    static func launch(_ bundleID: String, on udid: String, log: URL) throws -> Process {
+    @MainActor
+    static func launch(_ bundleID: String, on udid: String, log: URL, started: (Process) -> Void,
+                       cancelled: () -> Bool) async throws -> Process {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
         process.arguments = ["devicectl", "device", "process", "launch", "--device", udid, "--terminate-existing", "--console", bundleID]
         if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil) }
         let handle = try FileHandle(forWritingTo: log)
-        handle.seekToEndOfFile()
+        let offset = handle.seekToEndOfFile()
         process.standardOutput = handle
         process.standardError = handle
         process.standardInput = FileHandle.nullDevice
-        try process.run()
-        return process
+        defer { try? handle.close() }
+        do {
+            try process.run()
+            started(process)
+            try await PhoneLaunch.wait(process, bundleID: bundleID, output: log, offset: offset, cancelled: cancelled)
+            return process
+        } catch {
+            Subprocess.terminateTree(process)
+            throw error
+        }
     }
 
     /// The last lines of a tool's output, for a message: the reason is at the end, after the noise.
@@ -154,13 +193,13 @@ enum Devices {
 
     /// What's wrong before anything is tried, in plain words, or nil when the phone is ready.
     static func problem(_ device: Device?, team: String) -> String? {
-        guard let device else { return "That phone isn't paired with this Mac any more. Plug it in and choose it again under Try On." }
+        guard let device else { return "Lamp can't see that phone. Plug it in with a data cable and unlock it, then Retry. If it still doesn't appear, choose it again under Try On." }
         guard device.paired else { return "\(device.name) hasn't trusted this Mac yet. Choose Pair under Try On, and tap Trust on the phone." }
-        guard device.developerMode else { return "Turn on Developer Mode on \(device.name) (Settings → Privacy & Security → Developer Mode), then try again." }
+        guard device.developerMode else { return "On \(device.name), open Settings → Privacy & Security → Developer Mode and turn it on. Restart the device when asked, unlock it, and tap Turn On to confirm. Then click Retry." }
         guard team.count == 10 else { return "Choose your Apple team in Lamp's Settings → Building → Experimental first." }
         let signedIn = xcodeTeams()
         guard signedIn.isEmpty || signedIn.contains(where: { $0.id == team }) else {
-            return "Xcode is signed in to \(signedIn.map { "\($0.name) (\($0.id))" }.joined(separator: ", ")), not team \(team). Choose that team in Lamp's Settings → Building → Experimental, or sign in to the other account in Xcode → Settings → Accounts."
+            return "The team selected in Lamp isn't available in Xcode. Choose one of your signed-in teams in Lamp → Settings → Building → Experimental, or sign in with an account that belongs to the selected team in Xcode → Settings → Accounts. Then click Retry."
         }
         return nil
     }
