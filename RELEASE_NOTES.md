@@ -5,36 +5,31 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
-## Unreleased
+## 0.10.0
 
-- Pictures are made with Nano Banana 2.1, Google's newest image model, unless you pick another in Settings → AI.
-- Apps on your own iPhone or iPad work away from your Mac: while the Mac is reachable their AI goes through
-  Lamp as before, and elsewhere they use your OpenRouter key themselves, kept in the phone's Keychain since
-  they last saw Lamp.
-
-## Unreleased
-
-- Settings → Providers now shows what's on this Mac (Native Mac AI, Ollama, LM Studio, and your Claude
-  Code and Codex sign-ins) apart from the providers you've added a key for, and says on each row what it's
-  doing: building apps, answering inside them, making pictures, deciding. A note says a key can go with an
-  app to your iPhone while a sign-in can't.
-- "Text generation" lists every way an app's AI can be answered, by name: OpenRouter's models, each model
-  your Claude Code or Codex sign-in offers (Sonnet via Claude Code, say), or a model on this
-  Mac. An app built with a model on this Mac keeps using it even once you add a key.
-- iOS apps away from this Mac also choose their decision model: Jev, or by text through the text model
-  they use away. Settings and an app's info panel both offer it.
-- Settings → Building has its own Image generation choice, for icon artwork, beside the builder (now
-  labelled Text generation); Settings → Apps → Image generation is for pictures inside apps only.
-- Wherever Settings says something needs an OpenRouter key, an Add a Key… button sits at the right. When a
-  cloud picture model is chosen without a key, the note says what makes the pictures meanwhile and why.
+- New apps start by choosing Mac, iPhone or iPad (with iOS apps on). Apps on your own iPhone or iPad work
+  away from your Mac: while the Mac is reachable their AI goes through Lamp as before, and elsewhere they use
+  your OpenRouter key themselves, kept in the phone's Keychain since they last saw Lamp. Settings → Apps has
+  "iOS apps away from this Mac": the OpenRouter models a phone app uses for text, pictures and decisions when
+  it can't reach the Mac, and an app's own panel has the same choices.
+- Putting an app on a phone says what's happening and what went wrong: it waits for the phone to confirm
+  the launch (quickly now), explains install failures, and offers Retry; the iPhone setup in Settings shows
+  the missing step and its next action.
+- Settings is reorganised. Providers shows what's on this Mac (Native Mac AI, Ollama, LM Studio, and your
+  Claude Code and Codex sign-ins) apart from the providers you've added a key for, and says on each row what
+  it's doing. Building has one Text generation menu, the models under what runs them (Claude Code, Codex,
+  OpenRouter, a model on this Mac…), and its own Image generation choice for icon artwork. Apps has Text
+  generation (every way an app's AI can be answered, by name), Image generation for pictures inside apps, and
+  the decision model. Wherever something needs an OpenRouter key, an Add a Key… button sits at the right,
+  and the notes say plainly what happens without one.
 - Decisions can be made on this Mac: H2O Lightning 4B, a free 2.5 GB decision model about as good as Jev,
-  downloaded from Settings → Apps and run privately. OpenAI's new Decisions API (Luna) is a choice too, with
-  an OpenAI key, as is answering by text through whatever answers your apps. Jev preview is gone.
-- The notes under the model choices say plainly what happens without a key: which sign-in answers text, and
-  that pictures need an OpenRouter key or a picture model on this Mac, with the way to add one.
-- With iOS apps on, Settings → Apps has "Away from this Mac": which OpenRouter models an app on your phone
-  uses for text and pictures when it can't reach the Mac, and a plain word (with the way to a key) when
-  there's no key for it. An app's own panel has the same choices.
+  downloaded from Settings → Apps and run privately. OpenAI's Decisions API (Luna) is a choice too, with an
+  OpenAI key, as is answering by text through whatever answers your apps. Jev preview is gone.
+- Pictures are made with Nano Banana 2.1, Google's newest image model, unless you pick another.
+- The welcome's agent step: picking Claude Code or ChatGPT is the choice; only a missing app or sign-in is
+  asked for.
+- The agent writes in the language your Mac is set to, and so do the apps it makes.
+- The build card shows progress while the agent thinks, before its plan, and what's being worked on.
 
 ## 0.9.3
 
