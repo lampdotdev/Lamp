@@ -30,7 +30,13 @@ A capability given to one engine must be given to all of them that can take it, 
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items.
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
-- **Using other apps** (`ComputerUse`): with an OpenRouter key, Lamp runs the tool loop itself against
+- **Using other apps** (`ComputerUse`): two drivers behind one `ComputerUse.Job`. When the ChatGPT app has
+  its Computer Use plugin installed, Lamp drives that (`CodexComputerUse`: the `cua_repl` MCP server from
+  `~/.codex/plugins/cache/openai-bundled/unified-computer-use/<newest>/.mcp.json`, one `js` tool in which the
+  model writes JavaScript against `cua`; the server asks before each step through MCP elicitation, which
+  `MCPClient` answers from `Job.decide`: reads go ahead, actions through the person's approval). It isn't a
+  documented interface, so when it's missing, off (Settings → Apps), or won't start, CuaDriver's tools are used
+  as before. With an OpenRouter key, Lamp runs the tool loop itself against
   OpenRouter. Without one, the task is one turn of the builder: pi gets the driver's tools through its
   extension (a tools file and `LAMP_COMPUTER_URL`, which posts each call to `/agent/computer`), Claude Code
   and Codex through `/mcp` with the task's own token (`Store.computerTasks`, never the build tools). The

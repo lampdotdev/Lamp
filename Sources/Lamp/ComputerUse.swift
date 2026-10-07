@@ -46,6 +46,7 @@ enum ComputerUse {
     static var isInstalled: Bool { FileManager.default.isExecutableFile(atPath: executable.path) }
 
     static func status() async -> Status {
+        if CodexComputerUse.isAvailable { return .ready }   // its helper app holds the permissions
         guard isInstalled else { return .notInstalled }
         // The daemon answers with its own permission state (it holds them, not Lamp). Right after an install
         // it may not be up yet, and the answer has no permissions in it: ask again shortly.
@@ -210,7 +211,7 @@ enum ComputerUse {
 
     /// What stops a task before it starts, or nil.
     static func check() -> Failure? {
-        guard isInstalled else {
+        guard isInstalled || CodexComputerUse.isAvailable else {
             return Failure(message: "Using other apps isn't set up yet. Turn on “Let apps use your other apps” in Lamp → Settings → Apps.")
         }
         // While the Mac is locked, apps don't expose their windows and screen capture is refused.
@@ -226,11 +227,15 @@ enum ComputerUse {
     /// One task in progress (not Swift's Task): the connection to the driver, the tools the model may use, what the person has
     /// to approve, and the names of what's on screen. Whichever model drives the task (OpenRouter, a local
     /// model, or a coding agent through Lamp's MCP endpoint) calls `call` for each step.
+    /// What does the looking and clicking: Codex's computer use when the ChatGPT app has it, else CuaDriver.
+    enum Driver: String { case codex, cua }
+
     final class Job {
         let taskText: String
         let appName: String
         let allowActions: Bool
         let approve: (Action) async -> Bool
+        let driver: Driver
         private let client: MCPClient
         private let allowed: Set<String>
         /// The driver's tools the model may use, with `intent` added to those that act.
@@ -243,6 +248,34 @@ enum ComputerUse {
             self.appName = appName
             self.allowActions = allowActions
             self.approve = approve
+            // Codex's computer use first, when it's there and starts; CuaDriver otherwise. Codex's asks before
+            // each step, and the answer is the person's for anything that acts.
+            var codex: MCPClient?
+            var codexInstructions = ""
+            if CodexComputerUse.isAvailable {
+                if let client = try? CodexComputerUse.connect(elicitation: { _ in false }),
+                   let instructions = try? await client.initialize() {
+                    codex = client
+                    codexInstructions = instructions
+                } else {
+                    print("Codex's computer use is installed but didn't start; using CuaDriver.")
+                }
+            }
+            if let codex {
+                driver = .codex
+                client = codex
+                let names: Set<String> = ["js", "js_reset"]
+                allowed = names
+                let listed = try await client.listTools()
+                tools = listed.filter { names.contains($0.name) }
+                systemPrompt = CodexComputerUse.systemPrompt(appName: appName, allowActions: allowActions, instructions: codexInstructions,
+                                                             toolDescription: listed.first { $0.name == "js" }?.description ?? "")
+                return   // the server's questions are answered from `call`, once self exists
+            }
+            driver = .cua
+            guard isInstalled else {
+                throw Failure(message: "Using other apps isn't set up yet. Turn on “Let apps use your other apps” in Lamp → Settings → Apps.")
+            }
             client = try MCPClient(executable: executable, arguments: ["mcp"])
             let instructions: String
             do {
@@ -285,6 +318,18 @@ enum ComputerUse {
 
         func close() { client.close() }
 
+        /// Codex's question before a step: reads go ahead, actions only when the task may act and the person
+        /// allows this one (or allowed all for the task). The same dialog as CuaDriver's actions get.
+        private func decide(_ elicitation: MCPClient.Elicitation) async -> Bool {
+            guard enabled else { return false }
+            if CodexComputerUse.read(elicitation) { return true }
+            guard allowActions else { return false }
+            return await approve(CodexComputerUse.action(elicitation, intent: currentIntent))
+        }
+
+        /// What the model said the current `js` step is for, shown with each approval it raises.
+        private var currentIntent: String?
+
         /// The tools in OpenAI's function-calling shape, for the chat-completions loop.
         var openAITools: [[String: Any]] {
             tools.map { ["type": "function", "function": ["name": $0.name, "description": $0.description, "parameters": $0.inputSchema]] }
@@ -308,6 +353,17 @@ enum ComputerUse {
             guard enabled else { throw stopped }
             if BrowserTabs.handles(name) { return (await BrowserTabs.call(name, arguments), []) }
             guard allowed.contains(name) else { return ("That tool isn't available for this task.", []) }
+            if driver == .codex {
+                // The server asks about each step itself (decide); the title is the model's word for it.
+                client.elicitationHandler = { [weak self] in await self?.decide($0) ?? false }
+                currentIntent = arguments["title"] as? String ?? intent
+                do {
+                    let result = try await client.call(name, arguments: arguments)
+                    return (String(result.text.prefix(60_000)), result.images.map { (mimeType: "image/jpeg", data: compactJPEG($0.data, mimeType: $0.mimeType)) })
+                } catch {
+                    return ("Error: \(error.localizedDescription)", [])
+                }
+            }
             if actTools.contains(name) {
                 let described = ComputerUse.describe(name, arguments, labels: labels)
                 let action = Action(tool: name, target: described.target, details: described.details, intent: intent)
@@ -575,6 +631,18 @@ final class MCPClient: @unchecked Sendable {
         var structured: Any? = nil
     }
 
+    /// A question the server asks before a step (MCP elicitation): what it wants to do and in which app.
+    struct Elicitation {
+        let message: String
+        let tool: String                    // _meta.tool_name, e.g. "click"
+        let parameters: [String: Any]       // _meta.tool_params
+        let display: [String: String]       // _meta.tool_params_display, by display name
+        let risk: String?
+    }
+
+    /// Answers the server's elicitations: true accepts, false declines. Without one, every question is declined.
+    var elicitationHandler: ((Elicitation) async -> Bool)?
+
     private let process = Process()
     private let input = Pipe()
     private let output = Pipe()
@@ -583,9 +651,10 @@ final class MCPClient: @unchecked Sendable {
     private var waiting: [Int: CheckedContinuation<[String: Any], Error>] = [:]
     private var nextID = 1
 
-    init(executable: URL, arguments: [String]) throws {
+    init(executable: URL, arguments: [String], environment: [String: String] = [:]) throws {
         process.executableURL = executable
         process.arguments = arguments
+        if !environment.isEmpty { process.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 } }
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
@@ -602,7 +671,7 @@ final class MCPClient: @unchecked Sendable {
     /// Starts the session; returns the server's instructions.
     func initialize() async throws -> String {
         let result = try await request("initialize", [
-            "protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any],
+            "protocolVersion": "2025-06-18", "capabilities": ["elicitation": [:] as [String: Any]] as [String: Any],
             "clientInfo": ["name": "Lamp", "version": BuildStamp.current.lamp ?? "0"],
         ])
         notify("notifications/initialized")
@@ -679,11 +748,17 @@ final class MCPClient: @unchecked Sendable {
         lock.lock()
         buffer.append(chunk)
         var replies: [(CheckedContinuation<[String: Any], Error>, Result<[String: Any], Error>)] = []
+        var questions: [(Any, [String: Any])] = []
         while let newline = buffer.firstIndex(of: 0x0A) {
             let line = buffer[buffer.startIndex..<newline]
             buffer.removeSubrange(buffer.startIndex...newline)
-            guard let message = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
-                  let id = message["id"] as? Int, let continuation = waiting.removeValue(forKey: id) else { continue }
+            guard let message = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { continue }
+            // A request from the server, which arrives while a call of ours is in flight: answered on its own.
+            if message["method"] as? String == "elicitation/create", let id = message["id"] {
+                questions.append((id, message["params"] as? [String: Any] ?? [:]))
+                continue
+            }
+            guard let id = message["id"] as? Int, let continuation = waiting.removeValue(forKey: id) else { continue }
             if let error = message["error"] as? [String: Any] {
                 replies.append((continuation, .failure(ComputerUse.Failure(message: error["message"] as? String ?? "The helper failed."))))
             } else {
@@ -692,6 +767,24 @@ final class MCPClient: @unchecked Sendable {
         }
         lock.unlock()
         for (continuation, result) in replies { continuation.resume(with: result) }
+        for (id, params) in questions { answer(id, params) }
+    }
+
+    /// Asks the handler and replies: accept with an empty form (the server's forms have no fields), or decline.
+    private func answer(_ id: Any, _ params: [String: Any]) {
+        let meta = params["_meta"] as? [String: Any] ?? [:]
+        var display: [String: String] = [:]
+        for item in meta["tool_params_display"] as? [[String: Any]] ?? [] {
+            if let name = item["display_name"] as? String ?? item["name"] as? String, let value = item["value"] { display[name] = "\(value)" }
+        }
+        let elicitation = Elicitation(message: params["message"] as? String ?? "", tool: meta["tool_name"] as? String ?? "",
+                                      parameters: meta["tool_params"] as? [String: Any] ?? [:], display: display, risk: meta["riskLevel"] as? String)
+        let handler = elicitationHandler
+        Task.detached { [weak self] in
+            let accepted = await handler?(elicitation) ?? false
+            let result: [String: Any] = accepted ? ["action": "accept", "content": [:] as [String: Any]] : ["action": "decline"]
+            self?.send(["jsonrpc": "2.0", "id": id, "result": result])
+        }
     }
 
     private func failAll() {
