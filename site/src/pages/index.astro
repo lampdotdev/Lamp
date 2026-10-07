@@ -73,38 +73,38 @@ const points: { title: string; text: string; tile: string; visual?: (props: obje
   {
     title: "Change it any time",
     text: "Always finding ways to improve? No worries, continue making changes to your apps. Saved versions let you try new things and roll back if it doesn't work out.",
-    tile: "sm:col-span-4 bg-panel",
+    tile: "bento:col-span-4 bg-panel",
     visual: ChangeItAnyTime,
   },
   {
     title: "Apps that use your Mac",
     text: "An app can use your other apps to get things done, browser included, with whatever you're already signed in to.",
-    tile: "sm:col-span-6 bg-night text-white",
+    tile: "bento:col-span-6 bg-night text-white",
     visual: UsesYourMac,
   },
   {
     title: "Works with what's on your Mac",
     text: "Apps can read and add to your calendar, reminders and contacts, find and send mail, and send you notifications. Through your other apps, they can reach Notes, Messages and more.",
-    tile: "sm:col-span-5 bg-panel",
+    tile: "bento:col-span-5 bg-panel",
     visual: WorksWithYourMac,
     below: true,
   },
   {
     title: "Always gorgeous",
     text: "By default, every app looks and feels made in Cupertino: native controls, proper menus and keyboard shortcuts, and an icon of its own. But make it your own if you want. Never a vibe-coded look.",
-    tile: "sm:col-span-5 bg-glow",
+    tile: "bento:col-span-5 bg-glow",
     visual: BeautifulByDefault,
   },
   {
     title: "Made for Apple silicon",
     text: "Apps use what's built into your Mac, like reading text in pictures, understanding speech and translating, instantly and privately. Lamp can also run AI models on your Mac's own chip, both to build your apps and inside them.",
-    tile: "sm:col-span-4 bg-graphite text-white",
+    tile: "bento:col-span-4 bg-graphite text-white",
     visual: AppleSilicon,
   },
   {
     title: "Share with anyone",
     text: "Send an app to a friend by AirDrop, Messages or Mail. They get their own copy to make their own, and Lamp shows them what it does before it opens.",
-    tile: "sm:col-span-6 bg-panel",
+    tile: "bento:col-span-6 bg-panel",
     visual: ShareWithAnyone,
   },
 ];
@@ -177,8 +177,8 @@ const description = `${pitch} ${noCode}`;
     </section>
 
     <section class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-      <div class="grid gap-4 sm:grid-cols-10">
-        <div class="overflow-hidden rounded-[28px] bg-panel pt-12 text-center sm:col-span-10 sm:pt-16">
+      <div class="grid gap-4 bento:grid-cols-10">
+        <div class="overflow-hidden rounded-[28px] bg-panel pt-12 text-center bento:col-span-10 sm:pt-16">
           <h3 class="px-8 font-display text-3xl font-bold tracking-tight sm:text-5xl">Real Mac apps</h3>
           <p class="mx-auto mt-4 max-w-[50rem] px-8 text-xl leading-[1.4] text-muted">
             {together("Each one is an app of its own, in your Applications folder and in Spotlight. No browser tab, no subscription to someone else's tool. No server or security to worry about.")}
