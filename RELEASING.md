@@ -136,7 +136,7 @@ Release builds of Lamp update themselves with [Sparkle](https://sparkle-project.
   - `/download/<tag>` redirects to GitHub's short-lived download link for that release's DMG; `/download/latest`
     picks the newest published release, which is where the website's Download button points.
   - It reads the releases with `GITHUB_TOKEN`, a fine-grained token with **Contents: read-only** on `RooCodeInc/Lamp` only.
-  - Deploy with `cd updates && vercel deploy --prod --scope roo-code`.
+  - It deploys itself: the Vercel project is connected to this repo with `updates` as its root directory, so a push to `main` that touches `updates/` goes to production and a branch gets a preview, like the website in `site/`. `cd updates && vercel deploy --prod --scope roo-code` still works for a deploy by hand.
 - **Only newer releases appear:** releases before the first one with `sparkle.json` aren't in the feed, because Sparkle couldn't verify them. Copies of Lamp from before Sparkle was added need one manual update to a release that includes it.
 
 ## Website
