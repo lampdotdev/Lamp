@@ -189,6 +189,7 @@ final class Store: ObservableObject {
 
         var cutting = false                 // the engine is cutting its conversation, before the agent starts (`Cut`)
         var cutTool: LineTool?              // …and the tool doing it, once it has started
+        var toldOfCut = false               // Claude Code refused its cut this turn and got the note instead
 
         var isWorking: Bool { agent != nil || build != nil || cutting }
 
@@ -1122,17 +1123,18 @@ final class Store: ObservableObject {
         let notes = Attachments.note(for: saved) + back
             + (sentAgain ? "" : Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project))
         turns[project.id]?.request = prompt
+        // Whether this turn is the one to make Claude Code's cut, rather than one that carries the note.
+        let cutsAsItRuns = engine == .claude && Cut.pending(for: project, engine: .claude)?.canCut(.claude) == true
         let ran = await runAgent(prompt + notes, files: files, on: project)
         // The note about going back is the agent's only word of it, so it's kept until the agent has had it:
         // a turn that failed before reaching the agent leaves it for the next one. So is a cut in its
         // conversation, which is made again then (and finds nothing more to leave out, if it was made).
         // Claude Code's is different: its cut is only made once Lamp has taken up the copy (`runAgent`, which
-        // forgets it then). A turn stopped after its first words but before that still has the cut to make.
+        // forgets it then). A turn that set out to make it and was stopped or failed after its first words,
+        // but before that, has neither made the cut nor carried the note: both are still owed.
         if let last = asked.last, Self.reachedAgent(last, in: logs[project.id] ?? []) {
             Versions.forgetNote(for: project)
-            if engine != .claude || Cut.pending(for: project, engine: .claude)?.canCut(.claude) != true {
-                Cut.forget(for: project, engine: engine)
-            }
+            if !cutsAsItRuns || turns[project.id]?.toldOfCut == true { Cut.forget(for: project, engine: engine) }
         }
         guard ran else {
             return TurnResult(end: .failed, watched: isWatching(project.id))
@@ -1382,6 +1384,7 @@ final class Store: ObservableObject {
             Cut.save(waiting, for: project, engine: .claude)
             if cutRefused {
                 log(project, .detail, "Claude Code couldn't go back to before the message that was changed, so it's told about it instead.")
+                turn.toldOfCut = true
                 return await runAgent(prompt + (waiting.note ?? ""), files: files, on: project)
             }
         }
