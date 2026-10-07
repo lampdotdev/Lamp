@@ -176,7 +176,7 @@ enum AppAI {
         } else if let provider = Provider.apiProvider(Builder.piProvider), provider.id != "openrouter" {
             routes.append(.make(id: "engine:pi", label: "Your \(provider.name) key, through the builder", kind: .engine(.pi)))
         }
-        for model in LocalModels.shared.installed {
+        for model in LocalModels.shared.installed where !LocalModels.isDecisionModel(model.id) {
             routes.append(.make(id: "local:\(model.id)", label: "\(model.name) on this Mac", kind: .localModel(provider: Builder.localProvider, model: model.id)))
         }
         for (provider, models) in LocalModels.shared.external.sorted(by: { $0.key < $1.key }) {
@@ -472,16 +472,30 @@ enum AppAI {
     // MARK: Decisions (System One models such as TypeSafe's Jev)
 
     /// Decision models: Jev through OpenRouter or directly through TypeSafe. Same request either way.
+    /// Where decisions go: Jev through OpenRouter or TypeSafe, OpenAI's Decisions API, a decision model on
+    /// this Mac, or a small text model answering as JSON (`decideByText`).
     static let decisionModels: [(id: String, label: String, provider: String, model: String)] = [
         ("openrouter:jev-latest", "Jev via OpenRouter", "openrouter", "jev-latest"),
         ("typesafe:jev-latest", "Jev via TypeSafe", "typesafe", "jev-latest"),
+        ("openai:gpt-6-luna", "Luna via OpenAI (Decisions API)", "openai", "gpt-6-luna"),
+        ("local:h2o-lightning-4b", "H2O Lightning 4B on this Mac", "local", "h2o-lightning-4b"),
+        ("text", "By text, through what answers apps", "text", ""),
     ]
+
+    /// The decision model on this Mac, as installed (its id for the local server), or nil.
+    @MainActor static func localDecisionModel() -> String? {
+        guard let spec = LocalModels.decisionCatalog.first else { return nil }
+        return LocalModels.shared.installedID(for: spec)
+    }
 
     static var decisionModel: (id: String, label: String, provider: String, model: String) {
         let saved = UserDefaults.standard.string(forKey: "decisionModel") ?? ""
         if let chosen = decisionModels.first(where: { $0.id == saved }) { return chosen }
-        // Default to whichever key exists, preferring OpenRouter.
-        return KeyStore.openRouterKey == nil && KeyStore.key(for: "typesafe") != nil ? decisionModels[1] : decisionModels[0]
+        // Default to whichever key exists, preferring OpenRouter, then TypeSafe, then OpenAI.
+        for provider in ["openrouter", "typesafe", "openai"] where KeyStore.key(for: provider) != nil {
+            return decisionModels.first { $0.provider == provider }!
+        }
+        return decisionModels[0]
     }
 
     /// Sends `state` and typed `questions` (TypeSafe's System One format) to the decision model.
@@ -489,12 +503,19 @@ enum AppAI {
     static func decide(state: Any, questions: [String: Any],
                        model appChoice: String? = nil) async throws -> ([String: Any], Double) {
         let choice = decisionModels.first { $0.id == appChoice } ?? decisionModel
+        if choice.provider == "text" { return try await decideByText(state: state, questions: questions) }
+        if choice.provider == "local" {
+            if let id = await localDecisionModel() { return try await decideLocally(state: state, questions: questions, model: id) }
+            if canAnswer { return try await decideByText(state: state, questions: questions) }
+            throw Failure(message: "The decision model on this Mac isn't downloaded yet. Get it in Lamp → Settings (⌘,) → Apps.")
+        }
         guard let key = KeyStore.key(for: choice.provider) else {
             // No decision model: a small text model answers the same questions in JSON instead.
             if canAnswer { return try await decideByText(state: state, questions: questions) }
-            let name = choice.provider == "typesafe" ? "a TypeSafe" : "an OpenRouter"
+            let name = choice.provider == "typesafe" ? "a TypeSafe" : choice.provider == "openai" ? "an OpenAI" : "an OpenRouter"
             throw Failure(message: "Decisions need \(name) key. Add one in Lamp → Settings (⌘,) → AI.")
         }
+        if choice.provider == "openai" { return try await decideViaOpenAI(state: state, questions: questions, key: key, model: choice.model) }
         let endpoint = choice.provider == "typesafe" ? "https://api.typesafe.ai/v1/systemone"
                                                      : "https://openrouter.ai/api/v1/systemone"
         var request = URLRequest(url: URL(string: endpoint)!)
@@ -526,6 +547,166 @@ enum AppAI {
             return (answers, cost)
         }
         throw Failure(message: "The decision model is busy. Try again in a moment.")
+    }
+
+    /// The state as the decision models read it: text as it is, anything else as JSON.
+    private static func stateText(_ state: Any) -> String {
+        if let text = state as? String { return text }
+        return (try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys, .fragmentsAllowed]))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "\(state)"
+    }
+
+    /// Each question's options, in order: for a choice the criteria's names (with descriptions); for a
+    /// score the levels, lowest first; for a noul true then false.
+    private static func options(of question: [String: Any]) -> [(name: String, description: String)] {
+        switch question["type"] as? String {
+        case "noul":
+            let criteria = question["criteria"] as? [String: Any] ?? [:]
+            return [("true", criteria["true"] as? String ?? "Yes"), ("false", criteria["false"] as? String ?? "No")]
+        case "score":
+            return (question["criteria"] as? [String] ?? []).map { ($0, "") }
+        default:
+            if let dict = question["criteria"] as? [String: Any] {
+                return dict.keys.sorted().map { ($0, dict[$0] as? String ?? "") }
+            }
+            return (question["criteria"] as? [String] ?? []).map { ($0, "") }
+        }
+    }
+
+    /// OpenAI's Decisions API (gpt-6-luna): the same questions in its shape (predicate, choice, score), and
+    /// its answers back in Jev's shape.
+    static func decideViaOpenAI(state: Any, questions: [String: Any], key: String, model: String) async throws -> ([String: Any], Double) {
+        var asked: [[String: Any]] = []
+        for (id, value) in questions {
+            guard let question = value as? [String: Any] else { continue }
+            var instructions = question["instructions"] as? String ?? ""
+            var item: [String: Any] = ["name": id]
+            let options = options(of: question)
+            switch question["type"] as? String {
+            case "noul":
+                item["type"] = "predicate"
+                if let criteria = question["criteria"] as? [String: Any], !criteria.isEmpty {
+                    instructions += "\nYes means: \(criteria["true"] ?? "yes"). No means: \(criteria["false"] ?? "no")."
+                }
+            case "score":
+                item["type"] = "score"
+                item["levels"] = options.map { ["label": $0.name, "description": $0.name] }
+            default:
+                item["type"] = "choice"
+                item["choices"] = options.map { ["value": $0.name, "description": $0.description.isEmpty ? $0.name : $0.description] }
+            }
+            item["instructions"] = instructions
+            asked.append(item)
+        }
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/decisions")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["model": model, "input": stateText(state), "questions": asked] as [String: Any])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        guard status == 200, let given = obj["answers"] as? [[String: Any]] else {
+            let detail = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
+            throw Failure(message: Provider.friendlyError("\(status) \(detail)"))
+        }
+        var answers: [String: Any] = [:]
+        for answer in given {
+            guard let id = answer["name"] as? String else { continue }
+            switch answer["type"] as? String {
+            case "predicate":
+                answers[id] = ["noul": answer["probability"] as? Double ?? 0.5]
+            case "score":
+                var probabilities: [String: Double] = [:]
+                for entry in answer["probabilities"] as? [[String: Any]] ?? [] {
+                    if let index = entry["value"] as? Int, let p = entry["probability"] as? Double { probabilities[String(index)] = p }
+                }
+                answers[id] = ["score": answer["score"] as? Double ?? 0, "probabilities": probabilities, "confidence": answer["confidence"] as? Double ?? 0]
+            default:
+                var probabilities: [String: Double] = [:]
+                for entry in answer["probabilities"] as? [[String: Any]] ?? [] {
+                    if let value = entry["value"] as? String, let p = entry["probability"] as? Double { probabilities[value] = p }
+                }
+                answers[id] = ["choice": answer["choice"] as? String ?? "", "probabilities": probabilities, "confidence": answer["confidence"] as? Double ?? 0]
+            }
+        }
+        // $0.10 per million input tokens, nothing for output.
+        let cost = Double((obj["usage"] as? [String: Any])?["input_tokens"] as? Int ?? 0) * 0.10 / 1_000_000
+        return (answers, cost)
+    }
+
+    /// A Jev-class model on this Mac, through the local server, the way its serving shim does it: one
+    /// question per forward pass, the record and the lettered options in a chat prompt ending in "Answer:",
+    /// and the probabilities read off the label tokens at that slot (softmax over their log-probabilities
+    /// at the model's temperature), with the shim's confidence and the floor it holds yes/no answers to.
+    static func decideLocally(state: Any, questions: [String: Any], model: String) async throws -> ([String: Any], Double) {
+        let base = try await LocalModels.shared.ensureServer(for: model)
+        let labels = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz").map(String.init)
+        let record = stateText(state)
+        var answers: [String: Any] = [:]
+        for (id, value) in questions {
+            guard let question = value as? [String: Any] else { continue }
+            let options = options(of: question)
+            guard !options.isEmpty, options.count <= labels.count else { throw Failure(message: "The question \"\(id)\" has no options, or too many.") }
+            let lines = options.enumerated().map { index, option in
+                "\(labels[index])) \(option.name)" + (option.description.isEmpty ? "" : ": \(option.description)")
+            }
+            let user = "record: \(record)\nquestion: \(question["instructions"] as? String ?? "")\noptions:\n" + lines.joined(separator: "\n")
+            let prompt = "<|im_start|>system\nYou are a decision engine. You read a record and answer one question about it by choosing exactly one option. Reply with a single letter.<|im_end|>\n"
+                + "<|im_start|>user\n\(user)<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nAnswer:"
+            var request = URLRequest(url: URL(string: "\(base)/v1/completions")!)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 600
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["model": model, "prompt": prompt, "max_tokens": 1, "temperature": 0,
+                                                                           "logprobs": max(options.count * 2, 20)] as [String: Any])
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            // The server lists the likeliest tokens at the answer slot: [{token, logprob}] under the first
+            // content entry (or, from older servers, a {token: logprob} dictionary).
+            guard (response as? HTTPURLResponse)?.statusCode == 200, let choice = (obj["choices"] as? [[String: Any]])?.first,
+                  let logprobs = choice["logprobs"] as? [String: Any] else {
+                throw Failure(message: "The decision model on this Mac didn't answer: \((obj["error"] as? [String: Any])?["message"] as? String ?? "no probabilities came back").")
+            }
+            var top: [String: Double] = [:]
+            if let content = (logprobs["content"] as? [[String: Any]])?.first, let list = content["top_logprobs"] as? [[String: Any]] {
+                for entry in list { if let token = entry["token"] as? String, let p = entry["logprob"] as? Double { top[token] = p } }
+            } else if let dict = (logprobs["top_logprobs"] as? [[String: Any]])?.first {
+                for (token, p) in dict { if let p = p as? Double { top[token] = p } }
+            }
+            guard !top.isEmpty else { throw Failure(message: "The decision model on this Mac didn't answer: no probabilities came back.") }
+            // The label's log-probability at the answer slot, with or without the space the tokenizer puts first.
+            var logs: [Double] = []
+            for index in options.indices {
+                let label = labels[index]
+                let found = top.first { $0.key.trimmingCharacters(in: .whitespaces) == label }?.value
+                logs.append(found ?? -30)
+            }
+            let temperature = 0.8
+            let scaled = logs.map { $0 / temperature }
+            let peak = scaled.max() ?? 0
+            let weights = scaled.map { exp($0 - peak) }
+            let total = weights.reduce(0, +)
+            let probabilities = weights.map { $0 / total }
+            let confidence = options.count < 2 ? 1 : (probabilities.max()! - 1 / Double(options.count)) / (1 - 1 / Double(options.count))
+            switch question["type"] as? String {
+            case "noul":
+                var p = probabilities[0]
+                let floor = 0.801   // the shim commits a yes/no it isn't sure of to the floor on its side
+                if max(p, 1 - p) < floor { p = p >= 0.5 ? floor : 1 - floor }
+                answers[id] = ["noul": p]
+            case "score":
+                let score = probabilities.enumerated().reduce(0.0) { $0 + Double($1.offset) * $1.element }
+                answers[id] = ["score": score, "probabilities": Dictionary(uniqueKeysWithValues: probabilities.enumerated().map { (String($0.offset), $0.element) }),
+                               "confidence": confidence]
+            default:
+                let best = probabilities.enumerated().max { $0.element < $1.element }!.offset
+                answers[id] = ["choice": options[best].name, "probabilities": Dictionary(uniqueKeysWithValues: zip(options.map(\.name), probabilities)),
+                               "confidence": confidence]
+            }
+        }
+        return (answers, 0)
     }
 
     /// The fast model of whatever answers for apps, for decisions made by text: Haiku through Claude Code,

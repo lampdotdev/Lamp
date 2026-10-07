@@ -3071,7 +3071,12 @@ final class Store: ObservableObject {
         guard project.platform == .iphone, Experiments.iosApps else { return (403, ["error": "Not for this app."]) }
         guard let key = KeyStore.openRouterKey else { return (404, ["error": "There's no OpenRouter key to keep."]) }
         let models = AppModels.load(project)
-        let decision = AppAI.decisionModels.first { $0.id == models.decision } ?? AppAI.decisionModel
+        // Away from the Mac only Jev through OpenRouter or TypeSafe can answer: the choice when it's one of
+        // those (with its key), OpenRouter otherwise.
+        var decision = AppAI.decisionModels.first { $0.id == models.decision } ?? AppAI.decisionModel
+        if !["openrouter", "typesafe"].contains(decision.provider) || KeyStore.key(for: decision.provider) == nil {
+            decision = AppAI.decisionModels[0]
+        }
         var keys: [String: Any] = [
             "openrouter": key,
             "text_model": AppAI.awayModel(for: models.away).openRouter,

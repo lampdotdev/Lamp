@@ -21,6 +21,11 @@ plain "Lamp x.y.z" line.
 - "Inside your apps" lists every way an app's AI can be answered, by name: OpenRouter's models, your Claude
   Code or Codex sign-in, or a model on this Mac. An app built with a model on this Mac keeps using it even
   once you add a key.
+- Decisions can be made on this Mac: H2O Lightning 4B, a free 2.5 GB decision model about as good as Jev,
+  downloaded from Settings → Apps and run privately. OpenAI's new Decisions API (Luna) is a choice too, with
+  an OpenAI key, as is answering by text through whatever answers your apps. Jev preview is gone.
+- The notes under the model choices say plainly what happens without a key: which sign-in answers text, and
+  that pictures need an OpenRouter key or a picture model on this Mac, with the way to add one.
 - With iOS apps on, Settings → Apps has "Away from this Mac": which OpenRouter models an app on your phone
   uses for text and pictures when it can't reach the Mac, and a plain word (with the way to a key) when
   there's no key for it. An app's own panel has the same choices.

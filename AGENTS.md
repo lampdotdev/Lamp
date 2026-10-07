@@ -35,7 +35,12 @@ A capability given to one engine must be given to all of them that can take it, 
   Settings → Apps and an app's info panel, and dispatched by kind in `AppAI.dispatch`. The default
   (`AppAI.defaultRoute`) is the local model that builds apps when there is one, else Sonnet through
   OpenRouter with a key, else the builder's own sign-in. Settings → Providers shows what each provider and
-  sign-in is doing (`ProvidersSettings.jobs`).
+  sign-in is doing (`ProvidersSettings.jobs`). Decisions (`AppAI.decisionModels`, `AppAI.decide`) go to Jev
+  through OpenRouter or TypeSafe, to OpenAI's Decisions API (`decideViaOpenAI`, the same questions in its
+  predicate/choice/score shape), to a Jev-class model on this Mac (`LocalModels.decisionCatalog`, run on the
+  bundled llama-server; `decideLocally` does what the model's serving shim does: one forward pass per
+  question, probabilities read off the label tokens at the "Answer:" slot), or by text through what answers
+  apps (`decideByText`). A decision model is never offered for text or building (`LocalModels.isDecisionModel`).
 - **Using other apps** (`ComputerUse`): two drivers behind one `ComputerUse.Job`. When the ChatGPT app has
   its Computer Use plugin installed, Lamp drives that (`CodexComputerUse`: the `cua_repl` MCP server from
   `~/.codex/plugins/cache/openai-bundled/unified-computer-use/<newest>/.mcp.json`, one `js` tool in which the
