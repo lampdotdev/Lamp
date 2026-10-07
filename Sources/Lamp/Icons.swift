@@ -9,7 +9,7 @@ struct IconSpec: Codable, Equatable {
     var subject: String         // the one object the icon shows, e.g. "a yellow legal pad with a red pencil"
     var symbol: String          // SF Symbol shown until (or instead of) generated artwork
     var background: String      // a name from Icons.backgrounds
-    var tint: String            // hex main colour of the object; colours the symbol on light backgrounds
+    var tint: String            // hex main color of the object; colors the symbol on light backgrounds
 
     init(subject: String, symbol: String, background: String, tint: String) {
         self.subject = subject
@@ -20,7 +20,7 @@ struct IconSpec: Codable, Equatable {
 
     private enum Keys: String, CodingKey { case subject, symbol, background, tint, art_prompt, foreground }
 
-    /// Also reads the older format (`art_prompt`, a two-colour `background`, `foreground`).
+    /// Also reads the older format (`art_prompt`, a two-color `background`, `foreground`).
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         symbol = try c.decode(String.self, forKey: .symbol)
@@ -168,7 +168,7 @@ enum Icons {
         try? encoder.encode(spec).write(to: specURL(project))
     }
 
-    /// Artwork depends on the subject and the colours it was painted to sit on.
+    /// Artwork depends on the subject and the colors it was painted to sit on.
     static func artURL(_ project: LampProject, spec: IconSpec) -> URL {
         let key = "v2|\(spec.subject.trimmed)|\(background(named: spec.background).name)|\(spec.tint.trimmed.lowercased())"
         let hash = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16)
@@ -199,7 +199,7 @@ enum Icons {
         "symbol": "<an SF Symbols name that really exists and is closest to the subject, e.g. note.text, camera.fill, timer>", \
         "background": "<one of: \(names)>", "tint": "#RRGGBB"}
         Pick a background that suits the app's mood and lets the object stand out. Most great icons use white, \
-        graphite or one saturated colour. tint is the object's main colour and must contrast with the background.
+        graphite or one saturated color. tint is the object's main color and must contrast with the background.
         """
         if let current, let json = try? String(data: JSONEncoder().encode(current), encoding: .utf8) {
             prompt += "\nMake it clearly different from the current icon (a different object and background): \(json)"
@@ -211,7 +211,7 @@ enum Icons {
             if NSImage(systemSymbolName: spec.symbol, accessibilityDescription: nil) != nil, color(hex: spec.tint) != nil {
                 return spec
             }
-            prompt += "\n\"\(spec.symbol)\" is not a valid SF Symbol name, or tint isn't a #RRGGBB colour. Fix it."
+            prompt += "\n\"\(spec.symbol)\" is not a valid SF Symbol name, or tint isn't a #RRGGBB color. Fix it."
         }
         return fallback(for: project.name)
     }
@@ -224,7 +224,7 @@ enum Icons {
 
     // MARK: Rendering
 
-    /// The foreground layer: the object (artwork, or the SF Symbol) centred on a transparent 1024px canvas,
+    /// The foreground layer: the object (artwork, or the SF Symbol) centered on a transparent 1024px canvas,
     /// sized to Apple's grid so every icon has the same breathing room.
     static func foregroundLayer(_ spec: IconSpec, art: NSImage?) -> NSBitmapImageRep {
         canvas(1024) { rect in
@@ -293,7 +293,7 @@ enum Icons {
     }
 
     /// The same icon for iPhone and iPad, where the system rounds the corners and wants an opaque square: the
-    /// tile's own gradient goes on behind it, so its transparent corners fill with the same colours, and the tile
+    /// tile's own gradient goes on behind it, so its transparent corners fill with the same colors, and the tile
     /// is drawn a little larger than the canvas so its rounded rim falls outside.
     static func square(_ spec: IconSpec, tile: NSImage) -> NSBitmapImageRep {
         let bg = background(named: spec.background)
@@ -303,7 +303,7 @@ enum Icons {
         }
     }
 
-    /// Places a full-bleed tile on Apple's macOS grid: an 824pt square centred on a 1024pt canvas, with shadow.
+    /// Places a full-bleed tile on Apple's macOS grid: an 824pt square centered on a 1024pt canvas, with shadow.
     static func onGrid(_ tile: NSImage, size: Int) -> NSBitmapImageRep {
         canvas(size) { rect in
             let s = rect.width / 1024
@@ -411,7 +411,7 @@ enum Icons {
         - one clear, tangible object and nothing else: no scene, extra props, text, letters or second rounded tile
         - a simple, bold silhouette that still reads at 32px
         - clean edges with no leftover background, halo or cut-off parts
-        - calm, harmonious colour that stands out against the background
+        - calm, harmonious color that stands out against the background
         - polished and native-looking next to Apple's own icons
         Reply as JSON: {"scores": [<1-10 for each icon, in order>], "best": <number of the best icon, from 1>, \
         "why": "<one short sentence>"}
@@ -431,10 +431,10 @@ enum Icons {
         let bg = background(named: spec.background)
         let prompt = """
         A single \(spec.subject), drawn as the object for a macOS app icon in Apple's own icon style: one tangible \
-        object with a simple, instantly recognisable silhouette, smooth rounded forms, subtle soft gradients and \
-        gentle light from above, front or slight three-quarter view. Two or three colours at most, mainly \
-        \(spec.tint), chosen to stand out against a \(bg.name) background. The object alone, centred, filling about \
-        70% of the frame, on a plain flat light grey background. No scene, no ground, no cast shadow, no \
+        object with a simple, instantly recognizable silhouette, smooth rounded forms, subtle soft gradients and \
+        gentle light from above, front or slight three-quarter view. Two or three colors at most, mainly \
+        \(spec.tint), chosen to stand out against a \(bg.name) background. The object alone, centered, filling about \
+        70% of the frame, on a plain flat light gray background. No scene, no ground, no cast shadow, no \
         background elements, no text, no letters, no border, no frame, no rounded square tile, no app icon shape.
         """
         return try await AppAI.image(prompt: prompt, references: [], aspectRatio: "1:1", model: iconModel).0
@@ -512,7 +512,7 @@ enum Icons {
         return rep
     }
 
-    /// Draws an image centred in `rect`, scaled so its longer side is `side`.
+    /// Draws an image centered in `rect`, scaled so its longer side is `side`.
     private static func draw(_ image: NSImage, fittingSide side: CGFloat, in rect: NSRect) {
         let scale = min(side / image.size.width, side / image.size.height)
         let drawn = NSSize(width: image.size.width * scale, height: image.size.height * scale)
@@ -520,7 +520,7 @@ enum Icons {
                               width: drawn.width, height: drawn.height))
     }
 
-    /// Icon Composer's colour notation, e.g. "srgb:0.00000,0.47843,1.00000,1.00000".
+    /// Icon Composer's color notation, e.g. "srgb:0.00000,0.47843,1.00000,1.00000".
     private static func composerColor(_ hex: String) -> String {
         let c = color(hex: hex)?.usingColorSpace(.sRGB) ?? .white
         return "srgb:" + [c.redComponent, c.greenComponent, c.blueComponent, 1].map { String(format: "%.5f", $0) }

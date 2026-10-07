@@ -300,9 +300,9 @@ extension Sharing {
         "capabilities": ["<what it accesses or does on the Mac, in plain words>"], \
         "concerns": ["<anything suspicious, dangerous, hidden, or not matching its description>"], \
         "risk": "low" | "medium" | "high"}
-        low = ordinary app behaviour. medium = powerful but plausible for its purpose (running commands, sending \
+        low = ordinary app behavior. medium = powerful but plausible for its purpose (running commands, sending \
         data to third-party servers, deleting files). high = sends personal data elsewhere, touches credentials, \
-        SSH keys or browser data, hides or obfuscates behaviour, installs itself to run in the background, or does \
+        SSH keys or browser data, hides or obfuscates behavior, installs itself to run in the background, or does \
         things unrelated to its stated purpose. Keep each list item under 15 words. Use [] when there's nothing.
         """
         let prompt = "App name: \(package.name)\n\nDescription (APP.md):\n\(about.prefix(4000))\n\nCode:\n\(code)"

@@ -1729,7 +1729,7 @@ enum Template {
                     return "pressed return: saved as \(panel.url?.path ?? panel.nameFieldStringValue)"
                 case ("key", "escape"):
                     panel.cancel(nil)
-                    return "pressed escape: cancelled the panel"
+                    return "pressed escape: canceled the panel"
                 default:
                     return "\(action.action): " + filePanel(panel)
                 }
@@ -1960,7 +1960,7 @@ enum Template {
                     fill(submenu)
                     return "\"\(item.title)\" is a submenu with\n" + list(submenu, depth: 1)
                 } else {
-                    guard item.isEnabled else { return "\"\(item.title)\" is greyed out right now" }
+                    guard item.isEnabled else { return "\"\(item.title)\" is grayed out right now" }
                     menu.performActionForItem(at: index)
                     return "picked \"\(item.title)\""
                 }
@@ -1968,14 +1968,14 @@ enum Template {
             return "nothing to pick"
         }
 
-        /// A menu's items, one per line, with what's ticked or greyed out.
+        /// A menu's items, one per line, with what's ticked or grayed out.
         private static func list(_ menu: NSMenu, depth: Int, indent: String = "  ", skipFirst: Bool = false) -> String {
             var lines: [String] = []
             // A pull-down menu's first item is its own title.
             for item in menu.items.dropFirst(skipFirst ? 1 : 0) where !item.isSeparatorItem && !item.isHidden && !item.title.isEmpty {
                 var line = indent + "\"\(item.title)\""
                 if item.state == .on { line += " (ticked)" }
-                if !item.isEnabled, item.submenu == nil { line += " (greyed out)" }
+                if !item.isEnabled, item.submenu == nil { line += " (grayed out)" }
                 if !item.keyEquivalent.isEmpty, item.submenu == nil { line += "  " + shortcut(item) }
                 lines.append(line)
                 if let submenu = item.submenu, depth > 1, lines.count < 80 {
@@ -2128,7 +2128,7 @@ enum Template {
     private func JSContextGroupSetExecutionTimeLimit(_ group: JSContextGroupRef?, _ limit: Double,
                                                      _ callback: JSShouldTerminateCallback?, _ context: UnsafeMutableRawPointer?)
 
-    /// Behaviour the AI writes while the app runs: small JavaScript functions against an API the app exposes.
+    /// Behavior the AI writes while the app runs: small JavaScript functions against an API the app exposes.
     /// Use it when the app needs logic nobody wrote in advance: what happens when two invented objects meet,
     /// how a new kind of actor behaves, a rule the person just described. The AI gets the exposed functions'
     /// names and docs and writes the function body; the app runs it in a sealed JavaScript context.
@@ -2147,7 +2147,7 @@ enum Template {
     ///     try await world.run(rule, with: [a.dictionary, b.dictionary])
     ///
     /// Scripts run in a context that only has what the app exposed plus plain JavaScript (no files, network or
-    /// Mac access), with a time limit. `write` caches scripts by key in LampStore, so a behaviour is written
+    /// Mac access), with a time limit. `write` caches scripts by key in LampStore, so a behavior is written
     /// once and reused; `forget(key)` throws one away. Keep the exposed API small and well described: that's
     /// what makes the AI's scripts correct. Keep movement, rendering and physics in Swift; scripts decide what
     /// should happen, not how to draw it. Report script errors to the person only when it matters to them.
@@ -2259,7 +2259,7 @@ enum Template {
             if let running = pending[key] { return try await running.value }
             let task = Task<Script, Error> { @MainActor in
                 let system = """
-                You help a Mac app add behaviour while it runs by writing a small JavaScript function. \
+                You help a Mac app add behavior while it runs by writing a small JavaScript function. \
                 \(purpose.isEmpty ? "" : purpose + " ")The app offers these functions:
                 \(apiDescription)
 
@@ -2426,7 +2426,7 @@ enum Template {
     /// Lamp drives those apps in the background and returns the answer as text. Use it when the information
     /// lives in another app and there's no file or API to read instead.
     ///
-    ///     let brief = try await LampComputer.ask("Summarise the LinkedIn profile open in Chrome as a prospect brief")
+    ///     let brief = try await LampComputer.ask("Summarize the LinkedIn profile open in Chrome as a prospect brief")
     ///     let recent = try await LampComputer.ask("List the 5 newest emails in Gmail in Chrome as JSON: [{from, subject, time}]")
     ///     try await LampComputer.perform("In Slack, open #sales and post: Demo moved to 3pm")
     ///
@@ -2455,7 +2455,7 @@ enum Template {
 
     /// AI for this app, using the same AI account as Lamp. No API keys needed.
     ///
-    ///     let summary = try await LampAI.ask("Summarise these notes:\n\(notes)")
+    ///     let summary = try await LampAI.ask("Summarize these notes:\n\(notes)")
     ///
     ///     struct Items: Decodable { let items: [String] }
     ///     let result = try await LampAI.ask("Extract action items from:\n\(notes)\n" +
@@ -2474,7 +2474,7 @@ enum Template {
     ///     let combined = try await LampAI.editImages([person, beach], "put the person from the first photo on this beach")
     ///
     /// Make quick decisions with a decision model (Jev): probabilities and confidence, not text.
-    /// Use these to classify, route, filter, prioritise, match or moderate anything by its meaning.
+    /// Use these to classify, route, filter, prioritize, match or moderate anything by its meaning.
     /// They're smart, answer in well under a second and cost about $0.04 per million input tokens, so judging
     /// every item (hundreds of files, messages or rows) is fine and costs a fraction of a cent. Prefer them to
     /// keyword lists or hand-written rules that guess at meaning; keep exact facts (sizes, dates) in code and
@@ -2509,7 +2509,7 @@ enum Template {
     /// `data:`, and Lamp fences it off so the AI works on it without obeying it. For decisions, put it in
     /// `about:` and keep the question your own words. Don't write filters or regexes to scrub such text.
     ///
-    ///     let summary = try await LampAI.ask("Summarise this notification in one line.", data: notification.body)
+    ///     let summary = try await LampAI.ask("Summarize this notification in one line.", data: notification.body)
     ///
     /// Dates: `ask` already tells the AI the current date, time and time zone, with a calendar of the weeks
     /// around today so "Thursday" or "a week from Sunday" lands on the right day. When a date goes to the AI, write
@@ -3128,7 +3128,7 @@ enum Template {
     ///     @State private var hotKey = LampHotKey("cmd+shift+space") { LampWindows.show() }
     ///
     /// Keys: a–z, 0–9, space, return, tab, escape, delete, up, down, left, right, f1–f12, and - = [ ] ; ' , . / `
-    /// Modifiers: cmd, shift, option (or alt), control (or ctrl). Returns nil if the key isn't recognised
+    /// Modifiers: cmd, shift, option (or alt), control (or ctrl). Returns nil if the key isn't recognized
     /// or another app already uses the shortcut.
     final class LampHotKey {
         private var ref: EventHotKeyRef?
@@ -3236,7 +3236,7 @@ enum Template {
             return ""
         }
 
-        /// Each page's text; pages with no text layer (scans) are recognised from their image.
+        /// Each page's text; pages with no text layer (scans) are recognized from their image.
         static func readPDF(_ url: URL) async -> String {
             guard let document = PDFDocument(url: url) else { return "" }
             var pages: [String] = []
@@ -3405,7 +3405,7 @@ enum Template {
     ///     let today = try await LampCalendar.events(from: .now, to: .now.addingTimeInterval(86400))
     ///     try await LampCalendar.add("Call with Sam", start: date, end: date.addingTimeInterval(1800), notes: "…")
     ///     let open = try await LampReminders.open()
-    ///     let sam = try await LampContacts.search("Sam")             // name, emails, phones, organisation
+    ///     let sam = try await LampContacts.search("Sam")             // name, emails, phones, organization
     ///
     /// Each call asks for permission if it hasn't been granted and throws a plain message if it was refused
     /// ("…was refused. Allow it in System Settings → Privacy & Security → Calendars."; "Settings" on a phone).
@@ -3539,7 +3539,7 @@ enum Template {
         struct Contact: Identifiable {
             let id: String
             let name: String
-            let organisation: String?
+            let organization: String?
             let jobTitle: String?
             let emails: [String]
             let phones: [String]
@@ -3582,7 +3582,7 @@ enum Template {
 
         private static func convert(_ c: CNContact) -> Contact {
             Contact(id: c.identifier, name: CNContactFormatter.string(from: c, style: .fullName) ?? "",
-                    organisation: c.organizationName.isEmpty ? nil : c.organizationName,
+                    organization: c.organizationName.isEmpty ? nil : c.organizationName,
                     jobTitle: c.jobTitle.isEmpty ? nil : c.jobTitle,
                     emails: c.emailAddresses.map { $0.value as String }, phones: c.phoneNumbers.map { $0.value.stringValue },
                     note: nil)

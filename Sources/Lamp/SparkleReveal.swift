@@ -206,7 +206,7 @@ private struct SparkleEmitter: NSViewRepresentable {
         return cell
     }
 
-    /// Silver: a cool grey, dark enough to show on a white page, with red and blue each nudged a little either
+    /// Silver: a cool gray, dark enough to show on a white page, with red and blue each nudged a little either
     /// way for every particle, so some lean warm and yellow and some cool and blue.
     private static func silver(_ cell: CAEmitterCell, alpha: CGFloat, lighter: CGFloat = 0) {
         cell.color = NSColor(red: 0.68 + lighter, green: 0.69 + lighter, blue: 0.71 + lighter, alpha: alpha).cgColor
@@ -215,7 +215,7 @@ private struct SparkleEmitter: NSViewRepresentable {
         cell.blueRange = 0.13
     }
 
-    // The particles are white, tinted by each cell's colour.
+    // The particles are white, tinted by each cell's color.
 
     /// A point of light: a bright core in a soft halo.
     private static let dot: CGImage? = image { context, size in

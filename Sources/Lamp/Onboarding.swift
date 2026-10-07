@@ -37,7 +37,7 @@ private enum Step: Int, CaseIterable {
     }
 }
 
-/// Lamp's colours: near-black ink on a warm white page, where the porcelain lamp behind the welcome sits.
+/// Lamp's colors: near-black ink on a warm white page, where the porcelain lamp behind the welcome sits.
 private enum Palette {
     static let ground = Color(nsColor: LampBackdrop.page)
     static let accent = Color(red: 0.2, green: 0.19, blue: 0.18)
@@ -1095,7 +1095,7 @@ private extension View {
 // MARK: - Window
 
 /// Settings waits until the welcome is done: everything it would offer is set up in the welcome itself.
-/// A menu item without an action is greyed out, and so is its ⌘, shortcut.
+/// A menu item without an action is grayed out, and so is its ⌘, shortcut.
 enum SettingsMenu {
     private static let open = Selector(("showSettingsWindow:"))
 

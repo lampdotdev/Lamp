@@ -94,7 +94,7 @@ enum AppName {
     private static let prompt = """
     Name a small Mac app from what its user asked for.
 
-    First, check whether the user already named it. A name is usually a capitalised phrase used as a title, \
+    First, check whether the user already named it. A name is usually a capitalized phrase used as a title, \
     often at the very start ("Lucide Picker, an app that…", "Build Tally: a counter…", "make me an app called \
     Brew Log"). If they named it, use their name exactly as they wrote it, even if it includes a brand or \
     product name. Their choice beats every rule below.

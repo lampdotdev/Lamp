@@ -259,7 +259,7 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
     }
 }
 
-/// The checks as the few things a person would recognise, each with what it is. The detector's steps sit
+/// The checks as the few things a person would recognize, each with what it is. The detector's steps sit
 /// behind them: which agreement or download is missing is said in the step's own instructions.
 private enum PhoneSetupStage: CaseIterable {
     case xcode, software, simulator, phone

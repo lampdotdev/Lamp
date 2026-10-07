@@ -1,4 +1,4 @@
-/// Store and Provider use these same phrases that the bug reporter recognises, so editing the
+/// Store and Provider use these same phrases that the bug reporter recognizes, so editing the
 /// user-facing wording cannot silently disconnect it from the privacy-safe report summaries.
 enum ErrorMessages {
     static let buildFailed = "Sorry, I couldn't get that change working. Try describing it differently, or press Undo."

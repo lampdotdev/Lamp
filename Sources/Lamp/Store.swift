@@ -205,7 +205,7 @@ final class Store: ObservableObject {
 
         var isWorking: Bool { agent != nil || build != nil }
 
-        /// Stops what's running. Returns the processes signalled, for a caller that waits for them (quit).
+        /// Stops what's running. Returns the processes signaled, for a caller that waits for them (quit).
         @discardableResult func cancel() -> [pid_t] {
             stopped = true
             allowAll = false
@@ -237,7 +237,7 @@ final class Store: ObservableObject {
     var isWorking: Bool { turns.values.contains(where: \.isWorking) }
 
     /// Stops every agent and build, as when Lamp quits: otherwise they'd carry on without it. Returns the
-    /// processes signalled, so quitting can wait until they're gone.
+    /// processes signaled, so quitting can wait until they're gone.
     func stopAll() -> [pid_t] {
         var pids: [pid_t] = []
         for project in projects {

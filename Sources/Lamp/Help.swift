@@ -117,7 +117,7 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
         case .versions:
             [
                 HelpSection(title: "Undo a change", text: "Click Undo Last Change in the toolbar to go back to the version before the last change. Click it again to step further back. If a change was stopped or failed to build, Undo discards that unfinished change first. The agent keeps its conversation and is told to reread the app before its next change."),
-                HelpSection(title: "Keep a version you like", text: "Choose File → Name This Version… (⌘S) to give the current version a name you will recognise later."),
+                HelpSection(title: "Keep a version you like", text: "Choose File → Name This Version… (⌘S) to give the current version a name you will recognize later."),
                 HelpSection(title: "Return to an earlier version", text: "Click Versions in the toolbar to see earlier versions, name them and go back to one. You can also point at one of your requests in the chat and click the clock beside it to go back to before or after that change. Going back changes the app's code and keeps the data saved in the app. Later versions are kept, so you can undo it.")
             ]
         case .sharing:
