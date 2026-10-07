@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import QuickLook
 import UniformTypeIdentifiers
 
 /// The chat input: a native text view so Lamp controls the keys and the clipboard.
@@ -269,15 +270,21 @@ final class ComposerTextView: NSTextView {
     }
 }
 
-/// A pending attachment in the composer, with a remove button.
+/// An attachment, in the composer (with a remove button) or the chat. Clicking it shows it in Quick Look.
 struct AttachmentChip: View {
     let url: URL
+    /// The attachments it was sent or is going with, which the arrow keys step through in Quick Look.
+    var siblings: [URL] = []
     var onRemove: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 6) {
-            AttachmentThumbnail(url: url, size: 28)
-            Text(url.lastPathComponent).lineLimit(1).truncationMode(.middle).frame(maxWidth: 160, alignment: .leading)
+            AttachmentPreview(url: url, siblings: siblings) {
+                HStack(spacing: 6) {
+                    AttachmentThumbnail(url: url, size: 28)
+                    Text(url.lastPathComponent).lineLimit(1).truncationMode(.middle).frame(maxWidth: 160, alignment: .leading)
+                }
+            }
             if let onRemove {
                 Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                     .buttonStyle(.plain)
@@ -287,6 +294,28 @@ struct AttachmentChip: View {
         .font(.caption)
         .padding(4)
         .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 7))
+    }
+}
+
+/// Shows an attachment in Quick Look when clicked, the way Finder does with the space bar, instead of
+/// opening another app over Lamp. The arrow keys go through `siblings`, and the right-click menu still
+/// opens it or shows it in the Finder.
+struct AttachmentPreview<Label: View>: View {
+    let url: URL
+    var siblings: [URL] = []
+    @ViewBuilder let label: Label
+    @State private var previewing: URL?
+
+    var body: some View {
+        Button { previewing = url } label: { label.contentShape(Rectangle()) }
+            .buttonStyle(.plain)
+            .help(url.lastPathComponent)
+            .quickLookPreview($previewing, in: siblings.contains(url) ? siblings : [url])
+            .contextMenu {
+                Button("Quick Look") { previewing = url }
+                Button("Open") { NSWorkspace.shared.open(url) }
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            }
     }
 }
 
