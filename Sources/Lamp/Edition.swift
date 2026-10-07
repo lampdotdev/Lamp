@@ -12,6 +12,11 @@ enum Experiments {
     /// Those apps on the person's own iPhone or iPad, signed with their Apple account through Xcode, with
     /// Lamp answering their AI calls over the local network.
     static var devices: Bool { iosApps && UserDefaults.standard.bool(forKey: "experimentDevices") }
+    /// Those apps keep a copy of the person's OpenRouter (and TypeSafe) key in the phone's Keychain, so their
+    /// AI works away from the Mac. On by default once phones are; off keeps every call going through Lamp.
+    static var keyOnPhone: Bool {
+        devices && (UserDefaults.standard.object(forKey: "experimentKeyOnPhone") as? Bool ?? true)
+    }
 }
 
 enum Edition {

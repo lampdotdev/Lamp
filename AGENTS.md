@@ -107,6 +107,14 @@ simulator: the phone's screen can't be photographed. The app reaches Lamp's gate
 name (`Devices.macHost`, the `{{MACHOST}}` placeholder, chosen in LampSupport by `targetEnvironment`): the
 gateway also listens on the network while the switch is on (`Gateway.setLocalNetwork`), marks those
 requests, and admits them only to the app routes with the Mac's own name as Host (`Store.isMacHost`).
+Away from the Mac, a phone app answers for itself (`LampDirect` in LampSupport, device builds only): `post`
+first asks `/ai/keys` with a four-second timeout, at most every half minute; while the Mac answers, the
+call goes through Lamp as ever and the reply (the OpenRouter key, the TypeSafe key when decisions go there,
+and the app's model choices, served by `Store.keysForPhone` only for iPhone apps while
+`Experiments.keyOnPhone` is on) is kept in the phone's Keychain; when it doesn't, `LampDirect.handle` does
+what the gateway would with the provider directly (chat completions with the JSON retry, systemone
+decisions, images). The prompt's fencing and dates are made in the library either way. What's spent this
+way isn't recorded in Lamp, and `/ai/computer` says it needs the Mac.
 
 ## Generated apps
 

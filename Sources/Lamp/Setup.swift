@@ -544,6 +544,7 @@ struct ExperimentalSettings: View {
     @EnvironmentObject private var store: Store
     @AppStorage("experimentIOSApps") private var iosApps = false
     @AppStorage("experimentDevices") private var devices = false
+    @AppStorage("experimentKeyOnPhone") private var keyOnPhone = true
     @AppStorage("appleTeam") private var team = ""
     @State private var teams: [(id: String, name: String)] = []
 
@@ -563,6 +564,17 @@ struct ExperimentalSettings: View {
                             .padding(.leading, 20)
                     }
                     .padding(.leading, 20)
+                    if devices {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Toggle("Keep my API key on the device", isOn: $keyOnPhone)
+                            Text(keyOnPhone
+                                 ? "The app's AI works away from this Mac, with your OpenRouter key kept in the device's Keychain. What it spends then isn't shown in Lamp."
+                                 : "The app's AI goes through Lamp, so the device must be on this Mac's Wi‑Fi with Lamp open.")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .padding(.leading, 20)
+                        }
+                        .padding(.leading, 40)
+                    }
                 }
             }
             .toggleStyle(.checkbox)

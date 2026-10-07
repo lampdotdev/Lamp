@@ -8,6 +8,9 @@ plain "Lamp x.y.z" line.
 ## Unreleased
 
 - Pictures are made with Nano Banana 2.1, Google's newest image model, unless you pick another in Settings → AI.
+- Apps on your own iPhone or iPad work away from your Mac: while the Mac is reachable their AI goes through
+  Lamp as before, and elsewhere they use your OpenRouter key themselves, kept in the phone's Keychain since
+  they last saw Lamp. A switch in Settings → Experimental turns that off.
 
 ## 0.9.3
 

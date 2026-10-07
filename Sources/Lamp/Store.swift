@@ -2854,7 +2854,7 @@ final class Store: ObservableObject {
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
-        let paths = ["/ai", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
+        let paths = ["/ai", "/ai/keys", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
                      "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/mcp", "/pi/key"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
@@ -3002,6 +3002,7 @@ final class Store: ObservableObject {
     /// The routes a running app uses: text, pictures, decisions, and using the other apps on the Mac.
     private func appRequest(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
         if request.path == "/ai/computer" { return await useComputer(for: project, request: request.body) }
+        if request.path == "/ai/keys" { return keysForPhone(project) }
         if request.path == "/ai/decide" {
             guard let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any],
                   let state = body["state"], let questions = body["questions"] as? [String: Any], !questions.isEmpty else {
@@ -3051,6 +3052,25 @@ final class Store: ObservableObject {
         } catch {
             return (502, ["error": "Couldn't reach the AI: \(error.localizedDescription)"])
         }
+    }
+
+    /// What an app on the person's own phone keeps so its AI works away from the Mac (Settings → Experimental):
+    /// the OpenRouter key, the TypeSafe key when decisions go there, and the models the app is set to. Only for
+    /// iPhone apps, only while the switch is on; a Mac app or the simulator never needs it, and the key stays
+    /// in the phone's Keychain, put there by the app itself.
+    private func keysForPhone(_ project: LampProject) -> (Int, [String: Any]) {
+        guard project.platform == .iphone, Experiments.keyOnPhone else { return (403, ["error": "Not for this app."]) }
+        guard let key = KeyStore.openRouterKey else { return (404, ["error": "There's no OpenRouter key to keep."]) }
+        let models = AppModels.load(project)
+        let decision = AppAI.decisionModels.first { $0.id == models.decision } ?? AppAI.decisionModel
+        var reply: [String: Any] = [
+            "openrouter": key,
+            "text_model": AppAI.model(for: models.text).openRouter,
+            "image_model": Icons.artModels.contains { $0.id == models.image } ? models.image! : Icons.artModels[0].id,
+            "decision_model": decision.model, "decision_provider": decision.provider,
+        ]
+        if decision.provider == "typesafe", let typesafe = KeyStore.key(for: "typesafe") { reply["typesafe"] = typesafe }
+        return (200, reply)
     }
 
     /// `LampComputer.ask` / `.perform` from an app: a task done with the other apps on the Mac (see ComputerUse).
