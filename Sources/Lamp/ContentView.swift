@@ -491,11 +491,6 @@ struct ProjectView: View {
                 // Part of the bottom panel, set off from the message box the way the chat is.
                 Divider()
             }
-            if replacing != nil {
-                SendingAgainMark(onCancel: putBack)
-                    .padding(.horizontal, 12).padding(.top, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
             if !attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -516,7 +511,11 @@ struct ProjectView: View {
                 Composer(text: $draft, height: $composerHeight,
                          placeholder: busy ? "Working… describe the next change"
                             : lines.isEmpty ? "Describe an app…" : "Describe a change…",
-                         suggestion: shownSuggestion, onDismissSuggestion: { dismissedSuggestion = suggestion },
+                         // No suggestion while a request from the chat is in the box: it would be about a turn
+                         // that's on its way out, and Escape, which dismisses one, puts the request back instead.
+                         suggestion: replacing == nil ? shownSuggestion : nil,
+                         onDismissSuggestion: { dismissedSuggestion = suggestion },
+                         onEscape: replacing == nil ? nil : putBack,
                          isEnabled: true, focusRequest: focusRequest,
                          onSubmit: send, onFiles: { attachments.append(contentsOf: $0) })
                     .frame(height: composerHeight)
@@ -637,6 +636,8 @@ struct ProjectView: View {
     }
 
     /// Not sending it again after all: the chat is as it was, and so is the message box.
+    /// Escape in the message box does this. Emptying the box doesn't: that's how someone starts the request
+    /// over in new words.
     private func putBack() {
         replacing = nil
         sendProblem = nil

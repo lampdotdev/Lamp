@@ -105,7 +105,7 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
                 HelpSection(title: "Ask for a change", text: "Select an app in the sidebar and describe the change in its chat. Be specific about what happens now and what you want instead. Lamp rebuilds the app and reopens it, keeping its data."),
                 HelpSection(title: "Show what you mean", text: "Attach screenshots, documents or data with the paperclip, drag them onto the chat, or paste a copied image or file. Say what Lamp should use from each attachment."),
                 HelpSection(title: "While Lamp is working", text: "You can keep typing. Messages you send wait until the current change is finished, then go out together; click the ✕ beside a waiting message to take it back. Click Stop, beside the Send button, to cancel the change in progress. Turn on Agent Details in the toolbar to see each step the agent takes."),
-                HelpSection(title: "Change a message you already sent", text: "Click the circular arrow beside one of your messages in the chat: it is always there on your latest message, and appears on earlier ones when you point at them. The message moves into the message box, and it and everything after it step out of the chat. Change the words and send as usual. The app then goes back to how it was before that message and Lamp makes the change you asked for instead. The versions made in between are still listed under Versions. If you change your mind before sending, click the ✕ above the message box and everything is back as it was."),
+                HelpSection(title: "Change a message you already sent", text: "Click the pencil beside one of your messages in the chat: it is always there on your latest message, and appears on earlier ones when you point at them. The message moves into the message box, and it and everything after it step out of the chat. Change the words and send as usual. The app then goes back to how it was before that message and Lamp makes the change you asked for instead. The versions made in between are still listed under Versions. If you change your mind before sending, press Escape in the message box and the chat is back as it was."),
                 HelpSection(title: "Open or quit an app", text: "Click Open App (the Play button) in the toolbar. While the app is open, that button becomes Quit App. You can also right-click the app in the sidebar and choose Open or Quit, or Rebuild & Open to build it again from its code. Double-click an open app in the sidebar to bring it to the front.")
             ]
         case .versions:
@@ -138,7 +138,7 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
             ]
         case .shortcuts:
             [
-                HelpSection(title: "In Lamp", text: "⌘N — New App\n⌘O — Import Shared App\n⌘S — Name This Version\n⇧⌘C — Copy App File\n⌘, — Settings\n⌘/ — Lamp Help\n⇧⌘/ — Search the Help menu"),
+                HelpSection(title: "In Lamp", text: "⌘N — New App\n⌘O — Import Shared App\n⌘S — Name This Version\n⇧⌘C — Copy App File\n⌘, — Settings\n⌘/ — Lamp Help\n⇧⌘/ — Search the Help menu\nEscape — Put back a message you took from the chat to change"),
                 HelpSection(title: "In the chat", text: "Return — Send a message\nShift-Return — Add a new line\n⌘V — Paste text, or attach a copied image or file\nTab — Use the suggested next request\nEsc — Dismiss the suggestion"),
                 HelpSection(title: "In an app built with Lamp", text: "⇧⌘E — Edit with Lamp")
             ]

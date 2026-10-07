@@ -6,12 +6,14 @@ import UniformTypeIdentifiers
 /// Return sends, Shift/Option/Control-Return insert a new line, and pasting or dropping
 /// files or images (e.g. a screenshot) attaches them instead of inserting text.
 /// A `suggestion` replaces the placeholder while the composer is empty: Tab accepts it, Escape dismisses it.
+/// `onEscape`, when there is one, gets Escape first: it's how a request taken back from the chat is put back.
 struct Composer: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
     var placeholder: String
     var suggestion: String? = nil
     var onDismissSuggestion: () -> Void = {}
+    var onEscape: (() -> Void)? = nil
     var isEnabled: Bool
     var focusRequest: Int
     var onSubmit: () -> Void
@@ -65,6 +67,7 @@ struct Composer: NSViewRepresentable {
         textView.placeholder = suggestion ?? placeholder
         textView.suggestion = suggestion
         textView.onDismissSuggestion = onDismissSuggestion
+        textView.onEscape = onEscape
         textView.setAccessibilityPlaceholderValue(textView.placeholder)
         textView.setAccessibilityHelp(suggestion == nil ? nil : "Press Tab to use the suggestion, or Escape to dismiss it.")
         textView.isEditable = isEnabled
@@ -108,6 +111,7 @@ final class ComposerTextView: NSTextView {
     var placeholder = ""
     var suggestion: String?
     var onDismissSuggestion: (() -> Void)?
+    var onEscape: (() -> Void)?
     var onSubmit: (() -> Void)?
     var onFiles: (([URL]) -> Void)?
     var onWidthChange: (() -> Void)?
@@ -115,6 +119,12 @@ final class ComposerTextView: NSTextView {
     private var showsSuggestion: Bool { string.isEmpty && suggestion != nil }
 
     override func keyDown(with event: NSEvent) {
+        // Left alone while an input method is composing, where Escape belongs to it.
+        if event.keyCode == 53, let onEscape, !hasMarkedText(),
+           event.modifierFlags.intersection([.shift, .option, .control, .command]).isEmpty {
+            onEscape()
+            return
+        }
         if showsSuggestion, !hasMarkedText(),
            event.modifierFlags.intersection([.shift, .option, .control, .command]).isEmpty {
             switch event.keyCode {

@@ -173,23 +173,6 @@ enum ChatItem: Identifiable {
     }
 }
 
-/// The mark above the message box while a request taken back from the chat is in it, with the way out.
-struct SendingAgainMark: View {
-    let onCancel: () -> Void
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "arrow.clockwise")
-            Text("Editing message")
-            Button(action: onCancel) { Image(systemName: "xmark.circle.fill") }
-                .buttonStyle(.plain)
-                .help("Put the message back in the chat")
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    }
-}
-
 struct Transcript: View {
     let lines: [LogLine]
     let dir: URL
@@ -300,7 +283,7 @@ struct LogRow: View, Equatable {
                         .help("Go back to how the app was around this request")
                     }
                     if let sendAgain, line.canSendAgain {
-                        Button { sendAgain(line) } label: { Image(systemName: "arrow.clockwise") }
+                        Button { sendAgain(line) } label: { Image(systemName: "pencil") }
                             .buttonStyle(.plain)
                             .foregroundStyle(.secondary)
                             .opacity(hovered || isLatestRequest ? 1 : 0)

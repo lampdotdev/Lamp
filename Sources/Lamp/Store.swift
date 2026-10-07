@@ -40,6 +40,8 @@ struct LogLine: Identifiable, Codable, Equatable {
     var attachments: [String]? = nil   // names in the app's Attachments/ folder
     var version: String? = nil         // for a request: the version it made
     var before: String? = nil          // for a request: the version the app was at when it was sent
+    var replaced: String? = nil        // for a request sent again in other words: the request it took the place of
+    var tookBack: [String]? = nil      // …and every request that left the chat for it, oldest first
 
     /// Lamp knows where the app was before this request, so it can be changed and sent again from there.
     /// Not so for some requests from before that was noted.
@@ -75,6 +77,10 @@ struct QueuedMessage: Identifiable {
     var attachments: [URL] = []
     /// Files already in the app's Attachments folder: those of a request that's sent again.
     var kept: [String] = []
+    /// The request this one takes the place of, when it's one sent again in other words.
+    var replaces: String? = nil
+    /// Every request that left the chat when this one was sent, oldest first.
+    var tookBack: [String] = []
 }
 
 @MainActor
@@ -1000,6 +1006,11 @@ final class Store: ObservableObject {
         for message in messages {
             let names = message.kept + Attachments.save(message.attachments, to: project)
             log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
+            if message.replaces != nil || !message.tookBack.isEmpty, let last = logs[project.id]?.indices.last {
+                logs[project.id]?[last].replaced = message.replaces
+                logs[project.id]?[last].tookBack = message.tookBack.isEmpty ? nil : message.tookBack
+                saveChat(project)
+            }
             saved += names
         }
         return saved
@@ -1032,10 +1043,17 @@ final class Store: ObservableObject {
         }
 
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
-        let notes = Attachments.note(for: saved) + Versions.note(for: project) + Runtime.crashNote(for: project)
-            + Runtime.screenshotNote(for: project)
+        // After a request is sent again the build on disk is still of the code that was just taken back, so
+        // its picture and its crashes say nothing about the files the agent has now.
+        let sentAgain = messages.contains { $0.replaces != nil || !$0.tookBack.isEmpty }
+        let notes = Attachments.note(for: saved) + Versions.note(for: project)
+            + (sentAgain ? "" : Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project))
         turns[project.id]?.request = prompt
-        guard await runAgent(prompt + notes, files: files, on: project) else {
+        let ran = await runAgent(prompt + notes, files: files, on: project)
+        // The note about going back is the agent's only word of it, so it's kept until the agent has had it:
+        // a turn that failed before reaching the agent leaves it for the next one.
+        if let last = asked.last, Self.reachedAgent(last, in: logs[project.id] ?? []) { Versions.forgetNote(for: project) }
+        guard ran else {
             return TurnResult(end: .failed, watched: isWatching(project.id))
         }
         // A new app the agent didn't touch: it only replied (say, with questions about a vague request).
@@ -1781,12 +1799,12 @@ final class Store: ObservableObject {
     func restore(_ project: LampProject, to version: AppVersion) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
-        guard await Versions.restore(project, to: version, message: "Restored to “\(version.label)”") else {
+        guard await Versions.restore(project, to: version, message: Versions.restoredMessage(to: version)) else {
             log(project, .status, "The app is already like “\(version.label)”")
             return
         }
         Versions.remember(project, restoredTo: version.label, from: version.date)
-        log(project, .status, "Restored to “\(version.label)”")
+        log(project, .status, Versions.restoredMessage(to: version))
         await rebuild(project, restoredFrom: version)
     }
 
@@ -1817,24 +1835,47 @@ final class Store: ObservableObject {
             log(project, .error, "Lamp couldn't go back to how the app was before that message, so nothing was sent.")
             return false
         }
-        if await Versions.save(project, message: "Restored to “\(target.label)”"), let head = await Versions.head(project) {
+        if await Versions.save(project, message: Versions.restoredMessage(to: target)), let head = await Versions.head(project) {
             Versions.copyPicture(in: project, from: target.id, to: head)
             versionsRevision += 1
         }
         // Requests that went out together made one change, so the ones just before this one go out with it again.
         var first = index
         while first > chat.startIndex, chat[first - 1].kind == .user { first -= 1 }
-        var again = chat[first..<index].map { QueuedMessage(text: $0.text, kept: $0.attachments ?? []) }
+        // They keep what they had taken back themselves: it's the chat's only record of it.
+        var again = chat[first..<index].map {
+            QueuedMessage(text: $0.text, kept: $0.attachments ?? [], replaces: $0.replaced, tookBack: $0.tookBack ?? [])
+        }
         let folder = project.dir.appendingPathComponent(Attachments.folder).standardizedFileURL
         let own = attachments.filter { $0.standardizedFileURL.deletingLastPathComponent() == folder }
+        // What the agent is told was taken back is the first request leaving the chat that it actually had:
+        // this one, or, when this one's own turn never reached it (the model couldn't be reached, say), the
+        // first after it that did. When none did, this one was only standing in for an earlier request, or
+        // for nothing, and sending it again takes back what it was taking back.
+        let had = chat[index...].first { $0.kind == .user && Self.reachedAgent($0.id, in: chat) }
+        let replaces = had.map { Self.label(for: $0) } ?? line.replaced
+        // Everything that leaves the chat with it is something the user decided against (for the suggested
+        // next message), along with what those had taken back in their turn. Not a request that never got
+        // through: that one is only being tried again.
+        let gone = chat[index...].filter { $0.kind == .user }.flatMap { request in
+            (request.tookBack ?? []) + (Self.reachedAgent(request.id, in: chat) ? [Self.label(for: request)] : [])
+        }.filter { $0 != text }
         again.append(QueuedMessage(text: text, attachments: attachments.filter { !own.contains($0) },
-                                   kept: own.map(\.lastPathComponent)))
+                                   kept: own.map(\.lastPathComponent), replaces: replaces, tookBack: gone))
         logs[project.id] = Array(chat[..<first])
         saveChat(project)
         progress[project.id] = nil   // a new app's build card belongs to the request that's gone
-        Versions.remember(project, tookBack: Self.label(for: line))
+        if let replaces { Versions.remember(project, tookBack: replaces) }
         queued[project.id, default: []].insert(contentsOf: again, at: 0)
         return true
+    }
+
+    /// Whether the agent got as far as answering a request or working on it: something of its own follows the
+    /// request in the chat before the next one. A turn that failed first leaves only Lamp's lines there.
+    static func reachedAgent(_ request: UUID, in chat: [LogLine]) -> Bool {
+        guard let index = chat.firstIndex(where: { $0.id == request }) else { return false }
+        return chat[(index + 1)...].drop { $0.kind == .user }.prefix { $0.kind != .user }
+            .contains { $0.kind == .agent || $0.kind == .tool }
     }
 
     /// After a restore: the new version looks like the old one, so it starts with its picture until the app
@@ -2523,7 +2564,7 @@ final class Store: ObservableObject {
             guard await Versions.restoreFiles(project, to: version) else {
                 return (500, ["error": "Lamp couldn't restore that version."])
             }
-            log(project, .status, "Restored to “\(version.label)”")
+            log(project, .status, Versions.restoredMessage(to: version))
             return (200, ["text": """
                 The app's files are now as they were in “\(version.label)”. Your changes earlier in this request \
                 are gone too. Read files again before editing them. Lamp builds and opens the app when you finish.

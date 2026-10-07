@@ -203,11 +203,20 @@ enum Versions {
         try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
     }
 
-    /// The note about a restore since the last request, once: reading it clears it.
+    /// The note about a restore since the last request. It stays until the agent has had it (`forgetNote`).
     static func note(for project: LampProject) -> String {
-        guard let note = try? String(contentsOf: noteURL(project), encoding: .utf8) else { return "" }
+        (try? String(contentsOf: noteURL(project), encoding: .utf8)) ?? ""
+    }
+
+    static func forgetNote(for project: LampProject) {
         try? FileManager.default.removeItem(at: noteURL(project))
-        return note
+    }
+
+    /// What a version made by going back to `version` is called. Going back to one that was itself made by
+    /// going back keeps that one's words, so the name never quotes itself: Restored to “Restored to “…””.
+    static func restoredMessage(to version: AppVersion) -> String {
+        if version.name == nil, version.message.hasPrefix("Restored to “") { return version.message }
+        return "Restored to “\(version.label)”"
     }
 
     /// The history as the agent's `list_versions` tool shows it.
