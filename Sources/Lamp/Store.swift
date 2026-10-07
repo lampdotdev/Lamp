@@ -1020,8 +1020,11 @@ final class Store: ObservableObject {
     /// while the agent builds the first version. Returns the app as it is now.
     private func bootstrap(_ project: LampProject, brief: String) async -> LampProject {
         var project = project
-        if project.untitled, let name = await AppName.suggest(for: brief) {
-            project = await performRename(project, to: name)
+        if project.untitled {
+            let suggestion = await AppName.suggest(for: brief)
+            progress[project.id]?.sketch = suggestion?.sketch ?? []
+            progress[project.id]?.named = true
+            if let name = suggestion?.name { project = await performRename(project, to: name) }
         }
         if Icons.load(project) == nil {
             let designing = project

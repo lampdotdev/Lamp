@@ -87,7 +87,8 @@ enum NextStep {
     }
 }
 
-/// Names an app from the first thing its user asked for. Fails soft: nil keeps it untitled.
+/// Names an app from the first thing its user asked for, and sketches its main parts for the build card
+/// while the agent is still thinking. Fails soft: without a name the app stays untitled.
 @MainActor
 enum AppName {
     private static let prompt = """
@@ -102,15 +103,32 @@ enum AppName {
     words that say what it is or evoke it (Notes, Stopwatch, Calendar, Photo Booth, Night Shift). No "App", \
     "Pro" or "AI" suffix, no made-up portmanteaus, no emoji, and not the name of an existing product or brand.
 
-    Respond with JSON: {"named_by_user": true or false, "name": "..."}
+    Then sketch what it will do: 3 or 4 short phrases, two to six words each, naming its main parts the way \
+    its user would ("Your habits, ticked off daily", "A reminder in the evening"). No file, type or framework \
+    names.
+
+    Respond with JSON: {"named_by_user": true or false, "name": "...", "parts": ["...", "..."]}
     """
 
-    static func suggest(for brief: String) async -> String? {
+    struct Suggestion {
+        var name: String?
+        /// A guess at the app's main parts, shown until the agent gives its own plan.
+        var sketch: [String]
+    }
+
+    static func suggest(for brief: String) async -> Suggestion? {
         let request = "\(prompt)\n\nThe user asked for:\n\(brief.prefix(4000))"
         guard let (text, _) = try? await AppAI.complete(prompt: request, images: [], system: "", json: true,
                                                          model: AppAI.defaultModel.openRouter),
-              let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
-              let raw = object["name"] as? String else { return nil }
+              let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
+        else { return nil }
+        let sketch = (object["parts"] as? [Any] ?? []).compactMap { ($0 as? String)?.trimmed }
+            .filter { !$0.isEmpty && $0.count <= 60 }.prefix(5)
+        return Suggestion(name: name(object), sketch: sketch.count >= 2 ? Array(sketch) : [])
+    }
+
+    private static func name(_ object: [String: Any]) -> String? {
+        guard let raw = object["name"] as? String else { return nil }
         let name = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
             .trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”‘’."))
         // The user's own name gets more room than one Lamp makes up.

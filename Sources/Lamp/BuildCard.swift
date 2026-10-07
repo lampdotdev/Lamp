@@ -32,6 +32,21 @@ struct TurnProgress {
     var steps: [String] = []
     /// The app's window once it has opened: the card's last frame.
     var screenshot: NSImage?
+    /// Lamp has tried naming the app from the request, whether or not a name came of it.
+    var named = false
+    /// Lamp's own guess at the app's parts, made with its name: shown, unticked, while the agent thinks
+    /// (which can take minutes) and replaced by the agent's plan when it gives one.
+    var sketch: [String] = []
+
+    /// How long the agent may think before the card says that's expected.
+    static let patience: TimeInterval = 20
+
+    /// The footer's line: what's happening, or that a long think at the start is normal.
+    func activity(at date: Date) -> String {
+        guard finished == nil, plan.isEmpty, files.isEmpty, activity == "Thinking",
+              date.timeIntervalSince(started) >= Self.patience else { return activity }
+        return "Still thinking it through. First versions take a few minutes."
+    }
 
     enum PartState { case open, started, active, done }
 
@@ -152,6 +167,7 @@ struct TurnProgress {
 /// Shown while a new app's first version is built: an outline of the app that fills in with its name,
 /// its icon, the agent's plan and what it's doing now, and ends on a picture of the real window.
 struct BuildCard: View {
+    @EnvironmentObject private var store: Store
     let project: LampProject
     let progress: TurnProgress
 
@@ -187,9 +203,14 @@ struct BuildCard: View {
                 } else {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                 }
-                Text(progress.finished == nil ? progress.activity
-                     : progress.failed ? "This didn't finish. See the messages above." : "\(project.name) is ready")
-                    .lineLimit(1)
+                if progress.finished == nil {
+                    TimelineView(.periodic(from: progress.started, by: 1)) { context in
+                        Text(progress.activity(at: context.date)).lineLimit(1)
+                    }
+                } else {
+                    Text(progress.failed ? "This didn't finish. See the messages above." : "\(project.name) is ready")
+                        .lineLimit(1)
+                }
                 Spacer()
                 Elapsed(from: progress.started, to: progress.finished)
             }
@@ -200,6 +221,9 @@ struct BuildCard: View {
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
         .animation(.easeInOut(duration: 0.35), value: progress.plan)
+        .animation(.easeInOut(duration: 0.35), value: progress.sketch)
+        .animation(.easeInOut(duration: 0.35), value: progress.named)
+        .animation(.easeInOut(duration: 0.35), value: store.icons[project.id] != nil)
         .animation(.easeInOut(duration: 0.5), value: progress.screenshot != nil)
     }
 
@@ -207,7 +231,7 @@ struct BuildCard: View {
         .open: "circle", .started: "circle.lefthalf.filled", .active: "circle.dotted", .done: "checkmark.circle.fill",
     ]
 
-    /// The agent's plan with ticks, what it has worked on when there's no plan, or blank bars before either.
+    /// The agent's plan with ticks, what it has worked on when there's no plan, or what Lamp is doing before either.
     @ViewBuilder
     private var outline: some View {
         if !progress.plan.isEmpty {
@@ -236,14 +260,88 @@ struct BuildCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach([280, 210, 245, 160] as [CGFloat], id: \.self) { width in
-                    RoundedRectangle(cornerRadius: 4).fill(.quaternary).frame(width: width, height: 10)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            gettingStarted
         }
     }
+
+    /// Before the agent has a plan, which can take minutes: what Lamp itself has done (all of it real, none
+    /// of it timed), then its sketch of the app or blank bars that show it's still going.
+    private var gettingStarted: some View {
+        let working = progress.finished == nil
+        let iconReady = store.icons[project.id] != nil
+        return VStack(alignment: .leading, spacing: 7) {
+            if project.untitled && !progress.named {
+                Self.step("Naming your app", done: false, working: working)
+            } else {
+                if !project.untitled { Self.step("Called it \(project.name)", done: true, working: working) }
+                Self.step(iconReady ? "Designed an icon" : "Designing an icon", done: iconReady, working: working)
+                Self.step("Working out the details", done: false, working: working)
+            }
+            Group {
+                if progress.sketch.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach([240, 180, 210] as [CGFloat], id: \.self) { width in
+                            RoundedRectangle(cornerRadius: 4).fill(.quaternary).frame(width: width, height: 10)
+                        }
+                    }
+                    .shimmering(working)
+                    .padding(.vertical, 4)
+                } else {
+                    VStack(alignment: .leading, spacing: 7) {
+                        ForEach(progress.sketch, id: \.self) { part in
+                            Label(part, systemImage: "circle.dashed")
+                        }
+                    }
+                    .foregroundStyle(.tertiary)
+                    .shimmering(working)
+                }
+            }
+            .padding(.leading, 24)
+            .padding(.top, 2)
+            .transition(.opacity)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private static func step(_ title: String, done: Bool, working: Bool) -> some View {
+        Label(title, systemImage: done ? "checkmark.circle.fill" : "circle.dotted")
+            .foregroundStyle(.secondary)
+            .symbolEffect(.pulse, isActive: working && !done)
+            .transition(.opacity)
+    }
+}
+
+/// A slow light passing over something that's still on its way, so a wait doesn't look like a freeze.
+private struct Shimmer: ViewModifier {
+    let active: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var phase: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        if active && !reduceMotion {
+            content
+                .overlay {
+                    GeometryReader { geometry in
+                        let band = geometry.size.width * 0.5
+                        LinearGradient(colors: [.clear, .white.opacity(0.45), .clear], startPoint: .leading, endPoint: .trailing)
+                            .frame(width: band)
+                            .offset(x: -band + phase * (geometry.size.width + band))
+                    }
+                    .mask(content)
+                    .allowsHitTesting(false)
+                }
+                .onAppear {
+                    phase = 0
+                    withAnimation(.linear(duration: 1.8).delay(0.4).repeatForever(autoreverses: false)) { phase = 1 }
+                }
+        } else {
+            content
+        }
+    }
+}
+
+private extension View {
+    func shimmering(_ active: Bool) -> some View { modifier(Shimmer(active: active)) }
 }
 
 /// A later turn's progress: one line saying what the agent is doing and for how long.
