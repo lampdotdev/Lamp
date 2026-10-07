@@ -114,7 +114,50 @@ final class Gateway: @unchecked Sendable {
 
 /// Runs an in-app AI request with whatever Lamp is connected to.
 enum AppAI {
-    /// The in-app text models with an OpenRouter key (or Claude Code answering without one).
+    /// Where an app's text AI goes: a model through OpenRouter, the Claude Code or Codex sign-in, pi with its
+    /// key provider, or a model running on this Mac. Settings and an app's own choice keep the id.
+    struct TextRoute: Identifiable, Equatable {
+        enum Kind: Equatable {
+            case openRouter(model: String)
+            case engine(Engine, model: String)   // Claude Code or Codex with one of its models; pi with its builder's
+            case localModel(provider: String, model: String)   // Native Mac AI, Ollama or LM Studio
+        }
+        let id: String
+        let label: String
+        let kind: Kind
+        /// Whether this route can answer right now: the key, the tool or the model it needs is there.
+        /// Worked out when the list is made, on the main thread, where the local models live.
+        let available: Bool
+
+        /// The OpenRouter model that stands in for this route where only OpenRouter can answer (an app on a
+        /// phone away from the Mac): the route's own model, else the usual default.
+        var openRouter: String {
+            if case .openRouter(let model) = kind { return model }
+            return AppAI.anthropicModels.first { $0.id == "sonnet" }!.openRouter
+        }
+
+        @MainActor static func make(id: String, label: String, kind: Kind) -> TextRoute {
+            let available: Bool
+            switch kind {
+            case .openRouter: available = Provider.hasKey
+            case .engine(.pi, _):
+                // pi with the person's own setup (their sign-ins), or with a key provider that has its key.
+                available = Agent.executable != nil && (Builder.piProvider == Builder.myPiProvider
+                    || (Provider.apiProvider(Builder.piProvider) != nil && KeyStore.key(for: Builder.piProvider) != nil))
+            case .engine(let engine, _): available = ToolLocator.path(for: engine) != nil
+            case .localModel(let provider, let model):
+                available = provider == Builder.localProvider ? LocalModels.shared.installed.contains { $0.id == model }
+                                                              : LocalModels.shared.external[provider]?.contains(model) == true
+            }
+            return TextRoute(id: id, label: label, kind: kind, available: available)
+        }
+    }
+
+    /// Sonnet through OpenRouter: what Lamp's own calls use when there's a key.
+    static var defaultOpenRouterModel: String { anthropicModels.first { $0.id == "sonnet" }!.openRouter }
+
+    /// The models OpenRouter offers for apps; Sonnet is the default among them (Haiku is cheaper but
+    /// noticeably worse, so it's only used when someone picks it).
     static let anthropicModels: [(id: String, label: String, openRouter: String)] = [
         ("claude-fable-5-1", "Smartest, priciest (Claude Fable)", "anthropic/claude-fable-5.1"),
         ("opus", "Best at coding (Claude Opus)", "anthropic/claude-opus-5.5"),
@@ -122,28 +165,137 @@ enum AppAI {
         ("haiku", "Fastest, cheapest (Claude Haiku)", "anthropic/claude-haiku-4.5"),
     ]
 
-    /// Without an OpenRouter key, Codex answers for apps with its own models, so those are the choices.
-    static var answersViaCodex: Bool { !Provider.hasKey && Builder.engine == .codex }
-
-    static var models: [(id: String, label: String, openRouter: String)] {
-        guard answersViaCodex else { return anthropicModels }
-        let codex = Builder.codexModels.dropFirst().map { (id: $0.id, label: $0.label, openRouter: "") }
-        return codex.isEmpty ? [("", "ChatGPT Codex's default", "")] : Array(codex)
+    /// Every route there is, whether or not it can answer right now; the pickers show the ones that can,
+    /// plus whatever is chosen.
+    @MainActor static var allTextRoutes: [TextRoute] {
+        var routes = anthropicModels.map { TextRoute.make(id: $0.id, label: $0.label + " via OpenRouter", kind: .openRouter(model: $0.openRouter)) }
+        // The sign-ins, one route per model they offer (Claude Code's short names; the models Codex lists).
+        for model in Builder.claudeModels where !model.id.isEmpty {
+            routes.append(.make(id: "engine:claude:\(model.id)", label: "\(model.label) via Claude Code", kind: .engine(.claude, model: model.id)))
+        }
+        // Codex lists its models once it has run; until then its default, with no model named, is the route.
+        let codexModels = Builder.codexModels.filter { !$0.id.isEmpty }
+        if codexModels.isEmpty {
+            routes.append(.make(id: "engine:codex", label: "Codex's default model via Codex", kind: .engine(.codex, model: "")))
+        }
+        for model in codexModels {
+            routes.append(.make(id: "engine:codex:\(model.id)", label: "\(model.label) via Codex", kind: .engine(.codex, model: model.id)))
+        }
+        if Builder.piProvider == Builder.myPiProvider {
+            routes.append(.make(id: "engine:pi", label: "\(Builder.piModel) via your own pi setup", kind: .engine(.pi, model: Builder.piModel)))
+        } else if let provider = Provider.apiProvider(Builder.piProvider), provider.id != "openrouter" {
+            routes.append(.make(id: "engine:pi", label: "\(Builder.piModel) via your \(provider.name) key", kind: .engine(.pi, model: Builder.piModel)))
+        }
+        for model in LocalModels.shared.installed where !LocalModels.isDecisionModel(model.id) {
+            routes.append(.make(id: "local:\(model.id)", label: "\(model.name) on this Mac", kind: .localModel(provider: Builder.localProvider, model: model.id)))
+        }
+        for (provider, models) in LocalModels.shared.external.sorted(by: { $0.key < $1.key }) {
+            for model in models {
+                routes.append(.make(id: "\(provider):\(model)", label: "\(model) (\(LocalModels.externalName(provider)))",
+                                    kind: .localModel(provider: provider, model: model)))
+            }
+        }
+        return routes
     }
 
-    /// Sonnet: Haiku is cheaper but noticeably worse, so it's only used when someone picks it.
-    static var defaultModel: (id: String, label: String, openRouter: String) {
-        answersViaCodex ? models[0] : anthropicModels.first { $0.id == "sonnet" }!
+    /// What the pickers offer: the routes that can answer now, and the chosen one even if it can't (so a
+    /// choice isn't silently lost when a key or model goes), in that order.
+    /// A route id as saved by an earlier Lamp, when the sign-ins were one route each with no model, read as
+    /// today's: Sonnet through Claude Code, Codex's first model.
+    @MainActor static func canonicalRoute(_ id: String) -> String {
+        switch id {
+        case "engine:claude": return "engine:claude:sonnet"
+        case "engine:codex": return Builder.codexModels.first { !$0.id.isEmpty }.map { "engine:codex:\($0.id)" } ?? id
+        default: return id
+        }
     }
 
-    static var model: (id: String, label: String, openRouter: String) {
-        let id = UserDefaults.standard.string(forKey: "appModel") ?? defaultModel.id
-        return models.first { $0.id == id } ?? defaultModel
+    @MainActor static func textRoutes(including chosen: String?) -> [TextRoute] {
+        let routes = allTextRoutes.filter(\.available)
+        let chosen = chosen.map(canonicalRoute)
+        if let chosen, !routes.contains(where: { $0.id == chosen }), let kept = allTextRoutes.first(where: { $0.id == chosen }) {
+            return routes + [kept]
+        }
+        return routes
     }
 
-    /// The text model for one app: its own choice (info panel), or the default from Settings.
-    static func model(for choice: String?) -> (id: String, label: String, openRouter: String) {
-        models.first { $0.id == choice } ?? model
+    /// The route apps use when nothing was chosen: what builds apps when that's a model on this Mac (someone
+    /// who chose to stay local keeps staying local), else OpenRouter's Sonnet with a key, else the builder's
+    /// own sign-in, else the first thing that can answer.
+    @MainActor static var defaultRoute: TextRoute {
+        let routes = allTextRoutes
+        func route(_ id: String) -> TextRoute? { routes.first { $0.id == id && $0.available } }
+        if Builder.engine == .pi, Builder.piProvider == Builder.localProvider || LocalModels.externalIDs.contains(Builder.piProvider),
+           let local = route("\(Builder.piProvider):\(Builder.piModel)") ?? route("local:\(Builder.piModel)") {
+            return local
+        }
+        if let sonnet = route("sonnet") { return sonnet }
+        // The builder's own sign-in: Sonnet through Claude Code (never Haiku unasked), Codex's best model, pi's.
+        let own: String
+        switch Builder.engine {
+        case .claude: own = "engine:claude:sonnet"
+        case .codex: own = canonicalRoute("engine:codex")
+        case .pi: own = "engine:pi"
+        }
+        if let route = route(own) { return route }
+        return routes.first(where: \.available) ?? routes.first { $0.id == "sonnet" }!
+    }
+
+    /// The OpenRouter model an app on the person's phone uses away from the Mac, where only OpenRouter can
+    /// answer: Settings' choice, else the chosen route's own model when that's through OpenRouter, else Sonnet.
+    @MainActor static var awayModel: (id: String, label: String, openRouter: String) {
+        let saved = UserDefaults.standard.string(forKey: "awayModel") ?? ""
+        if let chosen = anthropicModels.first(where: { $0.id == saved }) { return chosen }
+        if case .openRouter(let name) = model.kind, let same = anthropicModels.first(where: { $0.openRouter == name }) { return same }
+        return anthropicModels.first { $0.id == "sonnet" }!
+    }
+
+    /// The same for one app: its own choice (info panel), else Settings'.
+    @MainActor static func awayModel(for choice: String?) -> (id: String, label: String, openRouter: String) {
+        anthropicModels.first { $0.id == choice } ?? awayModel
+    }
+
+    /// The image model an app on the phone uses away from the Mac: Settings' choice, else the Mac's own
+    /// choice when that's a cloud model, else the first cloud model. The model on this Mac can't travel.
+    @MainActor static var awayImageModel: String {
+        let saved = UserDefaults.standard.string(forKey: "awayImageModel") ?? ""
+        if Icons.artModels.contains(where: { $0.id == saved }) { return saved }
+        let macs = Icons.artModel
+        return Icons.artModels.contains(where: { $0.id == macs }) ? macs : Icons.artModels[0].id
+    }
+
+    @MainActor static func awayImageModel(for choice: String?) -> String {
+        Icons.artModels.contains { $0.id == choice } ? choice! : awayImageModel
+    }
+
+    /// What a phone can decide with on its own, through the OpenRouter key it carries: Jev, or the text
+    /// model it uses away, asked the questions as JSON. The Mac's own model, TypeSafe and OpenAI stay here.
+    static var awayDecisionModels: [(id: String, label: String, provider: String, model: String)] {
+        [("openrouter:jev-latest", "Jev", "openrouter", "jev-latest"), ("text", "By text, through the text model above", "text", "")]
+    }
+
+    /// The decision model an app on the phone uses away from the Mac: Settings' choice, else by text when
+    /// that's the Mac's choice too, else Jev.
+    @MainActor static var awayDecisionModel: (id: String, label: String, provider: String, model: String) {
+        let saved = UserDefaults.standard.string(forKey: "awayDecisionModel") ?? ""
+        return awayDecisionModels.first { $0.id == saved } ?? awayDecisionModels.first { $0.id == decisionModel.id } ?? awayDecisionModels[0]
+    }
+
+    @MainActor static func awayDecisionModel(for choice: String?) -> (id: String, label: String, provider: String, model: String) {
+        awayDecisionModels.first { $0.id == choice } ?? awayDecisionModel
+    }
+
+    /// The route Settings chose for apps, when it can still answer; else the default.
+    @MainActor static var model: TextRoute { route(for: UserDefaults.standard.string(forKey: "appModel")) }
+
+    /// The text route for one app: its own choice (info panel), or Settings', when it can answer; else the
+    /// default.
+    @MainActor static func route(for choice: String?) -> TextRoute {
+        let choice = choice.map(canonicalRoute)
+        if let choice, let route = allTextRoutes.first(where: { $0.id == choice }), route.available { return route }
+        if let saved = UserDefaults.standard.string(forKey: "appModel").map(canonicalRoute), saved != choice,
+           let route = allTextRoutes.first(where: { $0.id == saved }), route.available { return route }
+        return defaultRoute
     }
 
     struct Failure: Error {
@@ -167,11 +319,11 @@ enum AppAI {
     /// `model` overrides the in-app model (an OpenRouter model ID), e.g. for Lamp's own import review.
     /// `appModel` is an app's own text model (an id from `models`), when it has one.
     static func complete(prompt: String, images: [Image], system: String, json: Bool,
-                         model: String? = nil, appModel: String? = nil) async throws -> (String, Double) {
-        let chosen = Self.model(for: appModel)
+                         model: String? = nil, appModel: String? = nil, engineModel: String? = nil) async throws -> (String, Double) {
+        let chosen = await route(for: appModel)
         var system = system
         if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
-        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen)
+        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel)
         guard json else { return (text, cost) }
         // A JSON reply that doesn't parse (cut off, or wrapped in prose) is useless to the app: ask once more,
         // through the same provider, saying so, before giving up. Both attempts are billed, so the cost goes
@@ -180,7 +332,7 @@ enum AppAI {
         if !isJSON(reply) {
             let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
             do {
-                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen)
+                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel)
                 cost += more
                 reply = stripFences(retry)
             } catch let failure as Failure {
@@ -195,35 +347,32 @@ enum AppAI {
         return (reply, cost)
     }
 
-    /// One request through whichever provider the app's AI is set up with.
+    /// One request along the route: `model` names an OpenRouter model to use instead of the route's own, for
+    /// Lamp's own calls (the icon judge, suggestions) when there's a key; `engineModel` likewise names the
+    /// model for Claude Code or Codex (the fast one for decisions by text).
     private static func dispatch(prompt: String, images: [Image], system: String, json: Bool, model: String?,
-                                 chosen: (id: String, label: String, openRouter: String)) async throws -> (String, Double) {
-        var (text, cost): (String, Double)
-        if Provider.hasKey {
-            (text, cost) = try await viaOpenRouter(prompt: prompt, images: images, system: system,
-                                                   model: model ?? chosen.openRouter, json: json)
-        } else if Builder.engine == .pi {
-            // No OpenRouter key: use whatever builds apps.
-            switch Builder.piProvider {
-            case Builder.localProvider:
-                let base = try await LocalModels.shared.ensureServer(for: Builder.piModel)
-                (text, cost) = try await viaOpenAICompatible("\(base)/v1/chat/completions", key: nil,
-                                                             prompt: prompt, images: images, system: system, model: Builder.piModel)
-            case "ext-ollama", "ext-lmstudio":
-                let port = Builder.piProvider == "ext-ollama" ? 11434 : 1234
-                (text, cost) = try await viaOpenAICompatible("http://127.0.0.1:\(port)/v1/chat/completions", key: nil,
-                                                             prompt: prompt, images: images, system: system, model: Builder.piModel)
-            default:
-                (text, cost) = try await viaPi(prompt: prompt, images: images, system: system)
-            }
-        } else if ToolLocator.path(for: Builder.engine) != nil {
-            // No OpenRouter key: use the Claude Code or Codex sign-in that builds apps.
-            (text, cost) = try await viaEngine(Builder.engine, prompt: prompt, images: images, system: system,
-                                               model: chosen.id)
-        } else {
-            throw Failure(message: "Apps' AI features need an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,).")
+                                 chosen: TextRoute, engineModel: String? = nil) async throws -> (String, Double) {
+        if let model, Provider.hasKey {
+            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json)
         }
-        return (text, cost)
+        switch chosen.kind {
+        case .openRouter(let model):
+            guard Provider.hasKey else { throw Failure(message: "Apps' AI features need an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,).") }
+            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json)
+        case .engine(.pi, _):
+            return try await viaPi(prompt: prompt, images: images, system: system)
+        case .engine(let engine, let model):
+            return try await viaEngine(engine, prompt: prompt, images: images, system: system, model: engineModel ?? model)
+        case .localModel(let provider, let model):
+            let base: String
+            if provider == Builder.localProvider {
+                base = try await LocalModels.shared.ensureServer(for: model)
+            } else {
+                base = "http://127.0.0.1:\(provider == "ext-ollama" ? 11434 : 1234)"
+            }
+            return try await viaOpenAICompatible("\(base)/v1/chat/completions", key: nil,
+                                                 prompt: prompt, images: images, system: system, model: model)
+        }
     }
 
     private static func isJSON(_ text: String) -> Bool {
@@ -368,17 +517,30 @@ enum AppAI {
     // MARK: Decisions (System One models such as TypeSafe's Jev)
 
     /// Decision models: Jev through OpenRouter or directly through TypeSafe. Same request either way.
+    /// Where decisions go: Jev through OpenRouter or TypeSafe, OpenAI's Decisions API, a decision model on
+    /// this Mac, or a small text model answering as JSON (`decideByText`).
     static let decisionModels: [(id: String, label: String, provider: String, model: String)] = [
         ("openrouter:jev-latest", "Jev via OpenRouter", "openrouter", "jev-latest"),
         ("typesafe:jev-latest", "Jev via TypeSafe", "typesafe", "jev-latest"),
-        ("typesafe:jev-preview", "Jev preview via TypeSafe", "typesafe", "jev-preview"),
+        ("openai:gpt-6-luna", "Luna via OpenAI (Decisions API)", "openai", "gpt-6-luna"),
+        ("local:h2o-lightning-4b", "H2O Lightning 4B on this Mac", "local", "h2o-lightning-4b"),
+        ("text", "By text, through what answers apps", "text", ""),
     ]
+
+    /// The decision model on this Mac, as installed (its id for the local server), or nil.
+    @MainActor static func localDecisionModel() -> String? {
+        guard let spec = LocalModels.decisionCatalog.first else { return nil }
+        return LocalModels.shared.installedID(for: spec)
+    }
 
     static var decisionModel: (id: String, label: String, provider: String, model: String) {
         let saved = UserDefaults.standard.string(forKey: "decisionModel") ?? ""
         if let chosen = decisionModels.first(where: { $0.id == saved }) { return chosen }
-        // Default to whichever key exists, preferring OpenRouter.
-        return KeyStore.openRouterKey == nil && KeyStore.key(for: "typesafe") != nil ? decisionModels[1] : decisionModels[0]
+        // Default to whichever key exists, preferring OpenRouter, then TypeSafe, then OpenAI.
+        for provider in ["openrouter", "typesafe", "openai"] where KeyStore.key(for: provider) != nil {
+            return decisionModels.first { $0.provider == provider }!
+        }
+        return decisionModels[0]
     }
 
     /// Sends `state` and typed `questions` (TypeSafe's System One format) to the decision model.
@@ -386,12 +548,19 @@ enum AppAI {
     static func decide(state: Any, questions: [String: Any],
                        model appChoice: String? = nil) async throws -> ([String: Any], Double) {
         let choice = decisionModels.first { $0.id == appChoice } ?? decisionModel
+        if choice.provider == "text" { return try await decideByText(state: state, questions: questions) }
+        if choice.provider == "local" {
+            if let id = await localDecisionModel() { return try await decideLocally(state: state, questions: questions, model: id) }
+            if canAnswer { return try await decideByText(state: state, questions: questions) }
+            throw Failure(message: "The decision model on this Mac isn't downloaded yet. Get it in Lamp → Settings (⌘,) → Apps.")
+        }
         guard let key = KeyStore.key(for: choice.provider) else {
             // No decision model: a small text model answers the same questions in JSON instead.
             if canAnswer { return try await decideByText(state: state, questions: questions) }
-            let name = choice.provider == "typesafe" ? "a TypeSafe" : "an OpenRouter"
+            let name = choice.provider == "typesafe" ? "a TypeSafe" : choice.provider == "openai" ? "an OpenAI" : "an OpenRouter"
             throw Failure(message: "Decisions need \(name) key. Add one in Lamp → Settings (⌘,) → AI.")
         }
+        if choice.provider == "openai" { return try await decideViaOpenAI(state: state, questions: questions, key: key, model: choice.model) }
         let endpoint = choice.provider == "typesafe" ? "https://api.typesafe.ai/v1/systemone"
                                                      : "https://openrouter.ai/api/v1/systemone"
         var request = URLRequest(url: URL(string: endpoint)!)
@@ -425,22 +594,201 @@ enum AppAI {
         throw Failure(message: "The decision model is busy. Try again in a moment.")
     }
 
-    /// The fast model of whatever answers for apps, for decisions made by text: Haiku through Claude Code,
-    /// Luna through Codex, and pi's own model otherwise.
-    static var fastModel: String? {
-        switch Builder.engine {
-        case .claude: "haiku"
-        case .codex: Builder.codexFastModel
-        case .pi: nil
+    /// The state as the decision models read it: text as it is, anything else as JSON.
+    private static func stateText(_ state: Any) -> String {
+        if let text = state as? String { return text }
+        return (try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys, .fragmentsAllowed]))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "\(state)"
+    }
+
+    /// Each question's options, in order: for a choice the criteria's names (with descriptions); for a
+    /// score the levels, lowest first; for a noul true then false.
+    private static func options(of question: [String: Any]) -> [(name: String, description: String)] {
+        switch question["type"] as? String {
+        case "noul":
+            let criteria = question["criteria"] as? [String: Any] ?? [:]
+            return [("true", criteria["true"] as? String ?? "Yes"), ("false", criteria["false"] as? String ?? "No")]
+        case "score":
+            return (question["criteria"] as? [String] ?? []).map { ($0, "") }
+        default:
+            if let dict = question["criteria"] as? [String: Any] {
+                return dict.keys.sorted().map { ($0, dict[$0] as? String ?? "") }
+            }
+            return (question["criteria"] as? [String] ?? []).map { ($0, "") }
         }
     }
 
-    /// What `fastModel` is called in Settings.
-    static var fastModelName: String {
-        switch Builder.engine {
-        case .claude: "Haiku through Claude Code"
-        case .codex: (Builder.codexModels.first { $0.id == Builder.codexFastModel }?.label).map { "\($0) through ChatGPT Codex" } ?? "ChatGPT Codex"
-        case .pi: "the builder's own model"
+    /// OpenAI's Decisions API (gpt-6-luna): the same questions in its shape (predicate, choice, score), and
+    /// its answers back in Jev's shape.
+    static func decideViaOpenAI(state: Any, questions: [String: Any], key: String, model: String) async throws -> ([String: Any], Double) {
+        var asked: [[String: Any]] = []
+        for (id, value) in questions {
+            guard let question = value as? [String: Any] else { continue }
+            var instructions = question["instructions"] as? String ?? ""
+            var item: [String: Any] = ["name": id]
+            let options = options(of: question)
+            switch question["type"] as? String {
+            case "noul":
+                item["type"] = "predicate"
+                if let criteria = question["criteria"] as? [String: Any], !criteria.isEmpty {
+                    instructions += "\nYes means: \(criteria["true"] ?? "yes"). No means: \(criteria["false"] ?? "no")."
+                }
+            case "score":
+                item["type"] = "score"
+                item["levels"] = options.map { ["label": $0.name, "description": $0.name] }
+            default:
+                item["type"] = "choice"
+                item["choices"] = options.map { ["value": $0.name, "description": $0.description.isEmpty ? $0.name : $0.description] }
+            }
+            item["instructions"] = instructions
+            asked.append(item)
+        }
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/decisions")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["model": model, "input": stateText(state), "questions": asked] as [String: Any])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        guard status == 200, let given = obj["answers"] as? [[String: Any]] else {
+            let detail = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
+            throw Failure(message: Provider.friendlyError("\(status) \(detail)"))
+        }
+        // Each answer is checked against its question: the API can refuse one (type "refusal", in a 200),
+        // and an app must never be handed a choice outside the options it gave, so anything that doesn't
+        // match is an error rather than an empty answer.
+        var answers: [String: Any] = [:]
+        for answer in given {
+            guard let id = answer["name"] as? String, let question = questions[id] as? [String: Any] else { continue }
+            let wanted = question["type"] as? String ?? "choice"
+            let type = answer["type"] as? String ?? ""
+            if type == "refusal" {
+                throw Failure(message: "The decision model declined the question \"\(id)\"" + ((answer["reason"] as? String).map { ": \($0)" } ?? "."))
+            }
+            switch (wanted, type) {
+            case ("noul", "predicate"):
+                guard let p = answer["probability"] as? Double, (0...1).contains(p) else { throw Failure(message: "The decision model's answer to \"\(id)\" had no probability.") }
+                answers[id] = ["noul": p]
+            case ("score", "score"):
+                var probabilities: [String: Double] = [:]
+                for entry in answer["probabilities"] as? [[String: Any]] ?? [] {
+                    if let index = entry["value"] as? Int, let p = entry["probability"] as? Double { probabilities[String(index)] = p }
+                }
+                guard let score = answer["score"] as? Double, !probabilities.isEmpty else { throw Failure(message: "The decision model's answer to \"\(id)\" had no score.") }
+                answers[id] = ["score": score, "probabilities": probabilities, "confidence": answer["confidence"] as? Double ?? 0]
+            case ("choice", "choice"):
+                var probabilities: [String: Double] = [:]
+                for entry in answer["probabilities"] as? [[String: Any]] ?? [] {
+                    if let value = entry["value"] as? String, let p = entry["probability"] as? Double { probabilities[value] = p }
+                }
+                let names = options(of: question).map(\.name)
+                guard let choice = answer["choice"] as? String, names.contains(choice) else {
+                    throw Failure(message: "The decision model's answer to \"\(id)\" wasn't one of its options.")
+                }
+                answers[id] = ["choice": choice, "probabilities": probabilities, "confidence": answer["confidence"] as? Double ?? 0]
+            default:
+                throw Failure(message: "The decision model answered \"\(id)\" with a \(type.isEmpty ? "different" : type) answer, not a \(wanted) one.")
+            }
+        }
+        for id in questions.keys where answers[id] == nil { throw Failure(message: "The decision model didn't answer \"\(id)\".") }
+        // $0.10 per million input tokens, nothing for output.
+        let cost = Double((obj["usage"] as? [String: Any])?["input_tokens"] as? Int ?? 0) * 0.10 / 1_000_000
+        return (answers, cost)
+    }
+
+    /// A Jev-class model on this Mac, through the local server, the way its serving shim does it: one
+    /// question per forward pass, the record and the lettered options in a chat prompt ending in "Answer:",
+    /// and the probabilities read off the label tokens at that slot (softmax over their log-probabilities
+    /// at the model's temperature), with the shim's confidence and the floor it holds yes/no answers to.
+    static func decideLocally(state: Any, questions: [String: Any], model: String) async throws -> ([String: Any], Double) {
+        let base = try await LocalModels.shared.ensureServer(for: model)
+        let labels = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz").map(String.init)
+        let record = stateText(state)
+        var answers: [String: Any] = [:]
+        for (id, value) in questions {
+            guard let question = value as? [String: Any] else { continue }
+            let options = options(of: question)
+            guard !options.isEmpty, options.count <= labels.count else { throw Failure(message: "The question \"\(id)\" has no options, or too many.") }
+            let lines = options.enumerated().map { index, option in
+                "\(labels[index])) \(option.name)" + (option.description.isEmpty ? "" : ": \(option.description)")
+            }
+            let user = "record: \(record)\nquestion: \(question["instructions"] as? String ?? "")\noptions:\n" + lines.joined(separator: "\n")
+            let prompt = "<|im_start|>system\nYou are a decision engine. You read a record and answer one question about it by choosing exactly one option. Reply with a single letter.<|im_end|>\n"
+                + "<|im_start|>user\n\(user)<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nAnswer:"
+            var request = URLRequest(url: URL(string: "\(base)/v1/completions")!)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 600
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["model": model, "prompt": prompt, "max_tokens": 1, "temperature": 0,
+                                                                           "logprobs": max(options.count * 2, 20)] as [String: Any])
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            // The server lists the likeliest tokens at the answer slot: [{token, logprob}] under the first
+            // content entry (or, from older servers, a {token: logprob} dictionary).
+            guard (response as? HTTPURLResponse)?.statusCode == 200, let choice = (obj["choices"] as? [[String: Any]])?.first,
+                  let logprobs = choice["logprobs"] as? [String: Any] else {
+                throw Failure(message: "The decision model on this Mac didn't answer: \((obj["error"] as? [String: Any])?["message"] as? String ?? "no probabilities came back").")
+            }
+            var top: [String: Double] = [:]
+            if let content = (logprobs["content"] as? [[String: Any]])?.first, let list = content["top_logprobs"] as? [[String: Any]] {
+                for entry in list { if let token = entry["token"] as? String, let p = entry["logprob"] as? Double { top[token] = p } }
+            } else if let dict = (logprobs["top_logprobs"] as? [[String: Any]])?.first {
+                for (token, p) in dict { if let p = p as? Double { top[token] = p } }
+            }
+            guard !top.isEmpty else { throw Failure(message: "The decision model on this Mac didn't answer: no probabilities came back.") }
+            // The label's log-probability at the answer slot, with or without the space the tokenizer puts first.
+            var logs: [Double] = []
+            for index in options.indices {
+                let label = labels[index]
+                let found = top.first { $0.key.trimmingCharacters(in: .whitespaces) == label }?.value
+                logs.append(found ?? -30)
+            }
+            let temperature = 0.8
+            let scaled = logs.map { $0 / temperature }
+            let peak = scaled.max() ?? 0
+            let weights = scaled.map { exp($0 - peak) }
+            let total = weights.reduce(0, +)
+            let probabilities = weights.map { $0 / total }
+            let confidence = options.count < 2 ? 1 : (probabilities.max()! - 1 / Double(options.count)) / (1 - 1 / Double(options.count))
+            switch question["type"] as? String {
+            case "noul":
+                var p = probabilities[0]
+                let floor = 0.801   // the shim commits a yes/no it isn't sure of to the floor on its side
+                if max(p, 1 - p) < floor { p = p >= 0.5 ? floor : 1 - floor }
+                answers[id] = ["noul": p]
+            case "score":
+                let score = probabilities.enumerated().reduce(0.0) { $0 + Double($1.offset) * $1.element }
+                answers[id] = ["score": score, "probabilities": Dictionary(uniqueKeysWithValues: probabilities.enumerated().map { (String($0.offset), $0.element) }),
+                               "confidence": confidence]
+            default:
+                let best = probabilities.enumerated().max { $0.element < $1.element }!.offset
+                answers[id] = ["choice": options[best].name, "probabilities": Dictionary(uniqueKeysWithValues: zip(options.map(\.name), probabilities)),
+                               "confidence": confidence]
+            }
+        }
+        return (answers, 0)
+    }
+
+    /// The fast model of whatever answers for apps, for decisions made by text: Haiku through Claude Code,
+    /// Luna through Codex, and pi's own model otherwise.
+    /// The small model for quick judgments on the route that will run them: Haiku when Claude Code answers,
+    /// Luna when Codex does; any other route uses its own model.
+    static func fastModel(for route: TextRoute) -> String? {
+        switch route.kind {
+        case .engine(.claude, _): "haiku"
+        case .engine(.codex, _): Builder.codexFastModel
+        default: nil
+        }
+    }
+
+    /// What the fallback for decisions is called in Settings: the fast model on the apps' text route.
+    @MainActor static var fastModelName: String {
+        switch model.kind {
+        case .engine(.claude, _): "Haiku through Claude Code"
+        case .engine(.codex, _): (Builder.codexModels.first { $0.id == Builder.codexFastModel }?.label).map { "\($0) through ChatGPT Codex" } ?? "ChatGPT Codex"
+        default: model.label.replacingOccurrences(of: "Your ", with: "your ")
         }
     }
 
@@ -472,7 +820,8 @@ enum AppAI {
         how concentrated the probabilities are.
         """
         let prompt = "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)"
-        let (text, cost) = try await complete(prompt: prompt, images: [], system: system, json: true, appModel: fastModel)
+        let fast = await fastModel(for: model)
+        let (text, cost) = try await complete(prompt: prompt, images: [], system: system, json: true, engineModel: fast)
         guard let raw = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
             throw Failure(message: "The model's decision wasn't valid JSON.", cost: cost)
         }

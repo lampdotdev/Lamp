@@ -929,14 +929,25 @@ struct AppInfoView: View {
             }
             Section {
                 let _ = settingsRevision
-                Picker("Text and pictures", selection: choice(\.text, default: AppAI.model.id)) {
-                    ForEach(AppAI.models, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
+                Picker("Text", selection: choice(\.text, default: AppAI.model.id)) {
+                    ForEach(AppAI.textRoutes(including: models.text)) { Text(Self.short($0.label)).tag($0.id) }
                 }
                 Picker("Making images", selection: choice(\.image, default: Icons.artModel)) {
                     ForEach(Icons.imageChoices, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
                 }
                 Picker("Decisions", selection: choice(\.decision, default: AppAI.decisionModel.id)) {
                     ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }
+                }
+                if project.platform == .iphone {
+                    Picker("Away from this Mac", selection: choice(\.away, default: AppAI.awayModel.id)) {
+                        ForEach(AppAI.anthropicModels, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
+                    }
+                    Picker("Pictures away", selection: choice(\.awayImage, default: AppAI.awayImageModel)) {
+                        ForEach(Icons.artModels, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
+                    }
+                    Picker("Decisions away", selection: choice(\.awayDecision, default: AppAI.awayDecisionModel.id)) {
+                        ForEach(AppAI.awayDecisionModels, id: \.id) { Text($0.label).tag($0.id) }
+                    }
                 }
             } header: {
                 Text("AI inside this app")

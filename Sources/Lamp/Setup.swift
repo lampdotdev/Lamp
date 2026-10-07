@@ -496,7 +496,14 @@ struct BuildingSettings: View {
 
 /// The AI, images and decisions that apps use while they run.
 struct AppsSettings: View {
-    @AppStorage("appModel") private var appModel = AppAI.defaultModel.id
+    @AppStorage("appModel") private var appModel = AppAI.defaultRoute.id
+    @AppStorage("awayModel") private var awayModel = ""
+    @AppStorage("awayImageModel") private var awayImageModel = ""
+    @AppStorage("awayDecisionModel") private var awayDecisionModel = ""
+    @ObservedObject private var local = LocalModels.shared
+    @AppStorage("experimentIOSApps") private var iosApps = false
+    @AppStorage("settingsTab") private var settingsTab = "building"
+    @AppStorage("settingsSheet") private var settingsSheet = ""
     @AppStorage("imageModel") private var imageModel = Icons.artModels[0].id
     @AppStorage("decisionModel") private var decisionModel = AppAI.decisionModel.id
     @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore
@@ -504,33 +511,80 @@ struct AppsSettings: View {
     var body: some View {
         Form {
             Section("Models used in apps") {
-                Picker("Inside your apps", selection: $appModel) {
-                    ForEach(AppAI.models, id: \.id) { Text($0.label).tag($0.id) }
+                Picker("Text generation", selection: Binding(get: { AppAI.canonicalRoute(appModel) }, set: { appModel = $0 })) {
+                    ForEach(AppAI.textRoutes(including: appModel)) { Text($0.label).tag($0.id) }
                 }
-                Picker("Images (icons and in-app)", selection: $imageModel) {
+                Picker("Image generation", selection: $imageModel) {
                     ForEach(Icons.imageChoices, id: \.id) { Text($0.label).tag($0.id) }
                 }
-                let _ = revision   // re-read KeyStore after the TypeSafe key changes
-                Text(KeyStore.openRouterKey == nil
-                     ? "Without an OpenRouter key, your apps' text AI goes through \(Builder.engine == .pi ? "the builder's provider" : Builder.engine.title) with your sign-in, and pictures come from \(AppAI.imageRouteName ?? "nowhere: an app that wants one will ask for a key"). Add a key in Providers for the models above."
-                     : "Image generation and the in-app models above use your OpenRouter key.")
-                    .font(.caption).foregroundStyle(.secondary)
+                let _ = revision   // re-read KeyStore after keys change
+                if AppAI.allTextRoutes.first(where: { $0.id == appModel })?.available == false {
+                    KeyNote(text: "That model needs an OpenRouter key. Until there is one, text inside apps goes through \(AppAI.defaultRoute.label.replacingOccurrences(of: "Your ", with: "your ")).")
+                }
+                if let maker = AppAI.imageRouteName {
+                    // A cloud model chosen with no key behind it isn't what makes the pictures: say what does, and why.
+                    if !Provider.hasKey, imageModel != Icons.localArt {
+                        KeyNote(text: "\(Icons.artModels.first { $0.id == imageModel }?.label ?? "That model") needs an OpenRouter key. Until there is one, pictures come from \(maker).")
+                    }
+                } else {
+                    KeyNote(text: "Pictures need an OpenRouter key or a picture model on this Mac: a \(Builder.engine == .pi ? "builder's" : Builder.engine.title) sign-in can't make them.")
+                }
 
                 Picker("Decision model", selection: $decisionModel) {
                     ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }
                 }
-                if decisionModel.hasPrefix("typesafe:") {
-                    if KeyStore.key(for: Provider.typesafe.id) == nil {
-                        KeyRow(provider: Provider.typesafe, label: "TypeSafe key") { revision += 1 }
+                let decisionChoice = AppAI.decisionModels.first { $0.id == decisionModel } ?? AppAI.decisionModel
+                switch decisionChoice.provider {
+                case "typesafe", "openai":
+                    if let provider = Provider.keyProvider(decisionChoice.provider), KeyStore.key(for: provider.id) == nil {
+                        KeyRow(provider: provider, label: "\(provider.name) key") { revision += 1 }
                     }
-                } else if KeyStore.openRouterKey == nil {
-                    Text(AppAI.canAnswer
-                         ? "No key for this yet, so decisions are made by \(AppAI.fastModelName) instead: slower and less exact than Jev. Add an OpenRouter key in Providers, or switch to TypeSafe."
-                         : "Add an OpenRouter key in Providers, or switch to TypeSafe.")
-                        .font(.caption).foregroundStyle(.orange)
+                case "local":
+                    if let spec = LocalModels.decisionCatalog.first, !local.isInstalled(spec) {
+                        if let progress = local.progress[spec.id] {
+                            ProgressView(value: progress) { Text("Downloading \(spec.name)…") }.font(.caption)
+                        } else {
+                            HStack(alignment: .top, spacing: 8) {
+                                Text("\(spec.name) isn't on this Mac yet (\(spec.sizeGB, specifier: "%.1f") GB). Until it is, decisions are made by \(AppAI.fastModelName).")
+                                    .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
+                                Button("Download") { local.download(spec) }.controlSize(.small)
+                            }
+                        }
+                    }
+                case "text":
+                    Text("A small text model (\(AppAI.fastModelName)) answers the questions as JSON: slower and less exact than a decision model, but needs nothing more.")
+                        .font(.caption).foregroundStyle(.secondary)
+                default:
+                    if KeyStore.openRouterKey == nil {
+                        KeyNote(text: AppAI.canAnswer
+                                ? "Needs an OpenRouter key. Until there is one, decisions are made by \(AppAI.fastModelName) instead: slower and less exact than Jev."
+                                : "Needs an OpenRouter key, or pick another.")
+                    }
                 }
-                Text("Fast, cheap typed judgments for apps: yes/no probabilities, picking from options, and rating on a scale, each with a calibrated confidence. Text in, decisions out.")
+                Text("Fast, cheap typed judgments for apps: yes/no probabilities, picking from options, and rating on a scale, each with a calibrated confidence.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            if iosApps {
+                // An app on the person's phone can only reach OpenRouter when it can't reach this Mac, so the
+                // choice here is among OpenRouter's models, and it's the one thing a phone needs a key for.
+                Section("iOS apps away from this Mac (through OpenRouter)") {
+                    Picker("Text generation", selection: Binding(get: { AppAI.awayModel.id }, set: { awayModel = $0 })) {
+                        ForEach(AppAI.anthropicModels, id: \.id) { Text($0.label).tag($0.id) }
+                    }
+                    Picker("Image generation", selection: Binding(get: { AppAI.awayImageModel }, set: { awayImageModel = $0 })) {
+                        ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
+                    }
+                    Picker("Decision model", selection: Binding(get: { AppAI.awayDecisionModel.id }, set: { awayDecisionModel = $0 })) {
+                        ForEach(AppAI.awayDecisionModels, id: \.id) { Text($0.label).tag($0.id) }
+                    }
+                    if Provider.hasKey {
+                        Text("When an app can't reach this Mac it goes to OpenRouter with your key. What it spends then isn't shown in Lamp.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")
+                    }
+                }
             }
             ComputerUseSettings()
         }
@@ -544,6 +598,8 @@ struct ExperimentalSettings: View {
     @EnvironmentObject private var store: Store
     @AppStorage("experimentIOSApps") private var iosApps = false
     @AppStorage("appleTeam") private var team = ""
+    @AppStorage("settingsTab") private var settingsTab = "building"
+    @AppStorage("settingsSheet") private var settingsSheet = ""
     @State private var teams: [(id: String, name: String)] = []
 
     var body: some View {
@@ -570,8 +626,11 @@ struct ExperimentalSettings: View {
                             if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
                         }
                     }
-                    Text("For putting an app on your own iPhone or iPad: sign in to your Apple account in Xcode, plug the phone in, and Try On offers to pair it. Away from this Mac the app uses your OpenRouter key itself; what it spends then isn't shown here.")
+                    Text("For putting an app on your own iPhone or iPad: sign in to your Apple account in Xcode, plug the phone in, and Try On offers to pair it. What the app uses away from this Mac is chosen under Apps.")
                         .font(.caption).foregroundStyle(.secondary)
+                    if !Provider.hasKey {
+                        KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")
+                    }
                 }
                 .padding(.leading, 20)
             }
@@ -682,16 +741,19 @@ struct ComputerUseSettings: View {
     }
 }
 
-/// Native Mac AI, Ollama and LM Studio, then the providers you've added a key for.
-/// Double-click one to see its models or change its key.
+/// What's on this Mac (Native Mac AI, Ollama, LM Studio, and the Claude Code and Codex sign-ins), then the
+/// providers you've added a key for. Each row says what it's doing for Lamp right now. Double-click one to
+/// see its models, sign in, or change its key.
 struct ProvidersSettings: View {
     @EnvironmentObject private var store: Store
     @ObservedObject private var local = LocalModels.shared
     @AppStorage("settingsSheet") private var pendingSheet = ""   // set by the setup screen
+    @AppStorage("appModel") private var appModel = ""            // read so the badges follow the picker
     @State private var selection: String?
     @State private var showing: ProviderDetail?
     @State private var removing: PiProvider?
     @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore
+    @State private var signedIn: [Engine: Bool?] = [:]
 
     private var added: [PiProvider] {
         _ = revision
@@ -703,38 +765,97 @@ struct ProvidersSettings: View {
         return Provider.keyProviders.filter { KeyStore.key(for: $0.id) == nil }
     }
 
-    /// Local first (always there, as are Ollama and LM Studio), then the cloud providers with keys.
-    private var rows: [String] {
-        [Builder.localProvider] + LocalModels.externalIDs + added.map(\.id)
+    /// On this Mac: Native Mac AI, Ollama and LM Studio (always there), and the coding agents when installed.
+    private var onThisMac: [String] {
+        [Builder.localProvider] + LocalModels.externalIDs
+            + [Engine.claude, .codex].filter { ToolLocator.path(for: $0) != nil }.map { "engine:\($0.rawValue)" }
+    }
+
+    /// What each row is doing for Lamp right now, so the tab shows what's used for what.
+    private func jobs(_ id: String) -> [String] {
+        _ = revision
+        _ = appModel
+        var jobs: [String] = []
+        let builder = Builder.engine == .pi ? Builder.piProvider : "engine:\(Builder.engine.rawValue)"
+        if builder == id { jobs.append("Builds apps") }
+        let answers: String
+        switch AppAI.model.kind {
+        case .openRouter: answers = "openrouter"
+        case .engine(.pi, _): answers = Builder.piProvider
+        case .engine(let engine, _): answers = "engine:\(engine.rawValue)"
+        case .localModel(let provider, _): answers = provider
+        }
+        if answers == id { jobs.append("Answers apps") }
+        switch AppAI.imageRoute {
+        case .openRouter: if id == "openrouter" { jobs.append("Pictures") }
+        case .local: if id == Builder.localProvider { jobs.append("Pictures") }
+        case .codex: if id == "engine:codex" { jobs.append("Pictures") }
+        case nil: break
+        }
+        let decision = AppAI.decisionModel
+        let decides: String
+        switch decision.provider {
+        case "local": decides = AppAI.localDecisionModel() != nil ? Builder.localProvider : answers
+        case "text": decides = answers
+        default: decides = KeyStore.key(for: decision.provider) != nil ? decision.provider : answers
+        }
+        if decides == id { jobs.append("Decisions") }
+        return jobs
+    }
+
+    /// One row: logo, name, what it's doing, and its state.
+    private func row(_ id: String) -> some View {
+        HStack(spacing: 10) {
+            ProviderLogo(id: id, size: 24)
+            Text(ProviderDetail.name(id))
+            ForEach(jobs(id), id: \.self) { job in
+                Text(job).font(.caption2).padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+            }
+            Spacer()
+            Text(detail(id)).font(.callout).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+        .tag(id)
+    }
+
+    private func list(_ rows: [String]) -> some View {
+        List(rows, id: \.self, selection: $selection) { id in row(id) }
+            .contextMenu(forSelectionType: String.self) { ids in
+                if let id = ids.first {
+                    if id.hasPrefix("engine:") {
+                        Button("Sign In…") { showing = ProviderDetail(id) }
+                    } else {
+                        Button(Provider.keyProvider(id) == nil ? "Show Models…" : "Edit…") { showing = ProviderDetail(id) }
+                    }
+                    if let provider = Provider.keyProvider(id) {
+                        Button("Remove…", role: .destructive) { removing = provider }
+                    }
+                }
+            } primaryAction: { ids in
+                showing = ids.first.map(ProviderDetail.init)
+            }
+            .onDeleteCommand { removing = selection.flatMap(Provider.keyProvider) }
+            .scrollDisabled(true)
+            .frame(height: CGFloat(max(rows.count, 1)) * 40)
     }
 
     var body: some View {
         Form {
             Section {
-                List(rows, id: \.self, selection: $selection) { id in
-                    HStack(spacing: 10) {
-                        ProviderLogo(id: id, size: 24)
-                        Text(ProviderDetail.name(id))
-                        Spacer()
-                        Text(detail(id)).font(.callout).foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 4)
-                    .tag(id)
+                list(onThisMac)
+                if Experiments.iosApps {
+                    Text("These stay on this Mac: iOS apps can use them only on the same Wi‑Fi network as it.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                .contextMenu(forSelectionType: String.self) { ids in
-                    if let id = ids.first {
-                        Button(Provider.keyProvider(id) == nil ? "Show Models…" : "Edit…") { showing = ProviderDetail(id) }
-                        if let provider = Provider.keyProvider(id) {
-                            Button("Remove…", role: .destructive) { removing = provider }
-                        }
-                    }
-                } primaryAction: { ids in
-                    showing = ids.first.map(ProviderDetail.init)
+            } header: { Text("On this Mac") }
+            Section {
+                if added.isEmpty {
+                    Text("No keys yet. OpenRouter gives apps the most to choose from and makes pictures\(Experiments.iosApps ? ", and goes with an app to your iPhone or iPad" : "").")
+                        .font(.callout).foregroundStyle(.secondary)
+                } else {
+                    list(added.map(\.id))
                 }
-                .onDeleteCommand { removing = selection.flatMap(Provider.keyProvider) }
-                .scrollDisabled(true)
-                .frame(height: CGFloat(rows.count) * 40)
-
                 HStack(spacing: 0) {
                     Menu {
                         ForEach(addable) { provider in
@@ -755,10 +876,13 @@ struct ProvidersSettings: View {
                     }
                     .buttonStyle(.borderless)
                     .disabled(selection.flatMap(Provider.keyProvider) == nil)
-                    .help("Native Mac AI, Ollama and LM Studio can't be removed")
+                    .help("Only keys can be removed")
                     Spacer()
+                    if Experiments.iosApps {
+                        Text("A key can go with an app to your iPhone or iPad.").font(.caption).foregroundStyle(.secondary)
+                    }
                 }
-            }
+            } header: { Text("With your key") }
         }
         .settingsPane()
         .sheet(item: $showing) { detail in
@@ -766,6 +890,7 @@ struct ProvidersSettings: View {
             case .key(let provider): ProviderSheet(provider: provider) { changed() }
             case .local: LocalAISheet()
             case .server(let id): ServerSheet(id: id)
+            case .engine(let engine): EngineSheet(engine: engine, signedIn: signedIn[engine] ?? nil) { refreshSignIns() }
             }
         }
         .confirmationDialog("Remove \(removing?.name ?? "provider")?", isPresented: Binding(
@@ -778,12 +903,27 @@ struct ProvidersSettings: View {
         } message: {
             Text("Lamp forgets its API key. Apps and builds that use it stop working until you add it again.")
         }
-        .onAppear(perform: openPending)
+        .onAppear { openPending(); refreshSignIns() }
         .onChange(of: pendingSheet) { openPending() }
         .task { local.refresh(); await local.detectExternal() }
     }
 
+    private func refreshSignIns() {
+        Task {
+            for engine in [Engine.claude, .codex] where ToolLocator.path(for: engine) != nil {
+                signedIn[engine] = await EngineSignIn.isSignedIn(engine)
+            }
+        }
+    }
+
     private func detail(_ id: String) -> String {
+        if id.hasPrefix("engine:"), let engine = Engine(rawValue: String(id.dropFirst(7))) {
+            switch signedIn[engine] {
+            case .some(.some(true)): return "Signed in"
+            case .some(.some(false)): return "Not signed in"
+            default: return "Checking…"
+            }
+        }
         if id == Builder.localProvider {
             guard !local.installed.isEmpty else { return "No models yet" }
             let bytes = local.installed.reduce(Int64(0)) { $0 + $1.bytes }
@@ -815,9 +955,11 @@ private enum ProviderDetail: Identifiable {
     case key(PiProvider)
     case local
     case server(String)
+    case engine(Engine)
 
     init(_ id: String) {
         if id == Builder.localProvider { self = .local }
+        else if id.hasPrefix("engine:"), let engine = Engine(rawValue: String(id.dropFirst(7))) { self = .engine(engine) }
         else if let provider = Provider.keyProvider(id) { self = .key(provider) }
         else { self = .server(id) }
     }
@@ -827,13 +969,47 @@ private enum ProviderDetail: Identifiable {
         case .key(let provider): provider.id
         case .local: Builder.localProvider
         case .server(let id): id
+        case .engine(let engine): "engine:\(engine.rawValue)"
         }
     }
 
     static func name(_ id: String) -> String {
         if id == Builder.localProvider { return "Native Mac AI" }
         if id.hasPrefix("ext-") { return LocalModels.externalName(id) }
+        if id.hasPrefix("engine:"), let engine = Engine(rawValue: String(id.dropFirst(7))) { return engine.title }
         return Provider.keyProvider(id)?.name ?? id
+    }
+}
+
+/// Claude Code or Codex: signed in or not, and the way to sign in. What they do for Lamp is on the row.
+private struct EngineSheet: View {
+    let engine: Engine
+    let signedIn: Bool?
+    let changed: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var working = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ProviderHeader(id: "engine:\(engine.rawValue)",
+                           detail: signedIn == true ? "Signed in. Builds apps and answers inside them with your \(engine == .claude ? "Claude" : "ChatGPT") subscription."
+                                : signedIn == false ? "Not signed in yet." : "Checking the sign-in…")
+            if Experiments.iosApps {
+                Text("The sign-in stays on this Mac: iOS apps can use it only on the same Wi‑Fi network as it. Away from it they need an OpenRouter key.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(working ? "Signing In…" : "Sign In…") {
+                    working = true
+                    Task { _ = await EngineSignIn.signIn(engine); working = false; changed() }
+                }
+                .keyboardShortcut(.defaultAction).disabled(working || signedIn == true)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
     }
 }
 
@@ -974,6 +1150,9 @@ struct ProviderLogo: View {
             if id == Builder.localProvider {
                 Image(systemName: "desktopcomputer")
                     .font(.system(size: size * 0.5)).foregroundStyle(.black.opacity(0.75))
+            } else if id.hasPrefix("engine:") {
+                Image(systemName: id == "engine:claude" ? "asterisk" : "terminal")
+                    .font(.system(size: size * 0.5)).foregroundStyle(.black.opacity(0.75))
             } else if let image {
                 Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
                     .padding(Self.fullBleed.contains(id) ? 0 : size * 0.18)
@@ -989,6 +1168,22 @@ struct ProviderLogo: View {
 }
 
 /// API key for one provider: shows "saved" with a Remove button, or a field to add one.
+/// A note that something needs an OpenRouter key, with the way to add one at its right: the same wherever
+/// Settings asks for a key, so the person always has the button to hand.
+struct KeyNote: View {
+    let text: String
+    @AppStorage("settingsTab") private var settingsTab = "building"
+    @AppStorage("settingsSheet") private var settingsSheet = ""
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(text).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button("Add a Key…") { settingsSheet = "openrouter"; settingsTab = "providers" }.controlSize(.small)
+        }
+    }
+}
+
 struct KeyRow: View {
     let provider: PiProvider
     var label: String?
@@ -1079,7 +1274,7 @@ struct ModelPicker: View {
         loading = true
         defer { loading = false }
         switch provider {
-        case Builder.localProvider: models = local.installed.map(\.id)
+        case Builder.localProvider: models = local.installed.filter { !LocalModels.isDecisionModel($0.id) }.map(\.id)
         case let id where id.hasPrefix("ext-"): models = local.external[id] ?? []
         default: models = await Agent.listModels(provider: provider)
         }

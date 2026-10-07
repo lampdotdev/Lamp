@@ -51,6 +51,20 @@ final class LocalModels: ObservableObject {
     /// Symlinks for llama-server's router: one folder per GGUF model.
     nonisolated static let routerDir = Edition.supportFolder.appendingPathComponent("Router")
 
+    /// Decision models that run on this Mac: Jev-class (state and a question in, a typed answer out, one
+    /// forward pass), scored by Lamp off the label tokens the way their serving shim does. Kept apart from
+    /// the text models: they can't write anything.
+    nonisolated static let decisionCatalog: [LocalModelSpec] = [
+        LocalModelSpec(id: "h2o-lightning-4b", name: "H2O Lightning 4B", repo: "mradermacher/h2o-lightning-4b-GGUF",
+                       files: ["h2o-lightning-4b.Q4_K_M.gguf"], sizeGB: 2.5, minRAMGB: 8,
+                       blurb: "Decisions on this Mac: free, private, and about as good as Jev."),
+    ]
+
+    /// Whether an installed model is one of the decision models, so it isn't offered for text or building.
+    nonisolated static func isDecisionModel(_ id: String) -> Bool {
+        decisionCatalog.contains { spec in id == spec.id || id == slug(spec.name) || id.hasPrefix(slug(spec.id)) }
+    }
+
     static let catalog: [LocalModelSpec] = [
         LocalModelSpec(id: "qwen3.6-35b-a3b", name: "Qwen3.6 35B-A3B", repo: "unsloth/Qwen3.6-35B-A3B-GGUF",
                        files: ["Qwen3.6-35B-A3B-UD-Q4_K_M.gguf", "mmproj-F16.gguf"], sizeGB: 23.0, minRAMGB: 48,

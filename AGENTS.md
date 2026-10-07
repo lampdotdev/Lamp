@@ -30,6 +30,17 @@ A capability given to one engine must be given to all of them that can take it, 
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items.
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
+  Where an app's text AI goes is an `AppAI.TextRoute` (an OpenRouter model, the Claude Code or Codex sign-in,
+  pi with its key provider, or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in
+  Settings → Apps and an app's info panel, and dispatched by kind in `AppAI.dispatch`. The default
+  (`AppAI.defaultRoute`) is the local model that builds apps when there is one, else Sonnet through
+  OpenRouter with a key, else the builder's own sign-in. Settings → Providers shows what each provider and
+  sign-in is doing (`ProvidersSettings.jobs`). Decisions (`AppAI.decisionModels`, `AppAI.decide`) go to Jev
+  through OpenRouter or TypeSafe, to OpenAI's Decisions API (`decideViaOpenAI`, the same questions in its
+  predicate/choice/score shape), to a Jev-class model on this Mac (`LocalModels.decisionCatalog`, run on the
+  bundled llama-server; `decideLocally` does what the model's serving shim does: one forward pass per
+  question, probabilities read off the label tokens at the "Answer:" slot), or by text through what answers
+  apps (`decideByText`). A decision model is never offered for text or building (`LocalModels.isDecisionModel`).
 - **Using other apps** (`ComputerUse`): two drivers behind one `ComputerUse.Job`. When the ChatGPT app has
   its Computer Use plugin installed, Lamp drives that (`CodexComputerUse`: the `cua_repl` MCP server from
   `~/.codex/plugins/cache/openai-bundled/unified-computer-use/<newest>/.mcp.json`, one `js` tool in which the

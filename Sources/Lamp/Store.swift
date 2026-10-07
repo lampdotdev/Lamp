@@ -3107,17 +3107,14 @@ final class Store: ObservableObject {
         guard project.platform == .iphone, Experiments.iosApps else { return (403, ["error": "Not for this app."]) }
         guard let key = KeyStore.openRouterKey else { return (404, ["error": "There's no OpenRouter key to keep."]) }
         let models = AppModels.load(project)
-        let decision = AppAI.decisionModels.first { $0.id == models.decision } ?? AppAI.decisionModel
+        let decision = AppAI.awayDecisionModel(for: models.awayDecision)
         var keys: [String: Any] = [
             "openrouter": key,
-            "text_model": AppAI.model(for: models.text).openRouter,
+            "text_model": AppAI.awayModel(for: models.away).openRouter,
             "decision_model": decision.model, "decision_provider": decision.provider,
         ]
-        // The image model the gateway itself would use for this app; none when that's the Mac's own model,
-        // which the phone can't run, so it says so rather than quietly paying for another.
-        let image = Icons.artModels.contains { $0.id == models.image } ? models.image! : (models.image == Icons.localArt ? Icons.localArt : Icons.artModel)
-        if image != Icons.localArt { keys["image_model"] = image }
-        if decision.provider == "typesafe", let typesafe = KeyStore.key(for: "typesafe") { keys["typesafe"] = typesafe }
+        // The cloud image model chosen for away from the Mac (the Mac's own model can't travel).
+        keys["image_model"] = AppAI.awayImageModel(for: models.awayImage)
         // Sealed with the secret that went to the phone inside its build, never over the network: the token
         // in the request is on the air too, so it can't be what protects the key.
         guard let json = try? JSONSerialization.data(withJSONObject: keys),
@@ -3148,10 +3145,8 @@ final class Store: ObservableObject {
             return (503, ["error": "Using other apps is turned off. Turn on “Let apps use your other apps” in Lamp → Settings → Apps, then try again."])
         }
         if let problem = ComputerUse.check() { return (502, ["error": problem.message]) }
-        // The model the app chose in its info panel; Sonnet if it hasn't chosen one. Its OpenRouter name with a
-        // key, its own name for Claude Code or Codex answering instead.
-        let chosen = AppAI.models.first { $0.id == AppModels.load(project).text } ?? AppAI.defaultModel
-        let model = Provider.hasKey ? chosen.openRouter : chosen.id
+        // The task goes along the app's text route, like its other AI.
+        let chosen = AppAI.route(for: AppModels.load(project).text)
         var allowAll = false
         do {
             let work = try await ComputerUse.Job(task, appName: project.name, allowActions: allowActions) { [weak self] action in
@@ -3165,7 +3160,7 @@ final class Store: ObservableObject {
             let token = UUID().uuidString + UUID().uuidString
             computerTasks[token] = work
             defer { computerTasks[token] = nil }
-            let (text, cost) = try await ComputerUse.answer(work, model: model, token: token)
+            let (text, cost) = try await ComputerUse.answer(work, route: chosen, token: token)
             record(project, cost: cost)
             return (200, ["text": text])
         } catch {
@@ -3386,9 +3381,12 @@ extension String {
 /// One app's own choice of models for its AI features, in .lamp/models.json. nil uses Lamp's default
 /// from Settings → Apps.
 struct AppModels: Codable, Equatable {
-    var text: String?       // an id from AppAI.models
+    var text: String?       // an AppAI.TextRoute id
     var image: String?      // an id from Icons.artModels
     var decision: String?   // an id from AppAI.decisionModels
+    var away: String?       // iPhone apps: an id from AppAI.anthropicModels, for when the phone can't reach the Mac
+    var awayImage: String?  // iPhone apps: an id from Icons.artModels, likewise
+    var awayDecision: String?  // iPhone apps: an id from AppAI.awayDecisionModels, likewise
 
     private static func url(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/models.json") }
 
