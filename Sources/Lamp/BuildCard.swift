@@ -41,7 +41,7 @@ struct TurnProgress {
     /// How long the agent may think before the card says that's expected.
     static let patience: TimeInterval = 20
 
-    /// The footer's line: what's happening, or that a long think at the start is normal.
+    /// The line under the app's name: what's happening, or that a long think at the start is normal.
     func activity(at date: Date) -> String {
         guard finished == nil, plan.isEmpty, files.isEmpty, activity == "Thinking",
               date.timeIntervalSince(started) >= Self.patience else { return activity }
@@ -92,11 +92,16 @@ struct TurnProgress {
         if worked { for index in plan.indices { plan[index].done = true } }
     }
 
-    var stage: String {
-        if finished != nil { return failed ? "Not finished" : "Ready" }
-        if activity.hasPrefix("Building") || activity.hasPrefix("Fixing a problem") { return "Building" }
-        if activity.hasPrefix("Opening") { return "Opening" }
-        return plan.isEmpty && files.isEmpty ? "Planning" : "Creating"
+    /// The app is being built and opened: past what the agent's plan or steps describe.
+    var finishing: Bool {
+        finished == nil && ["Building", "Fixing a problem", "Opening"].contains { activity.hasPrefix($0) }
+    }
+
+    /// The checklist gets a last row of Lamp's own once there's nothing left on it to work on.
+    var showsFinishing: Bool {
+        guard finished == nil else { return false }
+        if !plan.isEmpty { return finishing || plan.allSatisfy(\.done) }
+        return !steps.isEmpty && finishing
     }
 
     /// What the agent's tool call amounts to for someone who never sees the code: no file names, no tools.
@@ -177,9 +182,11 @@ struct BuildCard: View {
                 AppIcon(project: project, size: 44)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(project.untitled ? "New app" : project.name).font(.headline)
-                    Text(progress.stage).font(.caption).foregroundStyle(.secondary)
+                    status.font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
+                Elapsed(from: progress.started, to: progress.finished)
+                    .font(.callout).foregroundStyle(.secondary)
             }
             .padding(14)
             Divider()
@@ -194,37 +201,30 @@ struct BuildCard: View {
                 }
             }
             .padding(14)
-            Divider()
-            HStack(spacing: 8) {
-                if progress.finished == nil {
-                    ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 14, height: 14)
-                } else if progress.failed {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                } else {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                }
-                if progress.finished == nil {
-                    TimelineView(.periodic(from: progress.started, by: 1)) { context in
-                        Text(progress.activity(at: context.date)).lineLimit(1)
-                    }
-                } else {
-                    Text(progress.failed ? "This didn't finish. See the messages above." : "\(project.name) is ready")
-                        .lineLimit(1)
-                }
-                Spacer()
-                Elapsed(from: progress.started, to: progress.finished)
-            }
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 14).padding(.vertical, 10)
         }
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
         .animation(.easeInOut(duration: 0.35), value: progress.plan)
         .animation(.easeInOut(duration: 0.35), value: progress.sketch)
         .animation(.easeInOut(duration: 0.35), value: progress.named)
+        .animation(.easeInOut(duration: 0.35), value: progress.showsFinishing)
         .animation(.easeInOut(duration: 0.35), value: store.icons[project.id] != nil)
         .animation(.easeInOut(duration: 0.5), value: progress.screenshot != nil)
+    }
+
+    /// What's happening right now, under the app's name; once it's over, how it ended.
+    @ViewBuilder
+    private var status: some View {
+        if progress.finished == nil {
+            TimelineView(.periodic(from: progress.started, by: 1)) { context in
+                Text(progress.activity(at: context.date))
+            }
+        } else if progress.failed {
+            Label("Didn't finish. See the messages below.", systemImage: "exclamationmark.triangle.fill")
+                .symbolRenderingMode(.multicolor)
+        } else {
+            Label { Text("Ready") } icon: { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
+        }
     }
 
     /// A part being worked on gets a spinner instead.
@@ -245,17 +245,18 @@ struct BuildCard: View {
                         Text(part.title).foregroundStyle(state == .open ? .secondary : .primary)
                     }
                 }
+                if progress.showsFinishing { finishingRow }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else if !progress.steps.isEmpty {
             VStack(alignment: .leading, spacing: 7) {
                 ForEach(progress.steps.suffix(5), id: \.self) { step in
-                    // The step it's on right now is still open; the footer says so.
                     let current = progress.finished == nil && step == progress.activity
                     Label { Text(step) } icon: { Mark(symbol: current ? nil : "checkmark.circle.fill") }
                         .labelStyle(.titleAndIcon)
                         .foregroundStyle(.secondary)
                 }
+                if progress.showsFinishing { finishingRow }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
@@ -300,6 +301,15 @@ struct BuildCard: View {
             .transition(.opacity)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Lamp's own last row: the build and the first opening, which no plan lists. The header says which.
+    private var finishingRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Mark(symbol: nil).foregroundStyle(.secondary)
+            Text("Building and opening it")
+        }
+        .transition(.opacity)
     }
 
     private static func step(_ title: String, done: Bool, working: Bool) -> some View {
