@@ -2140,12 +2140,17 @@ final class Store: ObservableObject {
             log(project, .error, problem)
             return problem
         }
+        // The turn that owns the app now, taken before anything waits: Delete or Stop can come during any of
+        // the waits below, and then nothing more is written or launched for it (not even by a later turn of
+        // the same app, which would have a launch of its own).
+        guard let owner = turns[project.id] else { return "Lamp isn't working on this app." }
         // Launches on one device go one after another: a launch already under way finishes (and is then
         // closed, below) before the next starts, so two apps can't be racing onto the same screen.
         let previous = simulatorWork[udid]
         let mine = Task<String?, Never> { [self] in
             await previous?.value
-            return await launchOnSimulator(project, udid: udid, inFront: inFront)
+            guard turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
+            return await launchOnSimulator(project, owner: owner, udid: udid, inFront: inFront)
         }
         simulatorWork[udid] = Task { _ = await mine.value }
         return await mine.value
@@ -2154,10 +2159,7 @@ final class Store: ObservableObject {
     /// The launch in progress on each simulator, for the next one to wait for.
     private var simulatorWork: [String: Task<Void, Never>] = [:]
 
-    private func launchOnSimulator(_ project: LampProject, udid: String, inFront: Bool) async -> String? {
-        // The turn that owns the app now, taken before anything waits: Delete or Stop can come during any of
-        // the waits below, and then nothing more is written or launched for it.
-        guard let owner = turns[project.id] else { return "Lamp isn't working on this app." }
+    private func launchOnSimulator(_ project: LampProject, owner: Turn, udid: String, inFront: Bool) async -> String? {
         // The device is this project's from here: the driver acts only while the lease is held.
         let before = simulatorLeases[udid]
         simulatorLeases[udid] = project.id
