@@ -15,11 +15,13 @@ import Foundation
     @MainActor static func main() async throws {
         let fixtures = URL(fileURLWithPath: CommandLine.arguments[1])
         let rows = try JSONDecoder().decode([Fixture].self, from: Data(contentsOf: fixtures.appendingPathComponent("manifest.json")))
+        let expectedMessages = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: fixtures.appendingPathComponent("messages.json")))
         var messages: [String: String] = [:]
         for row in rows where !row.cause.isEmpty {
             let output = try String(contentsOf: fixtures.appendingPathComponent(row.file), encoding: .utf8)
             let failure = PhoneFailure(stage: PhoneFailure.Stage(rawValue: row.stage)!, output: output)
             check(failure.cause.rawValue == row.cause, "\(row.file) → \(row.cause) [\(row.provenance)]")
+            check(failure.message == expectedMessages[row.cause], "\(row.file) keeps the approved directions")
             messages[row.file] = failure.message
         }
         check(PhoneFailure(stage: .build, output: "No Accounts\n" + (try String(contentsOf: fixtures.appendingPathComponent("capability.txt"), encoding: .utf8))).cause == .capability, "specific capability cause beats No Accounts")
@@ -29,6 +31,17 @@ import Foundation
         check(PhoneFailure(stage: .install, output: "Unexpected installer error").cause == .install, "unknown install stays an install failure")
         check(PhoneFailure(stage: .build, output: "Your session has expired").cause == .authentication, "expired login has its own advice")
         check(PhoneFailure(stage: .build, output: "errSecInternalComponent").cause == .certificate, "keychain failure has certificate advice")
+        let extraMessages: [(PhoneFailure.Stage, String)] = [
+            (.build, "Authentication failed"), (.build, "No profiles for dev.example.app"),
+            (.build, "Compiler failed"), (.install, "Installer failed"),
+            (.launch, "Launch failed"), (.install, "Developer mode is disabled")
+        ]
+        for (stage, output) in extraMessages {
+            let failure = PhoneFailure(stage: stage, output: output)
+            check(failure.message == expectedMessages[failure.cause.rawValue], "\(failure.cause) keeps the approved directions")
+        }
+        let unnamedCapability = PhoneFailure(stage: .build, output: "Entitlement not supported")
+        check(unnamedCapability.message == expectedMessages["capability"]?.replacingOccurrences(of: "Push Notifications", with: "a feature this app uses"), "capability without a name keeps a readable placeholder")
         let bundle = "com.companyname.mauiapp1"
         let success = try String(contentsOf: fixtures.appendingPathComponent("launch-confirmed.txt"), encoding: .utf8)
         check(PhoneLaunch.acknowledged(success, bundleID: bundle), "real launch confirmation accepted")
@@ -38,6 +51,7 @@ import Foundation
         // its line matcher. Exit status, delayed output, timeout and cancellation all matter here.
         try await launchReplay(fixtures.appendingPathComponent("launch-confirmed.txt"), bundle: bundle, delay: "0.4", hold: "2", timeout: 2, expected: nil)
         try await launchReplay(fixtures.appendingPathComponent("launch-security.txt"), bundle: bundle, hold: "0", expected: .launchSecurity)
+        try await launchReplay(fixtures.appendingPathComponent("local-launch-security.txt"), bundle: bundle, hold: "0", expected: .launchSecurity)
         try await launchReplay(fixtures.appendingPathComponent("unreachable.txt"), bundle: bundle, hold: "0", expected: .unreachable)
         try await launchReplay(fixtures.appendingPathComponent("locked.txt"), bundle: bundle, hold: "0", expected: .locked)
         try await launchReplay(fixtures.appendingPathComponent("unreachable.txt"), bundle: bundle, hold: "2", timeout: 0.2, expected: .unreachable)

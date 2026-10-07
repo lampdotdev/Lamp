@@ -2418,7 +2418,7 @@ final class Store: ObservableObject {
         do {
             try Template.writeDeviceProject(for: project, team: team)
         } catch {
-            failed("Couldn't prepare the app for \(name). Retry; if it fails again, ask Lamp to fix the phone build.", output: error.localizedDescription)
+            failed("Lamp couldn't get the app ready for \(name). Click Retry. If it fails again, ask Lamp to fix it and include the error from Agent Details.", output: error.localizedDescription)
             return nil
         }
         log(project, .status, "Building for \(name)…")

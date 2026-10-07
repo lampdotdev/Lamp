@@ -102,5 +102,13 @@
     "provenance": "local-real-output",
     "source": "Captured through Lamp on 2026-10-07 with Xcode 27, cable disconnected and phone Wi-Fi off.",
     "note": "Exact diagnostic wording retained; the phone identifier is redacted and unrelated destinations omitted."
+  },
+  {
+    "file": "local-launch-security.txt",
+    "stage": "launch",
+    "cause": "launchSecurity",
+    "provenance": "local-real-output",
+    "source": "Captured through Lamp on this Mac during the first real-phone launch on 2026-10-07.",
+    "note": "Exact diagnostic wording retained; the signing team in the bundle identifier is redacted."
   }
 ]

@@ -68,35 +68,35 @@ struct PhoneFailure: LocalizedError {
         case .account:
             "Xcode couldn't find an Apple account for signing. Open Xcode → Settings → Accounts and sign in, then Retry."
         case .team:
-            "Xcode can't sign for the Apple team selected in Lamp. Choose your account's team in Lamp → Settings → Building → Experimental, or add that team's account in Xcode → Settings → Accounts, then Retry."
+            "Xcode can't use the Apple team selected in Lamp. In Lamp → Settings → Building → Experimental, choose a team that belongs to your Apple account. Or sign in with an account for the selected team in Xcode → Settings → Accounts. Then click Retry."
         case .authentication:
-            "Xcode couldn't use your Apple account. Open Xcode → Settings → Accounts and complete any sign-in or account notices, then Retry."
+            "Xcode couldn't sign in with your Apple account. Open Xcode → Settings → Accounts and follow any prompts to sign in again. Then click Retry."
         case .developerTrust:
             "The phone hasn't trusted this app's developer yet. On the phone, open Settings → General → VPN & Device Management, choose the developer under Developer App, and tap Trust or Verify. Keep the phone online, then Retry."
         case .launchSecurity:
-            "The phone refused to open the app. It may need you to trust the developer: on the phone, open Settings → General → VPN & Device Management, choose the developer under Developer App, and tap Trust or Verify. Keep the phone online, then Retry. If it is already trusted, the app's signature or permissions may be invalid; check your team and signing certificates in Xcode."
+            "The phone wouldn't open the app. On the phone, open Settings → General → VPN & Device Management. If the app's developer appears under Developer App, select it and tap Trust or Verify. Keep the phone online, then click Retry. If the developer is already trusted or isn't listed, open Agent Details to see Apple's error."
         case .appLimit:
-            "The phone has reached the free-account limit of 3 development apps. Remove a development app you no longer need from the phone, then Retry. Removing an app deletes its data."
+            "Your free Apple account allows up to 3 development apps on the phone. Delete one you no longer need, then click Retry. Deleting it also deletes its data."
         case .idLimit:
-            "Your free Apple account has reached its limit of 10 app IDs in 7 days. Wait for earlier registrations to expire, then Retry, or choose a paid developer team in Lamp's settings. Deleting apps from the phone doesn't free these registrations."
+            "You've reached your free Apple account's limit of 10 app IDs in 7 days. Wait until Apple lets you register another, then click Retry. Or choose a team with a paid Apple Developer membership in Lamp → Settings → Building → Experimental. Deleting apps from the phone won't reset this limit."
         case .expiredProfile:
-            "The app's permission to run on the phone has expired. Free-account signing lasts 7 days. Connect and unlock the phone, then Retry to sign and install it again."
+            "This app needs to be renewed before it can run on the phone. Connect and unlock the phone, then click Retry to reinstall it. Apps installed with a free Apple account need renewing every 7 days."
         case .capability:
-            "Your Apple account can't sign for \(capabilityName ?? "a feature this app uses"). Ask Lamp to remove that feature, or choose a developer team that supports it in Lamp's settings, then Retry. Apple's reason is under Agent Details."
+            "Your Apple team doesn't support \(capabilityName ?? "a feature this app uses"). Ask Lamp to remove that feature, or choose a team that supports it in Lamp → Settings → Building → Experimental. Then click Retry. Open Agent Details to see Apple's explanation."
         case .certificate:
-            "Xcode couldn't use a signing certificate or its private key. In Xcode → Settings → Accounts, select your team and open Manage Certificates to check your Apple Development certificate. Unlock your login keychain and allow signing access if asked, then Retry."
+            "Xcode couldn't sign the app. If your Mac asks to unlock the login keychain or allow access, follow the prompt, then click Retry. If it still fails, open Agent Details to see the error. You can find your Apple Development certificates in Xcode → Settings → Accounts: select your account and team, then open Manage Certificates."
         case .locked:
             "The phone is locked. Unlock it with its passcode and keep it unlocked, then Retry."
         case .unreachable:
             "Lamp couldn't reach the phone. Plug it in with a data cable and unlock it, then Retry."
         case .developerMode:
-            "Turn on Developer Mode on the phone in Settings → Privacy & Security → Developer Mode. Restart, unlock it, and confirm Turn On, then Retry."
+            "On the phone, open Settings → Privacy & Security → Developer Mode and turn it on. Restart the device when asked, unlock it, and tap Turn On to confirm. Then click Retry."
         case .signing:
-            "Xcode couldn't sign the app for the phone. Check your selected team and any signing notices in Xcode → Settings → Accounts, then Retry. Apple's reason is under Agent Details."
+            "Xcode couldn't sign the app for the phone. Make sure the team selected in Lamp → Settings → Building → Experimental belongs to your Apple account. In Xcode → Settings → Accounts, follow any prompts to sign in again, then click Retry. If it still fails, open Agent Details to see Apple's error."
         case .build:
-            "The app couldn't be built for the phone. The reason is under Agent Details. Retry, or ask Lamp to fix the phone build if it fails again."
+            "The app couldn't be built for the phone. Click Retry. If it fails again, ask Lamp to fix it and include the error from Agent Details."
         case .install:
-            "The app couldn't be installed on the phone. The reason is under Agent Details. Check the phone and Retry."
+            "The app couldn't be installed on the phone. Keep it connected and unlocked, then click Retry. If it still fails, open Agent Details to see the error."
         case .launch:
             "Lamp couldn't confirm that the app opened on the phone. Keep the phone connected and unlocked, then Retry. The reason is under Agent Details."
         }

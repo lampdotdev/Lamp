@@ -8,7 +8,7 @@ import uuid
 messages = json.loads(Path(sys.argv[1]).read_text())
 root = Path(sys.argv[2])
 fixtures = Path(__file__).parent / 'Fixtures'
-for name, fixture in [('Pocket Timer', 'launch-security.txt'),
+for name, fixture in [('Pocket Timer', 'local-launch-security.txt'),
                       ('Trail Notes', 'capability.txt'), ('Weekly Planner', 'app-limit.txt')]:
     app = root / name.replace(' ', '').lower()
     meta = app / '.lamp'

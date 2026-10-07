@@ -18,6 +18,11 @@ for name,subject in [('different-id','/CN=Apple Development: Test Person (CLIENT
     subprocess.run(['openssl','x509','-in',str(folder/(name+'.pem')),'-outform','der','-out',str(folder/(name+'.der'))],check=True)
 text='import Foundation\nimport Security\nimport CryptoKit\nenum Devices {\n'
 text+='\n'.join(block(marker) for marker in ['static func xcodeTeams()', 'static func knownTeams()', 'static func certificateTeam('])+'\n}\n'
+text += r'''
+enum Preflight {
+    struct Device { let name = "Test iPhone"; let paired = true; var developerMode: Bool }
+    static func xcodeTeams() -> [(id: String, name: String)] { [("TEAM000001", "Test Team")] }
+''' + block('static func problem(') + '\n}\n'
 text+=r'''
 @main struct TeamReplay {
     static func check(_ value: Bool, _ label: String) {
@@ -39,6 +44,11 @@ text+=r'''
         check(Devices.certificateTeam(missing) == nil, "no organizational unit means no guessed Team ID")
         let invalid = try certificate(folder.appendingPathComponent("invalid-team.der"))
         check(Devices.certificateTeam(invalid) == nil, "invalid organizational unit is not offered as a Team ID")
+        let expected = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: URL(fileURLWithPath: "Tests/PhoneInstall/Fixtures/messages.json")))
+        check(Preflight.problem(Preflight.Device(developerMode: false), team: "TEAM000001") == expected["deviceDeveloperMode"],
+              "Developer Mode preflight keeps the device name and approved confirmation steps")
+        check(Preflight.problem(Preflight.Device(developerMode: true), team: "OTHER00001") == expected["deviceTeam"],
+              "unavailable selected team points to Lamp's team settings")
         if CommandLine.arguments.count > 2 {
             let confirmed = try String(contentsOfFile: CommandLine.arguments[2], encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
             let actual = await Devices.knownTeams()

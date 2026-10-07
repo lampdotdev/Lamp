@@ -1,0 +1,22 @@
+{
+  "account": "Xcode couldn't find an Apple account for signing. Open Xcode → Settings → Accounts and sign in, then Retry.",
+  "team": "Xcode can't use the Apple team selected in Lamp. In Lamp → Settings → Building → Experimental, choose a team that belongs to your Apple account. Or sign in with an account for the selected team in Xcode → Settings → Accounts. Then click Retry.",
+  "authentication": "Xcode couldn't sign in with your Apple account. Open Xcode → Settings → Accounts and follow any prompts to sign in again. Then click Retry.",
+  "developerTrust": "The phone hasn't trusted this app's developer yet. On the phone, open Settings → General → VPN & Device Management, choose the developer under Developer App, and tap Trust or Verify. Keep the phone online, then Retry.",
+  "launchSecurity": "The phone wouldn't open the app. On the phone, open Settings → General → VPN & Device Management. If the app's developer appears under Developer App, select it and tap Trust or Verify. Keep the phone online, then click Retry. If the developer is already trusted or isn't listed, open Agent Details to see Apple's error.",
+  "appLimit": "Your free Apple account allows up to 3 development apps on the phone. Delete one you no longer need, then click Retry. Deleting it also deletes its data.",
+  "idLimit": "You've reached your free Apple account's limit of 10 app IDs in 7 days. Wait until Apple lets you register another, then click Retry. Or choose a team with a paid Apple Developer membership in Lamp → Settings → Building → Experimental. Deleting apps from the phone won't reset this limit.",
+  "expiredProfile": "This app needs to be renewed before it can run on the phone. Connect and unlock the phone, then click Retry to reinstall it. Apps installed with a free Apple account need renewing every 7 days.",
+  "capability": "Your Apple team doesn't support Push Notifications. Ask Lamp to remove that feature, or choose a team that supports it in Lamp → Settings → Building → Experimental. Then click Retry. Open Agent Details to see Apple's explanation.",
+  "certificate": "Xcode couldn't sign the app. If your Mac asks to unlock the login keychain or allow access, follow the prompt, then click Retry. If it still fails, open Agent Details to see the error. You can find your Apple Development certificates in Xcode → Settings → Accounts: select your account and team, then open Manage Certificates.",
+  "locked": "The phone is locked. Unlock it with its passcode and keep it unlocked, then Retry.",
+  "unreachable": "Lamp couldn't reach the phone. Plug it in with a data cable and unlock it, then Retry.",
+  "developerMode": "On the phone, open Settings → Privacy & Security → Developer Mode and turn it on. Restart the device when asked, unlock it, and tap Turn On to confirm. Then click Retry.",
+  "signing": "Xcode couldn't sign the app for the phone. Make sure the team selected in Lamp → Settings → Building → Experimental belongs to your Apple account. In Xcode → Settings → Accounts, follow any prompts to sign in again, then click Retry. If it still fails, open Agent Details to see Apple's error.",
+  "build": "The app couldn't be built for the phone. Click Retry. If it fails again, ask Lamp to fix it and include the error from Agent Details.",
+  "install": "The app couldn't be installed on the phone. Keep it connected and unlocked, then click Retry. If it still fails, open Agent Details to see the error.",
+  "launch": "Lamp couldn't confirm that the app opened on the phone. Keep the phone connected and unlocked, then Retry. The reason is under Agent Details.",
+  "deviceDeveloperMode": "On Test iPhone, open Settings → Privacy & Security → Developer Mode and turn it on. Restart the device when asked, unlock it, and tap Turn On to confirm. Then click Retry.",
+  "deviceTeam": "The team selected in Lamp isn't available in Xcode. Choose one of your signed-in teams in Lamp → Settings → Building → Experimental, or sign in with an account that belongs to the selected team in Xcode → Settings → Accounts. Then click Retry.",
+  "prepare": "Lamp couldn't get the app ready for Test iPhone. Click Retry. If it fails again, ask Lamp to fix it and include the error from Agent Details."
+}

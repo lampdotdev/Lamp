@@ -51,7 +51,12 @@ enum Subprocess {
     var subtitles: [String] = []
     func post(for project: LampProject, subtitle: String, body: String) { subtitles.append(subtitle) }
 }
-enum Template { static func writeDeviceProject(for project: LampProject, team: String) throws {} }
+@MainActor enum Template {
+    static var failPrepare = false
+    static func writeDeviceProject(for project: LampProject, team: String) throws {
+        if failPrepare { throw NSError(domain: "PreparationReplay", code: 1, userInfo: [NSLocalizedDescriptionKey: "Replayed project preparation error"]) }
+    }
+}
 enum Runtime {
     static func startLog(_ project: LampProject) {}
     static func logURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent("unused-review-log") }
@@ -119,7 +124,8 @@ text += r'''
         if !condition { fatalError("FAIL: \(label)") }
         print("PASS: \(label)")
     }
-    static func runChecks() async {
+    static func runChecks() async throws {
+        let expected = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1])))
         let project = LampProject()
         let store = Store(); store.projects = [project]
         let retry = Task { await store.retryPhone(project, udid: "TEST-PHONE") }
@@ -152,6 +158,14 @@ text += r'''
         second.notify(project, after: .failed)
         check(Notifier.shared.subtitles.isEmpty, "Stop also suppresses earlier error notifications")
 
+        Template.failPrepare = true
+        let preparation = Store(); preparation.projects = [project]
+        await preparation.retryPhone(project, udid: "TEST-PHONE")
+        check(preparation.logs[project.id]?.contains { $0.kind == .error && $0.text == expected["prepare"] && $0.retryPhone == "TEST-PHONE" } == true,
+              "preparation failure keeps the approved directions and Retry")
+        check(preparation.logs[project.id]?.contains { $0.kind == .detail && $0.text == "Replayed project preparation error" } == true,
+              "preparation failure keeps the underlying error in Agent Details")
+        Template.failPrepare = false
         let normal = Store(); normal.projects = [project]
         let healthy = normal.begin(project)!
         check(normal.completed(healthy).end == .changed, "Mac or simulator completion is unchanged")
@@ -165,7 +179,7 @@ text += r'''
     }
 }
 @main struct StoreReviewReplay {
-    @MainActor static func main() async { await Store.runChecks() }
+    @MainActor static func main() async throws { try await Store.runChecks() }
 }
 '''
 Path(sys.argv[1]).write_text(text)
