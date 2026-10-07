@@ -15,6 +15,10 @@
   /* The Mac app's own buttons (Onboarding.swift's Palette.accent and accentDeep). */
   --color-graphite: #33302e;
   --color-graphite-deep: #141311;
+
+  /* Where the feature tiles go side by side: the page's full width (max-w-6xl), the width their illustrations
+     are drawn for. Narrower than that, the tiles stack, each as wide as the page. */
+  --breakpoint-bento: 72rem;
 }
 
 @layer base {
@@ -27,5 +31,10 @@
   body {
     background: var(--color-page);
     color: var(--color-ink);
+  }
+
+  /* No lone word on a last line, anywhere on the page. */
+  h1, h2, h3, p, li {
+    text-wrap: pretty;
   }
 }

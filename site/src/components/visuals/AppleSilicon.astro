@@ -1,0 +1,70 @@
+---
+// For "Made for Apple silicon": an abstract chip, dark metal with a warm glow at its core like the lamp's, and
+// fine traces running off it to the tile's edges. Drawn in SVG on a 435×280 canvas (the tile's size on a
+// laptop), the chip 40px in to line up with the words. Not Apple's chip artwork, just the idea of one.
+const chip = { x: 40, y: 56, size: 168 };
+const die = { x: chip.x + 36, y: chip.y + 36, size: chip.size - 72 };
+const pins = Array.from({ length: 7 }, (_, i) => chip.y + 22 + i * ((chip.size - 44) / 6));
+---
+
+<div aria-hidden="true" class="relative h-[221px] overflow-hidden select-none sm:h-[280px]">
+  <!-- On a phone the scene is drawn at the desktop tile's size and shrunk, keeping the same arrangement. -->
+  <div class="absolute inset-0 h-[127%] w-[127%] origin-top-left scale-[0.79] sm:h-full sm:w-full sm:scale-100">
+    <svg viewBox="0 0 435 280" class="h-[280px] w-[435px]">
+      <defs>
+        <linearGradient id="silicon-metal" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#5a5652" />
+          <stop offset="0.5" stop-color="#2f2c2a" />
+          <stop offset="1" stop-color="#46423f" />
+        </linearGradient>
+        <radialGradient id="silicon-glow">
+          <stop offset="0" stop-color="#ffb84d" stop-opacity="0.95" />
+          <stop offset="0.45" stop-color="#f29d1f" stop-opacity="0.45" />
+          <stop offset="1" stop-color="#f29d1f" stop-opacity="0" />
+        </radialGradient>
+        <linearGradient id="silicon-trace" x1="0" x2="1">
+          <stop offset="0" stop-color="#f29d1f" stop-opacity="0.55" />
+          <stop offset="1" stop-color="#f29d1f" stop-opacity="0" />
+        </linearGradient>
+      </defs>
+
+      <!-- Traces out to the right edge, and up and down from the chip -->
+      {
+        pins.map((y, i) => (
+          <path
+            d={`M${chip.x + chip.size} ${y} H${chip.x + chip.size + 40 + (i % 3) * 18} L${chip.x + chip.size + 64 + (i % 3) * 18} ${y + (i - 3) * 9} H435`}
+            fill="none"
+            stroke="url(#silicon-trace)"
+            stroke-width="1.5"
+          />
+        ))
+      }
+      {
+        pins.slice(1, 6).map((y) => {
+          const x = chip.x + (y - chip.y);
+          return (
+            <>
+              <path d={`M${x} ${chip.y} V0`} stroke="#f29d1f" stroke-opacity="0.18" stroke-width="1.5" />
+              <path d={`M${x} ${chip.y + chip.size} V280`} stroke="#f29d1f" stroke-opacity="0.18" stroke-width="1.5" />
+            </>
+          );
+        })
+      }
+
+      <!-- The package, and the die glowing at its centre -->
+      <rect x={chip.x} y={chip.y} width={chip.size} height={chip.size} rx="26" fill="url(#silicon-metal)" stroke="rgba(255,255,255,0.14)" />
+      <rect x={chip.x + 10} y={chip.y + 10} width={chip.size - 20} height={chip.size - 20} rx="18" fill="none" stroke="rgba(255,255,255,0.06)" />
+      <circle cx={die.x + die.size / 2} cy={die.y + die.size / 2} r={die.size * 0.95} fill="url(#silicon-glow)" />
+      <rect x={die.x} y={die.y} width={die.size} height={die.size} rx="12" fill="#1c1a19" stroke="rgba(242,157,31,0.65)" stroke-width="1.5" />
+      {
+        [1, 2, 3].map((n) => (
+          <>
+            <path d={`M${die.x + (die.size * n) / 4} ${die.y + 10} V${die.y + die.size - 10}`} stroke="rgba(242,157,31,0.22)" />
+            <path d={`M${die.x + 10} ${die.y + (die.size * n) / 4} H${die.x + die.size - 10}`} stroke="rgba(242,157,31,0.22)" />
+          </>
+        ))
+      }
+      <rect x={die.x + die.size / 2 - 14} y={die.y + die.size / 2 - 14} width="28" height="28" rx="6" fill="#f29d1f" opacity="0.9" />
+    </svg>
+  </div>
+</div>
