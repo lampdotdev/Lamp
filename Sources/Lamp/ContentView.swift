@@ -701,7 +701,7 @@ struct ProjectView: View {
     private func transcript(_ lines: [LogLine], busy: Bool, progressShown: Bool = false) -> some View {
         Transcript(lines: lines, dir: project.dir, busy: busy, progressShown: progressShown, goBack: { line, before in
             Task { await store.restore(project, toVersionOf: line, before: before) }
-        }, sendAgain: self.busy ? nil : takeBack, retryPhone: Experiments.devices && project.device != nil ? { udid in
+        }, sendAgain: self.busy ? nil : takeBack, retryPhone: Experiments.iosApps && project.device != nil ? { udid in
             Task { await store.retryPhone(project, udid: udid) }
         } : nil)
     }

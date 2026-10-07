@@ -7,7 +7,7 @@ import re
 import sys
 
 source = Path('Sources/Lamp/Store.swift').read_text()
-def block(marker):
+def block(marker, source=source):
     start = source.index(marker)
     brace = source.index('{', start)
     depth = 1
@@ -42,7 +42,7 @@ struct LogLine {
 }
 struct Look {}
 struct TurnProgress { var finished: Date?; var failed = false }
-enum Experiments { static let devices = true }
+__PRODUCTION_EXPERIMENTS__
 enum Subprocess {
     @discardableResult static func terminateTree(_ process: Process) -> [pid_t] { [] }
 }
@@ -114,6 +114,7 @@ enum Runtime {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, retryPhone: retryPhone))
     }
 '''
+text = text.replace('__PRODUCTION_EXPERIMENTS__', block('enum Experiments', Path('Sources/Lamp/Edition.swift').read_text()))
 text += '\n'.join(methods)
 text += '''
     func completed(_ owner: Turn, crash: String? = nil, edited: Bool = true) -> TurnResult {
@@ -126,7 +127,16 @@ text += r'''
     }
     static func runChecks() async throws {
         let expected = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1])))
+        let previousDefaults = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+        defer { UserDefaults.standard.setVolatileDomain(previousDefaults, forName: UserDefaults.argumentDomain) }
         let project = LampProject()
+        UserDefaults.standard.setVolatileDomain(["experimentIOSApps": false], forName: UserDefaults.argumentDomain)
+        let disabled = Store(); disabled.projects = [project]
+        await disabled.retryPhone(project, udid: "TEST-PHONE")
+        check(disabled.turns.isEmpty && Devices.builds == 0 && Devices.installs == 0,
+              "Retry does nothing while the current iOS setting is off")
+        UserDefaults.standard.setVolatileDomain(["experimentIOSApps": true, "experimentDevices": false], forName: UserDefaults.argumentDomain)
+        check(Experiments.iosApps, "the current iOS setting enables phone Retry without the retired device switch")
         let store = Store(); store.projects = [project]
         let retry = Task { await store.retryPhone(project, udid: "TEST-PHONE") }
         while !Devices.checking { await Task.yield() }
