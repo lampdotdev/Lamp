@@ -845,13 +845,13 @@ struct ProvidersSettings: View {
             Section {
                 list(onThisMac)
                 if Experiments.iosApps {
-                    Text("These stay on this Mac: a sign-in can't go with an app to your iPhone.")
+                    Text("These stay on this Mac: a sign-in can't go with an app to your iPhone or iPad.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             } header: { Text("On this Mac") }
             Section {
                 if added.isEmpty {
-                    Text("No keys yet. OpenRouter gives apps the most to choose from and makes pictures\(Experiments.iosApps ? ", and goes with an app to your iPhone" : "").")
+                    Text("No keys yet. OpenRouter gives apps the most to choose from and makes pictures\(Experiments.iosApps ? ", and goes with an app to your iPhone or iPad" : "").")
                         .font(.callout).foregroundStyle(.secondary)
                 } else {
                     list(added.map(\.id))
@@ -995,7 +995,7 @@ private struct EngineSheet: View {
                            detail: signedIn == true ? "Signed in. Builds apps and answers inside them with your \(engine == .claude ? "Claude" : "ChatGPT") subscription."
                                 : signedIn == false ? "Not signed in yet." : "Checking the sign-in…")
             if Experiments.iosApps {
-                Text("The sign-in stays on this Mac. Apps on your iPhone need an OpenRouter key to work away from it.")
+                Text("The sign-in stays on this Mac. Apps on your iPhone or iPad need an OpenRouter key to work away from it.")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             HStack {
