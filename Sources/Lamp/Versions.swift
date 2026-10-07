@@ -105,7 +105,7 @@ enum Versions {
             // Before the restore is committed, so what comes back is already this Lamp's: the library's names
             // and the bundle id (an app copied from the other edition), with no change left over afterwards.
             Migration.normalize(project.dir, commit: false)
-            Template.upgradeBuildScript(for: project)
+            Template.writeBuildScript(for: project)
         }
         return ok
     }

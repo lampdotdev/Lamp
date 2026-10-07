@@ -2218,7 +2218,12 @@ final class Store: ObservableObject {
         guard exists(project) else { return "The app was deleted." }
         log(project, .status, "Building…")
         try? Template.writeSupport(for: project)
-        Template.upgradeBuildScript(for: project)
+        Template.writeBuildScript(for: project)
+        // The agent may edit Package.swift, but not into something that fetches or runs code at build time.
+        if let problem = Template.packageProblem(for: project) {
+            log(project, .detail, "Build failed:\n" + problem)
+            return problem
+        }
         // Taken before the build, so an edit made while it runs still counts as a change afterwards.
         let fingerprint = Runtime.fingerprint(project)
         var output: [String] = []
