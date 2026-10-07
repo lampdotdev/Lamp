@@ -192,22 +192,24 @@ enum Devices {
             throw error
         }
         close(slave)
-        // The copy runs on its own thread for as long as devicectl does: the terminal's line endings become
-        // the log's, and the log is what the launch wait and the app's log view read.
+        // The copy runs on its own thread for as long as devicectl does: bytes as they are, less the
+        // terminal's carriage returns, so a character split across two reads survives. The log is what the
+        // launch wait and the app's log view read; the wait is told when the last of it is there.
+        let drained = PhoneLaunch.Flag()
         Thread.detachNewThread {
             var buffer = [UInt8](repeating: 0, count: 8192)
             while true {
                 let count = read(master, &buffer, buffer.count)
                 guard count > 0 else { break }
-                let text = String(decoding: buffer[0..<count], as: UTF8.self).replacingOccurrences(of: "\r", with: "")
-                handle.write(Data(text.utf8))
+                handle.write(Data(buffer[0..<count].filter { $0 != 13 }))
             }
             close(master)
             try? handle.close()
+            drained.set()
         }
         do {
             started(process)
-            try await PhoneLaunch.wait(process, bundleID: bundleID, output: log, offset: offset, cancelled: cancelled)
+            try await PhoneLaunch.wait(process, bundleID: bundleID, output: log, offset: offset, cancelled: cancelled, drained: drained.isSet)
             return process
         } catch {
             Subprocess.terminateTree(process)
