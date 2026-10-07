@@ -280,7 +280,6 @@ struct BuildingSettings: View {
     @AppStorage("askOutsideFolder") private var askOutsideFolder = true
     @AppStorage("shareAppLog") private var shareLog = true
     @AppStorage("shareAppPictures") private var sharePictures = true
-    @AppStorage("iconModel") private var iconModel = Icons.artModels[0].id
     @State private var model = Builder.piModel
     @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore
     @State private var notificationsDenied = false
@@ -502,7 +501,7 @@ struct BuildingSettings: View {
                     }
                     if otherModel { ModelPicker(provider: provider, model: $model, revision: revision) }
                 }
-                Picker("Image generation", selection: $iconModel) {
+                Picker("Image generation", selection: Binding(get: { _ = revision; return Icons.iconModel }, set: { Icons.iconModel = $0; revision += 1 })) {
                     ForEach(Icons.imageChoices, id: \.id) { Text($0.label).tag($0.id) }
                 }
             }

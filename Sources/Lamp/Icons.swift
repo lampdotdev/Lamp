@@ -75,9 +75,13 @@ enum Icons {
     /// The image model for pictures inside apps (Settings → Apps → Image generation).
     static var artModel: String { choice("imageModel") }
 
-    /// The image model for icon artwork (Settings → Building → Icon artwork): the builder's business, so it
-    /// has its own choice; an app that makes pictures needn't pay for the model that draws icons best.
-    static var iconModel: String { choice("iconModel") }
+    /// The image model for icon artwork (Settings → Building → Image generation): the builder's business,
+    /// so it has its own choice; an app that makes pictures needn't pay for the model that draws icons best.
+    /// Until it's chosen, icons keep using the apps' model, as they did when there was one choice.
+    static var iconModel: String {
+        get { UserDefaults.standard.string(forKey: "iconModel") == nil ? artModel : choice("iconModel") }
+        set { UserDefaults.standard.set(newValue, forKey: "iconModel") }
+    }
 
     private static func choice(_ key: String) -> String {
         let saved = UserDefaults.standard.string(forKey: key) ?? ""
