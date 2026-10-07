@@ -1,0 +1,84 @@
+import SwiftUI
+import AppKit
+
+struct BugReportScene: Scene {
+    var body: some Scene {
+        Window("Report a Bug", id: "bug-report") {
+            BugReportView().environmentObject(Store.shared)
+        }
+        .defaultSize(width: 640, height: 680)
+    }
+}
+
+struct BugReportView: View {
+    @EnvironmentObject private var store: Store
+    @State private var report = ""
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Report a bug").font(.title2.bold())
+            Text("Send this to the person who invited you to Lamp, or reply to your invitation.")
+            Text("Describe the problem below. Review and edit the entire report before copying or sharing it. Nothing is sent automatically.")
+                .foregroundStyle(.secondary)
+            TextEditor(text: $report)
+                .font(.system(.body, design: .monospaced))
+                .padding(8)
+                .background(.background, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
+                .accessibilityLabel("Bug report")
+            Text("Includes versions, your selected engine, and activity labels. Log text, keys, chat and app code are left out unless you add them yourself.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            HStack {
+                Text(copied ? "Copied. Paste it into your message to send." : "Only the text above will be copied or shared.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(copied ? "Report copied. Paste it into your message to send." : "Only the text above will be copied or shared.")
+                Spacer()
+                ShareLink(item: report) { Text("Share…") }
+                    .disabled(report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Copy Report") {
+                    NSPasteboard.general.clearContents()
+                    copied = NSPasteboard.general.setString(report, forType: .string)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(report.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 580, minHeight: 560)
+        .onAppear {
+            // Keep an unfinished report when the window is brought forward again.
+            if report.isEmpty { report = snapshot() }
+        }
+        .onChange(of: report) { copied = false }
+    }
+
+    private func snapshot() -> String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let selected = store.selected
+        let lines = selected.map { store.logs[$0.id] ?? [] } ?? []
+        let activity = lines.suffix(20).map { line -> BugReport.Activity in
+            switch line.kind {
+            case .user: .request
+            case .agent: .reply
+            case .status: .status
+            case .error: .error
+            case .detail: .detail
+            case .tool: .tool
+            case .summary: .summary
+            case .needsKey: .needsKey
+            }
+        }
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        return BugReport.draft(
+            version: info["CFBundleShortVersionString"] as? String ?? "Unknown",
+            build: info["CFBundleVersion"] as? String ?? "Unknown",
+            macOS: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
+            engine: Builder.engine == .pi ? "Built-in agent (pi)" : Builder.engine.title,
+            isDev: Edition.isDev, hasSelection: selected != nil,
+            isBusy: selected.map { store.busy.contains($0.id) } ?? false,
+            activity: activity, lastError: lines.last(where: { $0.kind == .error })?.text)
+    }
+}
