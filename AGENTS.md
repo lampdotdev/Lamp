@@ -34,6 +34,19 @@ A capability given to one engine must be given to all of them that can take it, 
 Before opening a PR that touches any of this, check each engine's `case` in `Agent.run` and its parser,
 and say in the PR description which engines you tried.
 
+## Two Lamps on one Mac
+
+A build from source is **Lamp Dev**, a separate app from the Lamp people install: its own name and icon (an
+orange DEV banner), bundle id (`dev.lamp.host.dev`), folders (`~/Library/Application Support/Lamp Dev`,
+`~/Applications/Lamp Dev Apps`, `~/Library/Logs/Lamp Dev`), gateway and model-server ports, URL scheme
+(`lamp-dev://`) and Keychain entries, and no self-updating. `Sources/Lamp/Edition.swift` is the one place
+these come from, read off the bundle id that `build.sh` writes (`FLAVOR=dev` by default; `release.sh` passes
+`FLAVOR=release`). Anything new that names Lamp on disk or on the network goes through `Edition`, and the
+generated apps get it through the `{{SCHEME}}`, `{{NOTE}}`, `{{HOST}}` and `{{APPS}}` placeholders in
+`Template.swift`. The app-signing keychain is shared on purpose, so apps keep their permissions whichever
+Lamp rebuilds them. `scripts/dev-data.sh` copies your apps, keys, settings and the agent's sign-ins from the
+installed Lamp into Lamp Dev, so the development build has something to work on.
+
 ## Generated apps
 
 `Sources/Lamp/Template.swift` holds `LampSupport.swift`, the support code copied into every generated

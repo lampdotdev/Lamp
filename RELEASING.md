@@ -64,7 +64,7 @@ The notes are what people read in the update window: write the version's section
 before tagging (the workflow takes it from there), or pass your own file here. Never GitHub's generated
 list of pull requests.
 
-`release.sh` builds and signs, then notarizes twice with Apple (each usually 2 to 10 minutes). First it
+`release.sh` builds the release flavor (`FLAVOR=release`: the name Lamp, the `dev.lamp.host` bundle id, the update feed; `build.sh` on its own makes Lamp Dev) and signs, then notarizes twice with Apple (each usually 2 to 10 minutes). First it
 notarizes the app and staples its ticket, so Lamp.app opens without a network check even after it's
 copied out of the DMG. Then it packages a drag-to-Applications DMG, notarizes and staples that, and
 verifies both with Gatekeeper. `SKIP_NOTARIZE=1` stops after the signed DMG,

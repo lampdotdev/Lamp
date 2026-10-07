@@ -90,7 +90,7 @@ enum Provider {
 /// Builds signed with an Apple Team ID (Developer ID releases) use the login Keychain. Local builds
 /// have no Team ID, and macOS ties Keychain approval to each exact build, so every rebuild would ask
 /// again. Those builds keep keys in a file only your user account can read instead:
-/// ~/Library/Application Support/Lamp/keys.json. Keys are read once per launch.
+/// keys.json in Lamp's support folder. Keys are read once per launch.
 enum KeyStore {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var cache: [String: String?] = [:]
@@ -147,7 +147,7 @@ enum KeyStore {
     private enum KeychainItem {
         static func query(_ account: String) -> [String: Any] {
             [kSecClass as String: kSecClassGenericPassword,
-             kSecAttrService as String: "dev.lamp.host",
+             kSecAttrService as String: Edition.bundleID,
              kSecAttrAccount as String: account]
         }
 
@@ -170,7 +170,7 @@ enum KeyStore {
 
     /// keys.json, readable only by this user. Also migrates the older single-key file and Keychain item.
     private enum KeyFile {
-        static let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Lamp")
+        static let folder = Edition.supportFolder
         static let url = folder.appendingPathComponent("keys.json")
         static let legacy = folder.appendingPathComponent("openrouter-key")
 

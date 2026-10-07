@@ -5,7 +5,7 @@ import Network
 /// A tiny HTTP server on 127.0.0.1 that lets generated apps use Lamp's AI
 /// without ever seeing the key. Apps call it through `LampAI` (see Template.lampSupportSwift).
 final class Gateway: @unchecked Sendable {
-    static let port: UInt16 = 47811
+    static let port: UInt16 = Edition.gatewayPort
 
     struct Request {
         let method: String

@@ -38,8 +38,8 @@ struct InstalledModel: Identifiable, Hashable {
 final class LocalModels: ObservableObject {
     static let shared = LocalModels()
 
-    nonisolated static let port = 47812
-    nonisolated static let mlxPort = 47813
+    nonisolated static let port = Edition.localModelPort
+    nonisolated static let mlxPort = Edition.mlxPort
     nonisolated static let contextSize = 32768
     nonisolated static let mlxProvider = "forge-mlx"
 
@@ -47,11 +47,9 @@ final class LocalModels: ObservableObject {
     nonisolated static let localAppDir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/LocalAssistant/Models")
     /// Older Lamp builds downloaded here; still read.
-    nonisolated static let legacyDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Lamp/Models")
+    nonisolated static let legacyDir = Edition.supportFolder.appendingPathComponent("Models")
     /// Symlinks for llama-server's router: one folder per GGUF model.
-    nonisolated static let routerDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Lamp/Router")
+    nonisolated static let routerDir = Edition.supportFolder.appendingPathComponent("Router")
 
     static let catalog: [LocalModelSpec] = [
         LocalModelSpec(id: "qwen3.6-35b-a3b", name: "Qwen3.6 35B-A3B", repo: "unsloth/Qwen3.6-35B-A3B-GGUF",
@@ -394,7 +392,7 @@ final class LocalModels: ObservableObject {
     }
 
     private func logFile(_ name: String) -> FileHandle? {
-        let logs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Lamp")
+        let logs = Edition.logsFolder
         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
         let log = logs.appendingPathComponent(name)
         FileManager.default.createFile(atPath: log.path, contents: nil)
@@ -418,7 +416,7 @@ final class LocalModels: ObservableObject {
             if await Self.healthy("\(Self.baseURL)/health") { serverRunning = true; return }
             try await Task.sleep(for: .milliseconds(250))
         }
-        throw LocalError("The local model server didn't start. See ~/Library/Logs/Lamp/llama-server.log.")
+        throw LocalError("The local model server didn't start. See llama-server.log in \(Edition.logsFolder.path).")
     }
 
     /// mlx_lm.server serves one model; switching models restarts it.
@@ -446,7 +444,7 @@ final class LocalModels: ObservableObject {
             try await Task.sleep(for: .milliseconds(500))
         }
         stopMLX()
-        throw LocalError("The MLX server didn't start. See ~/Library/Logs/Lamp/mlx-server.log.")
+        throw LocalError("The MLX server didn't start. See mlx-server.log in \(Edition.logsFolder.path).")
     }
 
     private func stopMLX() {

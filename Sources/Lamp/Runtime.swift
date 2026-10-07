@@ -116,7 +116,7 @@ enum Runtime {
     /// Asks the running app to save fresh pictures of its windows now (see `LampRuntime` in the app).
     static func requestScreenshots(of project: LampProject) {
         DistributedNotificationCenter.default().postNotificationName(
-            Notification.Name("dev.lamp.snapshot.\(project.id)"), object: nil, userInfo: nil, deliverImmediately: true)
+            Notification.Name(Edition.notificationPrefix + "snapshot.\(project.id)"), object: nil, userInfo: nil, deliverImmediately: true)
     }
 
     /// Pictures the app has saved since `date`, frontmost window first. Waits up to `seconds` for the

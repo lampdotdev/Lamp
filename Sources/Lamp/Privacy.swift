@@ -39,8 +39,8 @@ enum Privacy {
             return .allow
         }
         // Lamp's keys, its agent's sign-ins and the user's other apps: never, whatever the settings say.
-        let forge = resolved(Agent.configDir, in: project.dir).deletingLastComponent
-        if path == forge || path.hasPrefix(forge + "/") {
+        // Both Lamps' folders (the installed one and the development build, Edition), whichever this is.
+        if lampFolders.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
             return .deny("That belongs to Lamp or to another of the user's apps, and isn't yours to open.")
         }
         guard asksOutsideFolder else { return .allow }
@@ -54,9 +54,15 @@ enum Privacy {
     /// tool runs can't, so it isn't allowed to start above them.
     static func wouldUncover(root raw: String, project: LampProject) -> Bool {
         let root = resolved(raw, in: project.dir)
-        let forge = resolved(Agent.configDir, in: project.dir).deletingLastComponent
-        return forge == root || forge.hasPrefix(root.hasSuffix("/") ? root : root + "/")
+        return lampFolders.contains { $0 == root || $0.hasPrefix(root.hasSuffix("/") ? root : root + "/") }
     }
+
+    /// The support folders of both Lamps on this Mac, the installed one's and the development build's,
+    /// as real paths: neither is the agent's to open, whichever Lamp it runs under.
+    private static let lampFolders: [String] = {
+        let support = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        return ["Lamp", "Lamp Dev"].map { support.appendingPathComponent($0).resolvingSymlinksInPath().standardizedFileURL.path }
+    }()
 
     /// Whether a search that started somewhere the agent may look should still pass over `path` further down:
     /// the places the rule above never opens.

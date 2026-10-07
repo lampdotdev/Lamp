@@ -7,6 +7,7 @@ import Security
 /// support library by its old names.
 enum Migration {
     static func fromForge() {
+        guard !Edition.isDev else { return }   // the development build has its own folders; nothing to move
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser
         // Apps still running under their old ids would keep their old folder open.

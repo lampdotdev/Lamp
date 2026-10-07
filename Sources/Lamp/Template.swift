@@ -55,10 +55,17 @@ enum Template {
     /// Apps used to build unoptimized (`-c debug`), which made games and simulations run many times slower.
     /// Lamp owns build.sh, so before each build it moves older apps to optimized builds, with debug info
     /// (-g) so crash reports keep file names and line numbers.
+    /// It also keeps the bundle id in step with this Lamp (Edition): an app copied from the installed Lamp
+    /// into the development build, or restored from a version made there, would otherwise build with the
+    /// other Lamp's id and open the other Lamp's copy of its data.
     static func upgradeBuildScript(for project: LampProject) {
         let url = project.dir.appendingPathComponent("build.sh")
-        guard let script = try? String(contentsOf: url, encoding: .utf8), script.contains("swift build -c debug") else { return }
-        let upgraded = script.replacingOccurrences(of: "swift build -c debug", with: "swift build -c release -Xswiftc -g")
+        guard let script = try? String(contentsOf: url, encoding: .utf8) else { return }
+        var upgraded = script.replacingOccurrences(of: "swift build -c debug", with: "swift build -c release -Xswiftc -g")
+        upgraded = upgraded.replacingOccurrences(
+            of: #"<key>CFBundleIdentifier</key><string>dev\.lamp\.(dev\.)?app\.[^<]+</string>"#,
+            with: "<key>CFBundleIdentifier</key><string>\(project.bundleID)</string>", options: .regularExpression)
+        guard upgraded != script else { return }
         try? upgraded.write(to: url, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
     }
@@ -70,6 +77,10 @@ enum Template {
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{TOKEN}}", with: token(for: project))
             .replacingOccurrences(of: "{{PORT}}", with: String(Gateway.port))
+            .replacingOccurrences(of: "{{SCHEME}}", with: Edition.urlScheme)
+            .replacingOccurrences(of: "{{NOTE}}", with: Edition.notificationPrefix)
+            .replacingOccurrences(of: "{{HOST}}", with: Edition.bundleID)
+            .replacingOccurrences(of: "{{APPS}}", with: Edition.supportFolder.appendingPathComponent("Apps").path)
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         let url = project.dir.appendingPathComponent("Sources/LampSupport.swift")
         if (try? String(contentsOf: url, encoding: .utf8)) != contents {
@@ -173,7 +184,7 @@ enum Template {
         var body: some Commands {
             CommandGroup(after: .appInfo) {
                 Button("Edit with Lamp…") {
-                    NSWorkspace.shared.open(URL(string: "lamp://edit?app={{SLUG}}")!)
+                    NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
                 }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             }
@@ -187,7 +198,7 @@ enum Template {
     enum LampWindows {
         static let start: Void = {
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("dev.lamp.showWindow"), object: Bundle.main.bundleIdentifier, queue: .main
+                forName: Notification.Name("{{NOTE}}showWindow"), object: Bundle.main.bundleIdentifier, queue: .main
             ) { _ in
                 MainActor.assumeIsolated { show() }
             }
@@ -244,7 +255,7 @@ enum Template {
         /// take a missing ordinary window for a failure and relaunch the app.
         private static func shown() {
             DistributedNotificationCenter.default().postNotificationName(
-                Notification.Name("dev.lamp.windowShown"), object: Bundle.main.bundleIdentifier, userInfo: nil, deliverImmediately: true)
+                Notification.Name("{{NOTE}}windowShown"), object: Bundle.main.bundleIdentifier, userInfo: nil, deliverImmediately: true)
         }
 
         /// The menu item that opens a window: File ▸ New Window (⌘N) while it still does that, or for an app with
@@ -288,8 +299,7 @@ enum Template {
     /// Saves what this app prints (`print`, `NSLog`, SwiftUI runtime warnings, fatal errors) and a picture of
     /// its windows to its Lamp project, where Lamp's builder looks to see what happened while the app ran.
     enum LampRuntime {
-        static let folder = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Library/Application Support/Lamp/Apps/{{SLUG}}/.lamp/runtime")
+        static let folder = URL(fileURLWithPath: "{{APPS}}/{{SLUG}}/.lamp/runtime")
 
         /// Runs once, at launch. Each launch starts a new log.txt and keeps the one before as previous-log.txt.
         static let start: Void = {
@@ -306,12 +316,12 @@ enum Template {
             }
             // Lamp asks for fresh pictures when its builder wants to look at the app.
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("dev.lamp.snapshot.{{SLUG}}"), object: nil, queue: .main) { _ in
+                forName: Notification.Name("{{NOTE}}snapshot.{{SLUG}}"), object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { snapshot() }
             }
             // ...and clicks, types and presses keys in it when the builder wants to try something (LampDriver).
             DistributedNotificationCenter.default().addObserver(
-                forName: Notification.Name("dev.lamp.useApp.{{SLUG}}"), object: nil, queue: .main) { note in
+                forName: Notification.Name("{{NOTE}}useApp.{{SLUG}}"), object: nil, queue: .main) { note in
                 let actions = note.userInfo?["actions"] as? String, id = note.userInfo?["id"] as? String
                 let signature = note.userInfo?["lampUseAppSignature"] as? String
                 MainActor.assumeIsolated { LampDriver.perform(actions, id: id, signature: signature) }
@@ -2152,7 +2162,7 @@ enum Template {
                     // Lamp isn't running: start it in the background, then retry once.
                     let config = NSWorkspace.OpenConfiguration()
                     config.activates = false
-                    if let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "dev.lamp.host") {
+                    if let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "{{HOST}}") {
                         _ = try? await NSWorkspace.shared.openApplication(at: lamp, configuration: config)
                     }
                     try await Task.sleep(for: .seconds(3))

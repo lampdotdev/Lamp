@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds build/Lamp.app (registers the lamp:// URL scheme).
+# Builds build/Lamp Dev.app, the development build (FLAVOR=release: Lamp.app, the one people install).
 #
 # Local builds are signed with a self-signed "Forge Local Signing" identity (see scripts/signing-identity.sh).
 # Releases set SIGN_IDENTITY to a Developer ID certificate (see release.sh): everything is then signed with
@@ -66,9 +66,19 @@ if [ -z "${SDKROOT:-}" ] && [ -d "$dev/SDKs" ] && [ ! -e "$dev/usr/lib/swift/hos
   done
 fi
 
+# Which Lamp this is (see Sources/Lamp/Edition.swift). A build from source is "Lamp Dev": its own name,
+# icon, bundle id, folders, ports and URL scheme, so it lives beside the Lamp you installed without
+# touching it. release.sh sets FLAVOR=release.
+FLAVOR="${FLAVOR:-dev}"
+if [ "$FLAVOR" = release ]; then
+  NAME="Lamp"; BUNDLE_ID="dev.lamp.host"; SCHEME="lamp"; HANDLER_RANK="Owner"
+else
+  NAME="Lamp Dev"; BUNDLE_ID="dev.lamp.host.dev"; SCHEME="lamp-dev"; HANDLER_RANK="Alternate"
+fi
+
 swift build -c release
 BIN="$(swift build -c release --show-bin-path)/Lamp"
-APP="${BUILD_DIR:-build}/Lamp.app"
+APP="${BUILD_DIR:-build}/$NAME.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Lamp"
@@ -78,8 +88,24 @@ ditto "$(dirname "$BIN")/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.fr
 rm -rf "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices" "$APP/Contents/Frameworks/Sparkle.framework/XPCServices"
 # Lamp's icon, made with the same pipeline as the apps' icons (see Resources/Icon): the classic .icns,
 # plus the compiled Icon Composer icon that macOS 26 draws in Liquid Glass.
-cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-cp Resources/Assets.car "$APP/Contents/Resources/Assets.car"
+if [ "$FLAVOR" = release ]; then
+  cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+  cp Resources/Assets.car "$APP/Contents/Resources/Assets.car"
+  ICON_NAME_KEY='<key>CFBundleIconName</key><string>AppIcon</string>'
+  UPDATE_KEYS='<key>SUFeedURL</key><string>https://updates.lamp.dev/appcast.xml</string>
+  <key>SUPublicEDKey</key><string>/CAEd8+y31zAUX1M2jdBf+0plXRw1Bv5IEdrX6r6irA=</string>
+  <key>SUEnableAutomaticChecks</key><true/>'
+else
+  # The same icon with a DEV banner across it, so the two Lamps tell apart in the Dock. Made once per
+  # change of the source icon (no Liquid Glass variant: the classic icon is enough to tell them apart).
+  DEV_ICON="${BUILD_DIR:-build}/AppIcon-Dev.icns"
+  if [ ! -f "$DEV_ICON" ] || [ Resources/AppIcon.png -nt "$DEV_ICON" ] || [ scripts/dev-icon.swift -nt "$DEV_ICON" ]; then
+    swift scripts/dev-icon.swift Resources/AppIcon.png "$DEV_ICON"
+  fi
+  cp "$DEV_ICON" "$APP/Contents/Resources/AppIcon.icns"
+  ICON_NAME_KEY=''
+  UPDATE_KEYS=''   # a development build never updates itself
+fi
 cp Resources/THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 install -m 755 Resources/lamp-approve.sh "$APP/Contents/Resources/lamp-approve.sh"
 cp Resources/lamp-tools.ts Resources/lamp-tools.json "$APP/Contents/Resources/"   # the agent's tools: pi's extension and the registry both it and the MCP endpoint read
@@ -95,14 +121,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleExecutable</key><string>Lamp</string>
-  <key>CFBundleIdentifier</key><string>dev.lamp.host</string>
-  <key>CFBundleName</key><string>Lamp</string>
-  <key>CFBundleDisplayName</key><string>Lamp</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
+  <key>CFBundleName</key><string>$NAME</string>
+  <key>CFBundleDisplayName</key><string>$NAME</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
-  <key>CFBundleIconName</key><string>AppIcon</string>
-  <key>SUFeedURL</key><string>https://updates.lamp.dev/appcast.xml</string>
-  <key>SUPublicEDKey</key><string>/CAEd8+y31zAUX1M2jdBf+0plXRw1Bv5IEdrX6r6irA=</string>
-  <key>SUEnableAutomaticChecks</key><true/>
+  $ICON_NAME_KEY
+  $UPDATE_KEYS
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
   <key>CFBundleVersion</key><string>$APP_BUILD</string>
@@ -121,15 +145,15 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDocumentTypes</key><array><dict>
     <key>CFBundleTypeName</key><string>Lamp App</string>
     <key>CFBundleTypeRole</key><string>Viewer</string>
-    <key>LSHandlerRank</key><string>Owner</string>
+    <key>LSHandlerRank</key><string>$HANDLER_RANK</string>
     <key>LSItemContentTypes</key><array><string>dev.lamp.lampapp</string></array>
   </dict></array>
   <key>NSMicrophoneUsageDescription</key><string>Lamp listens to your microphone when you dictate a change.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Lamp turns your dictation into text for the prompt box.</string>
   <key>NSAppleEventsUsageDescription</key><string>Lamp lists and switches your browser tabs when one of your apps reads a web page you have open.</string>
   <key>CFBundleURLTypes</key><array><dict>
-    <key>CFBundleURLName</key><string>dev.lamp.host</string>
-    <key>CFBundleURLSchemes</key><array><string>lamp</string></array>
+    <key>CFBundleURLName</key><string>$BUNDLE_ID</string>
+    <key>CFBundleURLSchemes</key><array><string>$SCHEME</string></array>
   </dict></array>
 </dict></plist>
 PLIST

@@ -5,7 +5,8 @@ import Foundation
 /// macOS remembers permissions (Files and Folders, Screen Recording, Accessibility, Keychain access) against
 /// an app's signature. An ad-hoc signature is just a hash of that one build, so every rebuild looked like a new
 /// app and asked again. Signing with a certificate that stays the same lets permissions survive rebuilds.
-/// The certificate is the same self-signed "Lamp App Signing" one Lamp's own builds use. It's made the
+/// The certificate is the same self-signed "Lamp App Signing" one Lamp's own builds use, and both the
+/// release and the development build share it (Edition), so an app keeps its permissions whichever rebuilds it. It's made the
 /// first time (scripts/signing-identity.sh) in Lamp's own keychain, which Lamp can unlock itself, so
 /// signing never asks for keychain access the way the login keychain does. It never leaves this Mac and
 /// isn't trusted for anything else.
