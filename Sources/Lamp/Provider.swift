@@ -248,12 +248,15 @@ enum KeyStore {
         static func write(_ keys: [String: String]) {
             let fm = FileManager.default
             try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            // Create it private first, then write, so keys are never briefly readable by others.
-            if !fm.fileExists(atPath: url.path) {
-                fm.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
+            guard let data = try? JSONEncoder().encode(keys) else { return }
+            // Written beside the file, private from the start, then put in its place in one step: the keys
+            // are never readable by others, and a write that fails leaves the file as it was.
+            let fresh = folder.appendingPathComponent("keys.json.\(UUID().uuidString)")
+            guard fm.createFile(atPath: fresh.path, contents: data, attributes: [.posixPermissions: 0o600]),
+                  rename(fresh.path, url.path) == 0 else {
+                try? fm.removeItem(at: fresh)
+                return
             }
-            try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-            try? JSONEncoder().encode(keys).write(to: url)
         }
     }
 }
