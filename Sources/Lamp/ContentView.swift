@@ -406,8 +406,7 @@ struct ProjectView: View {
     /// out of sight, so it's shown with what's left: otherwise Send would seem to do nothing.
     @State private var sendProblem: UUID?
     /// Keep the submitted words and files fixed while setup decides whether they can be sent.
-    @State private var submissionPending = false
-    @State private var deferredFiles: [URL] = []
+    private var submissionPending: Bool { store.pendingSubmissions.contains(store.current(project)?.id ?? project.id) }
     /// A request on its way out again: what it replaces stays out of sight until the chat has let go of it.
     @State private var sendingAgain: UUID?
     /// The end of the chat has been on screen. Only the rows in view are made, so this is how the chat
@@ -448,7 +447,10 @@ struct ProjectView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(attachments, id: \.self) { url in
-                    AttachmentChip(url: url, siblings: attachments) { attachments.removeAll { $0 == url } }
+                    AttachmentChip(url: url, siblings: attachments) {
+                        attachments.removeAll { $0 == url }
+                        saveDraft()
+                    }
                 }
             }
             .padding(.horizontal, 12)
@@ -507,7 +509,7 @@ struct ProjectView: View {
     private func chatRows(_ lines: [LogLine], height: CGFloat) -> some View {
         if lines.isEmpty && queued.isEmpty {
             // In the middle of the chat area: less the scroll view's own padding.
-            NewAppIntro(project: project, draft: $draft)
+            NewAppIntro(project: project, draft: draftBinding)
                 .frame(minHeight: height - 32)
         }
         if let card = store.progress[project.id], card.newApp,
@@ -539,12 +541,11 @@ struct ProjectView: View {
     private func composerRow(_ lines: [LogLine]) -> some View {
         HStack(alignment: .bottom, spacing: 8) {
             Button(action: chooseFiles) { Image(systemName: "paperclip").font(.title3) }
-                .disabled(submissionPending)
                 .buttonStyle(.borderless)
                 .help("Attach files. You can also paste or drop images and files here.")
                 .accessibilityLabel("Attach files")
                 .frame(height: Composer.lineHeight)
-            Composer(text: $draft, height: $composerHeight,
+            Composer(text: draftBinding, height: $composerHeight,
                      placeholder: busy ? "Working… describe the next change"
                         : lines.isEmpty ? "Describe an app…" : "Describe a change…",
                      // No suggestion while a request from the chat is in the box: it would be about a turn
@@ -552,7 +553,7 @@ struct ProjectView: View {
                      suggestion: replacing == nil ? shownSuggestion : nil,
                      onDismissSuggestion: { dismissedSuggestion = suggestion },
                      onEscape: replacing == nil ? nil : putBack,
-                     isEnabled: !submissionPending, focusRequest: focusRequest,
+                     isEnabled: true, focusRequest: focusRequest,
                      onSubmit: send, onFiles: attach)
                 .frame(height: composerHeight)
             if hasMicrophone {
@@ -631,7 +632,7 @@ struct ProjectView: View {
                 // Part of the bottom panel, set off from the message box the way the chat is.
                 Divider()
             }
-            if !attachments.isEmpty { pendingAttachments.disabled(submissionPending) }
+            if !attachments.isEmpty { pendingAttachments }
             composerRow(lines)
         }
         .overlay {
@@ -641,7 +642,6 @@ struct ProjectView: View {
             }
         }
         .onDrop(of: Attachments.dropTypes, isTargeted: $dropTargeted) { providers in
-            guard !submissionPending else { return false }
             Attachments.load(providers) { attach($0) }
             return true
         }
@@ -662,13 +662,9 @@ struct ProjectView: View {
         .task { await store.linkOldRequests(project) }
         .onAppear {
             focusRequest += 1
-            let saved = store.draft(for: project)
-            draft = saved.text
-            attachments = saved.attachments
-            replacing = saved.replacing
-            setAside = saved.replacing == nil ? nil
-                : Store.Draft(text: saved.setAsideText, attachments: saved.setAsideAttachments)
+            loadDraft()
         }
+        .onChange(of: submissionPending) { if !submissionPending { loadDraft() } }
         .onChange(of: draft) { saveDraft() }
         .onChange(of: attachments) { saveDraft() }
         .onChange(of: replacing) { saveDraft() }
@@ -712,10 +708,26 @@ struct ProjectView: View {
         } : nil)
     }
 
+    /// Persist writes synchronously so a check finishing in this event cycle sees the newest input,
+    /// including writes from a newly-created chat view after navigation.
+    private var draftBinding: Binding<String> {
+        Binding(get: { draft }, set: { draft = $0; saveDraft() })
+    }
+
+    private func loadDraft() {
+        let saved = store.draft(for: store.current(project) ?? project)
+        draft = saved.text
+        attachments = saved.attachments
+        replacing = saved.replacing
+        setAside = saved.replacing == nil ? nil
+            : Store.Draft(text: saved.setAsideText, attachments: saved.setAsideAttachments)
+    }
+
     private func saveDraft() {
+        guard let current = store.current(project) else { return }
         store.saveDraft(Store.Draft(text: draft, attachments: attachments, replacing: replacing,
                                     setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? []),
-                        for: project)
+                        for: current)
     }
 
     /// Takes a request out of the chat and into the message box, with the files it was sent with.
@@ -864,24 +876,21 @@ struct ProjectView: View {
         dictation.cancel()
         let submitted = Store.Draft(text: draft, attachments: attachments, replacing: replacing,
                                     setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? [])
-        submissionPending = true
-        PhoneSetup.shared.perform(for: project, in: store, cancelled: finishSubmission) { current in
-            sendPrepared(submitted, replacing: replaced, to: current)
+        guard let token = store.beginSubmission(project) else { return }
+        store.saveDraft(submitted, for: project)
+        PhoneSetup.shared.perform(for: project, in: store, cancelled: {
+            finishSubmission(token, captured: submitted, sent: false)
+        }) { current in
+            sendPrepared(submitted, replacing: replaced, to: current, token: token)
         }
     }
 
-    private func sendPrepared(_ submitted: Store.Draft, replacing replaced: LogLine?, to current: LampProject) {
+    private func sendPrepared(_ submitted: Store.Draft, replacing replaced: LogLine?, to current: LampProject, token: UUID) {
         let text = submitted.text.trimmed
         let files = submitted.attachments
-        draft = ""
-        attachments = []
-        replacing = nil
-        let aside = submitted.replacing == nil ? nil
-            : Store.Draft(text: submitted.setAsideText, attachments: submitted.setAsideAttachments)
-        setAside = nil
         guard let replaced else {
             store.send(text, attachments: files, to: current)
-            finishSubmission()
+            finishSubmission(token, captured: submitted, sent: true)
             return
         }
         sendingAgain = replaced.id
@@ -889,29 +898,24 @@ struct ProjectView: View {
         Task {
             // Nothing was sent: the words go back in the box, so they aren't lost with it, and the chat
             // keeps saying why.
-            if await !store.sendAgain(replaced, as: text, attachments: files, in: current) {
-                draft = text
-                attachments = files
-                setAside = aside
-                replacing = replaced.id
-                sendProblem = store.logs[current.id]?.last { $0.kind == .error }?.id
-            }
+            let sent = await store.sendAgain(replaced, as: text, attachments: files, in: current)
+            if !sent { sendProblem = store.logs[current.id]?.last { $0.kind == .error }?.id }
             sendingAgain = nil
-            finishSubmission()
+            finishSubmission(token, captured: submitted, sent: sent)
         }
     }
 
-    private func finishSubmission() {
-        submissionPending = false
-        attachments.append(contentsOf: deferredFiles)
-        deferredFiles.removeAll()
+    private func finishSubmission(_ token: UUID, captured: Store.Draft, sent: Bool) {
+        if let current = store.current(project) {
+            let kept = store.draft(for: current).afterSubmission(captured, sent: sent)
+            store.saveDraft(kept, for: current)
+        }
+        store.endSubmission(token)
     }
 
-    /// A paste or drop can finish loading after Send. Keep those files for the next draft rather than
-    /// adding them to the captured submission or throwing them away while the editor is locked.
     private func attach(_ files: [URL]) {
-        if submissionPending { deferredFiles.append(contentsOf: files) }
-        else { attachments.append(contentsOf: files) }
+        attachments.append(contentsOf: files)
+        saveDraft()
     }
 
     private func chooseFiles() {

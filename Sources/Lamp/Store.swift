@@ -137,6 +137,14 @@ final class Store: ObservableObject {
     /// Which Lamp built each installed app (see BuildStamp). Missing for apps that aren't built yet.
     @Published var stamps: [String: BuildStamp] = [:]
     @Published var chatFocusRequest = 0
+    @Published private(set) var pendingSubmissions = PendingSubmissions()
+
+    func beginSubmission(_ project: LampProject) -> UUID? {
+        guard let current = current(project) else { return nil }
+        return pendingSubmissions.begin(current.id)
+    }
+
+    func endSubmission(_ token: UUID) { pendingSubmissions.end(token) }
     @Published var setup = SetupCheck()
     /// The welcome finished this run. Normally the saved setting says so too, but `-onboarded NO` on the
     /// command line (for checking the welcome) keeps that setting from changing until Lamp quits.
@@ -439,7 +447,7 @@ final class Store: ObservableObject {
     // MARK: - Drafts
 
     /// What's typed but not sent in an app's chat.
-    struct Draft {
+    struct Draft: Equatable {
         var text = ""
         var attachments: [URL] = []
         /// The request in the chat this takes the place of when it's sent (see `sendAgain`).
@@ -448,6 +456,20 @@ final class Store: ObservableObject {
         /// sent again after all.
         var setAsideText = ""
         var setAsideAttachments: [URL] = []
+
+        /// Only clear input that is still exactly the captured request. An idea, edit or late file added
+        /// while setup was open belongs to the next draft, even though the earlier request was sent.
+        func afterSubmission(_ captured: Draft, sent: Bool) -> Draft {
+            guard sent else { return self }
+            if self == captured { return Draft() }
+            var kept = self
+            if kept.replacing == captured.replacing {
+                kept.replacing = nil
+                kept.setAsideText = ""
+                kept.setAsideAttachments = []
+            }
+            return kept
+        }
     }
 
     private var drafts: [String: Draft] = [:]
@@ -705,7 +727,7 @@ final class Store: ObservableObject {
     /// An untitled app you left without ever using is deleted, so trying New App leaves nothing behind.
     private func discardIfUnused(_ id: String) {
         guard let project = projects.first(where: { $0.id == id }), project.untitled,
-              (logs[id] ?? []).isEmpty, queued[id] == nil, !busy.contains(id),
+              (logs[id] ?? []).isEmpty, queued[id] == nil, !busy.contains(id), !pendingSubmissions.contains(id),
               !FileManager.default.fileExists(atPath: project.builtURL.path) else { return }
         try? FileManager.default.removeItem(at: project.dir)
         projects.removeAll { $0.id == id }
@@ -828,6 +850,9 @@ final class Store: ObservableObject {
         for (from, to) in moved where to == old.id { moved[from] = project.id }
         moved = moved.filter { $0.key != project.id }
         moved[old.id] = project.id
+        pendingSubmissions.move(from: old.id, to: project.id)
+        if let draft = drafts.removeValue(forKey: old.id) { drafts[project.id] = draft }
+        draftWrites.removeValue(forKey: old.id)?.cancel()
         logs[project.id] = logs.removeValue(forKey: old.id)
         usage[project.id] = usage.removeValue(forKey: old.id)
         queued[project.id] = queued.removeValue(forKey: old.id)
