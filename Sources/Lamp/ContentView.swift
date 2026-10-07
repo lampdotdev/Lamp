@@ -923,7 +923,10 @@ struct ProjectView: View {
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.message = "Attach screenshots, mockups, images, data or documents"
-        if panel.runModal() == .OK { attach(panel.urls) }
+        guard panel.runModal() == .OK else { return }
+        let files = panel.urls
+        // Changing the composer here can re-enter the chat's lazy layout while AppKit closes the panel.
+        DispatchQueue.main.async { attach(files) }
     }
 }
 
