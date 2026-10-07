@@ -35,8 +35,8 @@ for app in "$from"/Apps/*(N/); do
   # the app's build script is rewritten here and committed, so a restored version carries it too (Lamp
   # also puts it right before every build, whichever way the app arrived).
   rm -f "$to/Apps/$name/.lamp/runtime/built"
-  sed -i '' "s|<string>dev\.lamp\.app\.$name</string>|<string>dev.lamp.dev.app.$name</string>|" "$to/Apps/$name/build.sh"
-  git -C "$to/Apps/$name" add build.sh >/dev/null 2>&1 && \
+  [ -f "$to/Apps/$name/build.sh" ] && sed -i '' "s|<string>dev\.lamp\.app\.$name</string>|<string>dev.lamp.dev.app.$name</string>|" "$to/Apps/$name/build.sh"
+  [ -f "$to/Apps/$name/build.sh" ] && git -C "$to/Apps/$name" add build.sh >/dev/null 2>&1 && \
     git -C "$to/Apps/$name" -c user.name=Lamp -c user.email=lamp@localhost commit -qm "Lamp Dev's copy" >/dev/null 2>&1 || true
   # The app's own saved data, under its dev bundle id, so it opens where it left off.
   if [ -d "$support/dev.lamp.app.$name" ] && { [ $replace = 1 ] || [ ! -d "$support/dev.lamp.dev.app.$name" ]; }; then
