@@ -711,6 +711,22 @@ struct ProjectView: View {
                 .help("Open the app (right-click it in the sidebar to rebuild)")
             }
         }
+        if project.platform == .iphone {
+            ToolbarItem {
+                // Which simulator the app opens in, beside the Play button where Xcode keeps its destination.
+                Menu {
+                    Picker("Try On", selection: Binding(get: { project.family }, set: { store.setFamily(project, $0) })) {
+                        Label("iPhone", systemImage: "iphone").tag(DeviceFamily.iphone)
+                        Label("iPad", systemImage: "ipad").tag(DeviceFamily.ipad)
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    Label(project.family.name, systemImage: project.family == .ipad ? "ipad" : "iphone")
+                }
+                .disabled(busy)
+                .help("Which simulator the app opens in")
+            }
+        }
         gap
         ToolbarItemGroup {
             Button { Task { await store.undo(project) } } label: {
