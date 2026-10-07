@@ -33,6 +33,8 @@ struct LampProject: Identifiable, Hashable {
     var builtURL: URL { dir.appendingPathComponent("build/\(exe).app") }
     /// Every successful build is copied here so it shows up in Spotlight and Launchpad.
     var installedURL: URL { Store.installDir.appendingPathComponent("\(name).app") }
+    /// False for a draft (Template.draft): a new app whose scaffold isn't written yet.
+    var scaffolded: Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent("Package.swift").path) }
 }
 
 struct ProjectMeta: Codable {
@@ -530,25 +532,12 @@ final class Store: ObservableObject {
     // MARK: - Actions
 
     /// New App: an untitled app, straight into its chat. Its first message names it and designs its icon.
-    func create(platform: Platform = .mac, family preferred: DeviceFamily = .iphone) {
-        guard platform == .mac || Experiments.iosApps else { return }   // Settings → Building → Experimental
-        var family = preferred
-        if platform == .iphone {
-            // The app is for both devices: it opens on the preferred one, or on whichever this Mac can show.
-            if Simulator.problem(family) != nil, Simulator.problem(family == .iphone ? .ipad : .iphone) == nil {
-                family = family == .iphone ? .ipad : .iphone
-            }
-            if let problem = Simulator.problem(family) {
-                let alert = NSAlert()
-                alert.messageText = "Lamp can't build iPhone & iPad apps on this Mac yet"
-                alert.informativeText = problem
-                alert.runModal()
-                return
-            }
-        }
+    /// A Mac app until the intro says otherwise (`setKind`).
+    func create() {
+        // A draft: its scaffold waits for the first build (`materialize`), so the intro can still change its kind.
         let project: LampProject
         do {
-            project = try Template.scaffold(name: uniqueName("Untitled"), untitled: true, platform: platform, family: family, in: root)
+            project = try Template.draft(name: uniqueName("Untitled"), untitled: true, in: root)
         } catch {
             NSAlert(error: error).runModal()
             return
@@ -556,12 +545,62 @@ final class Store: ObservableObject {
         reload()
         selection = project.id
         chatFocusRequest += 1
-        Task { await initRepo(project, message: "Scaffold") }
     }
 
-    private func initRepo(_ project: LampProject, message: String) async {
-        _ = await Shell.run("git init -q && git add -A && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: project.dir,
-                            env: ["LAMP_MESSAGE": message]) { _ in }
+    /// Writes a draft's scaffold and makes its first version, before anything builds it. Nil, after saying so,
+    /// when that fails: the app is left a draft (no Package.swift, which is what marks it set up), so the next
+    /// request or Rebuild & Open writes it all again rather than building half a scaffold with no history.
+    private func materialize(_ project: LampProject) async -> LampProject? {
+        guard !project.scaffolded else { return project }
+        var problem: String?
+        do {
+            try Template.fill(project)
+            if !(await initRepo(project, message: "Scaffold")) { problem = "Lamp couldn't save the app's first version." }
+        } catch {
+            problem = error.localizedDescription
+        }
+        guard let problem else { return project }
+        try? FileManager.default.removeItem(at: project.dir.appendingPathComponent("Package.swift"))
+        log(project, .error, "Couldn't set up the app: \(problem) Try again in a moment.")
+        return nil
+    }
+
+    /// The app is for both devices: it opens on the preferred one, or on whichever this Mac can show. Nil,
+    /// after saying why, when this Mac can show neither.
+    private func simulatorFamily(preferring family: DeviceFamily) -> DeviceFamily? {
+        let other: DeviceFamily = family == .iphone ? .ipad : .iphone
+        let usable = Simulator.problem(family) != nil && Simulator.problem(other) == nil ? other : family
+        if let problem = Simulator.problem(usable) {
+            let alert = NSAlert()
+            alert.messageText = "Lamp can't build iOS apps on this Mac yet"
+            alert.informativeText = problem
+            alert.runModal()
+            return nil
+        }
+        return usable
+    }
+
+    /// The kind chosen in a new app's intro: a draft only says what it will be, so this is a change to that.
+    /// Quietly, as nothing in the chat would make sense of it.
+    func setKind(_ project: LampProject, platform: Platform, family: DeviceFamily) {
+        guard platform == .mac || Experiments.iosApps, !project.scaffolded, !busy.contains(project.id),
+              let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
+        var changed = projects[index]
+        changed.platform = platform
+        if platform == .iphone {
+            guard let usable = simulatorFamily(preferring: family) else { return }
+            changed.family = usable
+        } else {
+            changed.device = nil
+        }
+        guard changed != projects[index], (try? Template.saveMeta(changed)) != nil else { return }
+        projects[index] = changed
+    }
+
+    @discardableResult
+    private func initRepo(_ project: LampProject, message: String) async -> Bool {
+        await Shell.run("git init -q && git add -A && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: project.dir,
+                        env: ["LAMP_MESSAGE": message]) { _ in } == 0
     }
 
     /// Which simulator an iPhone & iPad app opens in. Takes effect at its next open; the app is quit first
@@ -689,6 +728,9 @@ final class Store: ObservableObject {
         guard !name.isEmpty, name != project.name || project.untitled,
               let current = projects.first(where: { $0.id == project.id }) else { return project }
         let unique = uniqueName(name, ignoring: current.id)
+        if !current.scaffolded {
+            return renameDraft(current, to: unique)
+        }
         if await isPristine(current) {
             return await rescaffold(current, as: unique)
         }
@@ -749,6 +791,33 @@ final class Store: ObservableObject {
                                                   family: project.family, device: device))
                 .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
         }
+        follow(old, to: project)
+        return project
+    }
+
+    /// A draft has no files yet to name after the app, so renaming it is moving its folder to match.
+    private func renameDraft(_ old: LampProject, to name: String) -> LampProject {
+        let exe = Template.identifier(from: name)
+        let slug = exe.lowercased() == old.id ? old.id : Template.freeSlug(for: exe, in: root)
+        let project = LampProject(id: slug, name: name, exe: exe, dir: root.appendingPathComponent(slug),
+                                  platform: old.platform, family: old.family, device: old.device)
+        do {
+            if slug != old.id { try FileManager.default.moveItem(at: old.dir, to: project.dir) }
+            try Template.saveMeta(project)
+        } catch {
+            log(old, .error, "Couldn't rename the app: \(error.localizedDescription)")
+            return old
+        }
+        follow(old, to: project)
+        return project
+    }
+
+    /// Carries what Lamp holds for an app over to the id it has now.
+    private func follow(_ old: LampProject, to project: LampProject) {
+        guard old.id != project.id else {
+            reload()
+            return
+        }
         // Rewritten so every entry points straight at the latest id: a slug that comes free and is used
         // again (A → B → A) would otherwise close a loop. Nothing points at the new id afterwards.
         for (from, to) in moved where to == old.id { moved[from] = project.id }
@@ -767,7 +836,6 @@ final class Store: ObservableObject {
         tokens = tokens.filter { $0.value != old.id }
         reload()
         if selection == old.id { selection = project.id }
-        return project
     }
 
     /// Where an app's chat went when its first message rescaffolded it under a new id, so something started
@@ -805,7 +873,7 @@ final class Store: ObservableObject {
 
     /// Puts the app's .lampapp file on the clipboard, ready to paste into Slack, Messages, Mail or Finder.
     /// Sharing is for Mac apps: an iPhone app's file would be opened as a Mac app by another Lamp.
-    func canShare(_ project: LampProject) -> Bool { project.platform == .mac }
+    func canShare(_ project: LampProject) -> Bool { project.platform == .mac && project.scaffolded }
 
     func copyAppFile(_ project: LampProject) {
         guard canShare(project) else { return }
@@ -1073,8 +1141,6 @@ final class Store: ObservableObject {
                 project = await bootstrap(project, brief: brief)
                 if project.id != untitled.id { progress[project.id] = progress.removeValue(forKey: untitled.id) }
             }
-            // Where the app is as the turn starts, so the request can be changed and sent again from here.
-            if let head = await Versions.head(project) { mark(asked, sentFrom: head, in: project) }
             var worked = false
             var result = TurnResult(end: .failed, watched: true)
             defer {
@@ -1090,6 +1156,11 @@ final class Store: ObservableObject {
                 if !result.watched, (queued[project.id] ?? []).isEmpty { notify(project, after: result.end) }
                 finish(project)
             }
+            // Named now, so the scaffold is written under its name. If it can't be, the turn ends here, failed.
+            guard let ready = await materialize(project) else { return }
+            project = ready
+            // Where the app is as the turn starts, so the request can be changed and sent again from here.
+            if let head = await Versions.head(project) { mark(asked, sentFrom: head, in: project) }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
             worked = result.end != .failed
             if newApp && result.end == .changed { await showResult(of: project) }
@@ -1542,7 +1613,7 @@ final class Store: ObservableObject {
         return probability >= 0.85
     }
 
-    /// Applies Settings → Building → Privacy to one of the agent's file tools, about to touch `path`: pi's own
+    /// Applies Settings → Building → Permissions and Privacy to one of the agent's file tools, about to touch `path`: pi's own
     /// tools ask through its extension, Codex's come from Lamp's MCP endpoint. The reason is for the agent.
     private func fileAccess(tool: String, path: String, for project: LampProject) async -> (allowed: Bool, reason: String?) {
         switch Privacy.verdict(tool: tool, path: path, project: project) {
@@ -2002,6 +2073,7 @@ final class Store: ObservableObject {
     func run(_ project: LampProject) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
+        guard let project = await materialize(project) else { return }
         if await build(project) == nil {
             await installReportingCrash(project)
         } else {

@@ -4,7 +4,6 @@ import AppKit
 @main
 struct LampApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
-    @AppStorage("experimentIOSApps") private var iosApps = false
     @StateObject private var store = Store.shared
 
     var body: some Scene {
@@ -17,12 +16,9 @@ struct LampApp: App {
             CheckForUpdatesCommand()
             LampHelpCommands()
             CommandGroup(replacing: .newItem) {
-                Button(iosApps ? "New Mac App" : "New App") { store.create() }
+                // A Mac app; with iOS apps on, the new app's intro offers iPhone and iPad instead.
+                Button("New App") { store.create() }
                     .keyboardShortcut("n")
-                if iosApps {   // Settings → Building → Experimental
-                    Button("New iPhone & iPad App") { store.create(platform: .iphone) }
-                        .keyboardShortcut("n", modifiers: [.command, .option])
-                }
             }
             CommandGroup(after: .newItem) {
                 Button("Import Shared App…") { store.chooseImport() }

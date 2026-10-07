@@ -10,7 +10,7 @@ enum Engine: String, CaseIterable, Identifiable {
         switch self {
         case .pi: "Lamp's built-in agent"
         case .claude: "Claude Code"
-        case .codex: "Codex"
+        case .codex: "ChatGPT Codex"
         }
     }
 
@@ -20,6 +20,16 @@ enum Engine: String, CaseIterable, Identifiable {
         case .pi: nil
         case .claude: "claude"
         case .codex: "codex"
+        }
+    }
+
+    /// The desktop app that brings an external engine with it (ToolLocator.desktopCopies): the simplest way
+    /// to get one that isn't installed.
+    var desktopApp: (name: String, download: URL)? {
+        switch self {
+        case .pi: nil
+        case .claude: ("Claude", URL(string: "https://claude.ai/download")!)
+        case .codex: ("ChatGPT", URL(string: "https://openai.com/chatgpt/download/")!)
         }
     }
 }
@@ -58,15 +68,6 @@ enum CommandApproval: String, CaseIterable, Identifiable {
         case .unusual: "Anything unusual"
         case .always: "Always"
         case .never: "Never"
-        }
-    }
-
-    var detail: String {
-        switch self {
-        case .risky: "Routine commands run on their own, and so does anything the in-app model rates low risk. Lamp asks about the rest."
-        case .unusual: "Routine commands run on their own; Lamp asks about anything else, including the low-risk ones. Claude Code uses its safety classifier; other agents use the decision model."
-        case .always: "Lamp asks before every command."
-        case .never: "Commands run without asking. They still show in the chat."
         }
     }
 }
@@ -110,7 +111,7 @@ enum Builder {
     /// Codex's choices: the models its account can use, from the list Codex itself caches
     /// (~/.codex/models_cache.json), best first. Just the default when the cache isn't there.
     static var codexModels: [(id: String, label: String)] {
-        [("", "Codex's default")] + codexCatalog.map { ($0.slug, $0.name) }
+        [("", "ChatGPT Codex's default")] + codexCatalog.map { ($0.slug, $0.name) }
     }
 
     /// Codex's small, fast model, for quick judgments: the "Luna" line.
@@ -263,13 +264,6 @@ enum ToolLocator {
         default:
             return []
         }
-    }
-
-    /// Which desktop app a tool came with, for Settings: "the Claude app", or nil for a command-line install.
-    static func desktopApp(for path: String) -> String? {
-        if path.contains("/Application Support/Claude/claude-code/") { return "the Claude app" }
-        if path.contains("/ChatGPT.app/") { return "the ChatGPT app" }
-        return nil
     }
 
     /// The numbers in `<tool> --version` (e.g. "codex-cli 0.160.0" → [0, 160, 0]); [] if it can't tell.
@@ -583,7 +577,7 @@ extension Agent {
             return [.tool("Edit \(paths.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))",
                           call: item["id"] as? String ?? UUID().uuidString)]
         case ("error", _), ("turn.failed", _):
-            let raw = obj["message"] as? String ?? ((obj["error"] as? [String: Any])?["message"] as? String) ?? "Codex failed."
+            let raw = obj["message"] as? String ?? ((obj["error"] as? [String: Any])?["message"] as? String) ?? "ChatGPT Codex failed."
             // Codex nests the API error as JSON text; surface its message.
             let nested = json(raw).flatMap { ($0["error"] as? [String: Any])?["message"] as? String }
             return [.failed(nested ?? raw)]

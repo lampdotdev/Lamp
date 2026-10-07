@@ -56,7 +56,7 @@ enum CodexComputerUse {
 
     /// A connection to the server, with Lamp answering its approvals.
     static func connect(elicitation: @escaping (MCPClient.Elicitation) async -> Bool) throws -> MCPClient {
-        guard let server else { throw ComputerUse.Failure(message: "Codex's computer use isn't installed.") }
+        guard let server else { throw ComputerUse.Failure(message: "The ChatGPT app's Computer Use isn't installed.") }
         let client = try MCPClient(executable: server.command, arguments: server.arguments, environment: server.environment)
         client.elicitationHandler = elicitation
         return client

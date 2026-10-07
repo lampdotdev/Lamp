@@ -286,6 +286,84 @@ struct BuildingSettings: View {
 
     private var selectedEngine: Engine { Engine(rawValue: engine) ?? .pi }
 
+    // Claude Code's and Codex's sign-ins, checked whenever the agent or where its tool was found changes. Kept
+    // per engine, so a check or browser sign-in that finishes after the agent changed only updates its own.
+    @State private var signIns: [Engine: Bool] = [:]
+    @State private var signingIn: Engine?
+    private var signedIn: Bool? { signIns[selectedEngine] }
+    /// Changes when the tool turns up (installed while Settings is open) or moves, as well as with the agent.
+    private var signInCheck: String { _ = revision; return "\(engine) \(ToolLocator.path(for: selectedEngine) ?? "")" }
+
+    /// What stands between the chosen agent and building, if anything.
+    private enum Readiness { case ready, checking, notInstalled, signedOut, problem(String) }
+
+    private var readiness: Readiness {
+        _ = revision
+        guard selectedEngine != .pi else { return Builder.problem().map(Readiness.problem) ?? .ready }
+        guard ToolLocator.path(for: selectedEngine) != nil else { return .notInstalled }
+        switch signedIn {
+        case nil: return .checking
+        case false?: return .signedOut
+        case true?: return Builder.problem().map(Readiness.problem) ?? .ready
+        }
+    }
+
+    /// Ready or Not Ready, beside the Agent menu. Where Claude Code or Codex was found is in its help, for
+    /// working out which copy runs when there are several.
+    @ViewBuilder private var agentStatus: some View {
+        Group {
+            switch readiness {
+            // Icon and word close together: a Label in a form row spaces them like a list item.
+            case .ready: HStack(spacing: 4) { Image(systemName: "checkmark.circle.fill"); Text("Ready") }.foregroundStyle(.green)
+            case .checking: ProgressView().controlSize(.small)
+            default: HStack(spacing: 4) { Image(systemName: "exclamationmark.circle.fill"); Text("Not Ready") }.foregroundStyle(.orange)
+            }
+        }
+        .help(ToolLocator.path(for: selectedEngine).map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "")
+    }
+
+    /// When the agent isn't ready: why, and the one thing that fixes it.
+    @ViewBuilder private var agentFix: some View {
+        switch readiness {
+        case .notInstalled:
+            if let app = selectedEngine.desktopApp {
+                LabeledContent("\(selectedEngine.title) comes with the \(app.name) app.") {
+                    Link("Download the \(app.name) App", destination: app.download)
+                }
+            }
+        case .signedOut:
+            LabeledContent("Sign in to \(selectedEngine.title) to build with it.") {
+                if signingIn == selectedEngine {
+                    HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Finish in your browser…").foregroundStyle(.secondary) }
+                } else {
+                    Button("Sign In…") { Task { await startSignIn() } }
+                }
+            }
+        case .problem(let problem):
+            Text(problem).foregroundStyle(.orange).font(.callout)
+        case .ready, .checking:
+            EmptyView()
+        }
+    }
+
+    private func checkSignIn() async {
+        let engine = selectedEngine
+        guard engine != .pi, ToolLocator.path(for: engine) != nil else { return }
+        signIns[engine] = nil
+        let signedIn = await EngineSignIn.isSignedIn(engine) ?? true   // can't tell: don't hold it up
+        // The check's process outlives a cancelled task; a newer check of this engine has the say.
+        guard !Task.isCancelled else { return }
+        signIns[engine] = signedIn
+    }
+
+    private func startSignIn() async {
+        let engine = selectedEngine
+        signingIn = engine
+        defer { if signingIn == engine { signingIn = nil } }
+        _ = await EngineSignIn.signIn(engine)
+        signIns[engine] = await EngineSignIn.isSignedIn(engine) ?? true
+    }
+
     /// The model Claude Code or Codex builds with ("" for the tool's default).
     private func engineModel(_ engine: Engine) -> Binding<String> {
         Binding(get: { _ = revision; return Builder.engineModel(engine) },
@@ -306,13 +384,21 @@ struct BuildingSettings: View {
 
     var body: some View {
         Form {
-            Section {
-                Picker("Agent", selection: $engine) {
-                    ForEach(Engine.allCases) { option in
-                        let missing = option != .pi && ToolLocator.path(for: option) == nil
-                        Text(option.title + (missing ? " (not installed)" : "")).tag(option.rawValue)
+            Section("AI settings for Lamp") {
+                LabeledContent("Agent") {
+                    HStack(spacing: 10) {
+                        agentStatus
+                        Picker("Agent", selection: $engine) {
+                            ForEach(Engine.allCases) { option in
+                                let missing = option != .pi && ToolLocator.path(for: option) == nil
+                                Text(option.title + (missing ? " (not installed)" : "")).tag(option.rawValue)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
                     }
                 }
+                agentFix
 
                 if selectedEngine == .pi {
                     Picker("Provider", selection: providerChoice) {
@@ -339,16 +425,6 @@ struct BuildingSettings: View {
                     }
                     ModelPicker(provider: provider, model: $model, revision: revision)
                 } else {
-                    let path = ToolLocator.path(for: selectedEngine)
-                    if let path, let app = ToolLocator.desktopApp(for: path) {
-                        LabeledContent("Installed", value: "With \(app)")
-                            .help((path as NSString).abbreviatingWithTildeInPath)
-                    } else {
-                        LabeledContent("Installed", value: path.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "Not found")
-                    }
-                    if path != nil {
-                        EngineSignInRow(engine: selectedEngine)
-                    }
                     if selectedEngine == .claude {
                         Picker("Model", selection: engineModel(.claude)) {
                             ForEach(Builder.claudeModels, id: \.id) { Text($0.label).tag($0.id) }
@@ -359,41 +435,31 @@ struct BuildingSettings: View {
                                 ForEach(Builder.codexModels, id: \.id) { Text($0.label).tag($0.id) }
                             }
                         } else {
-                            TextField("Model", text: engineModel(.codex), prompt: Text("Codex's default"))
+                            TextField("Model", text: engineModel(.codex), prompt: Text("ChatGPT Codex's default"))
                         }
                     }
-                    Text(selectedEngine == .codex
-                         ? "Codex runs commands inside its own sandbox, limited to the app's folder."
-                         : "Uses your Claude Code sign-in, without your personal hooks, plugins or connectors.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                if let problem = Builder.problem() {
-                    Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
                 }
             }
             Section {
                 Picker("Ask before running commands", selection: approvalChoice) {
                     ForEach(CommandApproval.allCases) { Text($0.title).tag($0.rawValue) }
                 }
-                Text((CommandApproval(rawValue: approval) ?? .risky).detail)
-                    .font(.caption).foregroundStyle(.secondary)
                 if (CommandApproval(rawValue: approval) ?? .risky).isAutomatic && CommandApproval.claudeAutoUnavailable && selectedEngine == .claude {
                     Text("Claude Code's auto mode isn't available for your account, so Lamp asks before every command.")
                         .font(.caption).foregroundStyle(.orange)
                 }
             }
-            Section("Privacy") {
-                Toggle("Ask before the agent opens files outside an app's folder", isOn: $askOutsideFolder)
-                Text("The agent works in the app's own folder. Anything else on your Mac it wants to read or change, it asks for first; system and developer files don't count. Lamp's keys and your other apps are always off limits."
-                     + (selectedEngine == .claude ? " This applies to Lamp's built-in agent and Codex; Claude Code follows its own rules." : ""))
-                    .font(.caption).foregroundStyle(.secondary)
-                Toggle("Show the agent what an app prints while it runs", isOn: $shareLog)
-                Toggle("Show the agent pictures of an app's windows", isOn: $sharePictures)
-                Text("Both help the agent find and fix problems, and both go to the AI model you chose. Turn them off for apps that show or print things you'd rather keep to yourself.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section {
-                Toggle("Notify me when an app is ready or needs me", isOn: $notify)
+            Section("Permissions and Privacy") {
+                // One row of checkboxes, box first, as Finder's settings have them: in a stack, so the form
+                // doesn't lay each out as a label with its control at the far end.
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle("Ask before the agent opens files outside an app's folder", isOn: $askOutsideFolder)
+                    Toggle("Show the agent what an app prints while it runs", isOn: $shareLog)
+                    Toggle("Let the agent see the content of app windows", isOn: $sharePictures)
+                    Toggle("Notify me when an app is ready or needs me", isOn: $notify)
+                }
+                .toggleStyle(.checkbox)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 if notify && notificationsDenied {
                     HStack {
                         Text("Notifications are turned off for Lamp in System Settings.")
@@ -415,8 +481,10 @@ struct BuildingSettings: View {
         .task { notificationsDenied = await Notifier.shared.isDenied() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { notificationsDenied = await Notifier.shared.isDenied() }
+            revision += 1   // looks for the agent's tool again: it may have been installed meanwhile
         }
         .onChange(of: engine) { recheck() }
+        .task(id: signInCheck) { await checkSignIn() }
         .onChange(of: provider) { model = Builder.piModel; recheck() }
         .onChange(of: model) { Builder.piModel = model; recheck() }
         .onAppear { revision += 1 }   // keys may have changed in the Providers tab
@@ -435,7 +503,7 @@ struct AppsSettings: View {
 
     var body: some View {
         Form {
-            Section {
+            Section("Models used in apps") {
                 Picker("Inside your apps", selection: $appModel) {
                     ForEach(AppAI.models, id: \.id) { Text($0.label).tag($0.id) }
                 }
@@ -481,25 +549,38 @@ struct ExperimentalSettings: View {
 
     var body: some View {
         Section {
-            Toggle("iPhone and iPad apps", isOn: $iosApps)
-                .onChange(of: iosApps) { store.setLocalNetwork(Experiments.devices) }
-            Text("Adds New iPhone & iPad App. Lamp builds the app and tries it in the iPhone or iPad simulator on this Mac (Try On, beside the Play button): that needs Xcode (free on the Mac App Store) and, the first time it tries an app, permission to control this computer.")
-                .font(.caption).foregroundStyle(.secondary)
+            // Checkboxes in a stack, as in Permissions and Privacy. Load iOS apps is a part of Build iOS apps,
+            // so it sits under it, indented, with its note under its words.
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle("Build iOS apps", isOn: $iosApps)
+                    .onChange(of: iosApps) { store.setLocalNetwork(Experiments.devices) }
+                if iosApps {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Toggle("Load iOS apps onto my device", isOn: $devices)
+                            .onChange(of: devices) { store.setLocalNetwork(Experiments.devices) }
+                        Text("Requires an Apple Developer account")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .padding(.leading, 20)
+                    }
+                    .padding(.leading, 20)
+                }
+            }
+            .toggleStyle(.checkbox)
+            .frame(maxWidth: .infinity, alignment: .leading)
             if iosApps {
-                Toggle("Put apps on your own iPhone or iPad", isOn: $devices)
-                    .onChange(of: devices) { store.setLocalNetwork(Experiments.devices) }
-                if devices {
-                    if teams.isEmpty {
-                        TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
-                    } else {
-                        Picker("Apple Team", selection: $team) {
-                            ForEach(teams, id: \.id) { Text("\($0.name) (\($0.id))").tag($0.id) }
-                            if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
+                Group {
+                    if devices {
+                        if teams.isEmpty {
+                            TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
+                        } else {
+                            Picker("Apple Team", selection: $team) {
+                                ForEach(teams, id: \.id) { Text("\($0.name) (\($0.id))").tag($0.id) }
+                                if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
+                            }
                         }
                     }
                 }
-                Text("Sign in to your Apple account in Xcode → Settings → Accounts (a free account will do: its apps last a week on the phone, a paid one's a year). Then plug the phone in with a cable: Try On, beside the Play button, offers to pair it (tap Trust on the phone), and tells you when to turn on Developer Mode there. Choose the phone under Try On and press Play. The app's AI goes through Lamp over your Wi‑Fi, so the phone and this Mac must be on the same network and Lamp must be open. The agent still tries the app on the simulator: it can't see the phone's screen.")
-                    .font(.caption).foregroundStyle(.secondary)
+                .padding(.leading, 20)
             }
         } header: { Text("Experimental") }
         .task {
@@ -523,11 +604,37 @@ struct ComputerUseSettings: View {
     @State private var problem: String?
 
     var body: some View {
-        Section {
-            Toggle("Let apps use your other apps", isOn: Binding(get: { enabled }, set: { on in
-                if on { Task { await turnOn() } } else { enabled = false; problem = nil }
-            }))
-            .disabled(working != nil)
+        Section("Permissions and Privacy") {
+            // Checkboxes with their descriptions under their words, as in Building's Permissions and Privacy;
+            // the choice of what does the clicking is a part of the first, so it's indented under it.
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Let apps use your other apps", isOn: Binding(get: { enabled }, set: { on in
+                    if on { Task { await turnOn() } } else { enabled = false; problem = nil }
+                }))
+                .disabled(working != nil)
+                note("Lets your apps read and use your other apps, such as Slack, Mail, or Gmail and LinkedIn in your browser, with the accounts you're already signed in to. Apps ask before every click or keystroke.")
+                if CodexComputerUse.server != nil {
+                    // The ChatGPT app's Computer Use is on this Mac: it does the looking and clicking, unless the
+                    // person would rather keep CuaDriver.
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("Use the ChatGPT app's Computer Use", isOn: Binding(get: { !codexOff }, set: { useCodex in
+                            codexOff = !useCodex
+                            // Back to CuaDriver while the feature is on: it has to be installed and allowed, like a first turn-on.
+                            Task { if enabled, !useCodex { await turnOn() } else { status = await ComputerUse.status() } }
+                        }))
+                        .disabled(working != nil)
+                        note(codexOff
+                             ? "CuaDriver (from Cua, open source) does the looking and clicking: turning the setting above on adds it to Applications, and macOS asks you to allow it Accessibility and Screen Recording."
+                             : "The ChatGPT app has Computer Use installed, so it does the looking and clicking, with the permissions you gave it there. It sends real clicks to the app in the background and reads its contents without moving your pointer. Turn it off to use CuaDriver instead.")
+                    }
+                    .padding(.top, 6)
+                    .padding(.leading, 20)
+                } else {
+                    note("Turning it on adds CuaDriver (from Cua, open source) to Applications, and macOS asks you to allow it Accessibility and Screen Recording. With the ChatGPT app and its Computer Use plugin installed, Lamp uses that instead.")
+                }
+            }
+            .toggleStyle(.checkbox)
+            .frame(maxWidth: .infinity, alignment: .leading)
             if let working {
                 HStack(spacing: 6) { ProgressView().controlSize(.small); Text(working).foregroundStyle(.secondary) }
                     .font(.callout)
@@ -539,27 +646,16 @@ struct ComputerUseSettings: View {
             if let problem {
                 Text(problem).font(.caption).foregroundStyle(.orange)
             }
-            Text("Lets your apps read and use your other apps, such as Slack, Mail, or Gmail and LinkedIn in your browser, with the accounts you're already signed in to. Apps ask before every click or keystroke.")
-                .font(.caption).foregroundStyle(.secondary)
-            if CodexComputerUse.server != nil {
-                // The ChatGPT app's Computer Use is on this Mac: it does the looking and clicking, unless the
-                // person would rather keep CuaDriver.
-                Toggle("Use the ChatGPT app's Computer Use", isOn: Binding(get: { !codexOff }, set: { useCodex in
-                    codexOff = !useCodex
-                    // Back to CuaDriver while the feature is on: it has to be installed and allowed, like a first turn-on.
-                    Task { if enabled, !useCodex { await turnOn() } else { status = await ComputerUse.status() } }
-                }))
-                .disabled(working != nil)
-                Text(codexOff
-                     ? "CuaDriver (from Cua, open source) does the looking and clicking: turning the switch above on adds it to Applications, and macOS asks you to allow it Accessibility and Screen Recording."
-                     : "The ChatGPT app has Computer Use installed, so it does the looking and clicking, with the permissions you gave it there. It sends real clicks to the app in the background and reads its contents without moving your pointer. Switch it off to use CuaDriver instead.")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                Text("Turning it on adds CuaDriver (from Cua, open source) to Applications, and macOS asks you to allow it Accessibility and Screen Recording. With the ChatGPT app and its Computer Use plugin installed, Lamp uses that instead.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
         }
         .task { status = await ComputerUse.status() }
+    }
+
+    /// A checkbox's description, lined up with its words.
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.leading, 20)
     }
 
     private func turnOn() async {
@@ -669,9 +765,6 @@ struct ProvidersSettings: View {
                     .help("Native Mac AI, Ollama and LM Studio can't be removed")
                     Spacer()
                 }
-            } footer: {
-                Text("Ollama and LM Studio models show up while those apps are running. Pick which provider builds apps in Building.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .settingsPane()
@@ -1212,34 +1305,3 @@ private struct LocalAISheet: View {
     }
 }
 
-/// Whether Claude Code or Codex is signed in, with a button that signs in through the browser.
-struct EngineSignInRow: View {
-    let engine: Engine
-    @State private var signedIn: Bool?
-    @State private var signingIn = false
-
-    var body: some View {
-        LabeledContent("Signed in") {
-            if signingIn {
-                HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Finish in your browser…").foregroundStyle(.secondary) }
-            } else {
-                switch signedIn {
-                case true?: Label("Yes", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                case false?: Button("Sign In…") { Task { await signIn() } }
-                case nil: ProgressView().controlSize(.small)
-                }
-            }
-        }
-        .task(id: engine) {
-            signedIn = nil
-            signedIn = await EngineSignIn.isSignedIn(engine) ?? true
-        }
-    }
-
-    private func signIn() async {
-        signingIn = true
-        _ = await EngineSignIn.signIn(engine)
-        signedIn = await EngineSignIn.isSignedIn(engine) ?? true
-        signingIn = false
-    }
-}

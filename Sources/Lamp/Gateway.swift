@@ -128,7 +128,7 @@ enum AppAI {
     static var models: [(id: String, label: String, openRouter: String)] {
         guard answersViaCodex else { return anthropicModels }
         let codex = Builder.codexModels.dropFirst().map { (id: $0.id, label: $0.label, openRouter: "") }
-        return codex.isEmpty ? [("", "Codex's default", "")] : Array(codex)
+        return codex.isEmpty ? [("", "ChatGPT Codex's default", "")] : Array(codex)
     }
 
     /// Sonnet: Haiku is cheaper but noticeably worse, so it's only used when someone picks it.
@@ -439,7 +439,7 @@ enum AppAI {
     static var fastModelName: String {
         switch Builder.engine {
         case .claude: "Haiku through Claude Code"
-        case .codex: (Builder.codexModels.first { $0.id == Builder.codexFastModel }?.label).map { "\($0) through Codex" } ?? "Codex"
+        case .codex: (Builder.codexModels.first { $0.id == Builder.codexFastModel }?.label).map { "\($0) through ChatGPT Codex" } ?? "ChatGPT Codex"
         case .pi: "the builder's own model"
         }
     }
@@ -562,7 +562,7 @@ enum AppAI {
     static var imageRouteName: String? {
         switch imageRoute {
         case .openRouter: "OpenRouter"
-        case .codex: "Codex, with your ChatGPT sign-in"
+        case .codex: "ChatGPT Codex, with your ChatGPT sign-in"
         case .local: "\(ImageModels.chosen?.name ?? "a model") on this Mac"
         case nil: nil
         }
@@ -665,7 +665,7 @@ enum AppAI {
         }
         if let failure { throw Failure(message: Provider.friendlyError(failure)) }
         guard let data = try? Data(contentsOf: folder.appendingPathComponent("image.png")), NSImage(data: data) != nil else {
-            throw Failure(message: "Codex didn't make the picture. Check it's signed in (Lamp → Settings → Building).")
+            throw Failure(message: "ChatGPT Codex didn't make the picture. Check it's signed in (Lamp → Settings → Building).")
         }
         return data
     }

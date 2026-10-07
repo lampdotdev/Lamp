@@ -2,48 +2,53 @@ import Foundation
 
 /// The scaffold every generated app starts from.
 enum Template {
-    static func scaffold(name rawName: String, untitled: Bool = false, platform: Platform = .mac, family: DeviceFamily = .iphone, in root: URL) throws -> LampProject {
+    static func scaffold(name: String, untitled: Bool = false, platform: Platform = .mac, family: DeviceFamily = .iphone,
+                         in root: URL) throws -> LampProject {
+        let project = try draft(name: name, untitled: untitled, platform: platform, family: family, in: root)
+        try fill(project)
+        return project
+    }
+
+    /// An app's folder with nothing in it but what Lamp knows of it. New App makes one, so the app can still
+    /// change its name and kind for free; its scaffold is written (`fill`) when there's first something to build.
+    static func draft(name rawName: String, untitled: Bool = false, platform: Platform = .mac, family: DeviceFamily = .iphone,
+                      in root: URL) throws -> LampProject {
         let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
         let exe = identifier(from: name)
+        let slug = freeSlug(for: exe, in: root)
+        let project = LampProject(id: slug, name: name.isEmpty ? exe : name, exe: exe,
+                                   dir: root.appendingPathComponent(slug), untitled: untitled, platform: platform, family: family)
+        try FileManager.default.createDirectory(at: project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        try saveMeta(project)
+        return project
+    }
+
+    /// The folder name for an executable name, numbered when it's taken.
+    static func freeSlug(for exe: String, in root: URL) -> String {
         var slug = exe.lowercased()
         var n = 2
         while FileManager.default.fileExists(atPath: root.appendingPathComponent(slug).path) {
             slug = "\(exe.lowercased())-\(n)"
             n += 1
         }
-        let project = LampProject(id: slug, name: name.isEmpty ? exe : name, exe: exe,
-                                   dir: root.appendingPathComponent(slug), untitled: untitled, platform: platform, family: family)
+        return slug
+    }
 
-        let iphone = platform == .iphone
-        let files: [String: String] = [
-            "Package.swift": iphone ? iPhonePackageSwift : packageSwift,
-            "Sources/App.swift": iphone ? iPhoneAppSwift : appSwift,
-            "Sources/ContentView.swift": iphone ? iPhoneContentViewSwift : contentViewSwift,
-            "build.sh": iphone ? iPhoneBuildSh : buildSh,
-            "APP.md": iphone ? iPhoneAppMd : appMd,
-            ".gitignore": ".build/\nbuild/\n.lamp/\n",
-        ]
-        for (path, template) in files {
-            let url = project.dir.appendingPathComponent(path)
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let contents = template
-                .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
-                .replacingOccurrences(of: "{{NAME}}", with: project.name)
-                .replacingOccurrences(of: "{{EXE}}", with: project.exe)
-                .replacingOccurrences(of: "{{SLUG}}", with: project.id)
-                .replacingOccurrences(of: "{{BUNDLE}}", with: project.bundleID)
-            try contents.write(to: url, atomically: true, encoding: .utf8)
-        }
-        try FileManager.default.setAttributes([.posixPermissions: 0o755],
-                                              ofItemAtPath: project.dir.appendingPathComponent("build.sh").path)
+    static func saveMeta(_ project: LampProject) throws {
+        try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
+                                             platform: project.platform, family: project.platform == .iphone ? project.family : nil,
+                                             device: project.device))
+            .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
+    }
 
-        let lampDir = project.dir.appendingPathComponent(".lamp")
-        try FileManager.default.createDirectory(at: lampDir, withIntermediateDirectories: true)
-        try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: untitled ? true : nil, platform: platform,
-                                             family: platform == .iphone ? family : nil))
-            .write(to: lampDir.appendingPathComponent("meta.json"))
-        try writeSupport(for: project)
-        return project
+    /// Writes the scaffold into a draft's folder, as the kind of app it is now.
+    static func fill(_ project: LampProject) throws {
+        let iphone = project.platform == .iphone
+        try write(iphone ? iPhoneAppSwift : appSwift, to: "Sources/App.swift", for: project)
+        try write(iphone ? iPhoneContentViewSwift : contentViewSwift, to: "Sources/ContentView.swift", for: project)
+        try write(iphone ? iPhoneAppMd : appMd, to: "APP.md", for: project)
+        try write(".build/\nbuild/\n.lamp/\n", to: ".gitignore", for: project)
+        try writeOwnedFiles(for: project)   // Package.swift last: it's what marks the app as no longer a draft
     }
 
     /// Per-app secret the app sends to Lamp's AI gateway. Created on first use.
@@ -75,6 +80,7 @@ enum Template {
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{BUNDLE}}", with: project.bundleID)
         let url = project.dir.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         // Left alone when it's already right, so its date only moves when the app needs a rebuild.
         if (try? String(contentsOf: url, encoding: .utf8)) != contents {
             try contents.write(to: url, atomically: true, encoding: .utf8)
@@ -468,6 +474,7 @@ enum Template {
 
     /// Whether the app is still the empty scaffold: nothing has been built into it yet.
     static func isScaffold(_ project: LampProject) -> Bool {
+        guard project.scaffolded else { return true }   // a draft: not even the scaffold yet
         guard let view = try? String(contentsOf: project.dir.appendingPathComponent("Sources/ContentView.swift"), encoding: .utf8)
         else { return false }
         return ([scaffoldHint] + earlierScaffoldHints).contains { view.contains($0) }

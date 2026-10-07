@@ -113,7 +113,6 @@ struct AppSidebar: View {
     enum Layout: String { case list, tiles }
 
     @EnvironmentObject private var store: Store
-    @AppStorage("experimentIOSApps") private var iosApps = false
     @AppStorage("sidebarLayout") private var layout = Layout.list
 
     var body: some View {
@@ -165,28 +164,15 @@ struct AppSidebar: View {
             }
             Button { store.create() } label: {
                 Label {
-                    Text(iosApps ? "New Mac App" : "New App")   // beside the iPhone and iPad entries, say which
+                    Text("New App")
                 } icon: {
-                    Image(systemName: iosApps ? "macbook" : "plus").frame(width: 24, height: 24)
+                    Image(systemName: "plus").frame(width: 24, height: 24)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .padding(.top, store.projects.isEmpty ? 0 : 12)
-            if iosApps {   // Settings → Building → Experimental
-                // One kind of app for both devices, as Apple has it; which one it's tried on is the app's choice.
-                Button { store.create(platform: .iphone) } label: {
-                    Label {
-                        Text("New iPhone & iPad App")
-                    } icon: {
-                        Image(systemName: "iphone").frame(width: 24, height: 24)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-            }
         }
         .listStyle(.sidebar)
         .environment(\.sidebarRowSize, .large)
@@ -1104,7 +1090,21 @@ struct NewAppIntro: View {
     @State private var ideas: [Idea] = []
     @FocusState private var editingName: Bool
 
+    @AppStorage("experimentIOSApps") private var iosApps = false
+
     private var busy: Bool { store.busy.contains(project.id) }
+
+    /// What a new app is made as, chosen before its first message. iPhone and iPad are the same kind of app
+    /// to Lamp; the choice is which simulator it opens in.
+    private enum Kind: String, CaseIterable { case mac = "Mac", iphone = "iPhone", ipad = "iPad" }
+
+    private var kind: Binding<Kind> {
+        Binding {
+            project.platform == .mac ? .mac : project.family == .ipad ? .ipad : .iphone
+        } set: { kind in
+            store.setKind(project, platform: kind == .mac ? .mac : .iphone, family: kind == .ipad ? .ipad : .iphone)
+        }
+    }
 
     var body: some View {
         VStack(spacing: 14) {
@@ -1125,6 +1125,16 @@ struct NewAppIntro: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 400)
+            if iosApps && !project.scaffolded {   // a draft, so its kind is still open (Store.setKind)
+                Picker("Kind", selection: kind) {
+                    ForEach(Kind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.radioGroup)
+                .horizontalRadioGroupLayout()
+                .labelsHidden()
+                .disabled(busy)
+                .padding(.top, 4)
+            }
             if fresh && draft.trimmed.isEmpty && !ideas.isEmpty {
                 StarterIdeas(ideas: ideas) { prompt in
                     draft = prompt
