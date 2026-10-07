@@ -35,17 +35,30 @@ enum Devices {
         set { UserDefaults.standard.set(newValue.trimmed.uppercased(), forKey: "appleTeam") }
     }
 
-    /// Teams the Mac has an Apple Development certificate for: what Xcode made when the person signed in
-    /// and ran something on a device. "Matt Rubens (Z925397W9T)" → ("Z925397W9T", "Matt Rubens").
+    /// The teams of the accounts signed in to Xcode: the ones its automatic signing can sign for.
+    static func xcodeTeams() -> [(id: String, name: String)] {
+        let accounts = UserDefaults(suiteName: "com.apple.dt.Xcode")?.dictionary(forKey: "IDEProvisioningTeamByIdentifier") ?? [:]
+        var teams: [(id: String, name: String)] = []
+        for case let list as [[String: Any]] in accounts.values {
+            for team in list {
+                guard let id = team["teamID"] as? String, id.count == 10, !teams.contains(where: { $0.id == id }) else { continue }
+                teams.append((id, team["teamName"] as? String ?? id))
+            }
+        }
+        return teams.sorted { $0.name < $1.name }
+    }
+
+    /// The teams to offer: those signed in to Xcode first, then any the Mac has an Apple Development
+    /// certificate for from earlier ("Matt Rubens (Z925397W9T)" → ("Z925397W9T", "Matt Rubens")).
     static func knownTeams() async -> [(id: String, name: String)] {
         let output = await Subprocess.run("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"], timeout: 20).output
-        var teams: [(String, String)] = []
+        var teams: [(id: String, name: String)] = xcodeTeams()
         for line in output.split(separator: "\n") where line.contains("\"Apple Development: ") {
             guard let open = line.lastIndex(of: "("), let close = line.lastIndex(of: ")"), open < close else { continue }
             let id = String(line[line.index(after: open)..<close])
             let start = line.range(of: "Apple Development: ")!.upperBound
             let name = String(line[start..<open]).trimmed
-            if id.count == 10, !teams.contains(where: { $0.0 == id }) { teams.append((id, name)) }
+            if id.count == 10, !teams.contains(where: { $0.id == id }) { teams.append((id, name)) }
         }
         return teams
     }
@@ -124,6 +137,10 @@ enum Devices {
         guard let device else { return "That phone isn't paired with this Mac any more. Plug it in and choose it again under Try On." }
         guard device.developerMode else { return "Turn on Developer Mode on \(device.name) (Settings → Privacy & Security → Developer Mode), then try again." }
         guard team.count == 10 else { return "Choose your Apple team in Lamp's Settings → Building → Experimental first." }
+        let signedIn = xcodeTeams()
+        guard signedIn.isEmpty || signedIn.contains(where: { $0.id == team }) else {
+            return "Xcode is signed in to \(signedIn.map { "\($0.name) (\($0.id))" }.joined(separator: ", ")), not team \(team). Choose that team in Lamp's Settings → Building → Experimental, or sign in to the other account in Xcode → Settings → Accounts."
+        }
         return nil
     }
 }

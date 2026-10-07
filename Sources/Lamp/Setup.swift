@@ -505,7 +505,11 @@ struct ExperimentalSettings: View {
         } header: { Text("Experimental") }
         .task {
             teams = await Devices.knownTeams()
-            if team.isEmpty, let first = teams.first { team = first.id }
+            // The account signed in to Xcode is the one that can sign, so its team is the first choice
+            // whenever the stored one isn't among Xcode's.
+            let signedIn = Devices.xcodeTeams()
+            if let first = signedIn.first, !signedIn.contains(where: { $0.id == team }) { team = first.id }
+            else if team.isEmpty, let first = teams.first { team = first.id }
         }
     }
 }
