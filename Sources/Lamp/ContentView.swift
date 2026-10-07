@@ -467,74 +467,137 @@ struct ProjectView: View {
         .padding(.top, 8)
     }
 
+    /// The chat itself, scrolled to its end. Kept out of `body`, like the rows and the message box, because
+    /// as one expression the whole view is more than the compiler can type-check in reasonable time.
+    private func chat(_ lines: [LogLine]) -> some View {
+        ScrollViewReader { proxy in
+            GeometryReader { area in
+                ScrollView {
+                    // While a new app is being built, its card stays in view above the steps, if there's
+                    // room: in a short window a pinned card would fill the chat and hide everything else.
+                    let pinned: PinnedScrollableViews = building != nil && area.size.height >= Self.roomToPinCard ? [.sectionHeaders] : []
+                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: pinned) {
+                        chatRows(lines)
+                    }
+                    // A readable line length; wide windows get margins instead of longer lines.
+                    .frame(maxWidth: 640)
+                    .padding(.horizontal, 20).padding(.vertical, 16)
+                    .frame(maxWidth: .infinity)
+                    // At least as tall as the chat area, so a short chat still sits at the top.
+                    .frame(minHeight: area.size.height, alignment: .top)
+                }
+                // A chat opens on its latest messages: the scroll view starts at the bottom, with
+                // no scrolling to get there.
+                .defaultScrollAnchor(.bottom)
+                // That start is worked out from a guess at the height of the rows that aren't made yet,
+                // and in a long chat the guess can land anywhere: the top, the middle, past the end. So
+                // the chat then goes to its last row, which it can only do once it has been laid out:
+                // sooner does nothing, and there's no telling when that is but by the end showing up.
+                // It tries for half a second, and once more when the end is there, to land on it exactly.
+                .task {
+                    for attempt in 0..<10 {
+                        if attempt == 0 { await Task.yield() } else { try? await Task.sleep(for: .milliseconds(50)) }
+                        guard !Task.isCancelled else { return }
+                        let done = endShown
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                        if done { return }
+                    }
+                }
+                .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
+                .onChange(of: written(lines)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
+                .onChange(of: store.progress[project.id]?.plan.count) { proxy.scrollTo("bottom", anchor: .bottom) }
+                .onChange(of: store.progress[project.id]?.screenshot != nil) { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
+        }
+    }
+
+    /// The chat's rows: the intro for a new app, the transcript with its build card or activity, and the
+    /// messages waiting their turn.
+    @ViewBuilder
+    private func chatRows(_ lines: [LogLine]) -> some View {
+        if lines.isEmpty && queued.isEmpty {
+            NewAppIntro(project: project, draft: $draft)
+        }
+        if let card = store.progress[project.id], card.newApp,
+           let request = lines.lastIndex(where: { $0.kind == .user }) {
+            // The build card goes straight after the request; what the agent says and
+            // does follows it.
+            transcript(Array(lines[...request]), busy: false)
+            Section {
+                transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy)
+            } header: {
+                BuildCard(project: project, progress: card)
+                    .padding(.top, 16).padding(.bottom, 12)
+                    .background(Color(nsColor: .textBackgroundColor))
+            }
+        } else {
+            let progress = busy ? store.progress[project.id] : nil
+            transcript(lines, busy: busy, progressShown: progress != nil)
+            if let progress { ActivityRow(progress: progress).padding(.top, 12) }
+        }
+        ForEach(queued) { message in
+            QueuedRow(message: message) { store.unqueue(message, from: project) }
+                .padding(.top, lines.isEmpty ? 0 : 32)
+        }
+        Color.clear.frame(height: 1).id("bottom")
+            .onAppear { endShown = true }
+    }
+
+    /// The message box with the buttons around it.
+    private func composerRow(_ lines: [LogLine]) -> some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            Button(action: chooseFiles) { Image(systemName: "paperclip").font(.title3) }
+                .buttonStyle(.borderless)
+                .help("Attach files. You can also paste or drop images and files here.")
+                .accessibilityLabel("Attach files")
+                .frame(height: Composer.lineHeight)
+            Composer(text: $draft, height: $composerHeight,
+                     placeholder: busy ? "Working… describe the next change"
+                        : lines.isEmpty ? "Describe an app…" : "Describe a change…",
+                     // No suggestion while a request from the chat is in the box: it would be about a turn
+                     // that's on its way out, and Escape, which dismisses one, puts the request back instead.
+                     suggestion: replacing == nil ? shownSuggestion : nil,
+                     onDismissSuggestion: { dismissedSuggestion = suggestion },
+                     onEscape: replacing == nil ? nil : putBack,
+                     isEnabled: true, focusRequest: focusRequest,
+                     onSubmit: send, onFiles: { attachments.append(contentsOf: $0) })
+                .frame(height: composerHeight)
+            if hasMicrophone {
+                Button(action: toggleDictation) {
+                    Image(systemName: dictation.isListening ? "mic.fill" : "mic").font(.title3)
+                        .symbolEffect(.pulse, isActive: dictation.isListening)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(dictation.isListening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                .help(dictation.isListening ? "Stop dictation" : "Dictate a change")
+                .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Dictate a change")
+                .frame(height: Composer.lineHeight)
+            }
+            if busy {
+                Button { store.stop(project) } label: { Image(systemName: "stop.circle.fill").font(.title2) }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Stop")
+                    .accessibilityLabel("Stop")
+                    .frame(height: Composer.lineHeight)
+            }
+            Button(action: send) {
+                Image(systemName: "arrow.up.circle.fill").font(.title2)
+            }
+            .buttonStyle(.plain)
+            // A request sent again starts from the app as it was, so it can't wait behind other work.
+            .disabled(draft.trimmed.isEmpty && attachments.isEmpty || replacing != nil && busy)
+            .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
+            .frame(height: Composer.lineHeight)
+        }
+        .padding(12)
+    }
+
     var body: some View {
         let lines = self.lines
         return VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                GeometryReader { area in
-                    ScrollView {
-                        // While a new app is being built, its card stays in view above the steps, if there's
-                        // room: in a short window a pinned card would fill the chat and hide everything else.
-                        LazyVStack(alignment: .leading, spacing: 0,
-                                   pinnedViews: building != nil && area.size.height >= Self.roomToPinCard ? [.sectionHeaders] : []) {
-                            if lines.isEmpty && queued.isEmpty {
-                                NewAppIntro(project: project, draft: $draft)
-                            }
-                            if let card = store.progress[project.id], card.newApp,
-                               let request = lines.lastIndex(where: { $0.kind == .user }) {
-                                // The build card goes straight after the request; what the agent says and
-                                // does follows it.
-                                transcript(Array(lines[...request]), busy: false)
-                                Section {
-                                    transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy)
-                                } header: {
-                                    BuildCard(project: project, progress: card)
-                                        .padding(.top, 16).padding(.bottom, 12)
-                                        .background(Color(nsColor: .textBackgroundColor))
-                                }
-                            } else {
-                                let progress = busy ? store.progress[project.id] : nil
-                                transcript(lines, busy: busy, progressShown: progress != nil)
-                                if let progress { ActivityRow(progress: progress).padding(.top, 12) }
-                            }
-                            ForEach(queued) { message in
-                                QueuedRow(message: message) { store.unqueue(message, from: project) }
-                                    .padding(.top, lines.isEmpty ? 0 : 32)
-                            }
-                            Color.clear.frame(height: 1).id("bottom")
-                                .onAppear { endShown = true }
-                        }
-                        // A readable line length; wide windows get margins instead of longer lines.
-                        .frame(maxWidth: 640)
-                        .padding(.horizontal, 20).padding(.vertical, 16)
-                        .frame(maxWidth: .infinity)
-                        // At least as tall as the chat area, so a short chat still sits at the top.
-                        .frame(minHeight: area.size.height, alignment: .top)
-                    }
-                    // A chat opens on its latest messages: the scroll view starts at the bottom, with
-                    // no scrolling to get there.
-                    .defaultScrollAnchor(.bottom)
-                    // That start is worked out from a guess at the height of the rows that aren't made yet,
-                    // and in a long chat the guess can land anywhere: the top, the middle, past the end. So
-                    // the chat then goes to its last row, which it can only do once it has been laid out:
-                    // sooner does nothing, and there's no telling when that is but by the end showing up.
-                    // It tries for half a second, and once more when the end is there, to land on it exactly.
-                    .task {
-                        for attempt in 0..<10 {
-                            if attempt == 0 { await Task.yield() } else { try? await Task.sleep(for: .milliseconds(50)) }
-                            guard !Task.isCancelled else { return }
-                            let done = endShown
-                            proxy.scrollTo("bottom", anchor: .bottom)
-                            if done { return }
-                        }
-                    }
-                    .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
-                    .onChange(of: written(lines)) { proxy.scrollTo("bottom", anchor: .bottom) }
-                    .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
-                    .onChange(of: store.progress[project.id]?.plan.count) { proxy.scrollTo("bottom", anchor: .bottom) }
-                    .onChange(of: store.progress[project.id]?.screenshot != nil) { proxy.scrollTo("bottom", anchor: .bottom) }
-                }
-            }
+            chat(lines)
             Divider()
             if let approval = store.approvals[project.id] {
                 ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation,
@@ -548,52 +611,7 @@ struct ProjectView: View {
                 Divider()
             }
             if !attachments.isEmpty { pendingAttachments }
-            HStack(alignment: .bottom, spacing: 8) {
-                Button(action: chooseFiles) { Image(systemName: "paperclip").font(.title3) }
-                    .buttonStyle(.borderless)
-                    .help("Attach files. You can also paste or drop images and files here.")
-                    .accessibilityLabel("Attach files")
-                    .frame(height: Composer.lineHeight)
-                Composer(text: $draft, height: $composerHeight,
-                         placeholder: busy ? "Working… describe the next change"
-                            : lines.isEmpty ? "Describe an app…" : "Describe a change…",
-                         // No suggestion while a request from the chat is in the box: it would be about a turn
-                         // that's on its way out, and Escape, which dismisses one, puts the request back instead.
-                         suggestion: replacing == nil ? shownSuggestion : nil,
-                         onDismissSuggestion: { dismissedSuggestion = suggestion },
-                         onEscape: replacing == nil ? nil : putBack,
-                         isEnabled: true, focusRequest: focusRequest,
-                         onSubmit: send, onFiles: { attachments.append(contentsOf: $0) })
-                    .frame(height: composerHeight)
-                if hasMicrophone {
-                    Button(action: toggleDictation) {
-                        Image(systemName: dictation.isListening ? "mic.fill" : "mic").font(.title3)
-                            .symbolEffect(.pulse, isActive: dictation.isListening)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(dictation.isListening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-                    .help(dictation.isListening ? "Stop dictation" : "Dictate a change")
-                    .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Dictate a change")
-                    .frame(height: Composer.lineHeight)
-                }
-                if busy {
-                    Button { store.stop(project) } label: { Image(systemName: "stop.circle.fill").font(.title2) }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help("Stop")
-                        .accessibilityLabel("Stop")
-                        .frame(height: Composer.lineHeight)
-                }
-                Button(action: send) {
-                    Image(systemName: "arrow.up.circle.fill").font(.title2)
-                }
-                .buttonStyle(.plain)
-                // A request sent again starts from the app as it was, so it can't wait behind other work.
-                .disabled(draft.trimmed.isEmpty && attachments.isEmpty || replacing != nil && busy)
-                .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
-                .frame(height: Composer.lineHeight)
-            }
-            .padding(12)
+            composerRow(lines)
         }
         .overlay {
             if dropTargeted {
