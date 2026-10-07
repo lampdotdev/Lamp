@@ -845,7 +845,7 @@ struct ProvidersSettings: View {
             Section {
                 list(onThisMac)
                 if Experiments.iosApps {
-                    Text("These stay on this Mac: a sign-in can't go with an app to your iPhone or iPad.")
+                    Text("These stay on this Mac: iOS apps can use them only on the same Wi‑Fi network as it.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             } header: { Text("On this Mac") }
@@ -995,7 +995,7 @@ private struct EngineSheet: View {
                            detail: signedIn == true ? "Signed in. Builds apps and answers inside them with your \(engine == .claude ? "Claude" : "ChatGPT") subscription."
                                 : signedIn == false ? "Not signed in yet." : "Checking the sign-in…")
             if Experiments.iosApps {
-                Text("The sign-in stays on this Mac. Apps on your iPhone or iPad need an OpenRouter key to work away from it.")
+                Text("The sign-in stays on this Mac: iOS apps can use it only on the same Wi‑Fi network as it. Away from it they need an OpenRouter key.")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             HStack {
