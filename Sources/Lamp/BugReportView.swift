@@ -14,10 +14,15 @@ struct BugReportView: View {
     @EnvironmentObject private var store: Store
     @State private var report = ""
     @State private var copied = false
+    @State private var confirmNewReport = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Report a bug").font(.title2.bold())
+            HStack {
+                Text("Report a bug").font(.title2.bold())
+                Spacer()
+                Button("New Report…") { confirmNewReport = true }
+            }
             Text("Send this to the person who invited you to Lamp, or reply to your invitation.")
             Text("Describe the problem below. Review and edit the entire report before copying or sharing it. Nothing is sent automatically.")
                 .foregroundStyle(.secondary)
@@ -53,6 +58,12 @@ struct BugReportView: View {
             if report.isEmpty { report = snapshot() }
         }
         .onChange(of: report) { copied = false }
+        .alert("Start a new report?", isPresented: $confirmNewReport) {
+            Button("Start New Report", role: .destructive) { report = snapshot() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Copy or share this report first if you want to keep it. Starting a new report replaces your text and captures the current diagnostics.")
+        }
     }
 
     private func snapshot() -> String {
