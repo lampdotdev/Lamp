@@ -10,6 +10,12 @@ plain "Lamp x.y.z" line.
 - Apps can use your other apps whatever builds them: with a local model or your Claude Code or Codex
   sign-in as well as with an OpenRouter key. The person still approves every click and keystroke.
 
+## Unreleased
+
+- Apps that use your other apps now do it through the ChatGPT app's Computer Use when it's installed: real
+  clicks and drags in the background, better reading of what's on screen, and nothing to install. You still
+  approve every step. CuaDriver stays as the fallback, and a switch in Settings → Apps chooses.
+
 ## 0.9.1
 
 - iPhone and iPad apps use more of the phone: the agent knows about the motion sensors, the camera and

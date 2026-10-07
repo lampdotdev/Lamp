@@ -517,6 +517,7 @@ struct ExperimentalSettings: View {
 /// needed and asks for its permissions; turning it off stops apps using it (CuaDriver stays installed).
 struct ComputerUseSettings: View {
     @AppStorage("computerUse") private var enabled = false
+    @AppStorage("codexComputerUseOff") private var codexOff = false
     @State private var status: ComputerUse.Status?
     @State private var working: String?
     @State private var problem: String?
@@ -538,14 +539,36 @@ struct ComputerUseSettings: View {
             if let problem {
                 Text(problem).font(.caption).foregroundStyle(.orange)
             }
-            Text("Lets your apps read and use your other apps, such as Slack, Mail, or Gmail and LinkedIn in your browser, with the accounts you're already signed in to. Turning it on adds CuaDriver (from Cua, open source) to Applications, and macOS asks you to allow it Accessibility and Screen Recording. Apps ask before every click or keystroke.")
+            Text("Lets your apps read and use your other apps, such as Slack, Mail, or Gmail and LinkedIn in your browser, with the accounts you're already signed in to. Apps ask before every click or keystroke.")
                 .font(.caption).foregroundStyle(.secondary)
+            if CodexComputerUse.server != nil {
+                // The ChatGPT app's Computer Use is on this Mac: it does the looking and clicking, unless the
+                // person would rather keep CuaDriver.
+                Toggle("Use the ChatGPT app's Computer Use", isOn: Binding(get: { !codexOff }, set: { useCodex in
+                    codexOff = !useCodex
+                    // Back to CuaDriver while the feature is on: it has to be installed and allowed, like a first turn-on.
+                    Task { if enabled, !useCodex { await turnOn() } else { status = await ComputerUse.status() } }
+                }))
+                .disabled(working != nil)
+                Text(codexOff
+                     ? "CuaDriver (from Cua, open source) does the looking and clicking: turning the switch above on adds it to Applications, and macOS asks you to allow it Accessibility and Screen Recording."
+                     : "The ChatGPT app has Computer Use installed, so it does the looking and clicking, with the permissions you gave it there. It sends real clicks to the app in the background and reads its contents without moving your pointer. Switch it off to use CuaDriver instead.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("Turning it on adds CuaDriver (from Cua, open source) to Applications, and macOS asks you to allow it Accessibility and Screen Recording. With the ChatGPT app and its Computer Use plugin installed, Lamp uses that instead.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .task { status = await ComputerUse.status() }
     }
 
     private func turnOn() async {
         problem = nil
+        if CodexComputerUse.isAvailable {   // nothing to install: the ChatGPT app's helper has the permissions
+            status = .ready
+            enabled = true
+            return
+        }
         do {
             try await ComputerUse.install { working = $0 }
             status = await ComputerUse.status()
