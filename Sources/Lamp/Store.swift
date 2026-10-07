@@ -111,7 +111,7 @@ struct QueuedMessage: Identifiable {
 final class Store: ObservableObject {
     static let shared = Store()
 
-    @Published var projects: [LampProject] = []
+    @Published var projects: [LampProject] = [] { didSet { syncLocalNetwork() } }   // the network listener follows which apps open on a phone
     @Published var selection: String? {
         didSet {
             markRead()
@@ -2848,9 +2848,14 @@ final class Store: ObservableObject {
     }
 
     /// The gateway answers on the local network only while an app is set to open on the person's own phone:
-    /// checked whenever that can change (startup, Try On, the experiment's switch).
-    func updateLocalNetwork() {
+    /// kept in step with the list of apps (Try On, deletion, rename, reload) and the experiment's switch.
+    func syncLocalNetwork() {
         gateway?.setLocalNetwork(Experiments.iosApps && projects.contains { $0.platform == .iphone && $0.device != nil })
+    }
+
+    /// The experiment's switch changed: the listener and the list of phones follow.
+    func updateLocalNetwork() {
+        syncLocalNetwork()
         refreshDevices()
     }
 
