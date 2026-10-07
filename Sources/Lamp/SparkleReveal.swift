@@ -100,7 +100,7 @@ private struct SparkleReveal: ViewModifier {
 }
 
 /// The sparkles themselves, from Core Animation's particle emitter: a line at the reveal's edge that gives
-/// off many small quick glints and a few larger, slower stars that turn as they rise and fade.
+/// off points of light.
 private struct SparkleEmitter: NSViewRepresentable {
     /// Where the edge is, in points from the top, and how wide the stream is.
     let edge: CGFloat
@@ -112,7 +112,7 @@ private struct SparkleEmitter: NSViewRepresentable {
 
     func makeNSView(context: Context) -> EmitterView {
         let view = EmitterView()
-        view.emitter.emitterCells = [Self.glints, Self.stars]
+        view.emitter.emitterCells = [Self.motes, Self.glints, Self.haze]
         return view
     }
 
@@ -124,102 +124,136 @@ private struct SparkleEmitter: NSViewRepresentable {
         // The view's layer counts up from the bottom.
         emitter.emitterPosition = CGPoint(x: view.bounds.midX, y: view.bounds.height - edge)
         emitter.emitterSize = CGSize(width: spread, height: 1)
-        emitter.birthRate = pouring ? 1 : 0
+        // Not before it has a size and a window: until then the line sits in the corner. When it starts, its
+        // clock starts too (in the layer's own time, known only once it's in a window); otherwise it gives off
+        // at once every sparkle it thinks it missed, in a dense line.
+        let on = pouring && !view.bounds.isEmpty && view.window != nil
+        if on && !view.started {
+            view.started = true
+            emitter.beginTime = emitter.convertTime(CACurrentMediaTime(), from: nil)
+        }
+        emitter.birthRate = on ? 1 : 0
         CATransaction.commit()
     }
 
     final class EmitterView: NSView {
         let emitter = CAEmitterLayer()
+        var started = false
 
         override init(frame: NSRect) {
             super.init(frame: frame)
             wantsLayer = true
             emitter.emitterShape = .line
             emitter.emitterMode = .outline
+            emitter.birthRate = 0
             layer?.addSublayer(emitter)
         }
 
         required init?(coder: NSCoder) { fatalError("not from a nib") }
     }
 
-    private static var glints: CAEmitterCell {
+    // Three kinds, for light rather than cartoon stars: fine motes drifting slowly in every direction, glints
+    // that flash for a moment and are gone, and a few large, faint, out-of-focus specks that give it depth.
+
+    private static var motes: CAEmitterCell {
         let cell = CAEmitterCell()
         cell.contents = dot
-        cell.birthRate = 70
-        cell.lifetime = 0.75
-        cell.lifetimeRange = 0.3
-        cell.velocity = 22
-        cell.velocityRange = 16
-        cell.emissionLongitude = .pi / 2   // up
-        cell.emissionRange = .pi / 2.5
-        cell.yAcceleration = -8            // slowing as it rises
-        cell.scale = 0.16
-        cell.scaleRange = 0.08
-        cell.scaleSpeed = -0.12
-        cell.alphaSpeed = -1.1
-        cell.color = NSColor(red: 1, green: 0.8, blue: 0.4, alpha: 1).cgColor
-        cell.greenRange = 0.1
+        cell.birthRate = 90
+        cell.lifetime = 1.4
+        cell.lifetimeRange = 0.6
+        cell.velocity = 7
+        cell.velocityRange = 7
+        cell.emissionRange = .pi * 2
+        cell.yAcceleration = 4             // a slight rise, like warm air
+        cell.scale = 0.07
+        cell.scaleRange = 0.04
+        cell.alphaRange = 0.4
+        cell.alphaSpeed = -0.7
+        cell.color = NSColor(red: 0.95, green: 0.72, blue: 0.32, alpha: 0.9).cgColor
+        cell.redRange = 0.05
+        cell.greenRange = 0.08
         return cell
     }
 
-    private static var stars: CAEmitterCell {
+    private static var glints: CAEmitterCell {
         let cell = CAEmitterCell()
-        cell.contents = star
-        cell.birthRate = 10
-        cell.lifetime = 1.1
-        cell.lifetimeRange = 0.3
-        cell.velocity = 14
-        cell.velocityRange = 8
-        cell.emissionLongitude = .pi / 2
-        cell.emissionRange = .pi / 3
-        cell.yAcceleration = -5
-        cell.spinRange = 2.5
-        cell.scale = 0.34
-        cell.scaleRange = 0.14
-        cell.scaleSpeed = -0.22
-        cell.alphaSpeed = -0.8
-        cell.color = NSColor(red: 0.98, green: 0.68, blue: 0.18, alpha: 1).cgColor
-        cell.greenRange = 0.12
+        cell.contents = glint
+        cell.birthRate = 32
+        cell.lifetime = 0.22
+        cell.lifetimeRange = 0.12
+        cell.velocity = 3
+        cell.emissionRange = .pi * 2
+        cell.scale = 0.4
+        cell.scaleRange = 0.16
+        cell.scaleSpeed = -1.1           // a flash that shrinks to nothing
+        cell.alphaSpeed = -2.5
+        cell.color = NSColor(red: 0.98, green: 0.78, blue: 0.4, alpha: 1).cgColor
         return cell
     }
 
-    /// The particles are white, tinted by each cell's colour.
-    private static let star: CGImage? = image { context, size in
-        context.addPath(sparkle(in: CGRect(origin: .zero, size: size)))
-        context.fillPath()
+    private static var haze: CAEmitterCell {
+        let cell = CAEmitterCell()
+        cell.contents = bokeh
+        cell.birthRate = 4
+        cell.lifetime = 1.6
+        cell.lifetimeRange = 0.4
+        cell.velocity = 5
+        cell.velocityRange = 4
+        cell.emissionRange = .pi * 2
+        cell.scale = 0.5
+        cell.scaleRange = 0.25
+        cell.alphaSpeed = -0.12
+        cell.color = NSColor(red: 0.98, green: 0.8, blue: 0.5, alpha: 0.14).cgColor
+        return cell
     }
 
+    // The particles are white, tinted by each cell's colour.
+
+    /// A point of light: a bright core in a soft halo.
     private static let dot: CGImage? = image { context, size in
-        let colors = [CGColor(gray: 1, alpha: 1), CGColor(gray: 1, alpha: 0)] as CFArray
-        guard let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors, locations: [0.15, 1])
+        radial(context, size, stops: [(0, 1), (0.18, 0.9), (0.45, 0.25), (1, 0)])
+    }
+
+    /// A glint: a hard bright core, a halo, and the faint thin cross of light a lens draws around one.
+    private static let glint: CGImage? = image { context, size in
+        radial(context, size, stops: [(0, 1), (0.06, 1), (0.16, 0.35), (0.4, 0)])
+        let c = CGPoint(x: size.width / 2, y: size.height / 2)
+        for horizontal in [true, false] {
+            let colors = [CGColor(gray: 1, alpha: 0), CGColor(gray: 1, alpha: 0.7), CGColor(gray: 1, alpha: 0)] as CFArray
+            guard let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors, locations: [0, 0.5, 1])
+            else { continue }
+            let thickness: CGFloat = 1.2
+            let rect = horizontal ? CGRect(x: 0, y: c.y - thickness / 2, width: size.width, height: thickness)
+                                  : CGRect(x: c.x - thickness / 2, y: 0, width: thickness, height: size.height)
+            context.saveGState()
+            context.clip(to: rect)
+            context.drawLinearGradient(gradient, start: horizontal ? CGPoint(x: 0, y: c.y) : CGPoint(x: c.x, y: 0),
+                                       end: horizontal ? CGPoint(x: size.width, y: c.y) : CGPoint(x: c.x, y: size.height), options: [])
+            context.restoreGState()
+        }
+    }
+
+    /// Out of focus: an even disc with a softened rim.
+    private static let bokeh: CGImage? = image { context, size in
+        radial(context, size, stops: [(0, 0.55), (0.7, 0.7), (0.85, 0.35), (1, 0)])
+    }
+
+    private static func radial(_ context: CGContext, _ size: CGSize, stops: [(CGFloat, CGFloat)]) {
+        let colors = stops.map { CGColor(gray: 1, alpha: $0.1) } as CFArray
+        guard let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors, locations: stops.map(\.0))
         else { return }
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
         context.drawRadialGradient(gradient, startCenter: center, startRadius: 0, endCenter: center, endRadius: size.width / 2, options: [])
     }
 
     private static func image(_ draw: (CGContext, CGSize) -> Void) -> CGImage? {
-        let side = 48
+        let side = 64
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0, space: space,
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         else { return nil }
-        context.setFillColor(CGColor(gray: 1, alpha: 1))
         draw(context, CGSize(width: side, height: side))
         return context.makeImage()
-    }
-
-    /// A four-pointed star with pinched sides, filling `rect`.
-    private static func sparkle(in rect: CGRect) -> CGPath {
-        let path = CGMutablePath()
-        let c = CGPoint(x: rect.midX, y: rect.midY)
-        let r = rect.width / 2, waist = r * 0.22
-        path.move(to: CGPoint(x: c.x, y: c.y - r))
-        path.addQuadCurve(to: CGPoint(x: c.x + r, y: c.y), control: CGPoint(x: c.x + waist, y: c.y - waist))
-        path.addQuadCurve(to: CGPoint(x: c.x, y: c.y + r), control: CGPoint(x: c.x + waist, y: c.y + waist))
-        path.addQuadCurve(to: CGPoint(x: c.x - r, y: c.y), control: CGPoint(x: c.x - waist, y: c.y + waist))
-        path.addQuadCurve(to: CGPoint(x: c.x, y: c.y - r), control: CGPoint(x: c.x - waist, y: c.y - waist))
-        path.closeSubpath()
-        return path
     }
 }
 
