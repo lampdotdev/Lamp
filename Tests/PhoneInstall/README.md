@@ -50,3 +50,8 @@ Agent Details still collapses long output to twelve display lines initially; Sho
 that limit and Show Less restores it. The revised packaged build compiled this UI. Both available VM
 slots were in use during the review follow-up, so the expansion control and a main/PR screenshot pair
 were not clicked/captured in that follow-up.
+
+`Tests/PhoneInstall/run-team-replay.sh` generates disposable certificates without touching any keychain.
+It checks that a Team ID comes from the certificate subject's organizational unit, not the developer ID
+in its common name. An optional path to a locally confirmed Team ID also runs read-only checks against
+Xcode's team cache and public certificates. The real-phone run exposed the mismatch on this Mac.

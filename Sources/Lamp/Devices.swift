@@ -1,4 +1,6 @@
 import Foundation
+import Security
+import CryptoKit
 
 /// The person's own iPhone or iPad: plugged in or on the same Wi‑Fi and paired with this Mac, found and
 /// driven with Xcode's devicectl. An app goes on it signed with the person's Apple account, which Xcode
@@ -49,19 +51,46 @@ enum Devices {
         return teams.sorted { $0.name < $1.name }
     }
 
-    /// The teams to offer: those signed in to Xcode first, then any the Mac has an Apple Development
-    /// certificate for from earlier ("Matt Rubens (Z925397W9T)" → ("Z925397W9T", "Matt Rubens")).
+    /// Prefer Xcode's signed-in teams, then teams with a valid development signing identity on this Mac.
     static func knownTeams() async -> [(id: String, name: String)] {
         let output = await Subprocess.run("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"], timeout: 20).output
-        var teams: [(id: String, name: String)] = xcodeTeams()
-        for line in output.split(separator: "\n") where line.contains("\"Apple Development: ") {
-            guard let open = line.lastIndex(of: "("), let close = line.lastIndex(of: ")"), open < close else { continue }
-            let id = String(line[line.index(after: open)..<close])
-            let start = line.range(of: "Apple Development: ")!.upperBound
-            let name = String(line[start..<open]).trimmed
-            if id.count == 10, !teams.contains(where: { $0.id == id }) { teams.append((id, name)) }
+        let fingerprints = Set(output.split(separator: "\n").compactMap { line -> String? in
+            line.split(whereSeparator: \.isWhitespace).first {
+                $0.range(of: #"^[0-9A-Fa-f]{40}$"#, options: .regularExpression) != nil
+            }.map { String($0).uppercased() }
+        })
+        var teams = xcodeTeams()
+        var found: CFTypeRef?
+        let query: [String: Any] = [kSecClass as String: kSecClassCertificate,
+                                   kSecMatchSubjectContains as String: "Apple Development",
+                                   kSecMatchLimit as String: kSecMatchLimitAll, kSecReturnRef as String: true]
+        guard SecItemCopyMatching(query as CFDictionary, &found) == errSecSuccess,
+              let certificates = found as? [SecCertificate] else { return teams }
+        for certificate in certificates {
+            let fingerprint = Insecure.SHA1.hash(data: SecCertificateCopyData(certificate) as Data)
+                .map { String(format: "%02X", $0) }.joined()
+            guard fingerprints.contains(fingerprint), let team = certificateTeam(certificate),
+                  !teams.contains(where: { $0.id == team.id }) else { continue }
+            teams.append(team)
         }
         return teams
+    }
+
+    /// The common name's parenthesised ID identifies the developer, not necessarily their team. The
+    /// certificate's subject organizational unit is the signing Team ID, as Xcode writes into projects.
+    static func certificateTeam(_ certificate: SecCertificate) -> (id: String, name: String)? {
+        guard let values = SecCertificateCopyValues(certificate, [kSecOIDX509V1SubjectName] as CFArray, nil) as? [String: Any],
+              let subject = values[kSecOIDX509V1SubjectName as String] as? [String: Any],
+              let fields = subject[kSecPropertyKeyValue as String] as? [[String: Any]] else { return nil }
+        func field(_ oid: CFString) -> String? {
+            fields.first { $0[kSecPropertyKeyLabel as String] as? String == oid as String }?[kSecPropertyKeyValue as String] as? String
+        }
+        guard let id = field(kSecOIDOrganizationalUnitName)?.uppercased(),
+              id.range(of: #"^[A-Z0-9]{10}$"#, options: .regularExpression) != nil,
+              let commonName = field(kSecOIDCommonName), commonName.hasPrefix("Apple Development: ") else { return nil }
+        let name = commonName.dropFirst("Apple Development: ".count)
+            .replacingOccurrences(of: #" \([A-Z0-9]{10}\)$"#, with: "", options: .regularExpression)
+        return (id, name)
     }
 
     /// The iPhones and iPads the Mac can see: paired ones, and plugged-in ones that haven't yet trusted
