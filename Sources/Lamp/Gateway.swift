@@ -174,6 +174,18 @@ enum AppAI {
         return defaultOpenRouterModel
     }
 
+    /// Whether a helper's answer is one of its own prompt's examples handed back, which small models do when
+    /// they can't work one out: a tip calculator's version titled "Added account shortcuts". That counts as
+    /// no answer, unless the person's own words say the same (asked for a stopwatch, "Stopwatch" is its name).
+    nonisolated static func parrots(_ answer: String, examples: [String], asked: String = "") -> Bool {
+        func plain(_ text: String) -> String {
+            text.lowercased().split { !$0.isLetter && !$0.isNumber }.joined(separator: " ")
+        }
+        let answer = plain(answer)
+        guard examples.contains(where: { plain($0) == answer }) else { return false }
+        return !" \(plain(asked)) ".contains(" \(answer) ")
+    }
+
     /// The models OpenRouter offers for apps; Sonnet is the default among them (Haiku is cheaper but
     /// noticeably worse, so it's only used when someone picks it).
     static let anthropicModels: [(id: String, label: String, openRouter: String)] = [

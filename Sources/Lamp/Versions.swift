@@ -250,12 +250,16 @@ enum VersionTitles {
         if let data = try? JSONEncoder().encode(titles) { try? data.write(to: url(project)) }
     }
 
+    /// The titles the prompt shows as examples. One of them back as the answer is the model repeating the
+    /// prompt, so the version keeps the request as its label. ("First version" is a real answer, and stays.)
+    static let examples = ["Added account shortcuts", "Fixed vanishing profile photo", "Darker sidebar"]
+
     private static let prompt = """
     Write a title for one saved version of a small Mac app, from the change below. It's shown in a list of \
     versions so the user can find the one they want to go back to.
 
     Say what changed for the person using the app, in 2 to 5 plain words, starting with a past-tense verb \
-    when it fits: "Added account shortcuts", "Fixed vanishing profile photo", "Darker sidebar", "First \
+    when it fits: \(examples.map { "\"\($0)\"" }.joined(separator: ", ")), "First \
     version". Never mention files, code, types or Lamp. If the request and the change disagree, describe the \
     change. No quotes, no full stop.
 
@@ -289,9 +293,15 @@ enum VersionTitles {
                                                          model: await AppAI.helperModel()),
               let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
               let raw = object["title"] as? String else { return nil }
+        return title(from: raw, asked: version.message)
+    }
+
+    /// The model's title tidied, or nil when it's unusable: too long, or an example from the prompt.
+    static func title(from raw: String, asked: String) -> String? {
         let title = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
             .trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”‘’."))
-        guard !title.isEmpty, title.split(separator: " ").count <= 7, title.count <= 48 else { return nil }
+        guard !title.isEmpty, title.split(separator: " ").count <= 7, title.count <= 48,
+              !AppAI.parrots(title, examples: examples, asked: asked) else { return nil }
         return title
     }
 }
