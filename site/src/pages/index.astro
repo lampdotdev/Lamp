@@ -6,6 +6,7 @@ import Carousel from "../components/Carousel.astro";
 import DownloadButton from "../components/DownloadButton.astro";
 import QuickLook from "../components/QuickLook.astro";
 import UsesYourMac from "../components/visuals/UsesYourMac.astro";
+import BeautifulByDefault from "../components/visuals/BeautifulByDefault.astro";
 import icon from "../assets/AppIcon.png";
 import anthropic from "../assets/logos/anthropic.png";
 import openai from "../assets/logos/openai.png";
@@ -83,6 +84,7 @@ const points: { title: string; text: string; tile: string; visual?: (props: obje
     title: "Beautiful by default",
     text: "Unless you ask for something different, every app looks and feels made in Cupertino: native controls, proper menus and keyboard shortcuts, and an icon of its own.",
     tile: "sm:col-span-2 bg-glow",
+    visual: BeautifulByDefault,
   },
   {
     title: "Made for Apple silicon",
