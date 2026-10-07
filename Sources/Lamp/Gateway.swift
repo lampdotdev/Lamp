@@ -160,6 +160,20 @@ enum AppAI {
     /// Sonnet through OpenRouter: what Lamp's own calls use when there's a key.
     static var defaultOpenRouterModel: String { anthropicModels.first { $0.id == "sonnet" }!.openRouter }
 
+    /// The OpenRouter model for Lamp's own text-only calls (an app's name and parts, the next-message
+    /// suggestion, a version's title): Sonnet, unless apps' text goes to a model on this Mac. Someone who
+    /// chose to stay local gets nil here, so these calls follow that route instead of leaving the Mac.
+    @MainActor static func helperModel() async -> String? {
+        // Ollama and LM Studio are looked for a moment after launch. A call made before that (the suggestion
+        // for the chat Lamp opens on) would find the chosen model missing and go to OpenRouter, so look first.
+        let wanted = UserDefaults.standard.string(forKey: "appModel") ?? (Builder.engine == .pi ? "\(Builder.piProvider):" : "")
+        if LocalModels.shared.external.isEmpty, LocalModels.externalIDs.contains(where: { wanted.hasPrefix("\($0):") }) {
+            await LocalModels.shared.detectExternal()
+        }
+        if case .localModel = model.kind { return nil }
+        return defaultOpenRouterModel
+    }
+
     /// The models OpenRouter offers for apps; Sonnet is the default among them (Haiku is cheaper but
     /// noticeably worse, so it's only used when someone picks it).
     static let anthropicModels: [(id: String, label: String, openRouter: String)] = [
