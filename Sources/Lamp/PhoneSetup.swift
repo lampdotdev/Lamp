@@ -74,7 +74,7 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         guard current.platform == .iphone else { then(current); return }
         perform(resolve: {
             guard let current = store.current(project) else { return nil }
-            return Context(family: current.family, phone: Experiments.devices ? current.device : nil)
+            return Context(family: current.family, phone: Experiments.iosApps ? current.device : nil)
         }, cancelled: cancelled) {
             if let current = store.current(project) { then(current) }
             else { cancelled() }
@@ -298,7 +298,6 @@ struct PhoneSetupView: View {
 
 @MainActor
 extension Store {
-    func createPhoneApp() { PhoneSetup.shared.perform(eitherSimulator: true) { self.create(platform: .iphone) } }
     func openPrepared(_ project: LampProject) {
         PhoneSetup.shared.perform(for: project, in: self) { current in Task { await self.open(current) } }
     }

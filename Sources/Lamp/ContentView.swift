@@ -1594,13 +1594,13 @@ private struct TryOnChoices: View {
             }
         }
         Divider()
-        Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show(family: project.family, phone: Experiments.devices ? project.device : nil) }
+        Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show(family: project.family, phone: Experiments.iosApps ? project.device : nil) }
         Button("Look for Devices Again") { refresh() }
             .onAppear { refresh() }
     }
 
     private func refresh() {
         store.refreshDevices()
-        if devices { Task { olderPhones = await PhoneTools.olderPhones() } }
+        if Experiments.iosApps { Task { olderPhones = await PhoneTools.olderPhones() } }
     }
 }

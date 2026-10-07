@@ -607,21 +607,6 @@ final class Store: ObservableObject {
         return nil
     }
 
-    /// The app is for both devices: it opens on the preferred one, or on whichever this Mac can show. Nil,
-    /// after saying why, when this Mac can show neither.
-    private func simulatorFamily(preferring family: DeviceFamily) -> DeviceFamily? {
-        let other: DeviceFamily = family == .iphone ? .ipad : .iphone
-        let usable = Simulator.problem(family) != nil && Simulator.problem(other) == nil ? other : family
-        if let problem = Simulator.problem(usable) {
-            let alert = NSAlert()
-            alert.messageText = "Lamp can't build iOS apps on this Mac yet"
-            alert.informativeText = problem
-            alert.runModal()
-            return nil
-        }
-        return usable
-    }
-
     /// The kind chosen in a new app's intro: a draft only says what it will be, so this is a change to that.
     /// Quietly, as nothing in the chat would make sense of it.
     func setKind(_ project: LampProject, platform: Platform, family: DeviceFamily) {
@@ -630,8 +615,9 @@ final class Store: ObservableObject {
         var changed = projects[index]
         changed.platform = platform
         if platform == .iphone {
-            guard let usable = simulatorFamily(preferring: family) else { return }
-            changed.family = usable
+            // Choosing what to make doesn't need installed tools. Send checks the selected simulator
+            // before building and explains the next setup action without blocking this draft's picker.
+            changed.family = family
         } else {
             changed.device = nil
         }
