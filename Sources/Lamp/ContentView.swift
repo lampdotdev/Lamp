@@ -469,8 +469,6 @@ struct ProjectView: View {
                         // At least as tall as the chat area, so a short chat still sits at the top.
                         .frame(minHeight: area.size.height, alignment: .top)
                     }
-                    // Selecting text waits for the turn to end: see Spinner.swift.
-                    .environment(\.chatTextSelectable, !busy)
                     // A chat opens on its latest messages: the scroll view starts at the bottom, with
                     // no scrolling to get there.
                     .defaultScrollAnchor(.bottom)

@@ -310,7 +310,7 @@ struct LogRow: View, Equatable {
                     // A message that's only attachments shows just them.
                     if !line.text.isEmpty {
                         Text(line.text)
-                            .selectable()
+                            .textSelection(.enabled)
                             .lineSpacing(2)
                             .padding(.horizontal, 12).padding(.vertical, 8)
                             .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
@@ -325,7 +325,7 @@ struct LogRow: View, Equatable {
             // While a turn is going this may be a message still being written, a little longer every time.
             Text(Self.prose(line.text, keep: !busy))
                 .lineSpacing(4)
-                .selectable()
+                .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .status, .tool:
             // Shown through StatusGroup and ToolGroup.
@@ -338,7 +338,7 @@ struct LogRow: View, Equatable {
             }
         case .error:
             Label {
-                Text(line.text).selectable().lineSpacing(2)
+                Text(line.text).textSelection(.enabled).lineSpacing(2)
             } icon: {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
             }
@@ -349,7 +349,7 @@ struct LogRow: View, Equatable {
             Text(line.text)
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
-                .selectable()
+                .textSelection(.enabled)
                 .lineLimit(12)
         case .needsKey:
             KeyCard(reason: line.text)
@@ -601,7 +601,7 @@ struct RanCommand: View {
                 Text(command)
                     .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.tertiary)
-                    .selectable()
+                    .textSelection(.enabled)
                     .padding(.leading, 22)
             }
         }
