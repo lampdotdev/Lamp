@@ -2780,19 +2780,22 @@ final class Store: ObservableObject {
         // Only requests addressed to this Mac: a web page that resolved its own name to 127.0.0.1 (DNS
         // rebinding) arrives with that name as the host, and gets nothing. No Host at all gets nothing either.
         let token = request.headers["authorization"]?.replacingOccurrences(of: "Bearer ", with: "") ?? ""
+        let agentRoute = route == "/mcp" || route.hasPrefix("/agent/")
+        if request.fromNetwork {
+            // An app on the person's phone: only the app routes, addressed to this Mac by its network name,
+            // with the app's own token like any other. The agent's routes never leave the Mac, and neither
+            // does the one that hands pi its key.
+            guard !agentRoute, route != "/pi/key", Self.isMacHost(request.headers["host"]) else {
+                return (403, ["error": "Not for this host."])
+            }
+        } else {
+            guard Self.isLocalHost(request.headers["host"]) else { return (403, ["error": "Not for this host."]) }
+        }
         // pi collecting its provider's key (Agent.keyCommand). The ticket is the whole credential, and it's
         // good once.
         if route == "/pi/key" {
             guard let key = KeyTicket.redeem(token) else { return (403, ["error": "This ticket isn't good any more."]) }
             return (200, ["key": key])
-        }
-        let agentRoute = route == "/mcp" || route.hasPrefix("/agent/")
-        if request.fromNetwork {
-            // An app on the person's phone: only the app routes, addressed to this Mac by its network name,
-            // with the app's own token like any other. The agent's routes never leave the Mac.
-            guard !agentRoute, Self.isMacHost(request.headers["host"]) else { return (403, ["error": "Not for this host."]) }
-        } else {
-            guard Self.isLocalHost(request.headers["host"]) else { return (403, ["error": "Not for this host."]) }
         }
         if agentRoute {
             // The agent's routes take only the agent's token for the turn in progress.
