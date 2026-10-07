@@ -173,6 +173,23 @@ enum ChatItem: Identifiable {
     }
 }
 
+/// The mark above the message box while a request taken back from the chat is in it, with the way out.
+struct SendingAgainMark: View {
+    let onCancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.clockwise")
+            Text("Editing message")
+            Button(action: onCancel) { Image(systemName: "xmark.circle.fill") }
+                .buttonStyle(.plain)
+                .help("Put the message back in the chat")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+}
+
 struct Transcript: View {
     let lines: [LogLine]
     let dir: URL
@@ -182,15 +199,20 @@ struct Transcript: View {
     var progressShown = false
     /// Goes back to the version a request made, or (true) to the one before it.
     var goBack: ((LogLine, Bool) -> Void)?
+    /// Takes a request back into the message box, to change it and send it again. Nil while the app is being
+    /// worked on: that has to finish first.
+    var sendAgain: ((LogLine) -> Void)?
 
     var body: some View {
         let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(lines) : lines)
         let finalAnswers = Self.finalAnswers(in: lines, busy: busy)
+        let latestRequest = lines.last { $0.kind == .user }?.id
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
             let isLast = index == items.count - 1
             Group {
                 switch item {
-                case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack).equatable()
+                case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack, sendAgain: sendAgain,
+                                             isLatestRequest: line.id == latestRequest).equatable()
                 case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && !progressShown).equatable()
                 case .statuses(let lines): StatusGroup(lines: lines, running: isLast && busy && !progressShown)
                 }
@@ -230,9 +252,16 @@ struct LogRow: View, Equatable {
     let dir: URL
     var busy = false
     var goBack: ((LogLine, Bool) -> Void)?
+    var sendAgain: ((LogLine) -> Void)?
+    /// The latest request shows its Send Again button all the time, so there's one to find; earlier ones
+    /// show it when pointed at.
+    var isLatestRequest = false
     @State private var hovered = false
 
-    static func == (a: LogRow, b: LogRow) -> Bool { a.line == b.line && a.busy == b.busy && a.dir == b.dir }
+    static func == (a: LogRow, b: LogRow) -> Bool {
+        a.line == b.line && a.busy == b.busy && a.dir == b.dir
+            && a.isLatestRequest == b.isLatestRequest && (a.sendAgain == nil) == (b.sendAgain == nil)
+    }
 
     var body: some View {
         switch line.kind {
@@ -270,6 +299,14 @@ struct LogRow: View, Equatable {
                         .opacity(hovered ? 1 : 0)
                         .help("Go back to how the app was around this request")
                     }
+                    if let sendAgain, line.canSendAgain {
+                        Button { sendAgain(line) } label: { Image(systemName: "arrow.clockwise") }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .opacity(hovered || isLatestRequest ? 1 : 0)
+                            .help("Change this message and send it again")
+                            .accessibilityLabel("Edit and Send Again")
+                    }
                     // A message that's only attachments shows just them.
                     if !line.text.isEmpty {
                         Text(line.text)
@@ -277,9 +314,10 @@ struct LogRow: View, Equatable {
                             .lineSpacing(2)
                             .padding(.horizontal, 12).padding(.vertical, 8)
                             .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
-                            .frame(maxWidth: 480, alignment: .trailing)
                     }
                 }
+                // The width limit goes around the buttons too, so they stay next to a short message.
+                .frame(maxWidth: 480 + 50, alignment: .trailing)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .onHover { hovered = $0 }

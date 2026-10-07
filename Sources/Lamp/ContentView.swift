@@ -387,10 +387,25 @@ struct ProjectView: View {
     @AppStorage("showVersions") private var showVersions = false
     @State private var suggestion: String?
     @State private var dismissedSuggestion: String?
+    /// The request taken back into the message box, to change and send again. It and everything after it
+    /// are out of sight meanwhile; they only leave the chat, and the app only goes back, when it's sent.
+    @State private var replacing: UUID?
+    /// What was in the message box before that, put back if the request isn't sent again after all. Kept
+    /// with the draft, so it's still there after looking at another app.
+    @State private var setAside: Store.Draft?
+    /// Lamp's line in the chat saying a request couldn't be sent again. It comes after the lines that are
+    /// out of sight, so it's shown with what's left: otherwise Send would seem to do nothing.
+    @State private var sendProblem: UUID?
+    /// A request on its way out again: what it replaces stays out of sight until the chat has let go of it.
+    @State private var sendingAgain: UUID?
 
     /// Worked out once per body (see `body`): it filters the whole chat, and body runs on every streamed token.
     private var lines: [LogLine] {
-        LogLine.visible(store.logs[project.id] ?? [], details: showDetails)
+        let all = store.logs[project.id] ?? []
+        let hidden = (replacing ?? sendingAgain).flatMap { id in all.firstIndex { $0.id == id } }
+        guard let hidden else { return LogLine.visible(all, details: showDetails) }
+        let problem = all[hidden...].last { $0.id == sendProblem }
+        return LogLine.visible(Array(all[..<hidden]) + (problem.map { [$0] } ?? []), details: showDetails)
     }
     private var busy: Bool { store.busy.contains(project.id) }
     /// How much of its latest message the agent has written so far: a message being written grows without
@@ -476,6 +491,11 @@ struct ProjectView: View {
                 // Part of the bottom panel, set off from the message box the way the chat is.
                 Divider()
             }
+            if replacing != nil {
+                SendingAgainMark(onCancel: putBack)
+                    .padding(.horizontal, 12).padding(.top, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if !attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -523,7 +543,8 @@ struct ProjectView: View {
                     Image(systemName: "arrow.up.circle.fill").font(.title2)
                 }
                 .buttonStyle(.plain)
-                .disabled(draft.trimmed.isEmpty && attachments.isEmpty)
+                // A request sent again starts from the app as it was, so it can't wait behind other work.
+                .disabled(draft.trimmed.isEmpty && attachments.isEmpty || replacing != nil && busy)
                 .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
                 .frame(height: Composer.lineHeight)
             }
@@ -560,9 +581,13 @@ struct ProjectView: View {
             let saved = store.draft(for: project)
             draft = saved.text
             attachments = saved.attachments
+            replacing = saved.replacing
+            setAside = saved.replacing == nil ? nil
+                : Store.Draft(text: saved.setAsideText, attachments: saved.setAsideAttachments)
         }
-        .onChange(of: draft) { store.saveDraft(Store.Draft(text: draft, attachments: attachments), for: project) }
-        .onChange(of: attachments) { store.saveDraft(Store.Draft(text: draft, attachments: attachments), for: project) }
+        .onChange(of: draft) { saveDraft() }
+        .onChange(of: attachments) { saveDraft() }
+        .onChange(of: replacing) { saveDraft() }
         .onAppear { hasMicrophone = Dictation.hasMicrophone }
         // A microphone plugged in (or taken away) while the chat is open shows or hides the button.
         .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasConnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
@@ -589,9 +614,35 @@ struct ProjectView: View {
     }
 
     private func transcript(_ lines: [LogLine], busy: Bool, progressShown: Bool = false) -> some View {
-        Transcript(lines: lines, dir: project.dir, busy: busy, progressShown: progressShown) { line, before in
+        Transcript(lines: lines, dir: project.dir, busy: busy, progressShown: progressShown, goBack: { line, before in
             Task { await store.restore(project, toVersionOf: line, before: before) }
-        }
+        }, sendAgain: self.busy ? nil : takeBack)
+    }
+
+    private func saveDraft() {
+        store.saveDraft(Store.Draft(text: draft, attachments: attachments, replacing: replacing,
+                                    setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? []),
+                        for: project)
+    }
+
+    /// Takes a request out of the chat and into the message box, with the files it was sent with.
+    private func takeBack(_ line: LogLine) {
+        if replacing == nil { setAside = Store.Draft(text: draft, attachments: attachments) }
+        dictation.cancel()
+        sendProblem = nil
+        draft = line.text
+        attachments = Attachments.urls(line.attachments ?? [], in: project)
+        replacing = line.id
+        focusRequest += 1
+    }
+
+    /// Not sending it again after all: the chat is as it was, and so is the message box.
+    private func putBack() {
+        replacing = nil
+        sendProblem = nil
+        draft = setAside?.text ?? ""
+        attachments = setAside?.attachments ?? []
+        setAside = nil
     }
 
     @ToolbarContentBuilder
@@ -693,9 +744,28 @@ struct ProjectView: View {
         guard !text.isEmpty || !attachments.isEmpty else { return }
         dictation.cancel()
         let files = attachments
+        let replaced = replacing.flatMap { id in store.logs[project.id]?.first { $0.id == id } }
+        guard replaced == nil || !busy else { return }
         draft = ""
         attachments = []
-        store.send(text, attachments: files, to: project)
+        replacing = nil
+        let aside = setAside
+        setAside = nil
+        guard let replaced else { return store.send(text, attachments: files, to: project) }
+        sendingAgain = replaced.id
+        sendProblem = nil
+        Task {
+            // Nothing was sent: the words go back in the box, so they aren't lost with it, and the chat
+            // keeps saying why.
+            if await !store.sendAgain(replaced, as: text, attachments: files, in: project) {
+                draft = text
+                attachments = files
+                setAside = aside
+                replacing = replaced.id
+                sendProblem = store.logs[project.id]?.last { $0.kind == .error }?.id
+            }
+            sendingAgain = nil
+        }
     }
 
     private func chooseFiles() {
