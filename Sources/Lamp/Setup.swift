@@ -498,7 +498,7 @@ struct ExperimentalSettings: View {
                         }
                     }
                 }
-                Text("Sign in to your Apple account in Xcode → Settings → Accounts (a free account will do: its apps last a week on the phone, a paid one's a year), plug the phone in and trust this Mac on it, and turn on Developer Mode on the phone (Settings → Privacy & Security). Then choose the phone under Try On and press Play. The app's AI goes through Lamp over your Wi‑Fi, so the phone and this Mac must be on the same network and Lamp must be open. The agent still tries the app on the simulator: it can't see the phone's screen.")
+                Text("Sign in to your Apple account in Xcode → Settings → Accounts (a free account will do: its apps last a week on the phone, a paid one's a year). Then plug the phone in with a cable: Try On, beside the Play button, offers to pair it (tap Trust on the phone), and tells you when to turn on Developer Mode there. Choose the phone under Try On and press Play. The app's AI goes through Lamp over your Wi‑Fi, so the phone and this Mac must be on the same network and Lamp must be open. The agent still tries the app on the simulator: it can't see the phone's screen.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         } header: { Text("Experimental") }

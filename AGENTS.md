@@ -71,8 +71,10 @@ size, so a pixel in them is a point on the screen. That needs Lamp to be allowed
 Privacy & Security → Accessibility; the first `use_app` asks.
 
 **On the person's own phone** (Settings → Experimental → Put apps on your own iPhone or iPad,
-`Experiments.devices`): Try On also lists the iPhones and iPads paired with the Mac (`Devices.list`, through
-`devicectl`), and `LampProject.device` remembers the chosen one. Play and the end of a turn then go through
+`Experiments.devices`): Try On also lists the iPhones and iPads the Mac can see (`Devices.list`, through
+`devicectl`): paired ones to choose, and plugged-in ones that haven't trusted the Mac yet, which it offers
+to pair (`Devices.pair`, `devicectl manage pair`, which puts the Trust prompt on the phone) before telling
+the person about Developer Mode. `LampProject.device` remembers the chosen one. Play and the end of a turn then go through
 `Store.installOnDevice`: `Template.writeDeviceProject` writes a small Xcode project under `.lamp/device`
 (one app target over the package's Sources as a synchronized group, the icon in an asset catalog, the
 attachments as a folder reference, a real Info.plist) and `Devices.build` runs `xcodebuild` with automatic

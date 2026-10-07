@@ -599,6 +599,33 @@ final class Store: ObservableObject {
         return devices.first(where: { $0.udid == udid })?.name ?? "Your phone"
     }
 
+    /// Pairs a plugged-in phone that hasn't trusted this Mac yet, then lists again. Told in the app's chat,
+    /// where the person is looking, as the Try On menu is the app's.
+    func pairDevice(_ device: Devices.Device, for project: LampProject) {
+        guard !pairing.contains(device.udid) else { return }
+        pairing.insert(device.udid)
+        log(project, .status, "Look at \(device.name): tap Trust when it asks, and enter its passcode.")
+        Task {
+            defer { pairing.remove(device.udid) }
+            do {
+                try await Devices.pair(device.udid)
+                devices = await Devices.list()
+                let paired = devices.first { $0.udid == device.udid }
+                if paired?.developerMode == true {
+                    log(project, .status, "\(device.name) is paired with this Mac. Choose it under Try On and press Play.")
+                } else {
+                    log(project, .status, "\(device.name) is paired with this Mac. Now turn on Developer Mode on it (Settings → Privacy & Security → Developer Mode; the phone restarts), then choose it under Try On.")
+                }
+            } catch {
+                log(project, .error, error.localizedDescription)
+                devices = await Devices.list()
+            }
+        }
+    }
+
+    /// Phones being paired right now, so the menu doesn't offer it twice.
+    @Published var pairing: Set<String> = []
+
     func refreshDevices() {
         guard Experiments.devices else { if !devices.isEmpty { devices = [] }; return }
         Task {
