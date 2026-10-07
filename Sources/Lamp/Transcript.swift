@@ -310,7 +310,7 @@ struct LogRow: View, Equatable {
                     // A message that's only attachments shows just them.
                     if !line.text.isEmpty {
                         Text(line.text)
-                            .textSelection(.enabled)
+                            .selectable()
                             .lineSpacing(2)
                             .padding(.horizontal, 12).padding(.vertical, 8)
                             .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
@@ -325,7 +325,7 @@ struct LogRow: View, Equatable {
             // While a turn is going this may be a message still being written, a little longer every time.
             Text(Self.prose(line.text, keep: !busy))
                 .lineSpacing(4)
-                .textSelection(.enabled)
+                .selectable()
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .status, .tool:
             // Shown through StatusGroup and ToolGroup.
@@ -338,7 +338,7 @@ struct LogRow: View, Equatable {
             }
         case .error:
             Label {
-                Text(line.text).textSelection(.enabled).lineSpacing(2)
+                Text(line.text).selectable().lineSpacing(2)
             } icon: {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
             }
@@ -349,7 +349,7 @@ struct LogRow: View, Equatable {
             Text(line.text)
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
-                .textSelection(.enabled)
+                .selectable()
                 .lineLimit(12)
         case .needsKey:
             KeyCard(reason: line.text)
@@ -401,7 +401,7 @@ struct KeyCard: View {
                         .onSubmit(save)
                         .onChange(of: key) { problem = nil }
                     if checking {
-                        ProgressView().controlSize(.small)
+                        Spinner()
                     } else {
                         Button("Save", action: save).disabled(key.trimmed.isEmpty)
                     }
@@ -463,7 +463,7 @@ struct ToolGroup: View, Equatable {
                 } label: {
                     HStack(spacing: 6) {
                         Group {
-                            if running { ProgressView().controlSize(.mini) } else { Image(systemName: Self.icon(calls)) }
+                            if running { Spinner(.mini) } else { Image(systemName: Self.icon(calls)) }
                         }
                         .frame(width: 16)
                         Text(Self.summary(calls))
@@ -523,7 +523,7 @@ struct ToolRow: View {
     var body: some View {
         HStack(spacing: 6) {
             Group {
-                if running { ProgressView().controlSize(.mini) } else { Image(systemName: call.icon) }
+                if running { Spinner(.mini) } else { Image(systemName: call.icon) }
             }
             .frame(width: 16)
             .foregroundStyle(.secondary)
@@ -554,7 +554,7 @@ struct StatusGroup: View {
                     HStack(spacing: 6) {
                         Group {
                             if running && line.id == lines.last?.id && line.text.hasSuffix("…") {
-                                ProgressView().controlSize(.mini)
+                                Spinner(.mini)
                             } else {
                                 Image(systemName: "checkmark.circle")
                             }
@@ -601,7 +601,7 @@ struct RanCommand: View {
                 Text(command)
                     .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.tertiary)
-                    .textSelection(.enabled)
+                    .selectable()
                     .padding(.leading, 22)
             }
         }

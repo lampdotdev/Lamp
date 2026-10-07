@@ -155,7 +155,7 @@ struct AppSidebar: View {
                     }
                     Spacer()
                     if store.busy.contains(project.id) {
-                        ProgressView().controlSize(.small)
+                        Spinner()
                     } else if store.unread.contains(project.id) {
                         ReadyDot()
                     }
@@ -231,7 +231,7 @@ struct AppTile: View {
             AppIcon(project: project, size: 56)
                 .overlay(alignment: .topTrailing) {
                     if store.busy.contains(project.id) {
-                        ProgressView().controlSize(.small)
+                        Spinner()
                             .padding(3)
                             .background(.regularMaterial, in: Circle())
                             .offset(x: 6, y: -6)
@@ -469,6 +469,8 @@ struct ProjectView: View {
                         // At least as tall as the chat area, so a short chat still sits at the top.
                         .frame(minHeight: area.size.height, alignment: .top)
                     }
+                    // Selecting text waits for the turn to end: see Spinner.swift.
+                    .environment(\.chatTextSelectable, !busy)
                     // A chat opens on its latest messages: the scroll view starts at the bottom, with
                     // no scrolling to get there.
                     .defaultScrollAnchor(.bottom)
@@ -923,7 +925,7 @@ private struct BuildToolsBanner: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ProgressView().controlSize(.small)
+            Spinner()
             Text("Installing Apple's app-building tools. Anything you ask for starts as soon as they're in.")
                 .font(.callout)
             Spacer()
@@ -1235,7 +1237,7 @@ struct ApprovalCard: View {
                 Text(explanation.summary).font(.headline)
             } else {
                 HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
+                    Spinner()
                     Text("Working out what this does…").foregroundStyle(.secondary)
                 }
             }

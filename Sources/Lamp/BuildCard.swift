@@ -181,7 +181,7 @@ struct BuildCard: View {
             Divider()
             HStack(spacing: 8) {
                 if progress.finished == nil {
-                    ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 14, height: 14)
+                    Spinner(side: 11).frame(width: 14, height: 14)
                 } else if progress.failed {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 } else {
@@ -252,7 +252,7 @@ struct ActivityRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            ProgressView().controlSize(.mini).frame(width: 16)
+            Spinner(.mini).frame(width: 16)
             Text(progress.activity).lineLimit(1)
             Text("·")
             Elapsed(from: progress.started, to: nil)
