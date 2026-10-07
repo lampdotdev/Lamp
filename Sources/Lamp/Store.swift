@@ -1006,8 +1006,8 @@ final class Store: ObservableObject {
         for message in messages {
             let names = message.kept + Attachments.save(message.attachments, to: project)
             log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
-            if let replaces = message.replaces, let last = logs[project.id]?.indices.last {
-                logs[project.id]?[last].replaced = replaces
+            if message.replaces != nil || !message.tookBack.isEmpty, let last = logs[project.id]?.indices.last {
+                logs[project.id]?[last].replaced = message.replaces
                 logs[project.id]?[last].tookBack = message.tookBack.isEmpty ? nil : message.tookBack
                 saveChat(project)
             }
@@ -1045,7 +1045,7 @@ final class Store: ObservableObject {
         let files = Attachments.inline(saved, in: project).map { "\(Attachments.folder)/\($0)" }
         // After a request is sent again the build on disk is still of the code that was just taken back, so
         // its picture and its crashes say nothing about the files the agent has now.
-        let sentAgain = messages.contains { $0.replaces != nil }
+        let sentAgain = messages.contains { $0.replaces != nil || !$0.tookBack.isEmpty }
         let notes = Attachments.note(for: saved) + Versions.note(for: project)
             + (sentAgain ? "" : Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project))
         turns[project.id]?.request = prompt
@@ -1842,13 +1842,18 @@ final class Store: ObservableObject {
         // Requests that went out together made one change, so the ones just before this one go out with it again.
         var first = index
         while first > chat.startIndex, chat[first - 1].kind == .user { first -= 1 }
-        var again = chat[first..<index].map { QueuedMessage(text: $0.text, kept: $0.attachments ?? []) }
+        // They keep what they had taken back themselves: it's the chat's only record of it.
+        var again = chat[first..<index].map {
+            QueuedMessage(text: $0.text, kept: $0.attachments ?? [], replaces: $0.replaced, tookBack: $0.tookBack ?? [])
+        }
         let folder = project.dir.appendingPathComponent(Attachments.folder).standardizedFileURL
         let own = attachments.filter { $0.standardizedFileURL.deletingLastPathComponent() == folder }
-        // What the agent is told was taken back is the last request it actually had. A request whose own turn
-        // never reached it (the model couldn't be reached, say) was itself standing in for an earlier one, or
-        // for nothing: sending that one again takes back what it was taking back.
-        let replaces = Self.reachedAgent(line.id, in: chat) ? Self.label(for: line) : line.replaced
+        // What the agent is told was taken back is the first request leaving the chat that it actually had:
+        // this one, or, when this one's own turn never reached it (the model couldn't be reached, say), the
+        // first after it that did. When none did, this one was only standing in for an earlier request, or
+        // for nothing, and sending it again takes back what it was taking back.
+        let had = chat[index...].first { $0.kind == .user && Self.reachedAgent($0.id, in: chat) }
+        let replaces = had.map { Self.label(for: $0) } ?? line.replaced
         // Everything that leaves the chat with it is something the user decided against (for the suggested
         // next message), along with what those had taken back in their turn. Not a request that never got
         // through: that one is only being tried again.
