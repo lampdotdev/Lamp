@@ -54,6 +54,7 @@ struct IconSpec: Codable, Equatable {
 /// Generated artwork is cached under .lamp/art/, so undoing an icon change is instant and free.
 enum Icons {
     static let artModels: [(id: String, label: String)] = [
+        ("google/gemini-nano-banana-2.1", "Nano Banana 2.1 (newest)"),
         ("google/gemini-3.1-flash-image", "Nano Banana 2 (Gemini 3.1 Flash Image)"),
         ("google/gemini-3-pro-image", "Nano Banana Pro (Gemini 3 Pro Image, pricier)"),
         ("openai/gpt-image-2.5-sunburst", "GPT Image 2.5 Sunburst (OpenAI, pricier)"),
