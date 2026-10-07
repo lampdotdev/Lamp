@@ -177,7 +177,9 @@ struct PhoneSetupView: View {
                     }
                 }
             } else if model.report != nil {
-                Text("The building tools are ready. To use your own phone, choose it under Try On; Lamp will check its software version too.")
+                Text(model.report?.passed.contains(.phone) == true
+                     ? "The building tools and your phone's software are ready."
+                     : "The building tools are ready. To use your own phone, choose it under Try On; Lamp will check its software version too.")
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Continue") { model.finish() }.buttonStyle(.borderedProminent)
             }
