@@ -132,6 +132,51 @@ enum Ideas {
     }
 }
 
+/// The six ideas on show, and the next six on request: made up on this Mac when it can, otherwise the next
+/// page of the built-in ones. The welcome and a new app's empty chat both page through ideas this way.
+@MainActor
+final class IdeaDeck: ObservableObject {
+    @Published private(set) var ideas: [Idea]
+    /// The next six, already made up, so asking for more is instant.
+    @Published private(set) var invented: [Idea]?
+    private var page = 0
+    private var inventing = false
+    private var seen: Set<String>
+
+    /// Opens on `first`: the welcome's first page, or the six a new app's chat drew.
+    init(first: [Idea] = Ideas.page(0)) {
+        ideas = first
+        seen = Set(first.map(\.title))
+    }
+
+    /// What the button for more shows: one icon for both kinds, since either way it's a fresh idea.
+    static let moreSymbol = "lightbulb"
+
+    func more() {
+        let next: [Idea]
+        if let invented {
+            next = invented
+            self.invented = nil
+        } else {
+            page += 1
+            next = Ideas.page(page)
+        }
+        seen.formUnion(next.map(\.title))
+        withAnimation { ideas = next }
+        prefetch()
+    }
+
+    func prefetch() {
+        guard Ideas.canInvent, invented == nil, !inventing else { return }
+        inventing = true
+        Task {
+            let avoiding = Array(seen) + Ideas.pool.map(\.title)
+            invented = await Ideas.invent(avoiding: avoiding)
+            inventing = false
+        }
+    }
+}
+
 #if canImport(FoundationModels)
 @available(macOS 26, *)
 private enum Inventor {
