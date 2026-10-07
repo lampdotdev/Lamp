@@ -749,6 +749,10 @@ final class Store: ObservableObject {
                                                   family: project.family, device: device))
                 .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
         }
+        // Rewritten so every entry points straight at the latest id: a slug that comes free and is used
+        // again (A → B → A) would otherwise close a loop. Nothing points at the new id afterwards.
+        for (from, to) in moved where to == old.id { moved[from] = project.id }
+        moved = moved.filter { $0.key != project.id }
         moved[old.id] = project.id
         logs[project.id] = logs.removeValue(forKey: old.id)
         usage[project.id] = usage.removeValue(forKey: old.id)
@@ -770,11 +774,10 @@ final class Store: ObservableObject {
     /// on the old app (pairing a phone, say) can still speak in the right chat.
     private var moved: [String: String] = [:]
 
-    /// The app as it is now, following any rescaffold since `project` was taken.
+    /// The app as it is now, following any rescaffold since `project` was taken (one step: `moved` always
+    /// points straight at the latest id).
     private func current(_ project: LampProject) -> LampProject? {
-        var id = project.id
-        while let next = moved[id] { id = next }
-        return projects.first { $0.id == id }
+        projects.first { $0.id == moved[project.id] ?? project.id }
     }
 
     /// Display names must be unique: each app installs as "<name>.app" in the apps folder (Edition.appsFolder).
