@@ -113,6 +113,7 @@ struct AppSidebar: View {
     enum Layout: String { case list, tiles }
 
     @EnvironmentObject private var store: Store
+    @AppStorage("experimentIOSApps") private var iosApps = false
     @AppStorage("sidebarLayout") private var layout = Layout.list
 
     var body: some View {
@@ -164,15 +165,28 @@ struct AppSidebar: View {
             }
             Button { store.create() } label: {
                 Label {
-                    Text("New App")
+                    Text(iosApps ? "New Mac App" : "New App")   // beside the iPhone and iPad entries, say which
                 } icon: {
-                    Image(systemName: "plus").frame(width: 24, height: 24)
+                    Image(systemName: iosApps ? "macbook" : "plus").frame(width: 24, height: 24)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .padding(.top, store.projects.isEmpty ? 0 : 12)
+            if iosApps {   // Settings → Building → Experimental
+                // One kind of app for both devices, as Apple has it; which one it's tried on is the app's choice.
+                Button { store.create(platform: .iphone) } label: {
+                    Label {
+                        Text("New iPhone & iPad App")
+                    } icon: {
+                        Image(systemName: "iphone").frame(width: 24, height: 24)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
         }
         .listStyle(.sidebar)
         .environment(\.sidebarRowSize, .large)
@@ -341,6 +355,15 @@ struct AppMenu: View {
             .disabled(busy)
         Button("Quit") { Task { await store.quitApp(project) } }
             .disabled(!store.openApps.contains(project.id))
+        if project.platform == .iphone {
+            // Which simulator the app opens in; it's built for both.
+            Picker("Try On", selection: Binding(get: { project.family }, set: { store.setFamily(project, $0) })) {
+                Text("iPhone").tag(DeviceFamily.iphone)
+                Text("iPad").tag(DeviceFamily.ipad)
+            }
+            .pickerStyle(.menu)
+            .disabled(busy)
+        }
         Divider()
         Button("Rename…") { store.renaming = project }
             .disabled(busy)
@@ -350,11 +373,13 @@ struct AppMenu: View {
             NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
         }
         Divider()
-        Button("Copy App File") { store.copyAppFile(project) }
-        ShareLink("Share…", item: SharedApp(project: project),
-                  preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
-        Button("Export…") { store.chooseExport(project) }
-        Divider()
+        if store.canShare(project) {
+            Button("Copy App File") { store.copyAppFile(project) }
+            ShareLink("Share…", item: SharedApp(project: project),
+                      preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
+            Button("Export…") { store.chooseExport(project) }
+            Divider()
+        }
         Button("Delete…", role: .destructive) { store.deleting = project }
     }
 }
@@ -697,15 +722,17 @@ struct ProjectView: View {
                 Label("Delete App", systemImage: "trash")
             }
             .help("Delete this app")
-            Menu {
-                Button("Copy App File") { store.copyAppFile(project) }
-                ShareLink("Share…", item: SharedApp(project: project),
-                          preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
-                Button("Export…") { store.chooseExport(project) }
-            } label: {
-                Label("Share App", systemImage: "square.and.arrow.up")
+            if store.canShare(project) {
+                Menu {
+                    Button("Copy App File") { store.copyAppFile(project) }
+                    ShareLink("Share…", item: SharedApp(project: project),
+                              preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
+                    Button("Export…") { store.chooseExport(project) }
+                } label: {
+                    Label("Share App", systemImage: "square.and.arrow.up")
+                }
+                .help("Send this app to someone with Lamp")
             }
-            .help("Send this app to someone with Lamp")
         }
         gap
         ToolbarItemGroup {

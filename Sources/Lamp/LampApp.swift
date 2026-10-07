@@ -4,6 +4,7 @@ import AppKit
 @main
 struct LampApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
+    @AppStorage("experimentIOSApps") private var iosApps = false
     @StateObject private var store = Store.shared
 
     var body: some Scene {
@@ -16,8 +17,12 @@ struct LampApp: App {
             CheckForUpdatesCommand()
             LampHelpCommands()
             CommandGroup(replacing: .newItem) {
-                Button("New App") { store.create() }
+                Button(iosApps ? "New Mac App" : "New App") { store.create() }
                     .keyboardShortcut("n")
+                if iosApps {   // Settings → Building → Experimental
+                    Button("New iPhone & iPad App") { store.create(platform: .iphone) }
+                        .keyboardShortcut("n", modifiers: [.command, .option])
+                }
             }
             CommandGroup(after: .newItem) {
                 Button("Import Shared App…") { store.chooseImport() }
@@ -27,7 +32,7 @@ struct LampApp: App {
                 // The same as Share ▸ Copy App File in the toolbar; here so the shortcut the Help lists exists.
                 Button("Copy App File") { if let project = store.selected { store.copyAppFile(project) } }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
-                    .disabled(store.selected == nil)
+                    .disabled(store.selected.map { !store.canShare($0) } ?? true)
             }
             CommandGroup(replacing: .saveItem) {
                 Button("Name This Version…") {

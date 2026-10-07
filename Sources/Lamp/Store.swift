@@ -2,6 +2,18 @@ import SwiftUI
 import CryptoKit
 import AppKit
 
+/// What an app is for: a Mac app that installs beside the user's others, or an iPhone app that runs in the
+/// iOS Simulator on this Mac (putting one on a real iPhone needs Apple's developer program; not yet).
+enum Platform: String, Codable {
+    case mac, iphone   // "iphone" is the iOS kind: iPhone and iPad apps alike (see DeviceFamily)
+}
+
+/// Which simulator an iOS app opens on. The app itself is built for both.
+enum DeviceFamily: String, Codable {
+    case iphone, ipad
+    var name: String { self == .ipad ? "iPad" : "iPhone" }
+}
+
 struct LampProject: Identifiable, Hashable {
     let id: String      // folder name; also used in lamp:// links
     let name: String    // display name
@@ -9,6 +21,8 @@ struct LampProject: Identifiable, Hashable {
     let dir: URL
     /// Made with New App and not named yet. The first message names it.
     var untitled = false
+    var platform: Platform = .mac
+    var family: DeviceFamily = .iphone
 
     var bundleID: String { Edition.appBundlePrefix + id }
     var builtURL: URL { dir.appendingPathComponent("build/\(exe).app") }
@@ -20,6 +34,8 @@ struct ProjectMeta: Codable {
     var name: String
     var exe: String
     var untitled: Bool?
+    var platform: Platform?   // nil in apps made before iPhone apps existed: a Mac app
+    var family: DeviceFamily?  // iOS apps: which simulator they open on; nil means iPhone
 }
 
 struct AppUsage: Codable {
@@ -323,7 +339,7 @@ final class Store: ObservableObject {
             guard let data = try? Data(contentsOf: dir.appendingPathComponent(".lamp/meta.json")),
                   let meta = try? JSONDecoder().decode(ProjectMeta.self, from: data) else { return nil }
             return LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
-                                untitled: meta.untitled ?? false)
+                                untitled: meta.untitled ?? false, platform: meta.platform ?? .mac, family: meta.family ?? .iphone)
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
@@ -505,10 +521,25 @@ final class Store: ObservableObject {
     // MARK: - Actions
 
     /// New App: an untitled app, straight into its chat. Its first message names it and designs its icon.
-    func create() {
+    func create(platform: Platform = .mac, family preferred: DeviceFamily = .iphone) {
+        guard platform == .mac || Experiments.iosApps else { return }   // Settings → Building → Experimental
+        var family = preferred
+        if platform == .iphone {
+            // The app is for both devices: it opens on the preferred one, or on whichever this Mac can show.
+            if Simulator.problem(family) != nil, Simulator.problem(family == .iphone ? .ipad : .iphone) == nil {
+                family = family == .iphone ? .ipad : .iphone
+            }
+            if let problem = Simulator.problem(family) {
+                let alert = NSAlert()
+                alert.messageText = "Lamp can't build iPhone & iPad apps on this Mac yet"
+                alert.informativeText = problem
+                alert.runModal()
+                return
+            }
+        }
         let project: LampProject
         do {
-            project = try Template.scaffold(name: uniqueName("Untitled"), untitled: true, in: root)
+            project = try Template.scaffold(name: uniqueName("Untitled"), untitled: true, platform: platform, family: family, in: root)
         } catch {
             NSAlert(error: error).runModal()
             return
@@ -522,6 +553,25 @@ final class Store: ObservableObject {
     private func initRepo(_ project: LampProject, message: String) async {
         _ = await Shell.run("git init -q && git add -A && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: project.dir,
                             env: ["LAMP_MESSAGE": message]) { _ in }
+    }
+
+    /// Which simulator an iPhone & iPad app opens in. Takes effect at its next open; the app is quit first
+    /// so the other device gets a fresh launch.
+    func setFamily(_ project: LampProject, _ family: DeviceFamily) {
+        guard project.platform == .iphone, project.family != family, begin(project) != nil else { return }
+        var changed = project
+        changed.family = family
+        try? JSONEncoder().encode(ProjectMeta(name: changed.name, exe: changed.exe, untitled: changed.untitled ? true : nil,
+                                              platform: changed.platform, family: family))
+            .write(to: changed.dir.appendingPathComponent(".lamp/meta.json"))
+        // In the list straight away, so nothing that starts meanwhile sees the old choice; the app itself is
+        // quit so its next open is a fresh launch on the other device.
+        if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
+        Task {
+            await quit(changed)
+            log(changed, .status, "\(changed.name) will open on the \(family.name) simulator from now on.")
+            finish(changed)
+        }
     }
 
     /// An untitled app you left without ever using is deleted, so trying New App leaves nothing behind.
@@ -560,8 +610,8 @@ final class Store: ObservableObject {
         }
 
         let fm = FileManager.default
-        let renamed = LampProject(id: current.id, name: unique, exe: current.exe, dir: current.dir)
-        try? JSONEncoder().encode(ProjectMeta(name: unique, exe: current.exe))
+        let renamed = LampProject(id: current.id, name: unique, exe: current.exe, dir: current.dir, platform: current.platform, family: current.family)
+        try? JSONEncoder().encode(ProjectMeta(name: unique, exe: current.exe, platform: current.platform, family: current.family))
             .write(to: current.dir.appendingPathComponent(".lamp/meta.json"))
         if fm.fileExists(atPath: current.installedURL.path) {
             try? fm.moveItem(at: current.installedURL, to: renamed.installedURL)
@@ -593,7 +643,7 @@ final class Store: ObservableObject {
         let fm = FileManager.default
         let project: LampProject
         do {
-            project = try Template.scaffold(name: name, in: root)
+            project = try Template.scaffold(name: name, platform: old.platform, family: old.family, in: root)
         } catch {
             NSAlert(error: error).runModal()
             return old
@@ -649,7 +699,11 @@ final class Store: ObservableObject {
     }
 
     /// Puts the app's .lampapp file on the clipboard, ready to paste into Slack, Messages, Mail or Finder.
+    /// Sharing is for Mac apps: an iPhone app's file would be opened as a Mac app by another Lamp.
+    func canShare(_ project: LampProject) -> Bool { project.platform == .mac }
+
     func copyAppFile(_ project: LampProject) {
+        guard canShare(project) else { return }
         do {
             let exported = try Sharing.export(project)
             let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -1487,6 +1541,18 @@ final class Store: ObservableObject {
     /// Opens the installed app, or brings it to the front if it's running. Only builds when there's
     /// nothing installed yet (or the installed copy was deleted).
     func open(_ project: LampProject) async {
+        if project.platform == .iphone {
+            // Running already: bring the simulator forward. Otherwise build (if needed) and launch.
+            if let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id { await Simulator.show(); return }
+            if FileManager.default.fileExists(atPath: project.builtURL.path), stamps[project.id]?.isOutdated != true {
+                guard begin(project) != nil else { return }
+                defer { finish(project) }
+                await installReportingCrash(project)
+            } else {
+                await run(project)
+            }
+            return
+        }
         // Built by an older Lamp: rebuild it first, so it gets this Lamp's fixes and building blocks.
         // Not while it's running (that would quit it under the user); if the build fails, the old one opens.
         if stamps[project.id]?.isOutdated == true, !busy.contains(project.id),
@@ -1534,6 +1600,7 @@ final class Store: ObservableObject {
               let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
             return (400, ["error": "use_app needs a list of actions."])
         }
+        if project.platform == .iphone { return await useOnSimulator(project, actions: actions, json: json) }
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
@@ -1569,6 +1636,63 @@ final class Store: ObservableObject {
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
         return (200, ["text": text, "screenshots": Privacy.sharesPictures ? Runtime.pictures(of: project).map(\.path) : []])
+    }
+
+    /// `use_app` for an iPhone app: Lamp drives the simulator through the Mac's accessibility system
+    /// (Simulator.Driver), then a fresh picture of the screen follows the report.
+    private func useOnSimulator(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {
+        guard let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid) else {
+            return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it in the simulator."])
+        }
+        // The owner, before any wait; and one Lamp app per simulator, so actions can't land on another's screen.
+        guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        guard simulatorLeases[running.udid] == project.id else {
+            return (200, ["text": "Another of the user's apps has taken this simulator since. Call look_at_app to open this app again."])
+        }
+        if let other = simulatorApps.first(where: { $0.key != project.id && $0.value.udid == running.udid && Simulator.isRunning(pid: $0.value.pid) }),
+           let name = projects.first(where: { $0.id == other.key })?.name {
+            return (200, ["text": "Another of the user's apps, \(name), is open on the same simulator, so the screen may not be this app's. Ask the user to quit it, or wait and try again."])
+        }
+        guard Simulator.Driver.isAllowed else {
+            Simulator.Driver.ask()
+            log(project, .status, "To try iPhone apps for you, Lamp needs to be allowed to control this computer: System Settings → Privacy & Security → Accessibility, then turn on Lamp.")
+            return (200, ["text": "Lamp isn't allowed to control the simulator yet. The user has just been asked to allow it (System Settings → " +
+                          "Privacy & Security → Accessibility). Say so to the user in plain words, and try again on their next request."])
+        }
+        guard let screen = await Simulator.Driver.screen(of: running.udid, owner: "\(project.id):\(running.pid)") else {
+            return (200, ["text": "Lamp can't find the iPhone's screen in the Simulator window. Make sure the Simulator is open and showing the iPhone, then try again."])
+        }
+        guard let data = json.data(using: .utf8), let decoded = try? JSONDecoder().decode([Simulator.Driver.Action].self, from: data) else {
+            return (400, ["error": "use_app needs a list of actions."])
+        }
+        let printed = Runtime.logSize(project)
+        let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
+        let report = await Simulator.Driver.perform(decoded, on: screen, picture: picture) { [weak self] in
+            guard let self, exists(project), turns[project.id] === owner, !owner.stopped else { return false }
+            // Still this app's screen: it's running, the device is still leased to this project (a launch by
+            // another project takes the lease before anything else), and no other app of Lamp's is running there.
+            guard simulatorLeases[running.udid] == project.id, simulatorApps[project.id]?.pid == running.pid, Simulator.isRunning(pid: running.pid) else { return false }
+            return !simulatorApps.contains { $0.key != project.id && $0.value.udid == running.udid && Simulator.isRunning(pid: $0.value.pid) }
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: ["id": UUID().uuidString, "report": report]) {
+            try? data.write(to: Runtime.folder(project).appendingPathComponent("use.json"))
+        }
+        guard Simulator.isRunning(pid: running.pid) else {
+            var text = "What happened:\n\(report)\n\nThe app quit or crashed while doing that."
+            if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nLast lines it printed:\n" + tail }
+            return (200, ["text": text])
+        }
+        var text = "What happened:\n\(report)"
+        if Runtime.sourcesChanged(project) {
+            text += "\n\nThis is the app as last built: it doesn't have the changes you've made to the code since. " +
+                "Call look_at_app to build and open them."
+        }
+        text += Privacy.sharesPictures
+            ? "\n\nA picture of the iPhone's screen follows. Points for the next use_app are pixels in it."
+            : "\n\n" + Privacy.picturesOff
+        if !Privacy.sharesLog { text += " " + Privacy.logOff }
+        if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
+        return (200, ["text": text, "screenshots": Privacy.sharesPictures ? [picture.path] : []])
     }
 
     /// `look_at_app` and `use_app` for agents that take tools over MCP (Claude Code and Codex): one streamable-HTTP
@@ -2010,6 +2134,7 @@ final class Store: ObservableObject {
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
     private func install(_ project: LampProject, inFront: Bool = true) async -> String? {
         guard exists(project) else { return nil }
+        if project.platform == .iphone { return await installOnSimulator(project, inFront: inFront) }
         await prepareIcon(project)
         await quit(project)
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
@@ -2042,6 +2167,95 @@ final class Store: ObservableObject {
         stamps[project.id] = BuildStamp.read(project.installedURL)
         return crash
     }
+
+    /// The iPhone counterpart of `install`: the built app goes into the booted simulator and is launched there,
+    /// with what it prints going to the same log the Mac apps use. Returns what's known if it died at once.
+    private func installOnSimulator(_ project: LampProject, inFront: Bool) async -> String? {
+        guard let udid = Simulator.device(project.family) else {
+            let problem = "No \(project.family.name) simulator with iOS \(Simulator.minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components."
+            log(project, .error, problem)
+            return problem
+        }
+        // The turn that owns the app now, taken before anything waits: Delete or Stop can come during any of
+        // the waits below, and then nothing more is written or launched for it (not even by a later turn of
+        // the same app, which would have a launch of its own).
+        guard let owner = turns[project.id] else { return "Lamp isn't working on this app." }
+        // Launches on one device go one after another: a launch already under way finishes (and is then
+        // closed, below) before the next starts, so two apps can't be racing onto the same screen.
+        let previous = simulatorWork[udid]
+        let mine = Task<String?, Never> { [self] in
+            await previous?.value
+            guard turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
+            return await launchOnSimulator(project, owner: owner, udid: udid, inFront: inFront)
+        }
+        simulatorWork[udid] = Task { _ = await mine.value }
+        return await mine.value
+    }
+
+    /// The launch in progress on each simulator, for the next one to wait for.
+    private var simulatorWork: [String: Task<Void, Never>] = [:]
+
+    private func launchOnSimulator(_ project: LampProject, owner: Turn, udid: String, inFront: Bool) async -> String? {
+        // The device is this project's from here: the driver acts only while the lease is held.
+        let before = simulatorLeases[udid]
+        simulatorLeases[udid] = project.id
+        func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped && simulatorLeases[udid] == project.id }
+        // A launch that doesn't come off gives the device back to whoever had it, so their look_at_app can
+        // carry on (and theirs rechecks the lease, so it reopens the app if need be).
+        func giveBack(_ message: String) -> String {
+            if simulatorLeases[udid] == project.id { simulatorLeases[udid] = before.flatMap { simulatorApps[$0] != nil ? $0 : nil } }
+            return message
+        }
+        note("Opening \(project.name) on the \(project.family.name) simulator…", for: project)
+        do {
+            try await Simulator.boot(udid, show: inFront)
+            await Simulator.terminate(project.bundleID, on: udid)
+            try await Simulator.install(project.builtURL, on: udid)
+            guard stillOwns() else { return giveBack("The app was deleted or stopped before it opened.") }
+            // One Lamp app per simulator: another project's app on this device is closed first, so what the
+            // simulator shows is always the app being worked on (and that app's use_app batch, if any, stops).
+            for (other, launched) in simulatorApps where other != project.id && launched.udid == udid {
+                if let theirs = projects.first(where: { $0.id == other }) { await Simulator.terminate(theirs.bundleID, on: udid) }
+                simulatorApps[other] = nil
+            }
+            guard stillOwns() else { return giveBack("The app was deleted or stopped before it opened.") }
+            Runtime.startLog(project)
+            Simulator.Driver.forget(project.id)
+            let pid = try await Simulator.launch(project.bundleID, on: udid, log: Runtime.logURL(project))
+            // The same could have happened during the launch itself: then the app just started belongs to
+            // nobody, and is stopped before anything records it.
+            guard stillOwns() else {
+                await Simulator.terminate(project.bundleID, on: udid)
+                return giveBack("The app was deleted or stopped before it opened.")
+            }
+            simulatorApps[project.id] = (udid, pid)
+            try? await Task.sleep(for: .seconds(3))
+            if !Simulator.isRunning(pid: pid) {
+                simulatorApps[project.id] = nil
+                log(project, .status, "\(project.name) quit right after opening. Looking at why…")
+                var crash = "The app quit right after launching."
+                if Privacy.sharesLog, let tail = Runtime.logTail(project) { crash += "\n\nLast lines it printed:\n" + tail }
+                log(project, .detail, crash)
+                refreshOpenApps()
+                return crash
+            }
+            if inFront { log(project, .status, "\(project.name) is ready on the \(project.family.name) simulator") }
+        } catch {
+            // A failure to boot, install or launch is reported like a crash: the agent must hear about it.
+            log(project, .error, "Couldn't open the app: \(error.localizedDescription)")
+            refreshOpenApps()
+            return giveBack("Couldn't open the app in the simulator: \(error.localizedDescription)")
+        }
+        refreshOpenApps()
+        stamps[project.id] = BuildStamp.read(project.builtURL)
+        return nil
+    }
+
+    /// iPhone apps running in the simulator: which simulator each was launched on, and its process id.
+    private var simulatorApps: [String: (udid: String, pid: Int32)] = [:]
+    /// Which project each simulator belongs to right now: taken before a launch's first wait, so two launches
+    /// on one device can't both go ahead, and checked before every action the driver takes.
+    private var simulatorLeases: [String: String] = [:]
 
     /// For Open App and Undo, where no agent is running to fix a crash.
     private func installReportingCrash(_ project: LampProject) async {
@@ -2264,9 +2478,11 @@ final class Store: ObservableObject {
 
     private func refreshOpenApps() {
         let prefix = Edition.appBundlePrefix
-        let ids = NSWorkspace.shared.runningApplications
+        var ids = NSWorkspace.shared.runningApplications
             .compactMap { $0.isTerminated ? nil : $0.bundleIdentifier }
             .filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
+        simulatorApps = simulatorApps.filter { Simulator.isRunning(pid: $0.value.pid) }
+        ids += simulatorApps.keys
         if Set(ids) != openApps { openApps = Set(ids) }
     }
 
@@ -2277,6 +2493,16 @@ final class Store: ObservableObject {
     }
 
     private func quit(_ project: LampProject) async {
+        if project.platform == .iphone {
+            // On the simulator it was launched on, not whichever one would be picked now.
+            if let running = simulatorApps[project.id] {
+                await Simulator.terminate(project.bundleID, on: running.udid)
+                if simulatorLeases[running.udid] == project.id { simulatorLeases[running.udid] = nil }
+            }
+            simulatorApps[project.id] = nil
+            refreshOpenApps()
+            return
+        }
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID) {
             app.terminate()
             for _ in 0..<30 where !app.isTerminated {
@@ -2595,6 +2821,28 @@ final class Store: ObservableObject {
         }
         var note = "The app built and is running."
         var screenshots: [URL] = []
+        if project.platform == .iphone {
+            // The simulator photographs the screen; nothing in the app has to cooperate.
+            // Open, and the device still this app's: otherwise it's opened again (which takes the device back).
+            let running = simulatorApps[project.id].map { Simulator.isRunning(pid: $0.pid) && simulatorLeases[$0.udid] == project.id } ?? false
+            if changed || !running {
+                let crash = await install(project, inFront: false)
+                turn.look.installed = true
+                turn.look.crash = crash
+                if let crash { return (200, ["text": "The app \(changed ? "built" : "is built"), but it didn't stay open.\n\n\(crash)"]) }
+                if !changed { note = "The app is running your latest code; it was reopened without rebuilding." }
+            } else {
+                note = "The app is running your latest code; nothing needed rebuilding."
+            }
+            try? await Task.sleep(for: .seconds(1))
+            let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
+            if let udid = simulatorApps[project.id]?.udid, await Simulator.screenshot(on: udid, to: picture) { screenshots = [picture] }
+            var text = note + " " + (screenshots.isEmpty ? "No picture of the iPhone could be taken."
+                : Privacy.sharesPictures ? "A picture of the iPhone's screen follows. Points for use_app are pixels in it." : Privacy.picturesOff)
+            if !Privacy.sharesLog { text += " " + Privacy.logOff }
+            if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
+            return (200, ["text": text, "screenshots": Privacy.sharesPictures ? screenshots.map(\.path) : []])
+        }
         if !changed, NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first != nil {
             // Nothing to rebuild and the app is open: ask it for fresh pictures instead of relaunching it.
             let asked = Date()

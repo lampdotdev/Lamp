@@ -47,6 +47,22 @@ generated apps get it through the `{{SCHEME}}`, `{{NOTE}}`, `{{HOST}}` and `{{AP
 Lamp rebuilds them. `scripts/dev-data.sh` copies your apps, keys, settings and the agent's sign-ins from the
 installed Lamp into Lamp Dev, so the development build has something to work on.
 
+## iPhone apps
+
+**New iPhone & iPad App** (behind Settings → Building → Experimental, `Experiments.iosApps`) makes one app for both devices, as Apple has it; the app's right-click menu's **Try On** picks which simulator it opens in (`LampProject.family`). It runs in the iPhone or iPad simulator on this Mac (`LampProject.platform == .iphone`,
+kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools: `Simulator`
+(`Sources/Lamp/Simulator.swift`) picks a booted or available iPhone with `simctl`, installs the built bundle,
+launches it with its output going to the app's log, and photographs the screen for `look_at_app`. The
+scaffold is a Swift package built for the simulator SDK by its own `build.sh` (no Xcode project, no signing
+beyond ad hoc), with a small `LampSupport.swift` of its own (`Template.iPhoneSupportSwift`: AI through
+Lamp's gateway, which the simulator reaches as 127.0.0.1) and a prompt of its own (`Agent.iPhonePrompt`).
+`use_app` drives the simulator from outside the app (`Simulator.Driver`): the Simulator app shows the
+iPhone's whole accessibility tree to the Mac, so Lamp finds what's under a point and presses it, sets a
+field's text, and sends real mouse events for swipes, scrolls and long presses. Pictures are made at point
+size, so a pixel in them is a point on the screen. That needs Lamp to be allowed in System Settings →
+Privacy & Security → Accessibility; the first `use_app` asks. Nothing puts an app on a real iPhone yet:
+that needs Apple's developer program and signing.
+
 ## Generated apps
 
 `Sources/Lamp/Template.swift` holds `LampSupport.swift`, the support code copied into every generated
