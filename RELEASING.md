@@ -19,8 +19,9 @@ have a Team ID, so they keep API keys in the login Keychain; local builds use `k
 finds a `keys.json` in its folder (from a build from source that used to share it) moves those keys into the
 Keychain and removes the file.
 
-Apps that Lamp generates are built on the user's Mac and ad-hoc signed. They're never downloaded, so they
-don't need notarization.
+Apps that Lamp generates are built on the user's Mac and signed there with Lamp's own self-signed
+certificate ("Lamp App Signing", see `scripts/signing-identity.sh`), or ad hoc when that can't be done.
+They're never downloaded, so they don't need notarization.
 
 ## One-time setup
 

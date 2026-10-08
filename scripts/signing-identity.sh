@@ -48,4 +48,20 @@ CNF
   security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$(cat "$PASSFILE")" "$KEYCHAIN" >/dev/null
   echo "Created the \"$NAME\" certificate in Lamp's keychain." >&2
 fi
+
+# Before macOS 27, codesign takes --keychain but still looks for the identity only in the person's keychain
+# search list (it hands the keychain to the lookup as the place to add to, which a search ignores), so for
+# Lamp's keychain it answers "no identity found". Try it on a scrap file: where it can't sign, Lamp's
+# keychain goes on the list, after the ones already there, which stay as they are. Where it can, the list
+# is left alone. Not being able to change the list is no reason to stop.
+SCRAP="$(mktemp)"
+cp /usr/bin/true "$SCRAP"
+if ! codesign --force --keychain "$KEYCHAIN" -s "$NAME" "$SCRAP" >/dev/null 2>&1; then
+  LISTED=(${(f)"$(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//')"})
+  if (( ! ${LISTED[(Ie)$KEYCHAIN]} )); then
+    security list-keychains -d user -s "${LISTED[@]}" "$KEYCHAIN" \
+      || echo "Couldn't add Lamp's keychain to the keychain search list." >&2
+  fi
+fi
+rm -f "$SCRAP"
 echo "$NAME"
