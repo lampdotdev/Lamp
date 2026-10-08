@@ -11,7 +11,7 @@ plain "Lamp x.y.z" line.
   temporary folders and the network, and nothing else on your Mac. A command that reaches elsewhere is
   simply refused by macOS, so Lamp no longer has to read commands to guess where they look, and the
   approval card is about what a command does. For anything outside, the agent uses its file tools, which
-  ask you. (Codex keeps its own sandbox and the earlier check.)
+  ask you. With Codex, the whole of Codex runs confined that way.
 
 ## 0.10.8
 

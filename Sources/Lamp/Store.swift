@@ -3377,17 +3377,19 @@ final class Store: ObservableObject {
             }
             // Claude Code already ran its own classifier before asking ("claude-permission"), so ask the user.
             let escalated = request.path.contains("format=claude-permission")
-            // Whose command: Claude Code's and pi's run confined (Sandbox), Codex's in Codex's own sandbox.
+            // Whose command: Claude Code's and pi's come back wrapped (Sandbox); Codex runs inside the sandbox
+            // whole, so its commands are confined already and go back as they are.
             let engine: Engine = request.path.contains("format=codex") ? .codex : request.path.contains("format=claude") ? .claude : .pi
-            let confined = shell && Sandbox.confines(engine) ? Sandbox.wrap(command, for: project) : nil
+            let confined = shell && engine != .codex && Sandbox.confines(engine) ? Sandbox.wrap(command, for: project) : nil
+            let sandboxed = shell && (engine == .codex ? Sandbox.confines(.codex) : confined != nil)
             if request.path.contains("format=codex") {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.
-                let allowed = await approveCommand(command, for: project, escalated: false, sandboxed: false)
+                let allowed = await approveCommand(command, for: project, escalated: false, sandboxed: sandboxed)
                 return (200, allowed ? [:] : ["hookSpecificOutput": ["hookEventName": "PreToolUse",
                                                                      "permissionDecision": "deny",
                                                                      "permissionDecisionReason": "The user denied this command in Lamp."]])
             }
-            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: confined != nil)
+            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed)
             let reason = allowed ? "Approved in Lamp." : "The user denied this command in Lamp."
             // An allowed command goes back confined: the hooks run what Lamp hands them.
             if escalated {

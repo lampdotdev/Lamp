@@ -409,7 +409,8 @@ extension Agent {
             // Isolated from the user's own Codex setup (--ignore-user-config --ignore-rules: their model, MCP
             // servers, features and rules), keeping their sign-in. Lamp's rules go in as developer instructions.
             env["LAMP_TOOL"] = ToolLocator.path(for: .codex) ?? "codex"
-            env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt(for: project) + tryRules + Self.codexNote)
+            let confined = Sandbox.confines(.codex)
+            env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt(for: project) + tryRules + Self.codexNote + (confined ? sandboxNote : ""))
             // Approvals (Settings → Building): a PreToolUse hook sends each shell command to Lamp before it runs,
             // and Lamp applies the setting: the decision model, then the in-app model's risk rating, then the
             // user (Only when risky, Anything unusual), or the user every time (Always). "Never" has no hook. In
@@ -427,20 +428,30 @@ extension Agent {
                 : #"hooks.PreToolUse=[{matcher="^Bash$",hooks=[{type="command",timeout=3600,command="'"# + hook + #"'"}]}]"#
             let codexModel = Builder.engineModel(.codex)
             if !codexModel.isEmpty { env["LAMP_MODEL"] = codexModel }
+            // Inside Lamp's sandbox (below) Codex's own is off: one can't run inside the other, and Lamp's closes
+            // the rest of the Mac to reads as well as writes, which Codex's never did.
+            let sandboxMode = confined ? "-s danger-full-access" : "-c sandbox_mode=\"workspace-write\" -c sandbox_workspace_write.network_access=true"
             let options = (codexModel.isEmpty ? "" : "-m \"$LAMP_MODEL\" ") + """
             --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check \\
-              -c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true \\
+              \(sandboxMode) \\
               -c web_search="live" -c "$LAMP_CODEX_INSTRUCTIONS" -c "$LAMP_CODEX_HOOKS" \\
               -c mcp_servers.lamp.url="http://127.0.0.1:\(Gateway.port)/mcp?files=1" -c mcp_servers.lamp.bearer_token_env_var="LAMP_TOKEN" \\
               -c mcp_servers.lamp.tool_timeout_sec=3600 -c mcp_servers.lamp.default_tools_approval_mode="approve"
             """
+            let launch: String
             if session != nil {
                 // `exec resume` keeps the conversation; it takes no -C/-i (Lamp already runs in the app's folder).
-                return AgentRun(command: "\"$LAMP_TOOL\" exec resume \(options) \"$LAMP_SESSION\" -- \"$LAMP_PROMPT\"", env: env)
+                launch = "\"$LAMP_TOOL\" exec resume \(options) \"$LAMP_SESSION\" -- \"$LAMP_PROMPT\""
+            } else {
+                let images = files.enumerated().filter { Attachments.isImage(URL(fileURLWithPath: $0.element)) }
+                    .map { "-i \"$LAMP_FILE_\($0.offset)\"" }.joined(separator: " ")
+                launch = "\"$LAMP_TOOL\" exec \(options) -C \"$LAMP_DIR\" \(images) -- \"$LAMP_PROMPT\""
             }
-            let images = files.enumerated().filter { Attachments.isImage(URL(fileURLWithPath: $0.element)) }
-                .map { "-i \"$LAMP_FILE_\($0.offset)\"" }.joined(separator: " ")
-            return AgentRun(command: "\"$LAMP_TOOL\" exec \(options) -C \"$LAMP_DIR\" \(images) -- \"$LAMP_PROMPT\"", env: env)
+            // The whole run confined to the app, with Codex's own folder (sign-in, sessions, caches) open to it.
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let install = ToolLocator.path(for: .codex).map(Sandbox.installFolders(of:)) ?? []
+            let command = confined ? (Sandbox.wrapEngine(launch, for: project, opening: [home + "/.codex"], reading: install) ?? launch) : launch
+            return AgentRun(command: command, env: env)
         }
     }
 
