@@ -243,8 +243,10 @@ widget is answered and the widget passes over anything else that took the port.
 Lamp never replaces an app on disk while it's running (`HeldInstalls`): macOS then stops taking the running
 app for its widget's owner and refuses its redraws until it's reopened. A build quits the app first; a new
 icon or its artwork (`Store.installIcon`) waits for the app to close or for the next build. The widget's
-own process is ended just before the swap too (`WidgetProcess`, found by its file inside that app): left
-alive it no longer matches the widget installed, and macOS fails every reload until it happens to exit.
+own process is ended just before the swap too, and before an app is deleted (`WidgetProcess`, found by its
+file inside that app or, for a copy running from elsewhere such as the Trash, by the widget's bundle id):
+left alive it no longer matches the widget installed, and macOS fails every reload and leaves the widget
+blank until that process happens to exit.
 
 ## Naming: Lamp and Lamp
 

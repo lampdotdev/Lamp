@@ -54,6 +54,40 @@ final class WidgetProcessTests: XCTestCase {
         XCTAssertEqual(WidgetProcess.running(from: other.file), [other.process.processIdentifier])
     }
 
+    /// The copy of a widget that went to the Trash with its app. Its process must not answer for an app made
+    /// later under the same name: it's found by the identifier of the widget it was started from.
+    func testAnOldCopysProcessIsEndedWhereverItRunsFrom() async throws {
+        func identify(_ file: URL, as identifier: String) throws {
+            let info = file.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Info.plist")
+            try XCTUnwrap(NSDictionary(dictionary: ["CFBundleIdentifier": identifier])).write(to: info)
+        }
+        // The app as installed now, and the deleted one's widget, still running from where it was moved to.
+        let installed = try widget(in: "Countdown")
+        try identify(installed.file, as: "dev.lamp.app.countdown.widget")
+        let other = try widget(in: "Sips")
+        try identify(other.file, as: "dev.lamp.app.sips.widget")
+        let trash = try XCTUnwrap(root).appendingPathComponent("Trash")
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        let old = trash.appendingPathComponent("Countdown.app/Contents/PlugIns/CountdownWidget.appex/Contents/MacOS/CountdownWidget")
+        try place(at: old)
+        try identify(old, as: "dev.lamp.app.countdown.widget")
+        let stale = Process()
+        stale.executableURL = old
+        stale.arguments = ["60"]
+        try stale.run()
+        started.append(stale)
+
+        // By its place alone the old copy's process is missed, which is how a new app's widget stayed blank.
+        XCTAssertEqual(WidgetProcess.running(from: installed.file), [installed.process.processIdentifier])
+        XCTAssertEqual(Set(WidgetProcess.running(from: installed.file, identifier: "dev.lamp.app.countdown.widget")),
+                       [installed.process.processIdentifier, stale.processIdentifier])
+        let ended = await WidgetProcess.end(from: installed.file, identifier: "dev.lamp.app.countdown.widget")
+        XCTAssertTrue(ended)
+        stale.waitUntilExit()
+        XCTAssertFalse(stale.isRunning)
+        XCTAssertTrue(other.process.isRunning)   // another app's widget, another identifier
+    }
+
     func testNothingRunningIsFine() async throws {
         let tally = try widget(in: "Tally")
         tally.process.terminate()

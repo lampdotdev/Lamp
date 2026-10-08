@@ -908,6 +908,7 @@ final class Store: ObservableObject {
         }
         await initRepo(project, message: "Scaffold")
         await quit(old)
+        await WidgetProcess.end(for: old)
         try? fm.removeItem(at: old.installedURL)
         try? fm.removeItem(at: old.dir)
 
@@ -1859,6 +1860,9 @@ final class Store: ObservableObject {
         stop(project)
         iconDesigns.removeValue(forKey: project.id)?.cancel()
         await quit(project)
+        // Its widget's process too: in the Trash it would go on running, and answer for an app made later
+        // under the same name.
+        await WidgetProcess.end(for: project)
         let fm = FileManager.default
         if fm.fileExists(atPath: project.installedURL.path) {
             try? fm.trashItem(at: project.installedURL, resultingItemURL: nil)
@@ -3075,8 +3079,7 @@ final class Store: ObservableObject {
         try fm.copyItem(at: project.builtURL, to: staging)
         // The app isn't running by now (a build quits it, an icon waits for it to close), but its widget's
         // process may be: ended here, last thing before the swap, so no program outlives the copy it came from.
-        let installedWidget = Template.widgetURL(in: project.installedURL, of: project)
-        await WidgetProcess.end(from: installedWidget.appendingPathComponent("Contents/MacOS/\(project.exe)Widget"))
+        await WidgetProcess.end(for: project)
         if fm.fileExists(atPath: project.installedURL.path) {
             _ = try fm.replaceItemAt(project.installedURL, withItemAt: staging)
         } else {
