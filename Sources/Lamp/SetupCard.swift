@@ -113,7 +113,7 @@ struct SetupCard: View {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
             }
         } else if declined {
-            Text("No problem. You can set this up any time in Lamp's Settings, under Providers.")
+            Text("No problem. You can set this up any time in Lamp's Settings, under AI Providers.")
         } else {
             Text(reason)
         }
@@ -391,10 +391,6 @@ struct CapabilityNote: View {
     let capability: Capability
     var project: LampProject? = nil
     var context: AIContext = .mac
-    /// What answers is shown beside the note already (Providers' overview), so the note needn't say it.
-    var answerShown = false
-    /// Upgrades offered once for several capabilities below them (Providers' overview), left out here.
-    var omitting: Set<Upgrade> = []
     @ObservedObject private var local = LocalModels.shared
     @State private var revision = 0
 
@@ -403,12 +399,12 @@ struct CapabilityNote: View {
         let resolution = AppAI.resolve(capability, for: project, in: context)
         if resolution.tier != .best {
             VStack(alignment: .leading, spacing: 6) {
-                // Orange only when nothing answers: something that works, if not as well, isn't a problem.
-                if let note = answerShown ? resolution.note : resolution.explanation {
-                    Text(note).font(.caption).foregroundStyle(resolution.tier == .none ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                // Gray: in Settings the Not Ready badge beside the choice is the only orange.
+                if let note = resolution.explanation {
+                    Text(note).font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                UpgradeList(upgrades: resolution.upgrades.filter { !omitting.contains($0) }, compact: true) { revision += 1 }
+                UpgradeList(upgrades: resolution.upgrades, compact: true) { revision += 1 }
             }
             // Keys, the choices in Settings and an app's own choices all change what a capability resolves to.
         .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in revision += 1 }

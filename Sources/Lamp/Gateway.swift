@@ -593,23 +593,47 @@ enum AppAI {
         return decisionModels[0]
     }
 
+    /// Whether a decision model can answer now: its key, or its download for the one on this Mac; by text
+    /// whenever the app's text route (`appText`, else Settings') can.
+    @MainActor static func canDecide(with choice: (id: String, label: String, provider: String, model: String),
+                                      appText: String? = nil) -> Bool {
+        switch choice.provider {
+        case "text": route(for: appText).available
+        case "local": localDecisionModel() != nil
+        default: KeyStore.key(for: choice.provider) != nil
+        }
+    }
+
+    /// What answers for a choice (an app's own, else Settings'): the choice when it can, else the first
+    /// decision model that can, else the text model as JSON when something answers, else nil. `decide`,
+    /// `resolve(.decisions)` and Settings all go by this, so what they name is what really answers.
+    @MainActor static func decisionRoute(for appChoice: String?, appText: String? = nil) -> (id: String, label: String, provider: String, model: String)? {
+        let wanted = decisionModels.first { $0.id == appChoice } ?? decisionModel
+        if canDecide(with: wanted, appText: appText) { return wanted }
+        return decisionModels.first { $0.provider != "text" && canDecide(with: $0, appText: appText) }
+            ?? decisionModels.first { $0.provider == "text" && canDecide(with: $0, appText: appText) }
+    }
+
     /// Sends `state` and typed `questions` (TypeSafe's System One format) to the decision model.
     /// Returns the answers keyed like the questions, and the cost in USD.
     /// `appText` is the app's own text choice: decisions made by text go along it, as the app's text does.
     static func decide(state: Any, questions: [String: Any],
                        model appChoice: String? = nil, appText: String? = nil) async throws -> ([String: Any], Double) {
-        let choice = decisionModels.first { $0.id == appChoice } ?? decisionModel
+        guard let choice = await decisionRoute(for: appChoice, appText: appText) else {
+            let wanted = decisionModels.first { $0.id == appChoice } ?? decisionModel
+            if wanted.provider == "local" {
+                throw Failure(message: "The decision model on this Mac isn't downloaded yet. Get it in Lamp → Settings (⌘,) → AI Providers → Native Mac AI.", needs: .decisions)
+            }
+            let name = wanted.provider == "typesafe" ? "a TypeSafe" : wanted.provider == "openai" ? "an OpenAI" : "an OpenRouter"
+            throw Failure(message: "Decisions need \(name) key. Add one in Lamp → Settings (⌘,) → AI Providers.", needs: .decisions)
+        }
         if choice.provider == "text" { return try await decideByText(state: state, questions: questions, appText: appText) }
-        if choice.provider == "local" {
-            if let id = await localDecisionModel() { return try await decideLocally(state: state, questions: questions, model: id) }
-            if await canAnswer { return try await decideByText(state: state, questions: questions, appText: appText) }
-            throw Failure(message: "The decision model on this Mac isn't downloaded yet. Get it in Lamp → Settings (⌘,) → Apps.", needs: .decisions)
+        if choice.provider == "local", let id = await localDecisionModel() {
+            return try await decideLocally(state: state, questions: questions, model: id)
         }
         guard let key = KeyStore.key(for: choice.provider) else {
-            // No decision model: a small text model answers the same questions in JSON instead.
-            if await canAnswer { return try await decideByText(state: state, questions: questions, appText: appText) }
-            let name = choice.provider == "typesafe" ? "a TypeSafe" : choice.provider == "openai" ? "an OpenAI" : "an OpenRouter"
-            throw Failure(message: "Decisions need \(name) key. Add one in Lamp → Settings (⌘,) → AI.", needs: .decisions)
+            // Gone since the route was chosen: the text model answers the same questions in JSON instead.
+            return try await decideByText(state: state, questions: questions, appText: appText)
         }
         if choice.provider == "openai" { return try await decideViaOpenAI(state: state, questions: questions, key: key, model: choice.model) }
         let endpoint = choice.provider == "typesafe" ? "https://api.typesafe.ai/v1/systemone"

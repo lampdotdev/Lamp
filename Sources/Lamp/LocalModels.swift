@@ -437,7 +437,7 @@ final class LocalModels: ObservableObject {
     private func ensureMLX(_ id: String) async throws {
         if mlxModel == id, await Self.healthy("\(Self.mlxBaseURL)/v1/models") { return }
         guard let path = Self.mlxServerPath else {
-            throw LocalError("This model needs a one-time install before it can run. In Lamp, open Settings → Providers, double-click Native Mac AI and click Install beside the model, then try again.")
+            throw LocalError("This model needs a one-time install before it can run. In Lamp, open Settings → AI Providers, double-click Native Mac AI and click Install beside the model, then try again.")
         }
         stopMLX()
         let process = Process()

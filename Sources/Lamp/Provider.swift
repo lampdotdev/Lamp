@@ -41,7 +41,7 @@ enum Provider {
     static let typesafe = PiProvider(id: "typesafe", name: "TypeSafe", envVar: "TYPESAFE_API_KEY",
                                      keyURL: "https://typesafe.ai")
 
-    /// Every provider Lamp keeps an API key for, as listed in Settings → Providers.
+    /// Every provider Lamp keeps an API key for, as listed in Settings → AI Providers.
     static let keyProviders = (apiProviders + [typesafe])
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
@@ -141,7 +141,7 @@ enum KeyStore {
     /// item isn't Lamp's own) come at launch and not in the middle of drawing a view: a Keychain prompt
     /// inside a layout pass runs the event loop inside the layout, which AppKit answers by crashing. The
     /// main thread only ever reads what this has found, and says there's no key for anything it hasn't
-    /// (a question declined, say); Settings → Providers asks again when it opens.
+    /// (a question declined, say); Settings → AI Providers asks again when it opens.
     static func preload() {
         DispatchQueue.global(qos: .userInitiated).async {
             if usesKeychain { for provider in Provider.keyProviders { _ = key(for: provider.id) } }

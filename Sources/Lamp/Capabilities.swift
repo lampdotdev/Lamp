@@ -158,31 +158,27 @@ extension AppAI {
         // Decisions by text go along the app's own text route (`AppAI.decide(appText:)`), so they're named by it.
         let textRoute = resolveText(choice: text)
         let byText = "\(fastModelName(for: route(for: text))), answering as text"
-        func fallback(_ why: String, _ upgrades: [Upgrade]) -> Resolution {
-            guard textRoute.tier != .none else {
-                return Resolution(capability: .decisions, tier: .none, answer: nil, provider: nil,
-                                  note: "\(why).", upgrades: upgrades + textRoute.upgrades.filter { !upgrades.contains($0) })
-            }
-            return Resolution(capability: .decisions, tier: .works, answer: byText, provider: textRoute.provider,
-                              note: "\(why). Until then they're made by text: slower and less exact.", upgrades: upgrades)
-        }
+        // Why the chosen one can't answer, and what would let it.
+        let why: String
+        let wants: [Upgrade]
         switch chosen.provider {
-        case "text":
-            guard textRoute.tier != .none else { return fallback("Nothing can answer apps yet", []) }
-            return Resolution(capability: .decisions, tier: .best, answer: byText, provider: textRoute.provider, note: nil, upgrades: [])
-        case "local":
-            if localDecisionModel() != nil {
-                return Resolution(capability: .decisions, tier: .best, answer: chosen.label, provider: Builder.localProvider, note: nil, upgrades: [])
-            }
-            let name = LocalModels.decisionCatalog.first?.name ?? "The decision model"
-            return fallback("\(name) isn't on this Mac yet", [.decisionModel])
-        default:
-            if KeyStore.key(for: chosen.provider) != nil {
-                return Resolution(capability: .decisions, tier: .best, answer: chosen.label, provider: chosen.provider, note: nil, upgrades: [])
-            }
-            let name = Provider.keyProvider(chosen.provider)?.name ?? chosen.provider
-            return fallback("\(chosen.label) needs \(keyPhrase(chosen.provider))", [.key(chosen.provider)])
+        case "text": (why, wants) = ("Nothing can answer apps yet", [])
+        case "local": (why, wants) = ("\(LocalModels.decisionCatalog.first?.name ?? "The decision model") isn't on this Mac yet", [.decisionModel])
+        default: (why, wants) = ("\(chosen.label) needs \(keyPhrase(chosen.provider))", [.key(chosen.provider)])
         }
+        // What `decide` will use: the choice, else another decision model that can, else text.
+        guard let used = decisionRoute(for: choice, appText: text) else {
+            return Resolution(capability: .decisions, tier: .none, answer: nil, provider: nil,
+                              note: "\(why).", upgrades: wants + textRoute.upgrades.filter { !wants.contains($0) })
+        }
+        let answer = used.provider == "text" ? byText : used.label
+        let provider = used.provider == "text" ? textRoute.provider : used.provider == "local" ? Builder.localProvider : used.provider
+        if used.id == chosen.id {
+            return Resolution(capability: .decisions, tier: .best, answer: answer, provider: provider, note: nil, upgrades: [])
+        }
+        return Resolution(capability: .decisions, tier: .works, answer: answer, provider: provider,
+                          note: used.provider == "text" ? "\(why). Until then they're made by text: slower and less exact." : "\(why).",
+                          upgrades: wants)
     }
 
     @MainActor private static func resolvePictures(choice: String?, text: String?) -> Resolution {

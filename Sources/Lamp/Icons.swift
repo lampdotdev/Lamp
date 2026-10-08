@@ -73,6 +73,12 @@ enum Icons {
         return artModels + [(localArt, "\(name) on this Mac (free, private)")]
     }
 
+    /// The choices that can make pictures now: the cloud models with a key, the Mac's own once it's in. With
+    /// none, Codex may still draw (`AppAI.imageRoute`), with no model to choose.
+    @MainActor static var usableChoices: [(id: String, label: String)] {
+        imageChoices.filter { $0.id == localArt ? ImageModels.ready : Provider.hasKey }
+    }
+
     /// The image model for pictures inside apps (Settings → Apps → Image generation).
     static var artModel: String { choice("imageModel") }
 

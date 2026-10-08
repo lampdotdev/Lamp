@@ -708,7 +708,7 @@ struct ProjectView: View {
             Group {
                 if showVersions && saved { VersionsView(project: project) } else { AppInfoView(project: project) }
             }
-            .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
+            .inspectorColumnWidth(min: 300, ideal: 340, max: 460)
         }
         .navigationTitle(project.name)
         .navigationSubtitle(usageSummary)
@@ -998,11 +998,44 @@ struct ProjectView: View {
     }
 }
 
+/// A label and its value on one row when they fit, else the value under the label, both left-aligned: the
+/// info panel is narrow, and a value squeezed to the right edge in two lines is hard to read.
+private struct InfoRow<Value: View>: View {
+    let title: String
+    let value: Value
+
+    init(_ title: String, @ViewBuilder value: () -> Value) {
+        self.title = title
+        self.value = value()
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                Spacer(minLength: 12)
+                value.fixedSize()
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                value
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+extension InfoRow where Value == Text {
+    init(_ title: String, value: String) {
+        self.init(title) { Text(value).foregroundStyle(.secondary) }
+    }
+}
+
 /// The info panel: what an app has cost, which models it uses, and where it lives.
 struct AppInfoView: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
-    /// This app's own model choices; nil fields follow Settings.
+    /// This app's own model choices, from an earlier Lamp that let it make them; nil fields follow Settings.
     @State private var models: AppModels
 
     init(project: LampProject) {
@@ -1011,6 +1044,11 @@ struct AppInfoView: View {
     }
     /// Bumped when Settings changes, so the defaults shown are current.
     @State private var settingsRevision = 0
+    @AppStorage("settingsTab") private var settingsTab = "building"
+    @Environment(\.openSettings) private var openSettings
+    // What the AI rows resolve from, besides Settings: the models on this Mac (text, decisions, pictures).
+    @ObservedObject private var local = LocalModels.shared
+    @ObservedObject private var images = ImageModels.shared
 
     private var usage: AppUsage { store.usage[project.id] ?? AppUsage() }
     private var requests: Int { (store.logs[project.id] ?? []).filter { $0.kind == .user }.count }
@@ -1032,80 +1070,71 @@ struct AppInfoView: View {
                 .frame(maxWidth: .infinity)
             }
             Section("Usage") {
-                LabeledContent("Total cost", value: dollars(usage.totalCost))
-                LabeledContent("Changes requested", value: "\(requests)")
-                LabeledContent("Building the app") {
-                    Text(runs(usage.agentRuns ?? 0, "agent run") + " · " + dollars(usage.agentCost ?? 0))
+                InfoRow("Total cost", value: dollars(usage.totalCost))
+                InfoRow("Changes requested", value: "\(requests)")
+                InfoRow("Building the app") {
+                    Text(runs(usage.agentRuns ?? 0, "agent run") + " · " + dollars(usage.agentCost ?? 0)).foregroundStyle(.secondary)
                 }
-                LabeledContent("AI inside the app") {
-                    Text(runs(usage.calls, "call") + " · " + dollars(usage.cost))
+                InfoRow("AI inside the app") {
+                    Text(runs(usage.calls, "call") + " · " + dollars(usage.cost)).foregroundStyle(.secondary)
                 }
             }
+            // What answers this app, read-only: models are chosen in Settings. Nothing that answers is Not Ready.
             Section {
-                let _ = settingsRevision
-                Picker("Text", selection: choice(\.text, default: AppAI.model.id)) {
-                    ForEach(AppAI.textRouteGroups(including: models.text), id: \.title) { group in
-                        Section(group.title) { ForEach(group.routes) { Text(Self.short($0.name)).tag($0.id) } }
-                    }
+                let _ = (settingsRevision, models)
+                ForEach(Capability.allCases) { capability in
+                    answerRow(capability.title, AppAI.resolve(capability, for: project))
                 }
-                Picker("Making images", selection: choice(\.image, default: Icons.artModel)) {
-                    ForEach(Icons.imageChoices, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
-                }
-                Picker("Decisions", selection: choice(\.decision, default: AppAI.decisionModel.id)) {
-                    ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }
-                }
-                if project.platform == .iphone {
-                    Picker("Away from this Mac", selection: choice(\.away, default: AppAI.awayModel.id)) {
-                        ForEach(AppAI.anthropicModels, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
-                    }
-                    Picker("Pictures away", selection: choice(\.awayImage, default: AppAI.awayImageModel)) {
-                        ForEach(Icons.artModels, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
-                    }
-                    Picker("Decisions away", selection: choice(\.awayDecision, default: AppAI.awayDecisionModel.id)) {
-                        ForEach(AppAI.awayDecisionModels, id: \.id) { Text($0.label).tag($0.id) }
+                if project.platform == .iphone, Experiments.iosApps {
+                    // Away from the Mac a phone answers only through the OpenRouter key: without one, one row says so.
+                    if Provider.hasKey {
+                        ForEach(Capability.allCases) { capability in
+                            answerRow("\(capability.title) away", AppAI.resolve(capability, for: project, in: .phoneAway))
+                        }
+                    } else {
+                        InfoRow("Away from this Mac") { NotReadyBadge() }
                     }
                 }
             } header: {
                 Text("AI inside this app")
             } footer: {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Starts as your choices in Settings. Changes apply straight away, without rebuilding.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    // What this app's choices come to, and what would make them better: the same as Settings says.
-                    let _ = (settingsRevision, models)
-                    ForEach(Capability.allCases) { CapabilityNote(capability: $0, project: project) }
-                    if project.platform == .iphone, Experiments.iosApps {
-                        CapabilityNote(capability: .text, project: project, context: .phoneAway)
+                HStack {
+                    Button("Configure Providers…") { settingsTab = "providers"; openSettings() }
+                    // Choices an earlier Lamp let this app make for itself: the one thing left to change here.
+                    if models != AppModels() {
+                        Button("Use Settings' Choices") { models = AppModels(); models.save(project) }
                     }
                 }
+                .controlSize(.small)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             Section {
                 let _ = settingsRevision
-                LabeledContent("Agent", value: Builder.engine.title)
+                InfoRow("Agent", value: Builder.engine.title)
                 if Builder.engine == .claude || Builder.engine == .codex {
                     let model = Builder.engineModel(Builder.engine)
                     let names = Builder.engine == .claude ? Builder.claudeModels : Builder.codexModels
-                    LabeledContent("Building with", value: model.isEmpty ? "\(Builder.engine.title)'s default"
+                    InfoRow("Building with", value: model.isEmpty ? "\(Builder.engine.title)'s default"
                                    : names.first { $0.id == model }?.label ?? model)
                 }
                 if Builder.engine == .pi {
-                    LabeledContent("Provider", value: providerName)
-                    if !Builder.piModel.isEmpty { LabeledContent("Building with", value: buildModel) }
+                    InfoRow("Provider", value: providerName)
+                    if !Builder.piModel.isEmpty { InfoRow("Building with", value: buildModel) }
                 }
             } header: {
                 Text("Building")
             } footer: {
-                SettingsLink { Text("Change in Settings…") }
-                    .buttonStyle(.link)
+                Button("Building Settings…") { settingsTab = "building"; openSettings() }
+                    .controlSize(.small)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             Section("App") {
                 if let stamp = store.stamps[project.id] {
-                    LabeledContent("Built with") {
+                    InfoRow("Built with") {
                         Text(stamp.summary).foregroundStyle(.secondary)
                     }
                 }
-                LabeledContent("Bundle ID") { Text(project.bundleID).textSelection(.enabled) }
+                InfoRow("Bundle ID") { Text(project.bundleID).foregroundStyle(.secondary).textSelection(.enabled) }
                 Button("Show App in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
                 }
@@ -1118,6 +1147,9 @@ struct AppInfoView: View {
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
             settingsRevision += 1
         }
+        // Keys and this app's own choices change what answers it too.
+        .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in settingsRevision += 1 }
+        .onReceive(NotificationCenter.default.publisher(for: AppModels.changed)) { _ in models = AppModels.load(project) }
         .onChange(of: project.id) { models = AppModels.load(project) }
     }
 
@@ -1129,13 +1161,13 @@ struct AppInfoView: View {
         return inside.hasPrefix("Claude") ? inside : String(label[..<open]).trimmed
     }
 
-    /// One of this app's model choices. Picking the model Settings uses means following Settings, so the app
-    /// keeps up if that default changes; any other pick is this app's own.
-    private func choice(_ field: WritableKeyPath<AppModels, String?>, default fallback: String) -> Binding<String> {
-        Binding(get: { models[keyPath: field] ?? fallback }, set: {
-            models[keyPath: field] = $0 == fallback ? nil : $0
-            models.save(project)
-        })
+    /// What answers one capability, named short (the panel is narrow), or Not Ready.
+    @ViewBuilder private func answerRow(_ title: String, _ resolution: Resolution) -> some View {
+        if resolution.tier == .none {
+            InfoRow(title) { NotReadyBadge() }
+        } else {
+            InfoRow(title, value: Self.short(resolution.answer ?? ""))
+        }
     }
 
     private var providerName: String {
