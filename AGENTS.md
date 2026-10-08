@@ -34,7 +34,7 @@ A capability given to one engine must be given to all of them that can take it, 
   with the request. `Memory.brief` adds them once per conversation and again only when the notes were
   changed by someone else, going by what `.lamp/notes-shown.json` says that engine's conversation last knew;
   most requests carry nothing. A conversation its engine has compacted is told again (pi's and Claude Code's parsers report
-  `.compacted`; Codex doesn't say, so its conversations are told again every few requests), and it is an experiment (`Experiments.memory`, off by default, in Settings → Experimental): off, there are no notes tools, rule or summaries, and no Memory tab in Settings.
+  `.compacted`; Codex doesn't say, so its conversations are told again every few requests), and the person can switch it off (`Memory.isOn`, on by default, the checkbox at the top of Settings → Memory): off, there are no notes tools, rule or summaries, and Settings doesn't list the notes. The switch keeps the key it had as an experiment that was off by default (`experimentMemory`), so whoever chose then keeps their choice and only someone who never chose gets the default.
   What is worth saving is said in `save_notes`'s description: every word there is paid for on every call.
 - **Approvals and privacy**: shell commands go through `/agent/approve` for every engine (pi's extension,
   Claude Code's hooks, Codex's hooks); file access outside the app's folder is checked the same way.
@@ -237,7 +237,7 @@ card), check:
 
 Each tab has one job: **Building**, how Lamp builds apps; **Apps**, what apps use while they run; **AI
 Providers**, what's on this Mac, then cloud providers, with keys, sign-ins and downloads (other tabs' menus
-end in "Configure providers…", which leads here); **Experimental**, what the Lamp team is still working on.
+end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (none now: bring `ExperimentalSettings` back with the next one).
 Lay out with the shared pieces in `Setup.swift`, and extend one rather than lay out by hand:
 `SettingsCheckboxes` (on/off is a checkbox, box first, never a switch), `.underCheckbox()`,
 `.checkboxNote(…)`, `NotReadyBadge`, `NotReadyRow`, `CapabilityNote` (the gray why-and-fix under Not Ready),

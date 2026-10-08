@@ -48,11 +48,15 @@ enum Memory {
     /// The summary is what rides along with requests, so it stays a line.
     static let summaryLimit = 120
 
-    /// An experiment, off until the person switches it on in Settings → Experimental. Off, the
+    /// On unless the person has switched it off in Settings → Memory. Off, the
     /// agent hears nothing of the notes and has no tools for them, so nothing is noted and they cost nothing;
     /// what was noted while it was on stays, for when it's switched back on.
+    /// The key keeps the name it had while this was an experiment, off by default, so a choice made then
+    /// still stands: only someone who never chose gets the new default.
     static let switchKey = "experimentMemory"
-    static var isOn: Bool { Experiments.memory }
+    static let onByDefault = true
+    static var isOn: Bool { isOn(in: .standard) }
+    static func isOn(in defaults: UserDefaults) -> Bool { defaults.object(forKey: switchKey) as? Bool ?? onByDefault }
     static let tools: Set<String> = ["read_notes", "save_notes"]
 
     /// Posted after notes are saved or cleared, so an open Settings window shows what the agent just noted.
@@ -349,10 +353,11 @@ enum Memory {
     }
 }
 
-/// Settings → Memory, a tab that is there while the experiment is on: what Lamp has noted about the person
-/// and about each app, to open, change and clear.
+/// Settings → Memory: whether Lamp keeps notes, and under that what it has noted about the person and about
+/// each app, to open, change and clear.
 struct MemorySettings: View {
     @EnvironmentObject private var store: Store
+    @AppStorage(Memory.switchKey) private var memory = Memory.onByDefault
     @State private var revision = 0   // bumps when notes change, so the rows re-read them
     @State private var editing: Row?
 
@@ -370,30 +375,38 @@ struct MemorySettings: View {
     var body: some View {
         Form {
             Section {
-                ForEach([Row(id: "", title: "About you")] + store.projects.map { Row(id: $0.id, title: "About \($0.name)") }) { row in
-                    let notes = place(row).map(Memory.read) ?? Memory.Notes()
-                    Button { editing = row } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(row.title)
-                                Text(notes.isEmpty ? "Nothing yet" : notes.summary)
-                                    .font(.caption).foregroundStyle(notes.isEmpty ? .tertiary : .secondary).lineLimit(2)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .id("\(row.id)-\(revision)")
+                SettingsCheckboxes {
+                    Toggle("Remember how I like things", isOn: $memory)
                 }
-            } header: {
-                Text("What Lamp remembers")
-            } footer: {
-                Text("Lamp keeps short notes on how you like things, so a new app starts out in your style, and on what you decided about each app, so it isn't forgotten or offered again, whichever AI is building. The AI is told only the line under each name, and opens the notes when a request needs them. They stay on this Mac: a shared copy of an app doesn't include them. Click one to read, change or clear it.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            // The notes depend on the checkbox: off, nothing reads them, so they aren't listed.
+            if memory {
+                Section {
+                    ForEach([Row(id: "", title: "About you")] + store.projects.map { Row(id: $0.id, title: "About \($0.name)") }) { row in
+                        let notes = place(row).map(Memory.read) ?? Memory.Notes()
+                        Button { editing = row } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(row.title)
+                                    Text(notes.isEmpty ? "Nothing yet" : notes.summary)
+                                        .font(.caption).foregroundStyle(notes.isEmpty ? .tertiary : .secondary).lineLimit(2)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .id("\(row.id)-\(revision)")
+                    }
+                } header: {
+                    Text("What Lamp remembers")
+                } footer: {
+                    Text("Lamp keeps short notes on how you like things, so a new app starts out in your style, and on what you decided about each app, so it isn't forgotten or offered again, whichever AI is building. The AI is told only the line under each name, and opens the notes when a request needs them. They stay on this Mac: a shared copy of an app doesn't include them. Click one to read, change or clear it.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
         .settingsPane()
