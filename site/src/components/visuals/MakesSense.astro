@@ -1,0 +1,26 @@
+---
+// For "Makes sense of anything.": three pages of small print, faded and fanned, and the one line an app
+// made of them. A 432×280 canvas, the tile's size on a laptop (four columns of ten), 40px in to line up with
+// the words.
+const lines = [0.92, 0.84, 0.96, 0.7, 0.88, 0.94, 0.62, 0.9, 0.8];
+---
+
+<div aria-hidden="true" class="relative h-[200px] overflow-hidden select-none sm:h-[280px]">
+  <div class="absolute inset-0 h-[140%] w-[140%] origin-top-left scale-[0.714] sm:h-full sm:w-full sm:scale-100">
+    {
+      [2, 1, 0].map((depth) => (
+        <div
+          class="absolute top-10 w-[220px] rounded-lg bg-white p-4 shadow-[0_8px_20px_rgba(0,0,0,0.14)]"
+          style={`left: ${40 + depth * 22}px; top: ${40 - depth * 10}px; opacity: ${1 - depth * 0.25}; rotate: ${depth * 3}deg`}
+        >
+          <div class="flex flex-col gap-2">
+            {lines.map((w) => <span class="h-1.5 rounded-full bg-black/12" style={`width: ${w * 100}%`} />)}
+          </div>
+        </div>
+      ))
+    }
+    <div class="absolute top-[150px] left-[150px] w-[250px] rounded-xl bg-white p-4 text-[14px] leading-snug text-ink shadow-[0_14px_34px_rgba(0,0,0,0.24)]">
+      <span class="font-semibold">In short:</span> the lease renews on 1&nbsp;March unless you give two months' notice.
+    </div>
+  </div>
+</div>
