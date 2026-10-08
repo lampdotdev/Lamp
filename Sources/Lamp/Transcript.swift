@@ -102,6 +102,29 @@ struct ToolCall {
 }
 
 extension LogLine {
+    /// About how many lines of a chat are on screen to begin with, and how many more each
+    /// Show Earlier Messages brings in. The chat lays out every row it shows, so this is what bounds the
+    /// cost of a long one.
+    static let recentCount = 60
+
+    /// Where the chat starts showing from: the request that opens a turn, far enough back that at least
+    /// `count` lines come before the latest request, or the beginning if there aren't that many. The latest
+    /// turn doesn't count towards it, so the start only moves when a request is sent, never while an answer
+    /// is being written under what someone is reading.
+    static func recentStart(in lines: [LogLine], atLeast count: Int) -> Int {
+        guard let latest = lines.lastIndex(where: { $0.kind == .user }) else { return 0 }
+        var start = latest
+        while start > 0, latest - start < count {
+            start = lines[..<start].lastIndex { $0.kind == .user } ?? 0
+        }
+        return start
+    }
+
+    /// How many lines before the latest request a chat starting at `start` is showing.
+    static func reach(in lines: [LogLine], from start: Int) -> Int {
+        (lines.lastIndex { $0.kind == .user } ?? start) - start
+    }
+
     /// The chat as most people read it: what they asked, what the agent answered and what happened to the
     /// app. The agent's working is left out, both its steps and what it says between them, which is where
     /// the file names and code are; the progress line stands in for it. Agent Details shows everything.

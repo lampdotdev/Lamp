@@ -435,9 +435,8 @@ struct ProjectView: View {
     private var submissionPending: Bool { store.pendingSubmissions.contains(store.current(project)?.id ?? project.id) }
     /// A request on its way out again: what it replaces stays out of sight until the chat has let go of it.
     @State private var sendingAgain: UUID?
-    /// The end of the chat has been on screen. Only the rows in view are made, so this is how the chat
-    /// knows it opened on its latest messages (see `body`).
-    @State private var endShown = false
+    /// How many lines before the latest request the chat reaches back for. Show Earlier Messages raises it.
+    @State private var reach = LogLine.recentCount
     /// What the toolbar knows of the app's history, for which of its buttons can do anything. Nil until read.
     @State private var history: History?
 
@@ -487,14 +486,37 @@ struct ProjectView: View {
     /// The chat itself, scrolled to its end. Kept out of `body`, like the rows and the message box, because
     /// as one expression the whole view is more than the compiler can type-check in reasonable time.
     private func chat(_ lines: [LogLine]) -> some View {
-        ScrollViewReader { proxy in
+        // Only the end of a long chat is shown until more is asked for (see `LogLine.recentStart`).
+        let start = LogLine.recentStart(in: lines, atLeast: reach)
+        let shown = start > 0 ? Array(lines[start...]) : lines
+        return ScrollViewReader { proxy in
             GeometryReader { area in
                 ScrollView {
-                    // While a new app is being built, its card stays in view above the steps, if there's
-                    // room: in a short window a pinned card would fill the chat and hide everything else.
-                    let pinned: PinnedScrollableViews = building != nil && area.size.height >= Self.roomToPinCard ? [.sectionHeaders] : []
-                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: pinned) {
-                        chatRows(lines, height: area.size.height)
+                    // Every row shown is laid out, not only the ones in view. A stack that makes its rows as
+                    // they scroll into view has to guess the height of the rest, and during a turn that
+                    // guessing could go round without ever settling, with Lamp stuck for good.
+                    VStack(alignment: .leading, spacing: 0) {
+                        if start > 0 {
+                            Button("Show Earlier Messages") {
+                                guard let top = shown.first?.id else { return }
+                                // From what's shown, not from what was asked for: a long turn can take the
+                                // chat further back than that, and the next lot has to start beyond it.
+                                reach = LogLine.reach(in: lines, from: start) + LogLine.recentCount
+                                // They come in above what's being read, which stays where it is.
+                                Task { @MainActor in
+                                    await Task.yield()
+                                    proxy.scrollTo(top, anchor: .top)
+                                }
+                            }
+                            .buttonStyle(.link)
+                            .font(.callout)
+                            .frame(maxWidth: .infinity)
+                            .padding(.bottom, 24)
+                        }
+                        // While a new app is being built, its card stays in view above the steps, if there's
+                        // room: in a short window a pinned card would fill the chat and hide everything else.
+                        chatRows(shown, height: area.size.height,
+                                 cardPinned: building != nil && area.size.height >= Self.roomToPinCard)
                     }
                     // A readable line length; wide windows get margins instead of longer lines.
                     .frame(maxWidth: 640)
@@ -506,20 +528,6 @@ struct ProjectView: View {
                 // A chat opens on its latest messages: the scroll view starts at the bottom, with
                 // no scrolling to get there.
                 .defaultScrollAnchor(.bottom)
-                // That start is worked out from a guess at the height of the rows that aren't made yet,
-                // and in a long chat the guess can land anywhere: the top, the middle, past the end. So
-                // the chat then goes to its last row, which it can only do once it has been laid out:
-                // sooner does nothing, and there's no telling when that is but by the end showing up.
-                // It tries for half a second, and once more when the end is there, to land on it exactly.
-                .task {
-                    for attempt in 0..<10 {
-                        if attempt == 0 { await Task.yield() } else { try? await Task.sleep(for: .milliseconds(50)) }
-                        guard !Task.isCancelled else { return }
-                        let done = endShown
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                        if done { return }
-                    }
-                }
                 .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
                 .onChange(of: written(lines)) { proxy.scrollTo("bottom", anchor: .bottom) }
                 .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
@@ -532,7 +540,7 @@ struct ProjectView: View {
     /// The chat's rows: the intro for a new app, the transcript with its build card or activity, and the
     /// messages waiting their turn.
     @ViewBuilder
-    private func chatRows(_ lines: [LogLine], height: CGFloat) -> some View {
+    private func chatRows(_ lines: [LogLine], height: CGFloat, cardPinned: Bool) -> some View {
         if lines.isEmpty && queued.isEmpty {
             // In the middle of the chat area: less the scroll view's own padding.
             NewAppIntro(project: project, draft: draftBinding)
@@ -543,13 +551,15 @@ struct ProjectView: View {
             // The build card goes straight after the request; what the agent says and
             // does follows it.
             transcript(Array(lines[...request]), busy: false)
-            Section {
-                transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy)
-            } header: {
-                BuildCard(project: project, progress: card)
-                    .padding(.top, 16).padding(.bottom, 12)
-                    .background(Color(nsColor: .textBackgroundColor))
-            }
+            BuildCard(project: project, progress: card)
+                .padding(.top, 16).padding(.bottom, 12)
+                .background(Color(nsColor: .textBackgroundColor))
+                // Pinned: once it reaches the top of the chat it stays there, over the steps going by.
+                .visualEffect { content, geometry in
+                    content.offset(y: cardPinned ? max(0, -geometry.frame(in: .scrollView).minY) : 0)
+                }
+                .zIndex(1)
+            transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy)
         } else {
             let progress = busy ? store.progress[project.id] : nil
             transcript(lines, busy: busy, progressShown: progress != nil)
@@ -560,7 +570,6 @@ struct ProjectView: View {
                 .padding(.top, lines.isEmpty ? 0 : 32)
         }
         Color.clear.frame(height: 1).id("bottom")
-            .onAppear { endShown = true }
     }
 
     /// The message box with the buttons around it.
