@@ -85,6 +85,15 @@ struct LogLine: Identifiable, Codable, Equatable {
         }
     }
 
+    /// Where an offer stands in a chat: not made yet, made already, or made only as the card about the app's
+    /// icon, which drawing icons by hand has answered while leaving the app's own pictures unanswered. An
+    /// offer that isn't about the icon then takes that card's place (the line at the index given).
+    enum Standing: Equatable { case new, offered, replaces(Int) }
+    static func standing(of offer: SetupOffer, in lines: [LogLine], iconsByHand: Bool) -> Standing {
+        guard let index = lines.firstIndex(where: { $0.setupOffer == offer }) else { return .new }
+        return iconsByHand && lines[index].setupOffer?.icon == true && offer.icon != true ? .replaces(index) : .offered
+    }
+
     /// Whether a chat with these lines should get a line offering to draw the design `key`: not when it has
     /// one for that design already, nor when the card about the icon is there, which offers it itself.
     static func offersDrawing(_ key: String, after lines: [LogLine]) -> Bool {
@@ -2573,10 +2582,15 @@ final class Store: ObservableObject {
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
             // The person's own phone gets the app when they press Play or a change is finished; the agent's
             // looks (not in front) stay on the simulator, which is the only screen Lamp can see.
-            if inFront, Experiments.iosApps, let udid = project.device {
-                return await installOnDevice(project, owner: owner, udid: udid)
+            let problem = if inFront, Experiments.iosApps, let udid = project.device {
+                await installOnDevice(project, owner: owner, udid: udid)
+            } else {
+                await installOnSimulator(project, owner: owner, inFront: inFront)
             }
-            return await installOnSimulator(project, owner: owner, inFront: inFront)
+            // As for a Mac app below: the artwork asked for while the icon was designed, before there was
+            // an app, is asked for again now there is one (an icon drawn by hand is only offered then).
+            upgradeIconArt(project)
+            return problem
         }
         await quit(project)
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
@@ -3002,10 +3016,17 @@ final class Store: ObservableObject {
         guard !offer.declined(in: fromAgent ? project : nil) else {
             return "The person said Not Now to setting this up. Don't offer it again; build so the app copes without it."
         }
-        guard !offers(in: project).contains(offer) else {
-            return "Lamp already offered this in the chat. Don't offer it again."
+        switch LogLine.standing(of: offer, in: logs[project.id] ?? [], iconsByHand: Icons.drawnByHand) {
+        case .offered: return "Lamp already offered this in the chat. Don't offer it again."
+        case .replaces(let index):
+            // The card there was about the icon and is folded away, answered by drawing icons by hand.
+            // This is about pictures the app makes, which nothing answers: it takes that card's place, and
+            // the icon gets its line instead.
+            logs[project.id]?.remove(at: index)
+            log(project, .offer, reason, offer: offer)
+            upgradeIconArt(project)
+        case .new: log(project, .offer, reason, offer: offer)
         }
-        log(project, .offer, reason, offer: offer)
         return "Lamp showed the person a card in the chat to set up \(offer.capability.title.lowercased()). Carry on; don't mention keys or settings in your reply."
     }
 
@@ -3046,10 +3067,14 @@ final class Store: ObservableObject {
                            because: "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) a proper icon, and your apps will be able to make pictures too.")
                 return
             }
+            // The person may choose to draw icons themselves during either wait here: from then on nothing
+            // Lamp drew is used, and the drawing is theirs to do.
+            guard !Icons.drawnByHand else { return offerDrawing(project, spec: spec) }
             do {
                 let art = try await Icons.generateBestArt(spec, appName: project.name) { [weak self] in
                     self?.log(project, .detail, $0)
                 }
+                guard !Icons.drawnByHand else { return offerDrawing(project, spec: spec) }
                 // A picture picked in Image Playground while these were being drawn is the person's choice: it stays.
                 guard Icons.cachedArt(project, spec: spec) == nil else { return }
                 let url = Icons.artURL(project, spec: spec)

@@ -140,6 +140,23 @@ final class IconsByHandTests: XCTestCase {
         XCTAssertTrue(LogLine.offersDrawing("a.png", after: [reply, pictures]))
     }
 
+    func testAPictureOfferTakesThePlaceOfAnAnsweredIconCard() {
+        let reply = LogLine(kind: .agent, text: "Tide Times is ready.")
+        let iconCard = LogLine(kind: .offer, text: "Nothing on this Mac can draw pictures yet.", offer: SetupOffer(capability: .pictures, icon: true))
+        let pictures = SetupOffer(capability: .pictures)
+        XCTAssertEqual(LogLine.standing(of: pictures, in: [reply], iconsByHand: true), .new)
+        // Folded to All set by drawing icons by hand, the icon's card would leave the app's pictures with
+        // no way to be set up: the app's own request replaces it.
+        XCTAssertEqual(LogLine.standing(of: pictures, in: [reply, iconCard], iconsByHand: true), .replaces(1))
+        // Still open (icons aren't drawn by hand), it offers the same ways: one card is enough.
+        XCTAssertEqual(LogLine.standing(of: pictures, in: [reply, iconCard], iconsByHand: false), .offered)
+        // The icon's card isn't raised again over itself, nor over a card about the app's pictures.
+        XCTAssertEqual(LogLine.standing(of: SetupOffer(capability: .pictures, icon: true), in: [reply, iconCard], iconsByHand: true), .offered)
+        let picturesCard = LogLine(kind: .offer, text: "Tide Times just tried to make a picture.", offer: pictures)
+        XCTAssertEqual(LogLine.standing(of: pictures, in: [reply, picturesCard], iconsByHand: true), .offered)
+        XCTAssertEqual(LogLine.standing(of: SetupOffer(capability: .text), in: [reply, iconCard], iconsByHand: true), .new)
+    }
+
     func testTheLineInTheChatSurvivesItsFile() throws {
         let line = LogLine(kind: .drawIcon, text: "0123456789abcdef.png")
         let read = try JSONDecoder().decode(LogLine.self, from: JSONEncoder().encode(line))
