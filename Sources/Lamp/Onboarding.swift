@@ -66,14 +66,23 @@ struct OnboardingView: View {
             }
             .id(step)
             .transition(.asymmetric(insertion: .stage(from: forward ? 1 : -1), removal: .stage(from: forward ? -1 : 1)))
-            .opacity(leaving ? 0 : 1)
+            .opacity(leaving || store.importBuild != nil ? 0 : 1)
             .scaleEffect(leaving ? 1.03 : 1)
+            // A shared app building takes the welcome's place until it opens. The step stays underneath,
+            // switched off, so it comes back as it was left.
+            .disabled(store.importBuild != nil)
+
+            if let build = store.importBuild {
+                ImportBuildStage(build: build)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
 
             Dots(current: step)
                 .frame(maxHeight: .infinity, alignment: .bottom)
                 .padding(.bottom, 22)
-                .opacity(step == .hello || leaving ? 0 : 1)
+                .opacity(step == .hello || leaving || store.importBuild != nil ? 0 : 1)
         }
+        .animation(.easeInOut(duration: 0.35), value: store.importBuild?.id)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
             ZStack {
@@ -126,6 +135,7 @@ struct OnboardingView: View {
             // Once Lamp's own view is in, so the welcome's fixed size doesn't hold the window back.
             try? await Task.sleep(for: .seconds(0.05))
             if let window { Chrome.restore(window, to: Onboarding.appSize) }
+            store.openWaitingImport()
             guard !idea.isEmpty else { return }
             store.create()
             if let project = store.selected { store.send(idea, to: project) }
@@ -167,6 +177,44 @@ private struct HelloStep: View {
             try? await Task.sleep(for: .seconds(0.15))
             shown = true
         }
+    }
+}
+
+/// A shared app opened during the welcome: what it is and that it's being built, for as long as that
+/// takes, so the window never sits unchanged looking as if nothing happened.
+private struct ImportBuildStage: View {
+    let build: Store.ImportBuild
+    @EnvironmentObject private var store: Store
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Group {
+                if let icon = store.icons[build.id] {
+                    Image(nsImage: icon).resizable().interpolation(.high)
+                } else {
+                    BlueprintIcon(letter: build.name.first, size: 112)
+                }
+            }
+            .frame(width: 112, height: 112)
+            .shadow(color: .black.opacity(0.12), radius: 14, y: 8)
+            .padding(.bottom, 22)
+            if build.failed {
+                Heading(title: "\(build.name) didn't open",
+                        detail: "It's in your apps. Finish the welcome, then ask Lamp to fix it.")
+                BigButton(title: "Continue") { store.importBuild = nil }
+                    .keyboardShortcut(.defaultAction)
+                    .padding(.top, 28)
+            } else {
+                Heading(title: "Building \(build.name)…", detail: "It opens as soon as it's ready, usually in under a minute.")
+                ProgressView()
+                    .progressViewStyle(.linear)
+                    .frame(width: 220)
+                    .padding(.top, 28)
+            }
+        }
+        .padding(.horizontal, 60)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(.easeInOut(duration: 0.3), value: build.failed)
     }
 }
 

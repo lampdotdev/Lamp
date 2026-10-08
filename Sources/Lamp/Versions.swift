@@ -20,7 +20,8 @@ struct AppVersion: Identifiable, Hashable {
     /// Lamp wrote the message itself (Undo, Rename…), so it's already short and needs no title.
     var isLampNote: Bool {
         ["Undid “", "Restored to “", "Rename to "].contains { message.hasPrefix($0) }
-            || ["Scaffold", "Imported from a shared file", "Fix a crash on launch"].contains(message)
+            || ["Scaffold", "Imported from a shared file", "Updated from a shared file",
+                "Before updating from a shared file", "Fix a crash on launch"].contains(message)
     }
     var shortID: String { String(id.prefix(8)) }
 }
@@ -180,6 +181,19 @@ enum Versions {
         Note from Lamp: before this message, the user went back to an earlier version of the app \
         (“\(label)”, from \(date.formatted(date: .abbreviated, time: .shortened))). The files may no longer \
         match what you remember from this conversation, so read them again before editing.
+        """
+        try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
+    }
+
+    /// Remembers that the app's code was replaced by a newer version someone shared, so the agent hears about
+    /// it on the next request. Its conversation still remembers the code from before.
+    static func rememberUpdate(_ project: LampProject) {
+        let note = """
+
+
+        Note from Lamp: before this message, the user updated this app from a newer version of it that \
+        someone shared with them. Its code, files and description were replaced, so they may no longer match \
+        what you remember from this conversation: read them again before editing.
         """
         try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
     }

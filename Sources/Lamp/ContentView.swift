@@ -1323,13 +1323,13 @@ struct ImportReviewView: View {
     @State private var room = CGFloat.infinity
     @State private var sheet: NSWindow?
     /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
-    /// verdict under the middle, and the buttons.
+    /// verdict under the middle, the line about the copy already here when there is one, and the buttons.
     @State private var fixed: [Part: CGFloat] = [:]
-    private enum Part { case name, verdict, buttons }
+    private enum Part { case name, verdict, existing, buttons }
     /// How tall the scrolling middle may be: the height a long review always stopped at, or less when the
-    /// screen below the sheet's top is shorter than that. The 96 is the sheet's padding and the gaps
-    /// between its four parts.
-    private var limit: CGFloat { max(60, min(400, room - fixed.values.reduce(0, +) - 96)) }
+    /// screen below the sheet's top is shorter than that. Taken off besides the fixed parts: the sheet's
+    /// padding (48) and a 16-point gap after each part but the last.
+    private var limit: CGFloat { max(60, min(400, room - fixed.values.reduce(0, +) - 48 - 16 * CGFloat(fixed.count))) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1341,6 +1341,9 @@ struct ImportReviewView: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Open “\(pending.package.name)”?").font(.title2.bold())
+                    if pending.waited {
+                        Text("You opened this during setup.").font(.callout).foregroundStyle(.secondary)
+                    }
                     // The sender's words, so the line under them says whose they are.
                     if let description {
                         Text(verbatim: description).font(.callout).lineLimit(4)
@@ -1412,21 +1415,50 @@ struct ImportReviewView: View {
                 .padding(.vertical, 20)
             }
 
+            if let existing = pending.existing {
+                // The buttons say what each does; this is what someone would worry about before choosing Update.
+                Label {
+                    Text("You already have this app\(existing.name == pending.package.name ? "" : ", as “\(existing.name)”"). Updating keeps your data, and you can go back if you change your mind.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(.secondary)
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.existing] = $0 }
+            }
+
             HStack {
                 Spacer()
                 // Escape always cancels. Return builds only when the review is in and vouches for the app
                 // (`ImportReview.opening`); anything less takes a deliberate click.
                 Button("Cancel", role: .cancel) { store.cancelImport() }
                     .keyboardShortcut(.cancelAction)
-                switch review?.opening {
-                case .byReturn:
-                    Button("Build & Open") { store.confirmImport() }
-                        .keyboardShortcut(.defaultAction)
-                case .anyway:
-                    Button("Open Anyway", role: .destructive) { store.confirmImport() }
-                case .byClick, nil:
-                    Button("Build & Open") { store.confirmImport() }
+                if pending.existing != nil {
+                    // The app is already here: the file either becomes its next version or a second app.
+                    // Either way its code runs, so Update follows the same rule as opening does.
+                    Button("Keep Both") { store.confirmImport() }
                         .disabled(review == nil)
+                    switch review?.opening {
+                    case .byReturn:
+                        Button("Update") { store.confirmUpdate() }
+                            .keyboardShortcut(.defaultAction)
+                    case .anyway:
+                        Button("Update Anyway", role: .destructive) { store.confirmUpdate() }
+                    case .byClick, nil:
+                        Button("Update") { store.confirmUpdate() }
+                            .disabled(review == nil)
+                    }
+                } else {
+                    switch review?.opening {
+                    case .byReturn:
+                        Button("Build & Open") { store.confirmImport() }
+                            .keyboardShortcut(.defaultAction)
+                    case .anyway:
+                        Button("Open Anyway", role: .destructive) { store.confirmImport() }
+                    case .byClick, nil:
+                        Button("Build & Open") { store.confirmImport() }
+                            .disabled(review == nil)
+                    }
                 }
             }
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.buttons] = $0 }
