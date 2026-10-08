@@ -208,8 +208,27 @@ Providers**, what's on this Mac, then cloud providers, with keys, sign-ins and d
 end in "Configure providers…", which leads here); **Experimental**, what the Lamp team is still working on.
 Lay out with the shared pieces in `Setup.swift`, and extend one rather than lay out by hand:
 `SettingsCheckboxes` (on/off is a checkbox, box first, never a switch), `.underCheckbox()`,
-`.checkboxNote(…)`, `NotReadyBadge`, `NotReadyRow`, `KeyNote`, `ImageModelRow`, and `.settingsPane()` at the
-end of each tab. A PR that adds to Settings says which tab, and why the option needs to exist at all.
+`.checkboxNote(…)`, `NotReadyBadge`, `NotReadyRow`, `CapabilityNote` (the gray why-and-fix under Not Ready),
+`ImageModelRow`, and `.settingsPane()` at the end of each tab. A PR that adds to Settings says which tab, and why the option needs to exist at all.
+
+### The app's info panel
+
+The info panel (`AppInfoView`, ⓘ in an app's toolbar) shows facts about one app; it chooses nothing. What
+belongs: what the app has cost, what answers its AI (from `AppAI.resolve`, so it's what really answers),
+how Lamp builds it, and where it lives. What doesn't: menus, switches, explanations, upgrade offers, or
+anything that's the same for every app and already in Settings.
+
+- **Read-only.** A thing that can be changed is changed in Settings: each section ends in one small button
+  that opens the tab where it's chosen ("Configure Providers…", "Building Settings…"). The only exception is
+  undoing what an app was left with by an earlier Lamp ("Use Settings' Choices", shown only when there is
+  something to undo).
+- **Facts, not notes.** A row is a label and its value. Nothing answers: `NotReadyBadge` as the value, with
+  no sentence under it; the fix is in Settings, one button away. No footers or captions.
+- **Fit the width.** Rows are `InfoRow`: the value beside its label when it fits, else under it, both
+  left-aligned. Keep values short (`AppInfoView.short`), and keep the panel's width (`inspectorColumnWidth`)
+  wide enough that most rows fit on one line.
+- **Current.** The panel observes whatever its rows read (Settings, keys, the app's own choices, the models
+  on this Mac), so a value never outlives what it describes.
 
 ## Conventions
 

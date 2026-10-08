@@ -708,7 +708,7 @@ struct ProjectView: View {
             Group {
                 if showVersions && saved { VersionsView(project: project) } else { AppInfoView(project: project) }
             }
-            .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
+            .inspectorColumnWidth(min: 300, ideal: 340, max: 460)
         }
         .navigationTitle(project.name)
         .navigationSubtitle(usageSummary)
@@ -998,6 +998,39 @@ struct ProjectView: View {
     }
 }
 
+/// A label and its value on one row when they fit, else the value under the label, both left-aligned: the
+/// info panel is narrow, and a value squeezed to the right edge in two lines is hard to read.
+private struct InfoRow<Value: View>: View {
+    let title: String
+    let value: Value
+
+    init(_ title: String, @ViewBuilder value: () -> Value) {
+        self.title = title
+        self.value = value()
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                Spacer(minLength: 12)
+                value.fixedSize()
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                value
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+extension InfoRow where Value == Text {
+    init(_ title: String, value: String) {
+        self.init(title) { Text(value).foregroundStyle(.secondary) }
+    }
+}
+
 /// The info panel: what an app has cost, which models it uses, and where it lives.
 struct AppInfoView: View {
     @EnvironmentObject private var store: Store
@@ -1037,13 +1070,13 @@ struct AppInfoView: View {
                 .frame(maxWidth: .infinity)
             }
             Section("Usage") {
-                LabeledContent("Total cost", value: dollars(usage.totalCost))
-                LabeledContent("Changes requested", value: "\(requests)")
-                LabeledContent("Building the app") {
-                    Text(runs(usage.agentRuns ?? 0, "agent run") + " · " + dollars(usage.agentCost ?? 0))
+                InfoRow("Total cost", value: dollars(usage.totalCost))
+                InfoRow("Changes requested", value: "\(requests)")
+                InfoRow("Building the app") {
+                    Text(runs(usage.agentRuns ?? 0, "agent run") + " · " + dollars(usage.agentCost ?? 0)).foregroundStyle(.secondary)
                 }
-                LabeledContent("AI inside the app") {
-                    Text(runs(usage.calls, "call") + " · " + dollars(usage.cost))
+                InfoRow("AI inside the app") {
+                    Text(runs(usage.calls, "call") + " · " + dollars(usage.cost)).foregroundStyle(.secondary)
                 }
             }
             // What answers this app, read-only: models are chosen in Settings. Nothing that answers is Not Ready.
@@ -1059,7 +1092,7 @@ struct AppInfoView: View {
                             answerRow("\(capability.title) away", AppAI.resolve(capability, for: project, in: .phoneAway))
                         }
                     } else {
-                        NotReadyRow(title: "Away from this Mac")
+                        InfoRow("Away from this Mac") { NotReadyBadge() }
                     }
                 }
             } header: {
@@ -1077,16 +1110,16 @@ struct AppInfoView: View {
             }
             Section {
                 let _ = settingsRevision
-                LabeledContent("Agent", value: Builder.engine.title)
+                InfoRow("Agent", value: Builder.engine.title)
                 if Builder.engine == .claude || Builder.engine == .codex {
                     let model = Builder.engineModel(Builder.engine)
                     let names = Builder.engine == .claude ? Builder.claudeModels : Builder.codexModels
-                    LabeledContent("Building with", value: model.isEmpty ? "\(Builder.engine.title)'s default"
+                    InfoRow("Building with", value: model.isEmpty ? "\(Builder.engine.title)'s default"
                                    : names.first { $0.id == model }?.label ?? model)
                 }
                 if Builder.engine == .pi {
-                    LabeledContent("Provider", value: providerName)
-                    if !Builder.piModel.isEmpty { LabeledContent("Building with", value: buildModel) }
+                    InfoRow("Provider", value: providerName)
+                    if !Builder.piModel.isEmpty { InfoRow("Building with", value: buildModel) }
                 }
             } header: {
                 Text("Building")
@@ -1097,11 +1130,11 @@ struct AppInfoView: View {
             }
             Section("App") {
                 if let stamp = store.stamps[project.id] {
-                    LabeledContent("Built with") {
+                    InfoRow("Built with") {
                         Text(stamp.summary).foregroundStyle(.secondary)
                     }
                 }
-                LabeledContent("Bundle ID") { Text(project.bundleID).textSelection(.enabled) }
+                InfoRow("Bundle ID") { Text(project.bundleID).foregroundStyle(.secondary).textSelection(.enabled) }
                 Button("Show App in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
                 }
@@ -1131,9 +1164,9 @@ struct AppInfoView: View {
     /// What answers one capability, named short (the panel is narrow), or Not Ready.
     @ViewBuilder private func answerRow(_ title: String, _ resolution: Resolution) -> some View {
         if resolution.tier == .none {
-            NotReadyRow(title: title)
+            InfoRow(title) { NotReadyBadge() }
         } else {
-            LabeledContent(title, value: Self.short(resolution.answer ?? ""))
+            InfoRow(title, value: Self.short(resolution.answer ?? ""))
         }
     }
 
