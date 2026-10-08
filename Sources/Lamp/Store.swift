@@ -1466,12 +1466,16 @@ final class Store: ObservableObject {
                 release(project)
                 offerHeldDrawing(project)
                 startQueued(project)
+                installHeldIcons(for: [project.id])
             }
             return
         }
         release(project)
         offerHeldDrawing(project)
         startQueued(project)
+        // An icon that was waiting for the app to close, when the app closed while this had it: the moment
+        // it closed came and went with the app taken, so it's looked at again now the app is free.
+        installHeldIcons(for: [project.id])
     }
 
     /// The offer to draw the icon that was wanted while the turn had the app, made now it's over: the last
@@ -1506,10 +1510,12 @@ final class Store: ObservableObject {
         return true
     }
 
-    /// The apps that just closed get the icon that was waiting for them. Owning the app meanwhile, like
-    /// any install; when a turn has it, the turn's own install brings the icon.
-    private func installHeldIcons(for closed: Set<String>) {
-        for project in projects where heldInstalls.due(amongClosed: closed).contains(project.id) {
+    /// Apps that are closed get the icon that was waiting for them: asked when an app closes, and again
+    /// whenever an app is given back (`finish`), since an app that closed while a turn had it couldn't be
+    /// installed then, and a turn that only replied, was stopped or failed installs nothing itself. Owning
+    /// the app meanwhile, like any install.
+    private func installHeldIcons(for candidates: Set<String>) {
+        for project in projects where heldInstalls.due(amongClosed: candidates).contains(project.id) && !isRunning(project) {
             guard begin(project) != nil else { continue }
             Task {
                 if FileManager.default.fileExists(atPath: project.builtURL.path) { await installIcon(project) }
