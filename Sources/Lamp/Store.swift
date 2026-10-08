@@ -980,7 +980,9 @@ final class Store: ObservableObject {
             return
         }
         // The newest request wins: a file opened while an earlier one is still unpacking, or a Cancel
-        // meanwhile, makes the earlier result unwanted when it arrives.
+        // meanwhile, makes the earlier result unwanted when it arrives. So does one still kept from before
+        // setup was ready (an agent chosen in the welcome, "Start building" not yet clicked).
+        waitingImport.discard()
         let request = UUID()
         importRequest = request
         if let previous = pendingImport { try? FileManager.default.removeItem(at: previous.package.folder) }

@@ -91,6 +91,19 @@ final class WaitingImportTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(try launch().take(setupReady: true, welcomeOver: true)).lastPathComponent, "Tally.lampapp")
     }
 
+    func testAnotherAppOpenedMeanwhileReplacesTheKeptOne() throws {
+        let waiting = try launch()
+        XCTAssertTrue(waiting.keep(try sharedFile("Tally.lampapp")))
+        let copy = try XCTUnwrap(waiting.keptFolder)
+        // An agent is chosen, and the person opens another shared app before "Start building": that one is
+        // reviewed straight away, and the older one must not turn up when the welcome ends.
+        waiting.discard()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy))
+        XCTAssertNil(waiting.take(setupReady: true, welcomeOver: true))
+        XCTAssertNil(try launch().take(setupReady: true, welcomeOver: true))
+    }
+
     func testNothingKeptMeansNothingToOpen() throws {
         XCTAssertNil(try launch().take(setupReady: true, welcomeOver: true))
         XCTAssertNil(try launch().keptFolder)

@@ -45,7 +45,9 @@ struct WaitingImport {
         return home.deletingLastPathComponent().path == folder.path ? home.path : nil
     }
 
-    private func discard() {
+    /// Forgets the kept file and removes its copy: a newer one takes its place, or the person has opened
+    /// another shared app themselves meanwhile, and the older one must not turn up after it.
+    func discard() {
         if let keptFolder { try? FileManager.default.removeItem(atPath: keptFolder) }
         defaults.removeObject(forKey: Self.key)
     }
