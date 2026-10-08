@@ -2825,8 +2825,13 @@ final class Store: ObservableObject {
                 // During a build the install that ends it picks the artwork up; if that install came first,
                 // finish() applies it. Otherwise apply it now.
                 // Deploying touches build/ and the installed app, so it owns the app like a turn does. If a
-                // turn has it, the install that ends the turn (or finish()) picks the artwork up.
-                guard begin(project) != nil else { pendingIconArt.insert(project.id); return }
+                // turn has it, the install that ends the turn (or finish()) picks the artwork up; the chat
+                // shows the artwork now, so "designed an icon" isn't a tick beside the old one.
+                guard begin(project) != nil else {
+                    pendingIconArt.insert(project.id)
+                    if Icons.load(project) == spec { icons[project.id] = await Icons.preview(spec, art: art) }
+                    return
+                }
                 await applyIconArt(project, spec: spec)
                 finish(project)
             } catch let failure as AppAI.Failure where failure.message == AppAI.noImageRoute {

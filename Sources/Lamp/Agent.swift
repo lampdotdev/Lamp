@@ -421,7 +421,10 @@ enum Agent {
         - The app icon is defined in icon.json: `subject` (the ONE tangible object the icon shows, as a short noun \
         phrase, e.g. "a yellow legal pad with a red pencil"), `symbol` (an SF Symbol name shown until artwork is \
         ready), `background` (one of \(Icons.backgrounds.map(\.name).joined(separator: ", "))) and `tint` (hex main \
-        color of the object). To change the icon, edit icon.json; Lamp redraws it. Never create icon files yourself.
+        color of the object). Lamp designed it from the user's request and is drawing its artwork while you work: \
+        leave icon.json alone unless the user asks for a different icon or its subject is plainly wrong for the app, \
+        since every change throws the artwork away and starts it again. To change it, edit icon.json; Lamp \
+        redraws it. Never create icon files yourself.
         """
 
         static let attachments = """
