@@ -45,8 +45,9 @@ A capability given to one engine must be given to all of them that can take it, 
   pi with its key provider, or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in
   Settings → Apps and an app's info panel, and dispatched by kind in `AppAI.dispatch`. The default
   (`AppAI.defaultRoute`) is the local model that builds apps when there is one, else Sonnet through
-  OpenRouter with a key, else the builder's own sign-in. Settings → AI Providers shows what each provider and
-  sign-in is doing (`ProvidersSettings.jobs`). Decisions (`AppAI.decisionModels`, `AppAI.decide`) go to Jev
+  OpenRouter with a key, else the builder's own sign-in. Settings → AI Providers lists each provider and
+  sign-in with its state, not what it's used for: that's in the menus that choose it. Decisions
+  (`AppAI.decisionModels`, `AppAI.decide`) go to Jev
   through OpenRouter or TypeSafe, to OpenAI's Decisions API (`decideViaOpenAI`, the same questions in its
   predicate/choice/score shape), to a Jev-class model on this Mac (`LocalModels.decisionCatalog`, run on the
   bundled llama-server; `decideLocally` does what the model's serving shim does: one forward pass per
@@ -180,11 +181,15 @@ touched and why the option needs to be there at all:
   the label can't say and the person needs to decide (something gets installed, a permission is asked
   for); it's one or two sentences, under its checkbox, with `.checkboxNote(…)`. No section footers, and no
   captions under pickers or lists.
-- **Show problems, not the absence of them.** When something is ready, say nothing. When a choice can't be
-  used as things are, `NotReadyBadge` goes beside it (`SettingsPicker(notReady:)` for a menu), and one row
-  under it says why, in gray, and offers the one thing that fixes it (`KeyNote`'s Add a Key…, Sign In…,
-  Download): see `BuildingSettings.agentStatus` and `agentFix`. The badge is the only orange in Settings, so
-  the words never contradict what's selected. Paths and other details go in `.help`, on hover.
+- **Show problems, not the absence of them.** When something is ready, say nothing. When it isn't, one
+  row says why, in gray, and offers the one thing that fixes it (`KeyNote`'s Add a Key…, Sign In…,
+  Download): see `BuildingSettings.agentStatus` and `agentFix`. `NotReadyBadge` is the only orange in
+  Settings. Paths and other details go in `.help`, on hover.
+- **A model menu lists only what can be used now**, and shows what's actually used when the saved choice
+  can't be (`AppsSettings`, `ImageModelRow`). With one option it's named as plain text; with nothing to
+  choose from, `NotReadyRow` stands where the menu would be, with the fix under it. Never a menu showing a choice the words under it say won't work.
+- **A setting is shown where it's chosen, and nowhere else.** No badges or summaries elsewhere saying what
+  a provider is used for: they repeat the menus and drift from what Lamp actually does.
 - **Menus list what's set up, then a way to set up more** ("Configure providers…" switches to AI Providers),
   rather than everything with "(not installed)".
 - **Section headings name the group** ("AI settings for Lamp", "Models used in apps", "Permissions and
