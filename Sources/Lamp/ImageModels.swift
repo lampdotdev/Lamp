@@ -94,7 +94,7 @@ final class ImageModels: ObservableObject {
     /// Makes one picture. Runs are queued: each loads the whole model, and two at once would double the
     /// memory. About 10–30 seconds on an M-series Pro, plus the load.
     static func generate(prompt: String, width: Int, height: Int) async throws -> Data {
-        guard let spec = chosen, let tool = toolPath(spec) else { throw AppAI.Failure(message: AppAI.noImageRoute) }
+        guard let spec = chosen, let tool = toolPath(spec) else { throw AppAI.Failure(message: AppAI.noImageRoute, needs: .pictures) }
         return try await queue.run {
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-flux-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

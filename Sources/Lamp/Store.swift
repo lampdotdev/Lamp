@@ -62,7 +62,8 @@ struct AppUsage: Codable {
 }
 
 struct LogLine: Identifiable, Codable, Equatable {
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey }
+    /// `needsKey` is a setup offer from before offers named their capability: it was always about pictures.
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -72,6 +73,16 @@ struct LogLine: Identifiable, Codable, Equatable {
     var replaced: String? = nil        // for a request sent again in other words: the request it took the place of
     var tookBack: [String]? = nil      // …and every request that left the chat for it, oldest first
     var retryPhone: String? = nil     // a phone install failure: retry this destination without the agent
+    var offer: SetupOffer? = nil      // a setup offer: what it's about (its text is the reason)
+
+    /// The offer a setup card is about, for this line and for the older key card.
+    var setupOffer: SetupOffer? {
+        switch kind {
+        case .offer: offer
+        case .needsKey: SetupOffer(capability: .pictures)
+        default: nil
+        }
+    }
 
     /// Lamp knows where the app was before this request, so it can be changed and sent again from there.
     /// Not so for some requests from before that was noted.
@@ -417,8 +428,9 @@ final class Store: ObservableObject {
         }
     }
 
-    func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil) {
-        logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone))
+    func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil,
+             offer: SetupOffer? = nil) {
+        logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone, offer: offer))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
         saveChat(project)
     }
@@ -1606,7 +1618,7 @@ final class Store: ObservableObject {
         guard let turn = turns[project.id] else { return false }   // only inside a turn (startQueued)
         turn.stopped = false
         let sessionFile = Self.sessionFile(for: project, engine: engine)
-        let run = Agent.run(prompt: prompt, files: files, project: project,
+        let run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
                             session: engine == .pi ? Self.piSession(for: project) : Self.savedSession(sessionFile),
                             token: turn.agentToken)
         let status = await Shell.run(run.command, cwd: project.dir, env: run.env,
@@ -1642,6 +1654,7 @@ final class Store: ObservableObject {
                     progress[project.id]?.tickWrittenParts()
                 case .compacted:
                     Memory.compacted(project)
+                    AIStatus.compacted(project)
                 case .tool(let text, let fullCall):
                     log(project, .tool, text)
                     let call = ToolCall(text)
@@ -1664,12 +1677,13 @@ final class Store: ObservableObject {
                     if engine != .pi {
                         try? id.write(to: sessionFile, atomically: true, encoding: .utf8)
                         Memory.delivered(to: project, session: id)
+                        AIStatus.delivered(to: project, session: id)
                     }
                 }
             }
         }
         turn.agent = nil
-        if answered { Memory.delivered(to: project) }
+        if answered { Memory.delivered(to: project); AIStatus.delivered(to: project) }
         endApprovals(for: project)
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
         showWritten(for: project)
@@ -2117,6 +2131,7 @@ final class Store: ObservableObject {
             case "name_version": (status, answer) = await versions("/name", arguments, of: project)
             case "restore_version": (status, answer) = await versions("/restore", arguments, of: project)
             case "read_notes", "save_notes": (status, answer) = Memory.call(name, arguments, for: project)
+            case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -2193,6 +2208,20 @@ final class Store: ObservableObject {
         }
         do { try fm.removeItem(at: target) } catch { return (500, ["error": "Couldn't delete \(relative): \(error.localizedDescription)"]) }
         return (200, ["text": "Deleted \(relative)."])
+    }
+
+    /// `offer_setup`: the agent asks Lamp to offer the person a way to set up a capability, with its reason.
+    private func agentOffer(_ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
+        guard let capability = (arguments["capability"] as? String).flatMap(Capability.init(rawValue:)) else {
+            return (400, ["error": "`capability` must be text, decisions or pictures."])
+        }
+        let away = arguments["away"] as? Bool == true
+        guard !away || project.platform == .iphone else {
+            return (400, ["error": "`away` is only for iPhone apps."])
+        }
+        let why = (arguments["why"] as? String)?.trimmed ?? ""
+        guard !why.isEmpty else { return (400, ["error": "Say in `why` what the person would get."]) }
+        return (200, ["text": offerSetup(project, SetupOffer(capability: capability, away: away ? true : nil), because: why, fromAgent: true)])
     }
 
     /// The tools every engine gets, from Resources/lamp-tools.json: the one place their names, descriptions and
@@ -2719,6 +2748,7 @@ final class Store: ObservableObject {
             if progress[project.id]?.finished != nil { progress[project.id]?.failed = false }
             attached.terminationHandler = { _ in Task { @MainActor in Store.shared.refreshOpenApps() } }
             log(project, .status, "\(project.name) is ready on \(name)")
+            offerAwaySetup(project)
         } catch {
             owner.build = nil
             if let failure = error as? PhoneFailure { failed(failure.message, output: failure.output) }
@@ -2933,11 +2963,52 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Asks for an OpenRouter key in the app's chat, once per app: the moment an app first wants a picture is
-    /// when a key is worth explaining, not the welcome screen.
-    private func askForKey(_ project: LampProject, because reason: String) {
-        guard !(logs[project.id] ?? []).contains(where: { $0.kind == .needsKey }) else { return }
-        log(project, .needsKey, reason)
+    /// The setup offers already in an app's chat.
+    func offers(in project: LampProject) -> Set<SetupOffer> {
+        Set((logs[project.id] ?? []).compactMap(\.setupOffer))
+    }
+
+    /// Offers a way to set up `offer` in the app's chat, once per app: the moment an app first wants
+    /// something nothing here can do is when a key or a download is worth explaining, not the welcome screen.
+    /// Lamp's own offers (`fromAgent` false) also keep away from anything the person said "Not Now" to in
+    /// any app; the agent's, which come with a reason of their own, only from what was turned down in this
+    /// one. Returns what happened, in words for the agent.
+    @discardableResult
+    func offerSetup(_ project: LampProject, _ offer: SetupOffer, because reason: String, fromAgent: Bool = false) -> String {
+        let resolution = AppAI.resolve(offer.capability, for: project, in: offer.context)
+        guard resolution.tier != .best else {
+            return "\(offer.capability.title) is already set up: \(resolution.answer ?? ""). Nothing to offer."
+        }
+        guard !offer.declined(in: fromAgent ? project : nil) else {
+            return "The person said Not Now to setting this up. Don't offer it again; build so the app copes without it."
+        }
+        guard !offers(in: project).contains(offer) else {
+            return "Lamp already offered this in the chat. Don't offer it again."
+        }
+        log(project, .offer, reason, offer: offer)
+        return "Lamp showed the person a card in the chat to set up \(offer.capability.title.lowercased()). Carry on; don't mention keys or settings in your reply."
+    }
+
+    /// Lamp's own words for an offer it makes when an app hit something nothing here can do.
+    private static func offerReason(_ capability: Capability, for project: LampProject) -> String {
+        switch capability {
+        case .text: "\(project.name) just tried to use AI, but nothing on this Mac can answer yet. Set up one of the ways below and it will work the next time."
+        case .decisions: "\(project.name) uses AI to make quick judgments, like yes or no, or which of a few options fits, but nothing on this Mac can make them yet. Set up one of the ways below and they will work the next time."
+        case .pictures: "\(project.name) just tried to make a picture, but nothing on this Mac can draw yet. Set up one of the ways below and it will work the next time."
+        }
+    }
+
+    /// An iPhone app that uses AI, just put on the phone: if nothing goes with it, say so once.
+    private func offerAwaySetup(_ project: LampProject) {
+        let sources = project.dir.appendingPathComponent("Sources")
+        let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        let usesAI = files.contains { url in
+            url.pathExtension == "swift" && url.lastPathComponent != "LampSupport.swift"
+                && ((try? String(contentsOf: url, encoding: .utf8))?.contains("LampAI.") ?? false)
+        }
+        guard usesAI else { return }
+        offerSetup(project, SetupOffer(capability: .text, away: true),
+                   because: "\(project.name)'s AI runs through this Mac, so on your phone it only works nearby. Add an OpenRouter key and the app takes it along, so its AI works anywhere.")
     }
 
     /// Generates artwork for the icon's object in the background (best of a few candidates) and swaps it in
@@ -2949,7 +3020,8 @@ final class Store: ObservableObject {
         Task {
             defer { artInProgress.remove(project.id) }
             guard await AppAI.imageRoute() != nil else {
-                askForKey(project, because: "Lamp can draw a proper icon for \(project.name), and pictures inside your apps, with an OpenRouter key.")
+                offerSetup(project, SetupOffer(capability: .pictures),
+                           because: "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) a proper icon, and your apps will be able to make pictures too.")
                 return
             }
             do {
@@ -2979,9 +3051,10 @@ final class Store: ObservableObject {
                 }
                 await applyIconArt(project, spec: spec)
                 finish(project)
-            } catch let failure as AppAI.Failure where failure.message == AppAI.noImageRoute {
+            } catch let failure as AppAI.Failure where failure.needs == .pictures {
                 // Codex signed out between the check and the pictures: the key card is still the right answer.
-                askForKey(project, because: "Lamp can draw a proper icon for \(project.name), and pictures inside your apps, with an OpenRouter key.")
+                offerSetup(project, SetupOffer(capability: .pictures),
+                           because: "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) a proper icon, and your apps will be able to make pictures too.")
             } catch {
                 log(project, .detail, "Icon artwork failed: \(error.localizedDescription)")
             }
@@ -3155,8 +3228,8 @@ final class Store: ObservableObject {
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
-        let paths = ["/ai", "/ai/keys", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/mcp", "/pi/key"]
+        let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/mcp", "/pi/key"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -3209,6 +3282,7 @@ final class Store: ObservableObject {
         // A phone asking what it may keep is answered whatever the state of setup: a key just removed makes
         // setup incomplete, and that's exactly when the phone has to hear that its copy should go.
         if route == "/ai/keys" { return keysForPhone(project) }
+        if route == "/ai/status" { return aiStatus(for: project) }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
     }
@@ -3251,6 +3325,9 @@ final class Store: ObservableObject {
         if route == "/agent/memory" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return Memory.call(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/setup" {
+            return agentOffer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/approve" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
@@ -3321,7 +3398,7 @@ final class Store: ObservableObject {
                 record(project, cost: cost)
                 return (200, ["answers": answers])
             } catch let failure as AppAI.Failure {
-                return (502, ["error": failure.message])
+                return failed(failure, for: project)
             } catch {
                 return (502, ["error": "Couldn't reach the decision model: \(error.localizedDescription)"])
             }
@@ -3343,9 +3420,6 @@ final class Store: ObservableObject {
                                                             model: models.image, appText: models.text)
                     record(project, cost: cost)
                     return (200, ["image": png.base64EncodedString(), "media_type": "image/png"])
-                } catch let failure as AppAI.Failure where failure.message == AppAI.noImageRoute {
-                    askForKey(project, because: "\(project.name) wants to make a picture, and nothing here can yet.")
-                    throw failure
                 }
             }
             let (text, cost) = try await AppAI.complete(prompt: prompt, images: images,
@@ -3356,26 +3430,54 @@ final class Store: ObservableObject {
             return (200, ["text": text])
         } catch let failure as AppAI.Failure {
             if failure.cost > 0 { record(project, cost: failure.cost) }   // billed even though it failed
-            return (502, ["error": failure.message])
+            return failed(failure, for: project)
         } catch {
             return (502, ["error": "Couldn't reach the AI: \(error.localizedDescription)"])
         }
     }
 
+    /// An app's AI call that failed. When it failed because nothing is set up to answer, the app is told
+    /// which capability (`needs`, so LampAI can say so) and the person is offered a way in the app's chat.
+    private func failed(_ failure: AppAI.Failure, for project: LampProject) -> (Int, [String: Any]) {
+        var reply: [String: Any] = ["error": failure.message]
+        if let needs = failure.needs {
+            reply["needs"] = needs.rawValue
+            offerSetup(project, SetupOffer(capability: needs), because: Self.offerReason(needs, for: project))
+        }
+        return (502, reply)
+    }
+
+    /// `LampAI.isAvailable`: which capabilities can answer this app now, so it can leave out or explain a
+    /// feature instead of failing at it.
+    private func aiStatus(for project: LampProject) -> (Int, [String: Any]) {
+        var reply: [String: Any] = [:]
+        for capability in Capability.allCases {
+            reply[capability.rawValue] = setup.ready && AppAI.resolve(capability, for: project).tier != .none
+        }
+        return (200, reply)
+    }
+
     /// What an app on the person's own phone keeps so its AI works away from the Mac (Settings → Experimental):
-    /// the OpenRouter key, the TypeSafe key when decisions go there, and the models the app is set to. Only for
-    /// iPhone apps, only while the switch is on; a Mac app or the simulator never needs it, and the key stays
-    /// in the phone's Keychain, put there by the app itself.
+    /// the OpenRouter key, the TypeSafe key when decisions go there, and the models the app is set to, as
+    /// `AppAI.resolve` has them for `.phoneAway`. Only for iPhone apps, only while the switch is on; a Mac app
+    /// or the simulator never needs it, and the key stays in the phone's Keychain, put there by the app itself.
     private func keysForPhone(_ project: LampProject) -> (Int, [String: Any]) {
         guard project.platform == .iphone, Experiments.iosApps else { return (403, ["error": "Not for this app."]) }
-        guard let key = KeyStore.openRouterKey else { return (404, ["error": "There's no OpenRouter key to keep."]) }
+        guard AppAI.resolve(.text, for: project, in: .phoneAway).tier != .none, let key = KeyStore.openRouterKey else {
+            return (404, ["error": "There's no OpenRouter key to keep."])
+        }
         let models = AppModels.load(project)
-        let decision = AppAI.awayDecisionModel(for: models.awayDecision)
+        var decision = AppAI.awayDecisionModel(for: models.awayDecision)
         var keys: [String: Any] = [
             "openrouter": key,
             "text_model": AppAI.awayModel(for: models.away).openRouter,
-            "decision_model": decision.model, "decision_provider": decision.provider,
         ]
+        if decision.provider == "typesafe" {
+            if let typesafe = KeyStore.key(for: "typesafe") { keys["typesafe"] = typesafe }
+            else { decision = AppAI.awayDecisionModels.first { $0.provider == "text" }! }   // what `resolve` says stands in
+        }
+        keys["decision_model"] = decision.model
+        keys["decision_provider"] = decision.provider
         // The cloud image model chosen for away from the Mac (the Mac's own model can't travel).
         keys["image_model"] = AppAI.awayImageModel(for: models.awayImage)
         // Sealed with the secret that went to the phone inside its build, never over the network: the token

@@ -606,54 +606,22 @@ struct AppsSettings: View {
                         Section(group.title) { ForEach(group.routes) { Text($0.name).tag($0.id) } }
                     }
                 }
+                let _ = (revision, appModel, imageModel)   // re-resolve after keys or choices change
+                CapabilityNote(capability: .text)
                 Picker("Image generation", selection: $imageModel) {
                     ForEach(Icons.imageChoices, id: \.id) { Text($0.label).tag($0.id) }
                 }
-                let _ = revision   // re-read KeyStore after keys change
-                if AppAI.allTextRoutes.first(where: { $0.id == appModel })?.available == false {
-                    KeyNote(text: "That model needs an OpenRouter key. Until there is one, text inside apps goes through \(AppAI.defaultRoute.label.replacingOccurrences(of: "Your ", with: "your ")).")
-                }
-                if let maker = AppAI.imageRouteName {
-                    // A cloud model chosen with no key behind it isn't what makes the pictures: say what does, and why.
-                    if !Provider.hasKey, imageModel != Icons.localArt {
-                        KeyNote(text: "\(Icons.artModels.first { $0.id == imageModel }?.label ?? "That model") needs an OpenRouter key. Until there is one, pictures come from \(maker).")
-                    }
-                } else {
-                    KeyNote(text: "Pictures need an OpenRouter key or a picture model on this Mac: a \(Builder.engine == .pi ? "builder's" : Builder.engine.title) sign-in can't make them.")
-                }
+                CapabilityNote(capability: .pictures)
 
                 Picker("Decision model", selection: $decisionModel) {
                     ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }
                 }
-                let decisionChoice = AppAI.decisionModels.first { $0.id == decisionModel } ?? AppAI.decisionModel
-                switch decisionChoice.provider {
-                case "typesafe", "openai":
-                    if let provider = Provider.keyProvider(decisionChoice.provider), KeyStore.key(for: provider.id) == nil {
-                        KeyRow(provider: provider, label: "\(provider.name) key") { revision += 1 }
-                    }
-                case "local":
-                    if let spec = LocalModels.decisionCatalog.first, !local.isInstalled(spec) {
-                        if let progress = local.progress[spec.id] {
-                            ProgressView(value: progress) { Text("Downloading \(spec.name)…") }.font(.caption)
-                        } else {
-                            HStack(alignment: .top, spacing: 8) {
-                                Text("\(spec.name) isn't on this Mac yet (\(spec.sizeGB, specifier: "%.1f") GB). Until it is, decisions are made by \(AppAI.fastModelName).")
-                                    .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
-                                Spacer(minLength: 0)
-                                Button("Download") { local.download(spec) }.controlSize(.small)
-                            }
-                        }
-                    }
-                case "text":
+                let _ = decisionModel
+                if AppAI.decisionModels.first(where: { $0.id == decisionModel })?.provider == "text", AppAI.resolve(.decisions).tier == .best {
                     Text("A small text model (\(AppAI.fastModelName)) answers the questions as JSON: slower and less exact than a decision model, but needs nothing more.")
                         .font(.caption).foregroundStyle(.secondary)
-                default:
-                    if KeyStore.openRouterKey == nil {
-                        KeyNote(text: AppAI.canAnswer
-                                ? "Needs an OpenRouter key. Until there is one, decisions are made by \(AppAI.fastModelName) instead: slower and less exact than Jev."
-                                : "Needs an OpenRouter key, or pick another.")
-                    }
                 }
+                CapabilityNote(capability: .decisions)
                 Text("Fast, cheap typed judgments for apps: yes/no probabilities, picking from options, and rating on a scale, each with a calibrated confidence.")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -673,9 +641,10 @@ struct AppsSettings: View {
                     if Provider.hasKey {
                         Text("When an app can't reach this Mac it goes to OpenRouter with your key. What it spends then isn't shown in Lamp.")
                             .font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")
                     }
+                    // Without a key nothing goes with an app, which the first note says for all three.
+                    CapabilityNote(capability: .text, context: .phoneAway)
+                    if Provider.hasKey { CapabilityNote(capability: .decisions, context: .phoneAway) }
                 }
             }
             ComputerUseSettings()
@@ -721,9 +690,7 @@ struct ExperimentalSettings: View {
                     }
                     Text("For putting an app on your own iPhone or iPad: sign in to your Apple account in Xcode, plug the phone in, and Try On offers to pair it. What the app uses away from this Mac is chosen under Apps.")
                         .font(.caption).foregroundStyle(.secondary)
-                    if !Provider.hasKey {
-                        KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")
-                    }
+                    CapabilityNote(capability: .text, context: .phoneAway)
                     Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() }
                 }
                 .padding(.leading, 20)
@@ -874,36 +841,51 @@ struct ProvidersSettings: View {
             + [Engine.claude, .codex].filter { ToolLocator.path(for: $0) != nil }.map { "engine:\($0.rawValue)" }
     }
 
-    /// What each row is doing for Lamp right now, so the tab shows what's used for what.
+    /// What each row is doing for Lamp right now, so the tab shows what's used for what: the builder, and
+    /// whatever `AppAI.resolve` says answers each capability.
     private func jobs(_ id: String) -> [String] {
         _ = revision
         _ = appModel
         var jobs: [String] = []
         let builder = Builder.engine == .pi ? Builder.piProvider : "engine:\(Builder.engine.rawValue)"
         if builder == id { jobs.append("Builds apps") }
-        let answers: String
-        switch AppAI.model.kind {
-        case .openRouter: answers = "openrouter"
-        case .engine(.pi, _): answers = Builder.piProvider
-        case .engine(let engine, _): answers = "engine:\(engine.rawValue)"
-        case .localModel(let provider, _): answers = provider
+        for capability in Capability.allCases where AppAI.resolve(capability).provider == id {
+            jobs.append(capability == .text ? "Answers apps" : capability.title)
         }
-        if answers == id { jobs.append("Answers apps") }
-        switch AppAI.imageRoute {
-        case .openRouter: if id == "openrouter" { jobs.append("Pictures") }
-        case .local: if id == Builder.localProvider { jobs.append("Pictures") }
-        case .codex: if id == "engine:codex" { jobs.append("Pictures") }
-        case nil: break
-        }
-        let decision = AppAI.decisionModel
-        let decides: String
-        switch decision.provider {
-        case "local": decides = AppAI.localDecisionModel() != nil ? Builder.localProvider : answers
-        case "text": decides = answers
-        default: decides = KeyStore.key(for: decision.provider) != nil ? decision.provider : answers
-        }
-        if decides == id { jobs.append("Decisions") }
         return jobs
+    }
+
+    /// What the overview's rows resolve to.
+    private var overview: [Resolution] {
+        _ = revision
+        return Capability.allCases.map { AppAI.resolve($0) } + (Experiments.iosApps ? [AppAI.resolve(.text, in: .phoneAway)] : [])
+    }
+
+    /// An upgrade that every row short of its best wants (one OpenRouter key, usually): offered once, under them.
+    private var sharedUpgrades: Set<Upgrade> {
+        let wanting = overview.filter { $0.tier != .best }
+        guard wanting.count > 1 else { return [] }
+        return wanting.dropFirst().reduce(Set(wanting[0].upgrades)) { $0.intersection($1.upgrades) }
+    }
+
+    /// A row of the overview: what answers one capability, and, when it could be better, how.
+    private func capabilityRow(_ capability: Capability, context: AIContext = .mac, title: String? = nil,
+                               omitting shared: Set<Upgrade> = []) -> some View {
+        let _ = revision
+        let resolution = AppAI.resolve(capability, in: context)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Image(systemName: capability.symbol).frame(width: 24).foregroundStyle(.secondary)
+                Text(title ?? capability.title)
+                Spacer()
+                Text(resolution.answer ?? "Nothing yet").font(.callout).foregroundStyle(.secondary)
+                Image(systemName: resolution.tier == .best ? "checkmark.circle.fill" : resolution.tier == .works ? "circle.bottomhalf.filled" : "circle.dashed")
+                    .foregroundStyle(resolution.tier == .best ? .green : resolution.tier == .works ? .orange : .secondary)
+                    .help(resolution.tier == .best ? "Set up" : resolution.tier == .works ? "Works, but could be better" : "Not set up")
+            }
+            CapabilityNote(capability: capability, context: context, answerShown: true, omitting: shared).padding(.leading, 34)
+        }
+        .padding(.vertical, 2)
     }
 
     /// One row: logo, name, what it's doing, and its state.
@@ -945,6 +927,19 @@ struct ProvidersSettings: View {
 
     var body: some View {
         Form {
+            Section {
+                let shared = sharedUpgrades
+                ForEach(Capability.allCases) { capabilityRow($0, omitting: shared) }
+                if Experiments.iosApps {
+                    capabilityRow(.text, context: .phoneAway, title: "On your phone, away from this Mac", omitting: shared)
+                }
+                if !shared.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Sets up everything above").font(.caption).foregroundStyle(.secondary)
+                        UpgradeList(upgrades: overview.flatMap(\.upgrades).reduce(into: []) { if shared.contains($1), !$0.contains($1) { $0.append($1) } }, compact: true) { revision += 1 }
+                    }
+                }
+            } header: { Text("What answers your apps") }
             Section {
                 list(onThisMac)
                 if Experiments.iosApps {
@@ -1007,6 +1002,7 @@ struct ProvidersSettings: View {
             Text("Lamp forgets its API key. Apps and builds that use it stop working until you add it again.")
         }
         .onAppear { openPending(); refreshSignIns(); KeyStore.preload() }   // a key declined at launch is asked for again
+        .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in revision += 1 }
         .onChange(of: pendingSheet) { openPending() }
         .task { local.refresh(); await local.detectExternal() }
     }
@@ -1267,10 +1263,12 @@ final class KeyCheck: ObservableObject {
         checking = false
     }
 
-    func save(_ typed: String, for provider: PiProvider, saved: @escaping () -> Void) {
+    /// `strict`, where the person can wait for OpenRouter's answer (the chat's setup card): a key it couldn't
+    /// be asked about isn't saved, and there's no saving it anyway.
+    func save(_ typed: String, for provider: PiProvider, strict: Bool = false, saved: @escaping () -> Void) {
         let key = typed.trimmed
         guard !key.isEmpty, !checking else { return }
-        guard provider.id == "openrouter", key != unchecked else {
+        guard provider.id == "openrouter", key != unchecked || strict else {
             KeyStore.setKey(key, for: provider.id)
             edited()
             return saved()
@@ -1286,6 +1284,8 @@ final class KeyCheck: ObservableObject {
                 KeyStore.setKey(key, for: provider.id)
                 saved()
             case .refused(let why):
+                problem = why
+            case .unchecked(let why) where strict:
                 problem = why
             case .unchecked(let why):
                 problem = why + " You can save the key without checking it."
@@ -1337,22 +1337,6 @@ struct ProviderLogo: View {
 }
 
 /// API key for one provider: shows "saved" with a Remove button, or a field to add one.
-/// A note that something needs an OpenRouter key, with the way to add one at its right: the same wherever
-/// Settings asks for a key, so the person always has the button to hand.
-struct KeyNote: View {
-    let text: String
-    @AppStorage("settingsTab") private var settingsTab = "building"
-    @AppStorage("settingsSheet") private var settingsSheet = ""
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text(text).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            Button("Add a Key…") { settingsSheet = "openrouter"; settingsTab = "providers" }.controlSize(.small)
-        }
-    }
-}
-
 struct KeyRow: View {
     let provider: PiProvider
     var label: String?

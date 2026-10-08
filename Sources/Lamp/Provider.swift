@@ -210,7 +210,12 @@ enum KeyStore {
             KeyFile.write(all)
         }
         Agent.keyChanged(for: provider, present: key != nil)   // pi's note of where to ask for it
+        // What each capability resolves to may have changed: setup cards and Settings' notes look again.
+        DispatchQueue.main.async { NotificationCenter.default.post(name: changed, object: provider) }
     }
+
+    /// Posted on the main thread after a key is saved or removed, with the provider's id.
+    static let changed = Notification.Name("LampKeyChanged")
 
     /// Takes in a key found outside the store (pi's auth file, where Lamp used to keep a copy) if this
     /// provider has none. True once the store holds a key for the provider; false when the store couldn't be
