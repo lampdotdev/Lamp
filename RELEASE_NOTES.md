@@ -12,6 +12,17 @@ plain "Lamp x.y.z" line.
   install for the whole Mac, a push, an upload, anything touching sign-ins or keys) still comes to you, and
   once Lamp has flagged a command that way nothing waves it through without you.
 
+## 0.11.1
+
+- Before an app goes on your own iPhone or iPad, Lamp checks that an Apple Account is signed in to Xcode
+  and that your team is chosen, and tells you what's missing; one signed-in team is chosen for you. Help
+  and the setup window say up front that a free Apple Account is enough.
+- Lamp works with Xcode 27, which shows simulators in Device Hub rather than the Simulator app: the setup
+  check looks for either, and the agent's looks and taps find the iPhone's screen there too.
+- When an app is ready on the simulator, the simulator comes to the front.
+- Looking at an iPhone app, the agent also reads the screen as text beside its picture: every control and
+  piece of text, what it holds and where to tap it, so small print and switch states aren't guesses.
+
 ## 0.11.0
 
 - The agent's shell commands run confined to the app: its folder, the system and developer tools, caches,
