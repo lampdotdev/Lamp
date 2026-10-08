@@ -230,6 +230,31 @@ final class WidgetBuildTests: XCTestCase {
         XCTAssertEqual(try run("python3 pretender.py > pretender.log & sleep 1; ./\(widget); ./\(widget); wait", in: work).output, "nothing\nnothing\n")
         // The app itself: its answer is taken.
         XCTAssertEqual(try run("./app \"$PWD/store\" 4 & sleep 1.5; ./\(widget); wait", in: work).output, "height 2.5\n")
+        // The app's own question, arriving in pieces as a connection may deliver it, is still answered whole;
+        // one that never ends its line, longer than any real one, gets nothing.
+        try ("""
+        import hashlib, hmac, socket, sys, time
+        secret = b"\(Template.widgetToken(for: project))"
+        def sign(*parts): return hmac.new(secret, "\\n".join(parts).encode(), hashlib.sha256).hexdigest()
+        def ask(pieces):
+            for port in range(\(port), \(port) + 8):   # the app takes the next port when its own is still busy, as the widget knows
+                try: s = socket.create_connection(("127.0.0.1", port), timeout=5); break
+                except ConnectionRefusedError: pass
+            for piece in pieces:
+                s.sendall(piece); time.sleep(0.3)
+            reply = b""
+            while True:
+                more = s.recv(4096)
+                if not more: break
+                reply += more
+            return reply.decode()
+        line = ("n1 " + sign("ask", "n1", "tide") + " tide\\n").encode()
+        head, _, json = ask([line[:5], line[5:40], line[40:]]).partition("\\n")
+        print("pieces:", head == "ok " + sign("answer", "n1", "tide", json), json)
+        print("endless:", repr(ask([b"x" * 5000])))
+        """).write(to: work.appendingPathComponent("pieces.py"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(try run("./app \"$PWD/store\" 6 & sleep 1.5; python3 pieces.py 2>&1; wait", in: work).output,
+                       "pieces: True {\"height\":2.5}\nendless: ''\n")
         // The app gone and a pretender in its place: the widget shows what the app said last, not the pretender's.
         XCTAssertEqual(try run("python3 pretender.py > pretender.log & sleep 1; ./\(widget); ./\(widget); wait", in: work).output, "height 2.5\nheight 2.5\n")
     }

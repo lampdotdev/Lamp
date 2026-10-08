@@ -4258,17 +4258,30 @@ enum Template {
         /// another program that took the port, and an old answer can't be played back to it.
         private static func answer(_ connection: NWConnection) {
             connection.start(queue: queue)
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, _, _ in
-                let line = String(data: data ?? Data(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let parts = line.split(separator: " ", maxSplits: 2).map(String.init)
-                var reply = Data()
-                if parts.count == 3, parts[1] == signature("ask", parts[0], parts[2]) {
-                    let json = shared[parts[2]] ?? ""
-                    reply = Data(("ok " + signature("answer", parts[0], parts[2], json) + "\n" + json).utf8)
+            // The question is one line, but a connection hands bytes over in whatever pieces they arrive in:
+            // it's read until the line's end, and only then judged. Nobody gets to hold the connection open
+            // or fill memory: a question longer than any real one, or not finished in a few seconds, is dropped.
+            var received = Data()
+            queue.asyncAfter(deadline: .now() + 5) { connection.cancel() }
+            func read() {
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, complete, error in
+                    if let data { received.append(data) }
+                    guard let end = received.firstIndex(of: 0x0A) else {
+                        if complete || error != nil || received.count > 4096 { return connection.cancel() }
+                        return read()
+                    }
+                    let line = String(data: received[..<end], encoding: .utf8) ?? ""
+                    let parts = line.split(separator: " ", maxSplits: 2).map(String.init)
+                    var reply = Data()
+                    if parts.count == 3, parts[1] == signature("ask", parts[0], parts[2]) {
+                        let json = shared[parts[2]] ?? ""
+                        reply = Data(("ok " + signature("answer", parts[0], parts[2], json) + "\n" + json).utf8)
+                    }
+                    connection.send(content: reply, contentContext: .finalMessage, isComplete: true,
+                                    completion: .contentProcessed { _ in connection.cancel() })
                 }
-                connection.send(content: reply, contentContext: .finalMessage, isComplete: true,
-                                completion: .contentProcessed { _ in connection.cancel() })
             }
+            read()
         }
 
         private static func signature(_ parts: String...) -> String {
