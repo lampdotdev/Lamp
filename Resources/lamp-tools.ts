@@ -186,14 +186,18 @@ async function resolved(given: string): Promise<string> {
 /**
  * Asks Lamp whether a file tool may touch a path; resolves to an error message when it may not. Paths inside the
  * app's folder need no asking, except what the running app saves there (its log and pictures), which the user
- * can keep from the agent in Lamp's settings.
+ * can keep from the agent in Lamp's settings, and the app's history (.git), which only Lamp writes.
  */
 async function checkFile(tool: string, given: string, signal?: AbortSignal): Promise<string | undefined> {
 	const [target, home] = await Promise.all([resolved(given), resolved(".")]);
 	const inside = target === home || target.startsWith(home + path.sep);
-	if (inside && !target.startsWith(path.join(home, ".lamp", "runtime") + path.sep)) return undefined;
+	// The app's history is Lamp's to write (see Sandbox), so Lamp is asked about it too; the comparison
+	// ignores case, as the Mac's usual file system does.
+	const within = path.relative(home, target).toLowerCase();
+	const history = inside && (within === ".git" || within.startsWith(".git" + path.sep));
+	if (inside && !history && !target.startsWith(path.join(home, ".lamp", "runtime") + path.sep)) return undefined;
 	const url = process.env.LAMP_APPROVE_URL;
-	if (!url) return inside ? undefined : "Files outside the app's folder need approval in Lamp, and Lamp isn't available.";
+	if (!url) return inside && !history ? undefined : "Files outside the app's folder need approval in Lamp, and Lamp isn't available.";
 	try {
 		const response = await fetch(url, {
 			method: "POST",
