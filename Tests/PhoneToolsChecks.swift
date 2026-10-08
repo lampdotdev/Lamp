@@ -11,6 +11,16 @@ final class PhoneToolsChecks {
 
     private func probe(fail: PhoneTools.Step? = nil, phoneVersion: String? = "17.0", runtime: String? = nil,
                        commands: (([String]) -> Void)? = nil) -> PhoneTools.Probe {
+        var p = probeWithoutAccount(fail: fail, phoneVersion: phoneVersion, runtime: runtime, commands: commands)
+        p.hasViewer = { _ in true }
+        p.teams = { fail == .account ? [] : [(id: "ABCDE12345", name: "Test Team")] }
+        p.team = { "ABCDE12345" }
+        p.chooseTeam = { _ in }
+        return p
+    }
+
+    private func probeWithoutAccount(fail: PhoneTools.Step? = nil, phoneVersion: String? = "17.0", runtime: String? = nil,
+                                     commands: (([String]) -> Void)? = nil) -> PhoneTools.Probe {
         .init(developer: { fail == .xcode ? nil : self.developer }, active: { fail == .tools ? "/Library/Developer/CommandLineTools" : self.developer }, run: { tool, args, env in
             expectEqual(env["DEVELOPER_DIR"], self.developer)
             commands?(args)
@@ -31,7 +41,7 @@ final class PhoneToolsChecks {
     }
 
     func testStopsAtEachPrerequisiteAndDoesNotProbeLaterSteps() {
-        let steps = PhoneTools.Step.allCases.filter { $0 != .phone }
+        let steps = PhoneTools.Step.allCases.filter { $0 != .phone && $0 != .account }
         for (index, step) in steps.enumerated() {
             var commands = [[String]]()
             let report = PhoneTools.check(probe: probe(fail: step, commands: { commands.append($0) }))
@@ -96,6 +106,67 @@ final class PhoneToolsChecks {
             expectEqual(PhoneTools.check(phone: "phone", probe: probe(phoneVersion: version)).issue?.action, .retry)
         }
         expectEqual(PhoneTools.check(phone: "different-phone", probe: probe()).issue?.action, .retry)
+    }
+
+    func testTheViewerIsSimulatorOrDeviceHubWhereverThisXcodeKeepsIt() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+        let developer = root.appendingPathComponent("Xcode.app/Contents/Developer").path
+        try fm.createDirectory(atPath: developer, withIntermediateDirectories: true)
+        expectEqual(PhoneTools.viewer(in: developer), nil)
+        // Xcode 27 has Device Hub beside the other apps, with no Simulator in Developer.
+        let hub = root.appendingPathComponent("Xcode.app/Contents/Applications/DeviceHub.app")
+        try fm.createDirectory(at: hub, withIntermediateDirectories: true)
+        expectEqual(PhoneTools.viewer(in: developer)?.lastPathComponent, "DeviceHub.app")
+        // Earlier Xcodes have Simulator in Developer, which comes first.
+        try fm.createDirectory(atPath: developer + "/Applications/Simulator.app", withIntermediateDirectories: true)
+        expectEqual(PhoneTools.viewer(in: developer)?.lastPathComponent, "Simulator.app")
+    }
+
+    func testAnXcodeWithoutTheSimulatorAppIsNotReady() {
+        var p = probe()
+        p.hasViewer = { developer in expectEqual(developer, self.developer); return false }
+        let report = PhoneTools.check(probe: p)
+        expectEqual(report.issue?.step, .simulator)
+        expectEqual(report.issue?.action, .components)
+        expectEqual(report.passed.last, .runtime)
+    }
+
+    func testAccountIsCheckedOnlyForAPhoneAndASingleTeamIsChosenByItself() {
+        // Without a phone, no account is needed, and Xcode's accounts aren't even asked for.
+        var asked = false
+        var p = probe()
+        p.teams = { asked = true; return [] }
+        expectTrue(PhoneTools.check(probe: p).ready)
+        expectFalse(asked)
+        // With one, no signed-in account stops the check before the phone is reached.
+        var commands = [[String]]()
+        let none = PhoneTools.check(phone: "phone", probe: probe(fail: .account, commands: { commands.append($0) }))
+        expectEqual(none.issue?.step, .account)
+        expectEqual(none.issue?.action, .openXcode)
+        expectFalse(none.passed.contains(.phone))
+        expectFalse(commands.contains { $0.contains("devicectl") })
+        // One team signed in and none chosen: chosen now, and the check goes on.
+        var chosen: String?
+        p = probe()
+        p.team = { "" }
+        p.chooseTeam = { chosen = $0 }
+        let single = PhoneTools.check(phone: "phone", probe: p)
+        expectTrue(single.ready)
+        expectEqual(chosen, "ABCDE12345")
+        expectEqual(single.passed, PhoneTools.Step.allCases)
+        // More than one and none of them chosen: the person decides, in Settings.
+        p.teams = { [(id: "ABCDE12345", name: "Test Team"), (id: "FGHIJ67890", name: "Other Team")] }
+        p.team = { "ZZZZZ00000" }
+        chosen = nil
+        let several = PhoneTools.check(phone: "phone", probe: p)
+        expectEqual(several.issue?.step, .account)
+        expectEqual(several.issue?.action, .settings)
+        expectEqual(chosen, nil)
+        // The chosen team among several: fine as it is.
+        p.team = { "FGHIJ67890" }
+        expectTrue(PhoneTools.check(phone: "phone", probe: p).ready)
     }
 
     func testReadyForBothFamiliesAndDoesNotNeedAPhysicalPhone() {
