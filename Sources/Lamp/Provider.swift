@@ -263,8 +263,12 @@ enum KeyStore {
         /// often Allow is clicked. Once a read has got through, the item is made Lamp's: written afresh,
         /// so its access list is this app's and no one is asked again.
         static func adopt(_ key: String, _ account: String) {
-            guard let team = teamID, let partitions = partitions(account),
-                  !partitions.contains("teamid:\(team)"), !partitions.contains("apple:") else { return }
+            guard let team = teamID, let access = access(account) else { return }
+            // Lamp's own item: its team's partition, and this app among the applications allowed to read it.
+            // One with the partition added by hand (security set-generic-password-partition-list) but not the
+            // app still asks every launch, so it's taken over too.
+            let partitionOK = access.partitions.contains("teamid:\(team)") || access.partitions.contains("apple:")
+            guard !(partitionOK && access.admitsThisApp) else { return }
             // The key is kept in the file, and read back, before the old item goes: if the new one can't be
             // added (or Lamp dies between the two), the file is what's read until it can be.
             var all: [String: String] = [:]
@@ -278,21 +282,26 @@ enum KeyStore {
             if write(key, account) { KeyFile.forget(account) }
         }
 
-        /// The partitions an item's access list admits ("apple-tool:", "teamid:…", "apple:"): a hex-encoded
-        /// plist in the partition ACL's description. Nil when it can't be read.
-        private static func partitions(_ account: String) -> [String]? {
+        /// What an item's access list says: the partitions it admits ("apple-tool:", "teamid:…", "apple:"; a
+        /// hex-encoded plist in the partition ACL's description) and whether this app is among the
+        /// applications allowed to read it (an empty list means any). Nil when it can't be read.
+        private static func access(_ account: String) -> (partitions: [String], admitsThisApp: Bool)? {
             var ref: CFTypeRef?
             var q = query(account)
             q[kSecReturnRef as String] = true
             guard SecItemCopyMatching(q as CFDictionary, &ref) == errSecSuccess, let ref else { return nil }
             let item = ref as! SecKeychainItem
             var access: SecAccess?
-            guard SecKeychainItemCopyAccess(item, &access) == errSecSuccess, let access,
-                  let acl = (SecAccessCopyMatchingACLList(access, kSecACLAuthorizationPartitionID) as? [SecACL])?.first else { return nil }
-            var apps: CFArray?
-            var description: CFString?
-            var selector = SecKeychainPromptSelector()
-            guard SecACLCopyContents(acl, &apps, &description, &selector) == errSecSuccess, let hex = description as String? else { return nil }
+            guard SecKeychainItemCopyAccess(item, &access) == errSecSuccess, let access else { return nil }
+            func contents(_ authorization: CFString) -> (apps: [SecTrustedApplication]?, description: String?)? {
+                guard let acl = (SecAccessCopyMatchingACLList(access, authorization) as? [SecACL])?.first else { return nil }
+                var apps: CFArray?
+                var description: CFString?
+                var selector = SecKeychainPromptSelector()
+                guard SecACLCopyContents(acl, &apps, &description, &selector) == errSecSuccess else { return nil }
+                return (apps as? [SecTrustedApplication], description as String?)
+            }
+            guard let partition = contents(kSecACLAuthorizationPartitionID), let hex = partition.description else { return nil }
             var bytes = [UInt8]()
             var index = hex.startIndex
             while index < hex.endIndex, let next = hex.index(index, offsetBy: 2, limitedBy: hex.endIndex) {
@@ -301,7 +310,22 @@ enum KeyStore {
                 index = next
             }
             let plist = try? PropertyListSerialization.propertyList(from: Data(bytes), format: nil)
-            return (plist as? [String: Any])?["Partitions"] as? [String]
+            let partitions = (plist as? [String: Any])?["Partitions"] as? [String] ?? []
+            // The applications allowed to decrypt: nil means any; otherwise this app's bundle must be among them.
+            guard let decrypt = contents(kSecACLAuthorizationDecrypt) else { return nil }
+            let admits: Bool
+            if let apps = decrypt.apps {
+                let own = Bundle.main.bundleURL.standardizedFileURL.path
+                admits = apps.contains { app in
+                    var data: CFData?
+                    guard SecTrustedApplicationCopyData(app, &data) == errSecSuccess, let data else { return false }
+                    let path = String(decoding: Data(data as Data).prefix { $0 != 0 }, as: UTF8.self)
+                    return path == own || path.hasPrefix(own + "/")
+                }
+            } else {
+                admits = true
+            }
+            return (partitions, admits)
         }
     }
 
