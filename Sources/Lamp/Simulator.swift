@@ -87,10 +87,16 @@ enum Simulator {
         return true
     }
 
-    /// Brings the Simulator window to the front.
+    /// Brings the Simulator window to the front. Xcode usually carries the Simulator app in its bundle, but
+    /// not always (Xcode 27 on one Mac had none): then the Mac is asked for whichever copy it has, which
+    /// shows the same booted devices, since every copy talks to the one simulator service.
     static func show() async {
-        guard let developer = PhoneTools.discover() else { return }
-        _ = await Subprocess.run("/usr/bin/open", [developer + "/Applications/Simulator.app"], timeout: 30)
+        let bundled = PhoneTools.discover().map { $0 + "/Applications/Simulator.app" }
+        if let bundled, FileManager.default.fileExists(atPath: bundled) {
+            _ = await Subprocess.run("/usr/bin/open", [bundled], timeout: 30)
+        } else {
+            _ = await Subprocess.run("/usr/bin/open", ["-b", "com.apple.iphonesimulator"], timeout: 30)
+        }
     }
 }
 

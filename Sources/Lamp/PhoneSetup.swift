@@ -252,8 +252,10 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
             guard let developer = report?.developer else { return }
             open(URL(fileURLWithPath: developer).deletingLastPathComponent().deletingLastPathComponent())
         case .simulator:
-            guard let developer = report?.developer else { return }
-            open(URL(fileURLWithPath: developer + "/Applications/Simulator.app"))
+            Task { await Simulator.show() }
+        case .settings:
+            UserDefaults.standard.set("building", forKey: "settingsTab")
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         case .updatePhone:
             open(URL(string: "https://support.apple.com/118575")!)
         case .retry:
@@ -285,13 +287,14 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
 /// The checks as the few things a person would recognize, each with what it is. The detector's steps sit
 /// behind them: which agreement or download is missing is said in the step's own instructions.
 private enum PhoneSetupStage: CaseIterable {
-    case xcode, software, simulator, phone
+    case xcode, software, simulator, account, phone
 
     var steps: [PhoneTools.Step] {
         switch self {
         case .xcode: return [.xcode, .tools, .firstLaunch]
         case .software: return [.platform, .runtime]
         case .simulator: return [.simulator]
+        case .account: return [.account]
         case .phone: return [.phone]
         }
     }
@@ -300,6 +303,7 @@ private enum PhoneSetupStage: CaseIterable {
         case .xcode: return "Xcode"
         case .software: return "iOS for Xcode"
         case .simulator: return "Simulator"
+        case .account: return "Your Apple Account"
         case .phone: return "Your iPhone or iPad"
         }
     }
@@ -308,17 +312,22 @@ private enum PhoneSetupStage: CaseIterable {
         case .xcode: return "Apple's free app for making apps"
         case .software: return "What Xcode needs to make iPhone and iPad apps"
         case .simulator: return "An iPhone or iPad on your Mac's screen, where Lamp tries your app"
+        case .account: return "Signed in to Xcode, with the team that signs apps for your phone"   // only shown once it has passed
         case .phone: return "On iOS \(PhoneTools.minimumIOS) or later"   // only shown once it has passed
         }
     }
+
+    /// The account and the phone are only checked when a phone is chosen, so their rows only show then.
+    var needsPhone: Bool { self == .account || self == .phone }
 }
 
 struct PhoneSetupView: View {
     @ObservedObject var model: PhoneSetup
 
-    /// The phone is only checked when one is chosen, so its row only shows then.
     private var stages: [PhoneSetupStage] {
-        PhoneSetupStage.allCases.filter { $0 != .phone || model.report?.passed.contains(.phone) == true || model.report?.issue?.step == .phone }
+        PhoneSetupStage.allCases.filter { stage in
+            !stage.needsPhone || stage.steps.contains { model.report?.passed.contains($0) == true || model.report?.issue?.step == $0 }
+        }
     }
 
     var body: some View {

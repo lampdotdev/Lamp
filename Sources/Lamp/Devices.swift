@@ -39,17 +39,7 @@ enum Devices {
     }
 
     /// The teams of the accounts signed in to Xcode: the ones its automatic signing can sign for.
-    static func xcodeTeams() -> [(id: String, name: String)] {
-        let accounts = UserDefaults(suiteName: "com.apple.dt.Xcode")?.dictionary(forKey: "IDEProvisioningTeamByIdentifier") ?? [:]
-        var teams: [(id: String, name: String)] = []
-        for case let list as [[String: Any]] in accounts.values {
-            for team in list {
-                guard let id = team["teamID"] as? String, id.count == 10, !teams.contains(where: { $0.id == id }) else { continue }
-                teams.append((id, team["teamName"] as? String ?? id))
-            }
-        }
-        return teams.sorted { $0.name < $1.name }
-    }
+    static func xcodeTeams() -> [(id: String, name: String)] { PhoneTools.xcodeTeams() }
 
     /// Prefer Xcode's signed-in teams, then teams with a valid development signing identity on this Mac.
     static func knownTeams() async -> [(id: String, name: String)] {

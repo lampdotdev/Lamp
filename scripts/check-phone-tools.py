@@ -12,7 +12,7 @@ import tempfile
 root = Path(__file__).resolve().parent.parent
 sources = root / "Sources/Lamp"
 store = (sources / "Store.swift").read_text()
-family = store[store.index("enum DeviceFamily:"):store.index("struct LampProject:")]
+family = store[store.index("enum DeviceFamily:"):store.index("\n}\n", store.index("enum DeviceFamily:")) + 3]
 simulator = (sources / "Simulator.swift").read_text()
 simulator = simulator[:simulator.index("    /// Boots the iPhone")] + "}\n"
 agent = (sources / "Agent.swift").read_text()

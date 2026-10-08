@@ -2693,7 +2693,12 @@ final class Store: ObservableObject {
                 refreshOpenApps()
                 return crash
             }
-            if inFront { log(project, .status, "\(project.name) is ready on the \(project.family.name) simulator") }
+            if inFront {
+                // The Simulator was opened before the install; by now it may be behind Lamp again, and "ready"
+                // should mean the app is in front of the person, not somewhere to be found.
+                await Simulator.show()
+                log(project, .status, "\(project.name) is ready on the \(project.family.name) simulator")
+            }
         } catch {
             // A failure to boot, install or launch is reported like a crash: the agent must hear about it.
             log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
