@@ -94,9 +94,38 @@ enum Privacy {
             if (word == "python" || word == "python3" || word == "perl") && following.first == "-" { return true }   // a script from a heredoc
             if word == "tee" { return true }
         }
-        // `> file` or `>> file`, but not `2>&1` or `> /dev/null`.
-        let redirect = try! NSRegularExpression(pattern: #"(?:^|[^0-9&<])>{1,2}\s*(?!/dev/null|&)[^\s|;&>]+"#)
-        return redirect.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) != nil
+        return redirectsIntoFile(command)
+    }
+
+    /// `> file` or `>> file` in the shell's own syntax: outside quotes and escapes (a `>` inside "a > b" is
+    /// text), and not `2>&1`, `&>`, `<>` or `> /dev/null`.
+    private static func redirectsIntoFile(_ command: String) -> Bool {
+        var quote: Character?
+        var escaped = false
+        var previous: Character?
+        let characters = Array(command)
+        var index = 0
+        while index < characters.count {
+            let character = characters[index]
+            defer { previous = character; index += 1 }
+            if escaped { escaped = false; continue }
+            if character == "\\", quote != "'" { escaped = true; continue }
+            if let open = quote {
+                if character == open { quote = nil }
+                continue
+            }
+            if character == "'" || character == "\"" { quote = character; continue }
+            guard character == ">" else { continue }
+            if let previous, previous.isNumber || previous == "&" || previous == "<" { continue }
+            var next = index + 1
+            if next < characters.count, characters[next] == ">" { next += 1 }
+            while next < characters.count, characters[next] == " " { next += 1 }
+            guard next < characters.count, characters[next] != "&" else { continue }
+            let target = String(characters[next...].prefix { !$0.isWhitespace && !"|;&>".contains($0) })
+            if target.isEmpty || target == "/dev/null" { continue }
+            return true
+        }
+        return false
     }
 
     /// Whether a shell command names something the rule above would ask about: a file or folder outside the

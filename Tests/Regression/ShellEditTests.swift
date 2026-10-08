@@ -19,4 +19,14 @@ final class ShellEditTests: XCTestCase {
         XCTAssertFalse(Privacy.editsFilesThroughShell("ls Sources > /dev/null"))
         XCTAssertFalse(Privacy.editsFilesThroughShell("gh repo clone owner/name .lamp/reference/name -- --depth 1"))
     }
+
+    /// A `>` inside quotes is text, not a redirect.
+    func testQuotedAnglesAreNotRedirects() {
+        XCTAssertFalse(Privacy.editsFilesThroughShell(#"git log --grep="a > b""#))
+        XCTAssertFalse(Privacy.editsFilesThroughShell(#"python3 -c "print(4 > 3)""#))
+        XCTAssertFalse(Privacy.editsFilesThroughShell(#"grep -n 'x >> y' Sources/App.swift"#))
+        XCTAssertFalse(Privacy.editsFilesThroughShell(#"echo "a \> b""#))
+        XCTAssertTrue(Privacy.editsFilesThroughShell(#"echo "a > b" > Sources/Notes.txt"#))
+        XCTAssertFalse(Privacy.editsFilesThroughShell("swift build &> /dev/null"))
+    }
 }

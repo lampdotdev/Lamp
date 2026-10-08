@@ -3375,8 +3375,10 @@ final class Store: ObservableObject {
             // Claude Code already ran its own classifier before asking ("claude-permission"), so ask the user.
             let escalated = request.path.contains("format=claude-permission")
             // An edit the file tools would make, written as a shell command: declined with the reason, rather than
-            // a card the user has to answer for something the file tools do silently.
-            if shell, Privacy.editsFilesThroughShell(command), !Privacy.reachesOutside(command, project: project) {
+            // a card the user has to answer for something the file tools do silently. Not when commands run
+            // without asking (Never): Claude Code and Codex don't consult Lamp at all then, so nor does pi.
+            if shell, CommandApproval.current != .never, Privacy.editsFilesThroughShell(command),
+               !Privacy.reachesOutside(command, project: project) {
                 log(project, .detail, "Declined a shell command that edits files: the agent's own file tools do that without asking.")
                 let reason = Privacy.shellEditRefusal
                 if request.path.contains("format=codex") {
