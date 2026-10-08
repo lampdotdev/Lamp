@@ -597,6 +597,7 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return
         }
+        moved[project.id] = nil   // the id is this draft's now, not a signpost to the app an earlier one became
         reload()
         selection = project.id
         chatFocusRequest += 1
@@ -891,7 +892,9 @@ final class Store: ObservableObject {
     /// The app as it is now, following any rescaffold since `project` was taken (one step: `moved` always
     /// points straight at the latest id).
     func current(_ project: LampProject) -> LampProject? {
-        projects.first { $0.id == moved[project.id] ?? project.id }
+        // An app under this id itself comes first: a new Untitled takes the id an earlier one left behind
+        // when its first message renamed it, and mustn't be taken for that earlier app.
+        projects.first { $0.id == project.id } ?? moved[project.id].flatMap { to in projects.first { $0.id == to } }
     }
 
     /// Display names must be unique: each app installs as "<name>.app" in the apps folder (Edition.appsFolder).
