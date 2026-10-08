@@ -120,6 +120,11 @@ extension LogLine {
         return start
     }
 
+    /// How many lines before the latest request a chat starting at `start` is showing.
+    static func reach(in lines: [LogLine], from start: Int) -> Int {
+        (lines.lastIndex { $0.kind == .user } ?? start) - start
+    }
+
     /// The chat as most people read it: what they asked, what the agent answered and what happened to the
     /// app. The agent's working is left out, both its steps and what it says between them, which is where
     /// the file names and code are; the progress line stands in for it. Agent Details shows everything.

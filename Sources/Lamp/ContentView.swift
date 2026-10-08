@@ -435,8 +435,8 @@ struct ProjectView: View {
     private var submissionPending: Bool { store.pendingSubmissions.contains(store.current(project)?.id ?? project.id) }
     /// A request on its way out again: what it replaces stays out of sight until the chat has let go of it.
     @State private var sendingAgain: UUID?
-    /// How many times Show Earlier Messages has been used in this chat: each brings in that much more.
-    @State private var earlierShown = 0
+    /// How many lines before the latest request the chat reaches back for. Show Earlier Messages raises it.
+    @State private var reach = LogLine.recentCount
     /// What the toolbar knows of the app's history, for which of its buttons can do anything. Nil until read.
     @State private var history: History?
 
@@ -487,7 +487,7 @@ struct ProjectView: View {
     /// as one expression the whole view is more than the compiler can type-check in reasonable time.
     private func chat(_ lines: [LogLine]) -> some View {
         // Only the end of a long chat is shown until more is asked for (see `LogLine.recentStart`).
-        let start = LogLine.recentStart(in: lines, atLeast: LogLine.recentCount * (earlierShown + 1))
+        let start = LogLine.recentStart(in: lines, atLeast: reach)
         let shown = start > 0 ? Array(lines[start...]) : lines
         return ScrollViewReader { proxy in
             GeometryReader { area in
@@ -499,7 +499,9 @@ struct ProjectView: View {
                         if start > 0 {
                             Button("Show Earlier Messages") {
                                 guard let top = shown.first?.id else { return }
-                                earlierShown += 1
+                                // From what's shown, not from what was asked for: a long turn can take the
+                                // chat further back than that, and the next lot has to start beyond it.
+                                reach = LogLine.reach(in: lines, from: start) + LogLine.recentCount
                                 // They come in above what's being read, which stays where it is.
                                 Task { @MainActor in
                                     await Task.yield()

@@ -33,6 +33,22 @@ final class RecentChatTests: XCTestCase {
         XCTAssertEqual(LogLine.recentStart(in: lines, atLeast: 60), start)
     }
 
+    /// A turn longer than one lot takes the chat further back than asked. The next lot starts from there:
+    /// asking again must always show something more.
+    func testShowingEarlierAlwaysShowsMore() {
+        let lines = chat(turns: 3, replies: 2) + chat(turns: 1, replies: 180) + chat(turns: 1, replies: 1)
+        var start = LogLine.recentStart(in: lines, atLeast: 60)
+        XCTAssertEqual(start, 9)
+        var steps = 0
+        while start > 0 {
+            let next = LogLine.recentStart(in: lines, atLeast: LogLine.reach(in: lines, from: start) + 60)
+            XCTAssertLessThan(next, start)
+            start = next
+            steps += 1
+        }
+        XCTAssertEqual(steps, 1)
+    }
+
     func testLinesBeforeTheFirstRequestComeWithIt() {
         let lines = [LogLine(kind: .status, text: "Imported")] + chat(turns: 3, replies: 2)
         XCTAssertEqual(LogLine.recentStart(in: lines, atLeast: 60), 0)
