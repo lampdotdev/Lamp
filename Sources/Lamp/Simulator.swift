@@ -91,12 +91,8 @@ enum Simulator {
     /// Xcode 27. Both show the iPhone's screen and its accessibility tree the same way.
     static let viewers = ["com.apple.iphonesimulator", "com.apple.dt.Devices"]
 
-    /// Where that app is in this Xcode, given its Developer folder.
-    static func viewer(in developer: String) -> URL? {
-        let xcode = URL(fileURLWithPath: developer).deletingLastPathComponent()
-        return [URL(fileURLWithPath: developer + "/Applications/Simulator.app"), xcode.appendingPathComponent("Applications/DeviceHub.app")]
-            .first { FileManager.default.fileExists(atPath: $0.path) }
-    }
+    /// Where that app is in this Xcode, given its Developer folder (found by the readiness check too).
+    static func viewer(in developer: String) -> URL? { PhoneTools.viewer(in: developer) }
 
     /// Brings the simulator's window to the front, showing this iPhone when the app shows one device at a time.
     static func show(_ udid: String? = nil) async {
