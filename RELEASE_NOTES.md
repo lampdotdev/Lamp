@@ -5,11 +5,16 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
-## Unreleased
+## 0.10.5
 
 - Pictures no longer fall back to a ChatGPT Codex sign-in that happens to be on the Mac: Codex draws them only
   when it's what builds your apps or answers inside them. Otherwise, with no OpenRouter key and no picture
   model on this Mac, Lamp asks for one.
+- A chat can no longer leave Lamp stuck during a turn: every row shown is laid out, and a long chat shows its
+  end first, with earlier messages a scroll away.
+- An app's icon artwork shows in the chat the moment it's picked, rather than at the end of the build.
+- Making a new app while an earlier new app was still working sent the message to the earlier app. Each app
+  now has its own identity, kept through renames, so a fresh app's first message is its own.
 
 ## 0.10.4
 
