@@ -13,6 +13,8 @@ import ChangeItAnyTime from "../components/visuals/ChangeItAnyTime.astro";
 import AppleSilicon from "../components/visuals/AppleSilicon.astro";
 import ShareWithAnyone from "../components/visuals/ShareWithAnyone.astro";
 import icon from "../assets/AppIcon.png";
+// The welcome's porcelain lamp, rendered for the hero card in Blender (see RELEASING.md).
+import heroLamp from "../assets/hero-lamp-reflection.png";
 import anthropic from "../assets/logos/anthropic.png";
 import openai from "../assets/logos/openai.png";
 import openrouter from "../assets/logos/openrouter.png";
@@ -163,29 +165,51 @@ const description = `${pitch} ${noCode}`;
     <!-- The hero sits in a card of its own across the window, like the tiles below, to set it apart from what
          follows. -->
     <div class="px-2 pt-2 sm:px-3 sm:pt-3">
-    <section class="flex flex-col items-center rounded-[28px] bg-panel px-6 pt-16 pb-14 text-center sm:pt-20 sm:pb-16">
+    <!--
+      Opens like Apple's product pages: the card starts as tall as the window with the icon large in its middle,
+      then the card shrinks to its own height as the icon settles and the words come up under it, the button
+      appears, and the porcelain lamp (the welcome's, rendered for this card) slides up from the bottom edge. Once, on load, and not at all for people who've asked for less
+      motion (global.css).
+    -->
+    <section class="hero-card hero-sky relative flex flex-col items-center overflow-hidden rounded-[28px] px-6 pt-14 text-center sm:pt-16">
+      <div class="hero-icon">
+        <Image
+          src={icon}
+          alt=""
+          width={88}
+          height={88}
+          densities={[1, 2]}
+          loading="eager"
+          class="size-18 drop-shadow-[0_10px_22px_rgba(217,122,6,0.28)] sm:size-22"
+        />
+      </div>
+      <!-- The name small under the icon, as Apple labels a product, and the promise as the page's heading. -->
+      <div class="hero-words flex flex-col items-center">
+        <p class="mt-3 text-[15px] font-semibold tracking-tight">Lamp</p>
+        <h1 class="mt-5 font-display text-5xl leading-[1.05] font-bold tracking-tight sm:text-7xl sm:whitespace-nowrap">
+          Wish apps into existence.
+        </h1>
+        <p class="mt-5 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">{together(pitch)}<br />{together(noCode)}</p>
+      </div>
+      <div class="hero-button relative z-10 mt-9"><DownloadButton /></div>
+      <!-- As wide as the card allows, but no taller than leaves the whole card in the window: the words above
+           take about 530px with the space under them, and the render is 2.98 times as wide as it is tall. -->
       <Image
-        src={icon}
-        alt="Lamp"
-        width={176}
-        height={176}
-        densities={[1, 2]}
+        src={heroLamp}
+        alt=""
+        widths={[800, 1200, 1600, 2400]}
+        sizes="100vw"
         loading="eager"
-        class="size-36 drop-shadow-[0_14px_30px_rgba(217,122,6,0.28)] sm:size-44"
+        class="hero-lamp pointer-events-none mt-6 h-auto max-w-none select-none sm:mt-4"
+        style="width: min(100%, calc((100svh - 530px) * 2.98))"
       />
-      <h1 class="mt-6 font-display text-5xl font-bold tracking-tight sm:text-6xl">Lamp</h1>
-      <p class="mt-4 font-display text-3xl leading-tight font-bold tracking-tight sm:text-4xl sm:whitespace-nowrap">
-        Wish apps into existence.
-      </p>
-      <p class="mt-5 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">{together(pitch)}<br />{together(noCode)}</p>
-      <div class="mt-9"><DownloadButton /></div>
     </section>
 
     </div>
 
     <section>
       <div class="mx-auto max-w-6xl px-4 pt-20 sm:px-6 sm:pt-24">
-        <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">For work. For play. For you.</h2>
+        <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">For work. For play. For&nbsp;you.</h2>
         <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
           {together("Something for the task that bugs you, or a game for when you're done.")}<br />{together("Each of these started as a single request:")}
         </p>
@@ -195,7 +219,7 @@ const description = `${pitch} ${noCode}`;
 
     <section class="bg-panel">
       <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Feels like a genie, not like work.</h2>
+      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Feels like a genie, not&nbsp;like&nbsp;work.</h2>
       <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
         {together("Download it. Describe your app. No account, minimal setup.")}<br />{together("Then just chat to make it perfectly yours.")}
       </p>
@@ -214,7 +238,7 @@ const description = `${pitch} ${noCode}`;
     <section class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
       <div class="grid gap-4 bento:grid-cols-10">
         <div class="overflow-hidden rounded-[28px] bg-panel pt-12 text-center bento:col-span-10 sm:pt-16">
-          <h3 class="px-8 font-display text-3xl font-bold tracking-tight sm:text-5xl">Real apps. Really yours.</h3>
+          <h3 class="px-8 font-display text-3xl font-bold tracking-tight sm:text-5xl">Real apps. Really&nbsp;yours.</h3>
           <p class="mx-auto mt-4 max-w-[50rem] px-8 text-xl leading-[1.4] text-muted">
             {together("In your Applications folder, in your Dock and on your Home Screen.")}<br />{together("No browser tab, no subscription, no server to worry about.")}
           </p>
@@ -256,7 +280,7 @@ const description = `${pitch} ${noCode}`;
 
     <section class="bg-panel">
       <div class="mx-auto max-w-6xl px-4 py-20 text-center sm:px-6 sm:py-24">
-      <h2 class="font-display text-4xl font-bold tracking-tight sm:text-5xl">Use the AI you already have.</h2>
+      <h2 class="font-display text-4xl font-bold tracking-tight sm:text-5xl">Use the AI you already&nbsp;have.</h2>
       <p class="mx-auto mt-4 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">
         {together("Lamp is free. It builds with your Claude or ChatGPT subscription, a key from more than a dozen AI providers, or a model that runs right on your Mac.")}
       </p>

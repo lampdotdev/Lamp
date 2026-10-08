@@ -162,6 +162,12 @@ button goes to `https://updates.lamp.dev/download/latest`, so a new release need
   (`swift scripts/phone-frame.swift out.png 1380 0.16 first.png second.png`: the device height in pixels, the
   screen's corner radius as a fraction of its width, then one or more screens side by side). The icons under
   "Real apps" are each app's 512px icon, from `iconutil -c iconset .lamp/AppIcon.icns`.
+- The hero's lamp (`site/src/assets/hero-lamp-reflection.png`) is the welcome's porcelain lamp rendered with
+  `design/lamp/render-hero.py`: export the model as in `design/lamp/README.md`, then
+  `Blender --background --factory-startup --python design/lamp/render-hero.py -- --model build/onboarding/lamp.obj
+  --output build/hero --width 3600 --height 1209 --samples 256 --name hero --eye 1.0,1.75,6.6 --target 0.72,1.36,0
+  --fov 14.5 --exposure 0.55 --fstop 8 --button 1.1`. Give a new render a new file name: the dev server keeps
+  serving its copy of the old one.
 
 **First deploy** (once): deploy the update server first, so the Download button's `/download/latest` exists,
 then create the site's project from `site/` and give it the domain.
