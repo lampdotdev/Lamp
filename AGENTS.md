@@ -160,44 +160,37 @@ installs depend on: the bundle ID `dev.lamp.host`, `~/Library/Application Suppor
 `~/Applications/Lamp Apps`, the `lamp://` scheme, the `.lampapp` extension and the signing certificates.
 Renaming any of those needs a migration, not a find-and-replace.
 
-## Settings
+## Interface
 
-Settings (`SettingsView` and its tabs, in `Sources/Lamp/Setup.swift`) has been tidied more than once, and
-new features keep undoing it. A change that adds to Settings follows these, and says in its PR which tab it
-touched and why the option needs to be there at all:
+Lamp's screens drift as features land: each adds its own explanation, warning or status, and an earlier
+tidy-up is undone. Before adding to any of them (Settings, the welcome, the chat and its cards, the build
+card), check:
 
-- **Each tab has one job.** Building: how Lamp builds apps (the models and what the agent may do without
-  asking, in one group, then its permissions). Apps: what apps use while they run. AI Providers: what's on
-  this Mac, then cloud AI providers. Experimental: what the Lamp team is still working on. Each tab's form ends in
-  `.settingsPane()`, which sizes the window to it.
-- **An experiment's settings live under its checkbox in the Experimental tab**, indented and shown only
-  while it's on, not in a section of their own in another tab. That includes its models (an iOS app's
-  "away from this Mac" models are under Build iOS apps). A feature leaving Experimental moves its settings
-  to the tab whose job they are.
-- **On/off options are checkboxes, box first, in `SettingsCheckboxes`**, never switches. An option that's
-  a part of another sits under it with `.underCheckbox()`, shown only while the other is on. Put the parent
-  checkbox last in its stack when its parts are pickers or fields, so they follow it.
-- **No explanatory text by default.** Labels say what an option does in plain words. A note is for what
-  the label can't say and the person needs to decide (something gets installed, a permission is asked
-  for); it's one or two sentences, under its checkbox, with `.checkboxNote(…)`. No section footers, and no
-  captions under pickers or lists.
-- **Show problems, not the absence of them.** When something is ready, say nothing. When it isn't, one
-  row says why, in gray, and offers the one thing that fixes it (`KeyNote`'s Add a Key…, Sign In…,
-  Download): see `BuildingSettings.agentStatus` and `agentFix`. `NotReadyBadge` is the only orange in
-  Settings. Paths and other details go in `.help`, on hover.
-- **A model menu lists only what can be used now**, and shows what's actually used when the saved choice
-  can't be (`AppsSettings`, `ImageModelRow`). With one option it's named as plain text; with nothing to
-  choose from, `NotReadyRow` stands where the menu would be, with the fix under it. Never a menu showing a choice the words under it say won't work.
-- **A setting is shown where it's chosen, and nowhere else.** No badges or summaries elsewhere saying what
-  a provider is used for: they repeat the menus and drift from what Lamp actually does.
-- **Menus list what's set up, then a way to set up more** ("Configure providers…" switches to AI Providers),
-  rather than everything with "(not installed)".
-- **Section headings name the group** ("AI settings for Lamp", "Models used in apps", "Permissions and
-  Privacy", "Cloud AI providers"), with the same words for the same idea in every tab. Codex is "ChatGPT Codex"
-  in anything people read: use `Engine.title`, never a literal.
-- **Async checks belong to what they checked.** A sign-in or install check that finishes after the
-  choice changed must not update the new choice: key results by engine or provider and drop cancelled
-  ones (`BuildingSettings.signIns`).
+- **Is it a choice, an action, or the fix for one?** Screens are for doing, not explaining. Labels say what
+  something does; a note is only for what the person must accept to decide (an install, a permission, a
+  cost), in a sentence or two. No footers, captions, or badges summing up what something is used for.
+- **Does it ever contradict itself?** What's shown is what Lamp does. Offer only what works now: a single
+  option is plain text, not a menu, and none is a Not Ready state with its fix. When all is well, say
+  nothing; a problem is one orange mark and one gray line with the one thing that fixes it. Never a choice
+  on screen with words under it saying it won't work.
+- **Is this its only home?** Show a thing where it's chosen or changed, and from anywhere else link there
+  rather than repeat it: repeats drift from what Lamp actually does. An experiment and its settings live in
+  Settings → Experimental, under its checkbox; a feature leaving Experimental takes its settings to the tab
+  whose job they are.
+- **Does structure carry the meaning?** Related things share a group. What depends on something sits
+  indented under it and shows only while that's on. Details for the curious (paths, versions) go in `.help`.
+- **Same words for the same thing**, in every screen, Help and errors. Product names come from one place
+  (`Engine.title`: "ChatGPT Codex"), never a literal.
+
+### Settings
+
+Each tab has one job: **Building**, how Lamp builds apps; **Apps**, what apps use while they run; **AI
+Providers**, what's on this Mac, then cloud providers, with keys, sign-ins and downloads (other tabs' menus
+end in "Configure providers…", which leads here); **Experimental**, what the Lamp team is still working on.
+Lay out with the shared pieces in `Setup.swift`, and extend one rather than lay out by hand:
+`SettingsCheckboxes` (on/off is a checkbox, box first, never a switch), `.underCheckbox()`,
+`.checkboxNote(…)`, `NotReadyBadge`, `NotReadyRow`, `KeyNote`, `ImageModelRow`, and `.settingsPane()` at the
+end of each tab. A PR that adds to Settings says which tab, and why the option needs to exist at all.
 
 ## Conventions
 
