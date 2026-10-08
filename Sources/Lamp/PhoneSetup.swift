@@ -413,7 +413,7 @@ struct PhoneSetupView: View {
         if model.report?.passed.contains(.phone) == true { return "Everything's ready, your iPhone or iPad included." }
         // An app that became a Mac app while this was open: nothing was checked, and nothing needs to be.
         if model.report?.passed.isEmpty == true { return "This is a Mac app now, so there's nothing to set up." }
-        return "Everything's ready. To put an app on your own iPhone or iPad, choose it under Try On, beside the Play button, and Lamp will check that too."
+        return "Everything's ready. To put an app on your own iPhone or iPad, you'll also need an Apple Account signed in to Xcode (a free one will do): choose the phone under Try On, beside the Play button, and Lamp will check that too."
     }
 
     /// One button row, the way a Mac dialog has it: the next thing to do on the right, where Return presses it.
