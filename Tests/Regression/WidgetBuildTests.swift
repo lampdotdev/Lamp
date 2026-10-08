@@ -168,6 +168,72 @@ final class WidgetBuildTests: XCTestCase {
                        + #"codesign --force --keychain "$LAMP_KEYCHAIN" -s "$LAMP_IDENTITY" "$LAMP_APP" 2>&1"#)
     }
 
+    // MARK: - The connection between them
+
+    /// The two halves Lamp writes, built as two small programs and run against each other and against a
+    /// program that only pretends to be the app.
+    func testTheWidgetTakesAnswersOnlyFromItsOwnApp() throws {
+        let project = try app()
+        try addWidget(to: project)
+        try Template.writeOwnedFiles(for: project)
+        let work = try XCTUnwrap(root).appendingPathComponent("halves")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        let port = Template.widgetPort(for: project)
+
+        // The app's half, cut out of LampSupport.swift, with the two things it leans on there.
+        let support = try text("Sources/LampSupport.swift", in: project)
+        let start = try XCTUnwrap(support.range(of: "enum LampWidget {"))
+        let end = try XCTUnwrap(support.range(of: "#endif", range: start.upperBound..<support.endIndex))
+        try ("""
+        import Foundation
+        import Network
+        import CryptoKit
+        import WidgetKit
+        enum LampStore { static let folder = URL(fileURLWithPath: CommandLine.arguments[1]) }
+        struct Tide: Codable { var height: Double }
+        \(support[start.lowerBound..<end.lowerBound])
+        LampWidget.share(Tide(height: 2.5), as: "tide")
+        RunLoop.main.run(until: Date().addingTimeInterval(Double(CommandLine.arguments[2])!))
+        """).write(to: work.appendingPathComponent("app.swift"), atomically: true, encoding: .utf8)
+        // The widget's half as Lamp wrote it, asked once.
+        try ("""
+        import Foundation
+        struct Tide: Codable { var height: Double }
+        LampWidget.read(Tide.self, from: "tide") { tide in
+            print(tide.map { "height \\($0.height)" } ?? "nothing")
+            exit(0)
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(20))
+        """).write(to: work.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
+        try text("Widget/LampWidgetSupport.swift", in: project).write(to: work.appendingPathComponent("half.swift"), atomically: true, encoding: .utf8)
+        // Something else on the app's port, answering the way the app did before answers were signed, and
+        // again with a signature made without the secret.
+        try ("""
+        import socket, sys
+        s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", \(port))); s.listen(5)
+        print("listening", flush=True)
+        for reply in [b'ok\\n{"height":666}', b'ok ' + b'0' * 64 + b'\\n{"height":666}']:
+            c, _ = s.accept(); c.recv(4096); c.sendall(reply); c.close()
+        """).write(to: work.appendingPathComponent("pretender.py"), atomically: true, encoding: .utf8)
+
+        // The widget keeps the last answer in its own settings, which macOS files under the program's name:
+        // a name of its own for this run, cleared afterwards, keeps one run's answer out of the next.
+        let widget = "lamp-widget-test-\(UUID().uuidString)"
+        defer { _ = try? run("defaults delete \(widget); rm -f ~/Library/Preferences/\(widget).plist", in: work) }
+        let built = try run(Shell.compatibleSDK + "xcrun swiftc -O -o \(widget) half.swift main.swift 2>&1; xcrun swiftc -O -o app app.swift 2>&1", in: work)
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: work.appendingPathComponent("app").path), String(built.output.suffix(2000)))
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: work.appendingPathComponent(widget).path), String(built.output.suffix(2000)))
+
+        // Nobody to ask, nothing kept: nothing.
+        XCTAssertEqual(try run("./\(widget)", in: work).output, "nothing\n")
+        // A pretender on the port, unsigned and then wrongly signed: still nothing, and nothing kept from it.
+        XCTAssertEqual(try run("python3 pretender.py > pretender.log & sleep 1; ./\(widget); ./\(widget); wait", in: work).output, "nothing\nnothing\n")
+        // The app itself: its answer is taken.
+        XCTAssertEqual(try run("./app \"$PWD/store\" 4 & sleep 1.5; ./\(widget); wait", in: work).output, "height 2.5\n")
+        // The app gone and a pretender in its place: the widget shows what the app said last, not the pretender's.
+        XCTAssertEqual(try run("python3 pretender.py > pretender.log & sleep 1; ./\(widget); ./\(widget); wait", in: work).output, "height 2.5\nheight 2.5\n")
+    }
+
     // MARK: - What the agent is told
 
     func testOnlyAMacAppIsToldItCanHaveAWidget() {

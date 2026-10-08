@@ -206,7 +206,13 @@ shares, answers on this Mac's own address at a port worked out from the app's id
 whoever sends the app's widget secret (`Template.widgetToken`), and reloads the widget. `LampWidget.read` in
 `Widget/LampWidgetSupport.swift`, a fourth file Lamp owns and rewrites (`Template.writeWidgetSupport`, only
 for an app with a widget), asks, and keeps the last answer in the widget's own sandbox for when the app is
-closed. So a widget is as fresh as the last time its app ran.
+closed. So a widget is as fresh as the last time its app ran. The secret never crosses the connection: the
+widget signs its question with it and the app signs its answer over the question's nonce, so only the app's
+widget is answered and the widget passes over anything else that took the port.
+
+Lamp never replaces an app on disk while it's running (`HeldInstalls`): macOS then stops taking the running
+app for its widget's owner and refuses its redraws until it's reopened. A build quits the app first; a new
+icon or its artwork (`Store.installIcon`) waits for the app to close or for the next build.
 
 ## Naming: Lamp and Lamp
 
