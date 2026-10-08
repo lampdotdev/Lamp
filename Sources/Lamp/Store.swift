@@ -323,6 +323,7 @@ final class Store: ObservableObject {
 
     private init() {
         Migration.fromForge()
+        Versions.refused = { [weak self] folder, refusal in self?.historyRefused(at: folder, refusal) }
         // The keys are read off the main thread first; what needs them (pi's auth file, the setup check, the
         // views drawn meanwhile) follows once they're in.
         KeyStore.preload()
@@ -449,6 +450,22 @@ final class Store: ObservableObject {
                 usage[project.id] = saved
             }
         }
+    }
+
+    /// Apps told, since Lamp opened, that their history can't be used.
+    private var toldAboutHistory: Set<String> = []
+    static let historyRefusedText = "Lamp can't save versions of this app, so Undo and Versions won't work for it. Its saved history is set up in a way Lamp can't use safely."
+
+    /// Lamp's git wasn't run on an app's history (`Versions.own` says when): the person is told once in the
+    /// app's chat, rather than finding later that nothing was saved. Every git call ends this way while the
+    /// history stays as it is, so it is said once per app each time Lamp is opened, and not twice in a row.
+    private func historyRefused(at folder: URL, _ refusal: Versions.Refusal) {
+        let path = folder.standardizedFileURL.path
+        guard let project = projects.first(where: { $0.dir.standardizedFileURL.path == path }),
+              toldAboutHistory.insert(project.id).inserted else { return }
+        NSLog("Lamp: git was not run on %@ (%@)", path, String(describing: refusal))
+        guard logs[project.id]?.last?.text != Self.historyRefusedText else { return }
+        log(project, .error, Self.historyRefusedText)
     }
 
     func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil,
@@ -804,7 +821,7 @@ final class Store: ObservableObject {
     /// Nothing has happened in the app but its scaffold, so it can still change its folder and executable name.
     private func isPristine(_ project: LampProject) async -> Bool {
         var output: [String] = []
-        let status = await Versions.git("test $(git rev-list --count HEAD) -eq 1 && git status --porcelain \(Versions.closed) -- . ':!\(Attachments.folder)'",
+        let status = await Versions.git("test $(git rev-list --count HEAD) -eq 1 && \(Versions.status(". ':!\(Attachments.folder)'"))",
                                      cwd: project.dir) { output.append($0) }
         return status == 0 && output.allSatisfy { $0.trimmed.isEmpty }
     }
@@ -1587,7 +1604,7 @@ final class Store: ObservableObject {
     private func agentChangedFiles(_ project: LampProject) async -> Bool {
         var output = ""
         let ignored = "':!Sources/LampSupport.swift' ':!icon.json' ':!\(Attachments.folder)'"
-        _ = await Versions.git("git status --porcelain \(Versions.closed) -- . \(ignored)", cwd: project.dir) {
+        _ = await Versions.git(Versions.status(". \(ignored)"), cwd: project.dir) {
             output += $0
         }
         return !output.trimmed.isEmpty

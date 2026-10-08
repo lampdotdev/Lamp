@@ -128,8 +128,6 @@ final class SandboxHistoryTests: XCTestCase {
         try await saveAndLook(project)
         let files = try loose("git ls-files -z | tr '\\0' '\\n'", in: project)
         XCTAssertTrue(files.output.contains("Vendor/odd\tname/file"), files.output)
-        let rules = try String(contentsOf: project.dir.appendingPathComponent(".git/info/exclude"), encoding: .utf8)
-        XCTAssertFalse(rules.contains("Vendor"), rules)
     }
 
     /// An app whose history was written before it was closed (0.11.0 confined commands and left it open):

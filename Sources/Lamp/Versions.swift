@@ -42,10 +42,12 @@ enum Versions {
     /// settings are cut back to the ones Lamp knows before every call (`own`), which is what covers a `.git`
     /// written before any of this; hooks and the file-watcher command are off whatever a repository says;
     /// and a repository inside the app's folder (a clone, say), whose `.git` the agent can write, is never
-    /// entered (`stage` keeps such folders out of the history, and status doesn't look inside them).
+    /// entered (`stage` keeps such folders out of the history, and `status` doesn't count them).
     static func git(_ command: String, cwd: URL, env: [String: String] = [:],
                     onLine: @escaping @MainActor (String) -> Void = { _ in }) async -> Int32 {
-        await Shell.run(script(command), cwd: cwd, env: env.merging(environment) { $1 }, onLine: onLine)
+        let status = await Shell.run(script(command), cwd: cwd, env: env.merging(environment) { $1 }, onLine: onLine)
+        if let refusal = Refusal(rawValue: status) { await MainActor.run { refused?(cwd, refusal) } }
+        return status
     }
 
     /// The same, for the one caller that can't await (the migration, at launch).
@@ -54,7 +56,21 @@ enum Versions {
     }
 
     /// What is run for a git command: nothing at all unless the history is Lamp's to trust.
-    static func script(_ command: String) -> String { "\(own) && {\n\(command)\n}" }
+    static func script(_ command: String) -> String { "\(own)\n\(command)" }
+
+    /// Why git wasn't run on an app's history: what `own` ends with instead of running the command. Nothing
+    /// has been changed when it does, except for `.locked`, where some settings may already be gone.
+    enum Refusal: Int32 {
+        /// `.git` isn't a real folder of the app, or its settings aren't a real file.
+        case shape = 97
+        /// The history is kept in a way Lamp can't both leave as it is and trust.
+        case format = 98
+        /// The settings couldn't be changed.
+        case locked = 99
+    }
+
+    /// Told each time git wasn't run, with the app's folder: Store says so in the app's chat.
+    @MainActor static var refused: ((URL, Refusal) -> Void)?
 
     /// Settings given this way win over the repository's, and reach the git that git itself starts.
     static let environment = [
@@ -65,50 +81,62 @@ enum Versions {
 
     /// Makes the history's settings Lamp's own before git reads them. Git has no way to be told "don't trust
     /// this repository's settings", and the ones that make it run a program are too many to switch off one
-    /// by one (filters, text converters, signing programs, includes, hooks named in settings, and more with
-    /// each release), so every setting but the plain ones below is removed, with git's own command for it.
-    /// An app's history from before `.git` was closed can hold anything; one written since holds nothing else.
+    /// by one (text converters, signing programs, includes, hooks named in settings, and more with each
+    /// release), so every setting is removed, with git's own command for it, except the ones below: how the
+    /// history is stored (its format, hashes, where names of versions are kept), how git itself converts
+    /// line endings and which files it checks out, who the person is and where they push. None of those names
+    /// a program. An app's history from before `.git` was closed can hold anything; one written since holds
+    /// nothing else.
     ///
-    /// First, the history has to be a real folder in the app, with its settings a real file of its own: a
-    /// `.git` that points somewhere else (a file or a link, or a shared folder named inside it) leads to a
-    /// place the agent can still write, and then git isn't run at all: Lamp saves nothing until the folder is
-    /// put right. A settings file with a second name (a hard link) can be written by that name, so it is
-    /// replaced by a copy in a file made new for it, never one that might already be there under a known name.
+    /// Two kinds of setting can't be removed without changing what the history means, and can't be kept
+    /// either, so git isn't run at all and nothing is changed (`Refusal.format`): a storage extension other
+    /// than the two kept (a partial clone fetches what it lacks from wherever its settings say; per-worktree
+    /// settings are a second file of them), and a filter, which is a program run on every file going in and
+    /// out (without it, files kept elsewhere or encrypted would be saved as they are on disk).
+    ///
+    /// Before any of that, the history has to be a real folder in the app, with its settings a real file of
+    /// its own: a `.git` that points somewhere else (a file or a link, or a shared folder named inside it)
+    /// leads to a place the agent can still write (`Refusal.shape`). A settings file with a second name (a
+    /// hard link) can be written by that name, so it is replaced by a copy in a file made new for it, never
+    /// one that might already be there under a known name.
     private static let own = #"""
-    { { [ ! -e .git ] && [ ! -L .git ]; } || { [ -d .git ] && [ ! -L .git ] && [ ! -e .git/commondir ] && [ ! -L .git/config ] \
-    && { [ ! -e .git/config ] || [ "$(stat -f %l .git/config)" = 1 ] || { fresh="$(mktemp .git/config.XXXXXXXX)" && cat .git/config > "$fresh" && mv -f "$fresh" .git/config; }; } \
-    && git config --file .git/config --name-only -z --list 2>/dev/null | sort -zu | while IFS= read -r -d '' key; do case "$key" in \
+    if [ -e .git ] || [ -L .git ]; then
+    { [ -d .git ] && [ ! -L .git ] && [ ! -e .git/commondir ] && [ ! -L .git/config ]; } || exit 97
+    if [ -e .git/config ]; then
+    git config --file .git/config --list >/dev/null 2>&1 || exit 98
+    git config --file .git/config --name-only -z --list | while IFS= read -r -d '' key; do case "$key" in \
+    extensions.objectformat|extensions.refstorage) ;; extensions.*|filter.*) exit 98 ;; esac; done
+    [ "$(stat -f %l .git/config)" = 1 ] || { fresh="$(mktemp .git/config.XXXXXXXX)" && cat .git/config > "$fresh" && mv -f "$fresh" .git/config; } || exit 99
+    git config --file .git/config --name-only -z --list | sort -zu | while IFS= read -r -d '' key; do case "$key" in \
     core.repositoryformatversion|core.filemode|core.bare|core.logallrefupdates|core.ignorecase|core.precomposeunicode|core.symlinks) ;; \
-    extensions.objectformat|user.name|user.email|remote.*.url|remote.*.fetch|branch.*.remote|branch.*.merge) ;; \
-    *) git config --file .git/config --unset-all "$key" || exit 1 ;; esac; done; }; }
+    extensions.objectformat|extensions.refstorage|core.eol|core.autocrlf|core.safecrlf|core.sparsecheckout|core.sparsecheckoutcone) ;; \
+    user.name|user.email|remote.*.url|remote.*.pushurl|remote.*.fetch|remote.pushdefault|branch.*.remote|branch.*.merge|branch.*.rebase) ;; \
+    push.default|pull.rebase|init.defaultbranch) ;; \
+    *) git config --file .git/config --unset-all "$key" 2>/dev/null || exit 99 ;; esac; done
+    fi; fi
     """#
 
     /// `git add -A`, without the repositories inside the app's folder. Git records one as a link to a commit
     /// (none of its files), and from then on runs git inside it, with its settings, to see whether it changed.
     /// Git has no switch for "never go in there", so this is a guard of Lamp's own: any link already recorded
-    /// is dropped before anything is added, and any just added is dropped again and its folder put on the
-    /// history's own ignore list, so it stops counting as unsaved work. The list is started again at every
-    /// save: a folder that has stopped being a repository is the app's files again, and is saved.
-    static let stage = "{ \(forget) && \(unlink) && git add -A && \(unlink); }"
+    /// is dropped before anything is added, and any just added is dropped again.
+    static let stage = "{ \(unlink) && git add -A && \(unlink); }"
 
-    /// Lamp's part of the ignore list is everything from this line on.
-    private static let listed = "# Lamp: repositories inside the app's folder"
-    private static let forget = """
-    { [ ! -f .git/info/exclude ] || sed -i '' "/^\(listed)$/,\\$d" .git/info/exclude; } \\
-    && mkdir -p .git/info && echo "\(listed)" >> .git/info/exclude
-    """
-
-    /// Takes every such link out of what's staged. Names end at a zero byte, so no name can hide one; a name
-    /// with a line break in it can't be written as an ignore rule, and is dropped each time instead.
+    /// Takes every such link out of what's staged. Names end at a zero byte, so no name can hide one.
     private static let unlink = #"""
     git ls-files -s -z | while IFS= read -r -d '' entry; do case "$entry" in 160000\ *) name=${entry#*$'\t'}; \
-    git rm -qf --cached -- ":(literal)$name" || exit 1; \
-    case "$name" in *$'\n'*) ;; *) printf '/%s/\n' "$name" | sed 's/[^A-Za-z0-9\/._-]/\\&/g' >> .git/info/exclude ;; esac ;; \
-    esac; done
+    git rm -qf --cached -- ":(literal)$name" || exit 1 ;; esac; done
     """#
 
-    /// For `git status`: what's inside a repository in the app's folder is not Lamp's to look at.
-    static let closed = "--ignore-submodules=all"
+    /// `git status` for "is there unsaved work in `paths`": one line per change, none when there is none.
+    /// A repository inside the app's folder is never part of a version, so it isn't unsaved work either: git
+    /// isn't sent into one, and with every new file listed on its own the only new entries that are folders
+    /// are those repositories, which are left out. Names end at a zero byte, as above.
+    static func status(_ paths: String) -> String {
+        "git status --porcelain -z --untracked-files=all --ignore-submodules=all -- \(paths) | " + #"""
+        while IFS= read -r -d '' entry; do case "$entry" in '?? '*/) ;; *) printf '%s\n' "$entry" ;; esac; done
+        """#
+    }
 
     /// Newest first.
     static func list(_ project: LampProject) async -> [AppVersion] {
@@ -188,7 +216,7 @@ enum Versions {
     /// Files changed since the last version, by a turn that was stopped or didn't finish.
     static func hasUnsavedChanges(_ project: LampProject) async -> Bool {
         var output = ""
-        _ = await git("git status --porcelain \(closed) -- . ':!\(Attachments.folder)'", cwd: project.dir) { output += $0 }
+        _ = await git(status(". ':!\(Attachments.folder)'"), cwd: project.dir) { output += $0 }
         return !output.trimmed.isEmpty
     }
 

@@ -49,10 +49,14 @@ A capability given to one engine must be given to all of them that can take it, 
   The app's `.git` is the one place in its folder that is read-only, to confined commands (the profile) and to
   the file tools (`Privacy.verdict`): Lamp's own git runs unconfined, and git runs what a repository names
   (hooks, settings that name a program). So all of Lamp's git goes through `Versions.git` (`gitBlocking` where
-  it can't await) and stages with `Versions.stage`; a new git call belongs there too. Before each call the
-  helper refuses a `.git` that isn't a real folder of the app, and removes every setting in it but the plain
-  ones it lists (an app from 0.11.0 or earlier may hold anything); it also keeps Lamp out of any repository
-  inside the app's folder. A setting Lamp itself needs in an app's `.git/config` has to be added to that list.
+  it can't await), stages with `Versions.stage` and asks what's unsaved with `Versions.status`; a new git call
+  belongs there too. Before each call the helper (`Versions.own`) removes every setting in the app's `.git/config`
+  but the ones it lists (an app from 0.11.0 or earlier may hold anything): how the history is stored, how git
+  itself converts line endings, who the person is and where they push. It runs no git at all, and changes
+  nothing, when `.git` isn't a real folder of the app or holds what can be neither kept nor removed (a storage
+  extension it doesn't list, a filter); `Versions.refused` then has Store say so once in the app's chat. It also
+  keeps Lamp out of any repository inside the app's folder. A setting Lamp itself needs in an app's
+  `.git/config` has to be added to that list, and must not be one that names a program or another file.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items.
