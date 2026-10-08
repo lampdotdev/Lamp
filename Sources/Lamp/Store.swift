@@ -820,7 +820,7 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return old
         }
-        for path in [".lamp/chat.json", ".lamp/usage.json", ".lamp/notes.md", Attachments.folder, Sharing.Assets.folder] {
+        for path in [".lamp/chat.json", ".lamp/usage.json", ".lamp/notes.md", ".lamp/share-id", Attachments.folder, Sharing.Assets.folder] {
             let from = old.dir.appendingPathComponent(path)
             if fm.fileExists(atPath: from.path) {
                 try? fm.copyItem(at: from, to: project.dir.appendingPathComponent(path))
@@ -962,6 +962,15 @@ final class Store: ObservableObject {
         let id = UUID()
         let package: Sharing.Package
         var review: ImportReview?
+        /// The app already here that this file is another version of, if any: the choice is then Update or Keep Both.
+        var existing: LampProject?
+    }
+
+    /// The app on this Mac that a shared file is a version of: the one it was shared from, or the copy made
+    /// by opening an earlier file from it.
+    func existingCopy(of package: Sharing.Package) -> LampProject? {
+        guard let identity = package.identity else { return nil }
+        return projects.first { $0.platform == .mac && $0.scaffolded && Sharing.identity(of: $0, create: false) == identity }
     }
 
     /// Opens a shared `.lampapp`: unpacks it, then shows a review (fixed checklist + AI check) before building.
@@ -990,7 +999,7 @@ final class Store: ObservableObject {
                 return
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
-            let pending = PendingImport(package: package)
+            let pending = PendingImport(package: package, existing: existingCopy(of: package))
             pendingImport = pending
             let review = await Sharing.review(package)
             if pendingImport?.id == pending.id { pendingImport?.review = review }
@@ -1012,53 +1021,66 @@ final class Store: ObservableObject {
         finishImport(pending.package)
     }
 
+    /// Update: the app already here takes the file's code, files, description and icon, in place, so it keeps
+    /// its name, its data, its permissions and its chat. What it was until now is saved as a version first
+    /// (changes not yet saved included), so Versions can bring it back; without that, nothing is replaced.
+    func confirmUpdate() {
+        guard let pending = pendingImport else { return }
+        guard let project = pending.existing.flatMap({ existing in projects.first { $0.id == existing.id } }),
+              begin(project) != nil else {
+            let alert = NSAlert()
+            alert.messageText = "“\(pending.existing?.name ?? pending.package.name)” is busy"
+            alert.informativeText = "Update it when it has finished what it's doing, or keep both."
+            alert.runModal()
+            return
+        }
+        importRequest = nil
+        pendingImport = nil
+        selection = project.id
+        Task {
+            defer { finish(project) }
+            let package = pending.package
+            defer { try? FileManager.default.removeItem(at: package.folder) }
+            let before = "Before updating from a shared file"
+            var kept = await Versions.head(project) == nil ? await initRepo(project, message: before) : true
+            if kept, await Versions.hasUnsavedChanges(project) { kept = await Versions.save(project, message: before) }
+            guard kept else {
+                log(project, .error, "Lamp couldn't save the app as it is, so it wasn't updated.")
+                return
+            }
+            do {
+                try Sharing.install(package, into: project, replacing: true)
+            } catch {
+                // Half-replaced files go back to the version just saved.
+                _ = await Shell.run("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
+                log(project, .error, "Couldn't update the app: \(error.localizedDescription)")
+                return
+            }
+            guard await Versions.save(project, message: "Updated from a shared file") else {
+                log(project, .status, "This is the version you already have.")
+                return
+            }
+            Versions.rememberUpdate(project)
+            versionsRevision += 1
+            log(project, .status, "Updated from a shared file. Building it now…")
+            if await build(project) == nil {
+                await installReportingCrash(project)
+            } else {
+                log(project, .error, ErrorMessages.appDoesNotBuild)
+            }
+        }
+    }
+
     private func finishImport(_ package: Sharing.Package) {
         defer { try? FileManager.default.removeItem(at: package.folder) }
-        let fm = FileManager.default
         let project: LampProject
         do {
             project = try Template.scaffold(name: uniqueName(package.name), in: root)
-            // Swap the scaffold's code for the shared code; keep Lamp's own LampSupport.swift.
-            let sources = project.dir.appendingPathComponent("Sources")
-            for item in try fm.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)
-            where item.lastPathComponent != "LampSupport.swift" {
-                try fm.removeItem(at: item)
-            }
-            let sharedSources = package.folder.appendingPathComponent("Sources").standardizedFileURL.path + "/"
-            for file in package.sources where file.lastPathComponent != "LampSupport.swift" {
-                let relative = file.standardizedFileURL.path.replacingOccurrences(of: sharedSources, with: "")
-                guard !relative.contains("..") else { continue }
-                let target = sources.appendingPathComponent(relative)
-                try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try fm.copyItem(at: file, to: target)
-            }
-            // Its Assets folder from the start, files or none: nothing attached to its chat later is adopted.
-            let folder = project.dir.appendingPathComponent(Sharing.Assets.folder)
-            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            if !package.attachments.isEmpty {
-                for file in package.attachments {
-                    let relative = package.assetPath(of: file)
-                    guard !relative.contains("..") else { continue }
-                    let target = folder.appendingPathComponent(relative)
-                    try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try fm.copyItem(at: file, to: target)
-                }
-            }
-            let appMd = package.folder.appendingPathComponent("APP.md")
-            if fm.fileExists(atPath: appMd.path) {
-                try? fm.removeItem(at: project.dir.appendingPathComponent("APP.md"))
-                try fm.copyItem(at: appMd, to: project.dir.appendingPathComponent("APP.md"))
-            }
-            if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
-               let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
-                Icons.save(spec, for: project)
-                // Files from older Lamp versions carry full-square artwork; only cut-out objects fit the new icons.
-                if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
-                   Icons.isCutOut(art) {
-                    let url = Icons.artURL(project, spec: spec)
-                    try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try? art.write(to: url)
-                }
+            try Sharing.install(package, into: project)
+            // The copy is the same app as the sender's: the next file shared from theirs can update it. A
+            // second copy made beside one that's already here (Keep Both) is an app of its own.
+            if let identity = package.identity, existingCopy(of: package) == nil {
+                Sharing.setIdentity(identity, of: project)
             }
         } catch {
             NSAlert(error: error).runModal()
