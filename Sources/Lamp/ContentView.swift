@@ -1013,6 +1013,9 @@ struct AppInfoView: View {
     @State private var settingsRevision = 0
     @AppStorage("settingsTab") private var settingsTab = "building"
     @Environment(\.openSettings) private var openSettings
+    // What the AI rows resolve from, besides Settings: the models on this Mac (text, decisions, pictures).
+    @ObservedObject private var local = LocalModels.shared
+    @ObservedObject private var images = ImageModels.shared
 
     private var usage: AppUsage { store.usage[project.id] ?? AppUsage() }
     private var requests: Int { (store.logs[project.id] ?? []).filter { $0.kind == .user }.count }
@@ -1111,6 +1114,9 @@ struct AppInfoView: View {
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
             settingsRevision += 1
         }
+        // Keys and this app's own choices change what answers it too.
+        .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in settingsRevision += 1 }
+        .onReceive(NotificationCenter.default.publisher(for: AppModels.changed)) { _ in models = AppModels.load(project) }
         .onChange(of: project.id) { models = AppModels.load(project) }
     }
 
