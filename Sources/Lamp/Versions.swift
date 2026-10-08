@@ -36,17 +36,54 @@ struct VersionNaming: Equatable {
 enum Versions {
     static let commit = "git -c user.name=Lamp -c user.email=lamp@localhost commit"
 
+    /// Lamp's own git, which runs outside the sandbox on a folder the agent's commands can write. Git runs
+    /// programs named by what it finds in a repository, so three things keep that to what Lamp put there:
+    /// the app's `.git` is read-only to a confined command and to the file tools (Sandbox, Privacy); a
+    /// repository inside the app's folder (a clone, say), whose `.git` they can write, is never entered
+    /// (`stage` keeps such folders out of the history, and status doesn't look inside them); and hooks and the
+    /// file-watcher command are off whatever a repository says, which also covers a `.git` written before any
+    /// of this. Settings given this way reach the git that git itself starts.
+    static func git(_ command: String, cwd: URL, env: [String: String] = [:],
+                    onLine: @escaping @MainActor (String) -> Void = { _ in }) async -> Int32 {
+        await Shell.run(command, cwd: cwd, env: env.merging(environment) { $1 }, onLine: onLine)
+    }
+
+    static let environment = [
+        "GIT_CONFIG_COUNT": "2",
+        "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": "/dev/null",
+        "GIT_CONFIG_KEY_1": "core.fsmonitor", "GIT_CONFIG_VALUE_1": "false",
+    ]
+
+    /// `git add -A`, without the repositories inside the app's folder. Git records one as a link to a commit
+    /// (none of its files), and from then on runs git inside it, with its settings, to see whether it changed.
+    /// Git has no switch for "never go in there", so this is a guard of Lamp's own: any link already recorded
+    /// is dropped before anything is added, and any just added is dropped again and its folder put on the
+    /// history's own ignore list, so it stops counting as unsaved work.
+    static let stage = "{ \(unlink) && git add -A && \(unlink); }"
+
+    /// Takes every such link out of what's staged. Names end at a zero byte, so no name can hide one; a name
+    /// with a line break in it can't be written as an ignore rule, and is dropped each time instead.
+    private static let unlink = #"""
+    git ls-files -s -z | while IFS= read -r -d '' entry; do case "$entry" in 160000\ *) name=${entry#*$'\t'}; \
+    git rm -qf --cached -- ":(literal)$name" || exit 1; \
+    case "$name" in *$'\n'*) ;; *) mkdir -p .git/info && printf '/%s/\n' "$name" | sed 's/[^A-Za-z0-9\/._-]/\\&/g' >> .git/info/exclude ;; esac ;; \
+    esac; done
+    """#
+
+    /// For `git status`: what's inside a repository in the app's folder is not Lamp's to look at.
+    static let closed = "--ignore-submodules=all"
+
     /// Newest first.
     static func list(_ project: LampProject) async -> [AppVersion] {
         var names: [String: String] = [:]
-        _ = await Shell.run("git for-each-ref refs/tags/forge/ --sort=creatordate --format='%(*objectname)%1f%(contents:subject)'",
+        _ = await git("git for-each-ref refs/tags/forge/ --sort=creatordate --format='%(*objectname)%1f%(contents:subject)'",
                             cwd: project.dir) { line in
             let parts = line.split(separator: "\u{1f}", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
             if parts.count == 2, !parts[1].isEmpty { names[parts[0]] = parts[1] }
         }
         let titles = VersionTitles.saved(in: project)
         var versions: [AppVersion] = []
-        _ = await Shell.run("git log --first-parent --format='%H%x1f%P%x1f%ct%x1f%(trailers:key=Lamp-Undid,valueonly,separator=%x2C)%(trailers:key=Forge-Undid,valueonly,separator=%x2C)%x1f%s'",   // Undos from before the rename keep the old trailer
+        _ = await git("git log --first-parent --format='%H%x1f%P%x1f%ct%x1f%(trailers:key=Lamp-Undid,valueonly,separator=%x2C)%(trailers:key=Forge-Undid,valueonly,separator=%x2C)%x1f%s'",   // Undos from before the rename keep the old trailer
                             cwd: project.dir) { line in
             let parts = line.split(separator: "\u{1f}", maxSplits: 4, omittingEmptySubsequences: false).map(String.init)
             guard parts.count == 5, let seconds = TimeInterval(parts[2]) else { return }
@@ -99,7 +136,7 @@ enum Versions {
         // Attachments and Lamp's own folder are left alone: a version from before the rename ignores .forge/,
         // not .lamp/, and clean would otherwise take the chat, token and sessions with it.
         let keep = "':!\(Attachments.folder)' ':!.lamp'"
-        let ok = await Shell.run("git restore --source=\"$LAMP_VERSION\" --staged --worktree -- . \(keep) && git clean -fdq -e .lamp -- . \(keep)",
+        let ok = await git("git restore --source=\"$LAMP_VERSION\" --staged --worktree -- . \(keep) && git clean -fdq -e .lamp -- . \(keep)",
                                  cwd: project.dir, env: ["LAMP_VERSION": version.id]) { _ in } == 0
         // A version from before the rename calls the support library by its old names.
         if ok {
@@ -114,7 +151,7 @@ enum Versions {
     /// Files changed since the last version, by a turn that was stopped or didn't finish.
     static func hasUnsavedChanges(_ project: LampProject) async -> Bool {
         var output = ""
-        _ = await Shell.run("git status --porcelain -- . ':!\(Attachments.folder)'", cwd: project.dir) { output += $0 }
+        _ = await git("git status --porcelain \(closed) -- . ':!\(Attachments.folder)'", cwd: project.dir) { output += $0 }
         return !output.trimmed.isEmpty
     }
 
@@ -127,13 +164,13 @@ enum Versions {
     /// Saves the app's files as they are now as a new version. False when nothing changed.
     static func save(_ project: LampProject, message: String, trailer: String? = nil) async -> Bool {
         let trailerArgument = trailer.map { " -m \"\($0)\"" } ?? ""
-        return await Shell.run("git add -A && ! git diff --cached --quiet && \(commit) -q -m \"$LAMP_MESSAGE\"\(trailerArgument)",
+        return await git("\(stage) && ! git diff --cached --quiet && \(commit) -q -m \"$LAMP_MESSAGE\"\(trailerArgument)",
                                cwd: project.dir, env: ["LAMP_MESSAGE": message]) { _ in } == 0
     }
 
     static func head(_ project: LampProject) async -> String? {
         var output = ""
-        guard await Shell.run("git rev-parse HEAD", cwd: project.dir, onLine: { output += $0 }) == 0 else { return nil }
+        guard await git("git rev-parse HEAD", cwd: project.dir, onLine: { output += $0 }) == 0 else { return nil }
         return output.trimmed.nilIfEmpty
     }
 
@@ -283,12 +320,12 @@ enum VersionTitles {
     /// Nil when the model couldn't be reached or gave something unusable.
     static func make(for version: AppVersion, in project: LampProject) async -> String? {
         var files: [String] = []
-        _ = await Shell.run("git show --format= --name-only \"$LAMP_VERSION\"", cwd: project.dir,
+        _ = await Versions.git("git show --format= --name-only \"$LAMP_VERSION\"", cwd: project.dir,
                             env: ["LAMP_VERSION": version.id]) { if !$0.trimmed.isEmpty { files.append($0.trimmed) } }
         // Lamp refreshing the support code it puts in every app isn't a change the user made.
         if !files.isEmpty, files.allSatisfy({ $0 == "Sources/LampSupport.swift" }) { return "Lamp update" }
         var diff = ""
-        _ = await Shell.run("git show --format= --unified=1 \"$LAMP_VERSION\" -- . ':!Sources/LampSupport.swift' ':!\(Attachments.folder)'",
+        _ = await Versions.git("git show --format= --unified=1 \"$LAMP_VERSION\" -- . ':!Sources/LampSupport.swift' ':!\(Attachments.folder)'",
                             cwd: project.dir, env: ["LAMP_VERSION": version.id]) { line in
             if diff.count < 8000 { diff += line + "\n" }
         }

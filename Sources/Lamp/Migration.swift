@@ -145,11 +145,11 @@ enum Migration {
             touched = true
         }
         guard touched, commit else { return }
-        _ = git(["add", "-A"], in: dir)
-        _ = git(["-c", "user.name=Lamp", "-c", "user.email=lamp@localhost", "commit", "-qm", "Rename to Lamp"], in: dir)
+        _ = Subprocess.runBlocking("/bin/zsh", ["-c", "\(Versions.stage) && \(Versions.commit) -qm 'Rename to Lamp'"], cwd: dir,
+                                   env: Versions.environment, timeout: 120)
     }
 
     private static func git(_ arguments: [String], in dir: URL) -> String {
-        Subprocess.runBlocking("/usr/bin/git", arguments, cwd: dir, mergeErrors: false, timeout: 120).output.trimmed
+        Subprocess.runBlocking("/usr/bin/git", arguments, cwd: dir, env: Versions.environment, mergeErrors: false, timeout: 120).output.trimmed
     }
 }

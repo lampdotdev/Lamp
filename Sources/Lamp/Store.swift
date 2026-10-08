@@ -695,7 +695,7 @@ final class Store: ObservableObject {
 
     @discardableResult
     private func initRepo(_ project: LampProject, message: String) async -> Bool {
-        await Shell.run("git init -q && git add -A && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: project.dir,
+        await Versions.git("git init -q && \(Versions.stage) && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: project.dir,
                         env: ["LAMP_MESSAGE": message]) { _ in } == 0
     }
 
@@ -804,7 +804,7 @@ final class Store: ObservableObject {
     /// Nothing has happened in the app but its scaffold, so it can still change its folder and executable name.
     private func isPristine(_ project: LampProject) async -> Bool {
         var output: [String] = []
-        let status = await Shell.run("test $(git rev-list --count HEAD) -eq 1 && git status --porcelain -- . ':!\(Attachments.folder)'",
+        let status = await Versions.git("test $(git rev-list --count HEAD) -eq 1 && git status --porcelain \(Versions.closed) -- . ':!\(Attachments.folder)'",
                                      cwd: project.dir) { output.append($0) }
         return status == 0 && output.allSatisfy { $0.trimmed.isEmpty }
     }
@@ -852,7 +852,7 @@ final class Store: ObservableObject {
         if let text = try? String(contentsOf: appMd, encoding: .utf8), text.hasPrefix("# \(current.name)\n") {
             try? ("# \(unique)\n" + text.dropFirst(current.name.count + 3)).write(to: appMd, atomically: true, encoding: .utf8)
         }
-        _ = await Shell.run("git add -A && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: current.dir,
+        _ = await Versions.git("\(Versions.stage) && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: current.dir,
                             env: ["LAMP_MESSAGE": "Rename to \(unique)"]) { _ in }
         reload()
         log(renamed, .status, "Renamed to \(unique)")
@@ -1153,7 +1153,7 @@ final class Store: ObservableObject {
             }
             /// False when the icon's pictures couldn't be returned; the ones there are then left alone.
             func putBack() async -> Bool {
-                _ = await Shell.run("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
+                _ = await Versions.git("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
                 guard hadArt else {
                     try? fm.removeItem(at: art)
                     return true
@@ -1225,7 +1225,7 @@ final class Store: ObservableObject {
         selection = project.id
         log(project, .status, "Imported from a shared file. Building it now…")
         Task {
-            _ = await Shell.run("git init -q && git add -A && \(Self.commit) -qm 'Imported from a shared file'",
+            _ = await Versions.git("git init -q && \(Versions.stage) && \(Self.commit) -qm 'Imported from a shared file'",
                                 cwd: project.dir) { _ in }
             await run(project)
         }
@@ -1524,7 +1524,7 @@ final class Store: ObservableObject {
         // Nothing is committed when the agent changed no files.
         let label = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n").nilIfEmpty
             ?? Self.label(attachments: saved)
-        var committed = await Shell.run("git add -A && \(Self.commit) -qm \"$LAMP_PROMPT\"", cwd: project.dir,
+        var committed = await Versions.git("\(Versions.stage) && \(Self.commit) -qm \"$LAMP_PROMPT\"", cwd: project.dir,
                                         env: ["LAMP_PROMPT": label]) { _ in } == 0
         let edited = changed || committed
         var crash: String?
@@ -1553,7 +1553,7 @@ final class Store: ObservableObject {
                                  on: project),
                   await buildFixingErrors(project) else { return TurnResult(end: .failed, watched: watched) }
             let commit = committed ? "-q --amend --no-edit" : "-qm 'Fix a crash on launch'"
-            if await Shell.run("git add -A && \(Self.commit) \(commit)", cwd: project.dir) { _ in } == 0 { committed = true }
+            if await Versions.git("\(Versions.stage) && \(Self.commit) \(commit)", cwd: project.dir) { _ in } == 0 { committed = true }
             crash = await install(project)
         }
         if crash != nil {
@@ -1587,7 +1587,7 @@ final class Store: ObservableObject {
     private func agentChangedFiles(_ project: LampProject) async -> Bool {
         var output = ""
         let ignored = "':!Sources/LampSupport.swift' ':!icon.json' ':!\(Attachments.folder)'"
-        _ = await Shell.run("git status --porcelain -- . \(ignored)", cwd: project.dir) {
+        _ = await Versions.git("git status --porcelain \(Versions.closed) -- . \(ignored)", cwd: project.dir) {
             output += $0
         }
         return !output.trimmed.isEmpty

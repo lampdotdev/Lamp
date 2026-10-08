@@ -46,6 +46,10 @@ A capability given to one engine must be given to all of them that can take it, 
   commands with it. SwiftPM's own sandbox can't start inside Lamp's, so a `swift` shim first on the path
   (`Sandbox.bin`) gives `swift build`/`test`/`run`/`package` `--disable-sandbox`. Nothing reads a command's text
   for paths any more; don't bring that back.
+  The app's `.git` is the one place in its folder that is read-only, to confined commands (the profile) and to
+  the file tools (`Privacy.verdict`): Lamp's own git runs unconfined, and git runs what a repository names
+  (hooks, settings that name a program). So all of Lamp's git goes through `Versions.git` and stages with
+  `Versions.stage`, which also keep it out of any repository inside the app's folder; a new git call belongs there too.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items.
