@@ -402,7 +402,7 @@ struct MemorySettings: View {
                 } header: {
                     Text("What Lamp remembers")
                 } footer: {
-                    Text("Lamp keeps short notes on how you like things, so a new app starts out in your style, and on what you decided about each app, so it isn't forgotten or offered again, whichever AI is building. The AI is told only the line under each name, and opens the notes when a request needs them. They stay on this Mac: a shared copy of an app doesn't include them. Click one to read, change or clear it.")
+                    Text("Notes on how you like things and what you decided for each app. They stay on this Mac. Click one to read or clear it.")
                         .font(.caption).foregroundStyle(.secondary)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
