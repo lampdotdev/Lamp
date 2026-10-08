@@ -34,8 +34,8 @@ enum Runtime {
                 hasher.update(data: data)
             }
         }
-        // Attachments can be big (pictures, data files): their name, size and date stand in for their contents.
-        for file in Sharing.usedAttachments(of: project).sorted(by: { $0.path < $1.path }) {
+        // The app's own files can be big (pictures, data files): name, size and date stand in for their contents.
+        for file in Sharing.assetFiles(of: project).sorted(by: { $0.path < $1.path }) {
             let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
             hasher.update(data: Data("\(file.lastPathComponent)\n\(values?.fileSize ?? 0)\n\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)".utf8))
         }

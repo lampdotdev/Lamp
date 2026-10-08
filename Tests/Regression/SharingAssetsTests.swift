@@ -1,0 +1,91 @@
+import XCTest
+@testable import Lamp
+
+/// What leaves the Mac with a shared app: its Assets/ folder, never the chat's attachments. An attachment
+/// the code names is adopted into Assets/ first, so apps from before the folder existed share what they use.
+final class SharingAssetsTests: XCTestCase {
+    private var root: URL?
+    override func tearDown() { if let root { try? FileManager.default.removeItem(at: root) } }
+
+    private func project() throws -> LampProject {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("lamp-sharing-\(UUID().uuidString)")
+        self.root = root
+        let dir = root.appendingPathComponent("coinflip")
+        try fm.createDirectory(at: dir.appendingPathComponent("Sources"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: dir.appendingPathComponent(Attachments.folder), withIntermediateDirectories: true)
+        try "let coin = LampAssets.image(\"heads.png\")".write(to: dir.appendingPathComponent("Sources/ContentView.swift"), atomically: true, encoding: .utf8)
+        try Data([1, 2, 3]).write(to: dir.appendingPathComponent("\(Attachments.folder)/heads.png"))
+        try Data([4, 5, 6]).write(to: dir.appendingPathComponent("\(Attachments.folder)/bug-screenshot.png"))
+        return LampProject(id: "coinflip", name: "Coin Flip", exe: "CoinFlip", dir: dir)
+    }
+
+    /// The archive's own listing: what a recipient's Lamp would unpack.
+    private func entries(of archive: URL) throws -> [String] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/zipinfo")
+        process.arguments = ["-1", archive.path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self).split(separator: "\n").map(String.init)
+    }
+
+    func testOnlyAssetsAreShared() throws {
+        let project = try project()
+        let entries = try entries(of: try Sharing.export(project))
+        XCTAssertTrue(entries.contains { $0.hasSuffix("Sources/ContentView.swift") }, "\(entries)")
+        XCTAssertTrue(entries.contains { $0.hasSuffix("\(Sharing.Assets.folder)/heads.png") }, "\(entries)")
+        XCTAssertFalse(entries.contains { $0.contains("bug-screenshot") }, "\(entries)")
+        XCTAssertFalse(entries.contains { $0.contains("\(Attachments.folder)/") }, "\(entries)")
+    }
+
+    func testNestedAssetsKeepTheirPlace() throws {
+        let project = try project()
+        let nested = project.dir.appendingPathComponent("\(Sharing.Assets.folder)/images")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try Data([7]).write(to: nested.appendingPathComponent("logo.png"))
+        let file = try Sharing.export(project)
+        XCTAssertTrue(try entries(of: file).contains { $0.hasSuffix("\(Sharing.Assets.folder)/images/logo.png") })
+        let package = try Sharing.open(file)
+        let logo = try XCTUnwrap(package.attachments.first { $0.lastPathComponent == "logo.png" })
+        XCTAssertEqual(package.assetPath(of: logo), "images/logo.png")
+    }
+
+    func testNamedAttachmentIsAdoptedIntoAssets() throws {
+        let project = try project()
+        Sharing.Assets.adopt(in: project)
+        let assets = project.dir.appendingPathComponent(Sharing.Assets.folder)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: assets.path).sorted(), ["heads.png"])
+        // The chat keeps its copies.
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: project.dir.appendingPathComponent(Attachments.folder).path).count, 2)
+    }
+
+    /// A new app is born with its Assets folder, so a reference file in its chat is never adopted, even by
+    /// code that lists its files.
+    func testNewAppNeverAdoptsChatFiles() throws {
+        let project = try project()
+        try FileManager.default.removeItem(at: project.dir.appendingPathComponent("Sources"))
+        try Template.fill(project)
+        let assets = project.dir.appendingPathComponent(Sharing.Assets.folder)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: assets.path))
+        try "let all = LampAssets.names".write(to: project.dir.appendingPathComponent("Sources/ContentView.swift"), atomically: true, encoding: .utf8)
+        Sharing.Assets.adopt(in: project)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: assets.path).count, 0)
+    }
+
+    /// The adoption happens once: an app with an Assets folder keeps later attachments in the chat, even one
+    /// that lists its files rather than naming them.
+    func testAdoptionIsOnceOnly() throws {
+        let project = try project()
+        try "let all = LampAssets.names".write(to: project.dir.appendingPathComponent("Sources/ContentView.swift"), atomically: true, encoding: .utf8)
+        Sharing.Assets.adopt(in: project)
+        let assets = project.dir.appendingPathComponent(Sharing.Assets.folder)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: assets.path).count, 2)
+        try Data([9]).write(to: project.dir.appendingPathComponent("\(Attachments.folder)/later-screenshot.png"))
+        Sharing.Assets.adopt(in: project)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: assets.path).count, 2)
+    }
+}

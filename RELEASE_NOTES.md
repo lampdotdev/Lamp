@@ -5,6 +5,12 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## Unreleased
+
+- What you attach in the chat stays on your Mac. An app's own files (a logo, a data file) live in its new
+  `Assets` folder, the only folder bundled inside the app and shared with it; the agent copies an attachment
+  there when the app should use it. Apps that already use an attachment get it copied over at their next build.
+
 ## 0.10.5
 
 - Pictures no longer fall back to a ChatGPT Codex sign-in that happens to be on the Mac: Codex draws them only
