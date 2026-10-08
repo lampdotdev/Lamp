@@ -83,7 +83,8 @@ struct AppUsage: Codable {
 
 struct LogLine: Identifiable, Codable, Equatable {
     /// `needsKey` is a setup offer from before offers named their capability: it was always about pictures.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer }
+    /// `drawIcon` offers to draw the app's icon in Image Playground; its text is the design it's for (`Icons.artKey`).
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, drawIcon }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -102,6 +103,30 @@ struct LogLine: Identifiable, Codable, Equatable {
         case .needsKey: SetupOffer(capability: .pictures)
         default: nil
         }
+    }
+
+    /// Where an offer stands in a chat: not made yet, made already, or made only as the card about the app's
+    /// icon, which is answered (the person draws icons, or something draws them by Settings' choices) and
+    /// folded away while the app's own pictures aren't. An offer that isn't about the icon then takes that
+    /// card's place (the line at the index given).
+    enum Standing: Equatable { case new, offered, replaces(Int) }
+    static func standing(of offer: SetupOffer, in lines: [LogLine], iconAnswered: Bool) -> Standing {
+        guard let index = lines.firstIndex(where: { $0.setupOffer == offer }) else { return .new }
+        return iconAnswered && lines[index].setupOffer?.icon == true && offer.icon != true ? .replaces(index) : .offered
+    }
+
+    /// Whether a chat with these lines should get a line offering to draw the design `key`: not when it has
+    /// one for that design already, nor when the card about the icon is there, which offers it itself.
+    static func offersDrawing(_ key: String, after lines: [LogLine]) -> Bool {
+        !lines.contains { $0.kind == .drawIcon && $0.text == key || $0.setupOffer?.icon == true }
+    }
+
+    /// What to do about offering to draw the design `key`: nothing (no built app yet, or it's offered
+    /// already), hold it until the turn that has the app finishes, or put the line in the chat now.
+    enum DrawingOffer: Equatable { case none, held, now }
+    static func drawingOffer(_ key: String, after lines: [LogLine], built: Bool, inTurn: Bool) -> DrawingOffer {
+        guard built, offersDrawing(key, after: lines) else { return .none }
+        return inTurn ? .held : .now
     }
 
     /// Lamp knows where the app was before this request, so it can be changed and sent again from there.
@@ -308,6 +333,7 @@ final class Store: ObservableObject {
     }
     private var artInProgress: Set<String> = []
     private var pendingIconArt: Set<String> = []     // artwork finished during a turn, to apply after it
+    private var heldDrawingOffers: Set<String> = []  // "Draw Icon…" wanted during a turn, to offer after it
     private var artApplied: [String: IconSpec] = [:] // the spec whose artwork the rendered icon includes
     private var iconDesigns: [String: Task<Void, Never>] = [:]   // icons designed from the first message
     private var tokens: [String: String] = [:]   // app token → project id, for the app's own routes (/ai…)
@@ -1432,12 +1458,22 @@ final class Store: ObservableObject {
             Task {
                 await applyIconArt(project, spec: spec)
                 release(project)
+                offerHeldDrawing(project)
                 startQueued(project)
             }
             return
         }
         release(project)
+        offerHeldDrawing(project)
         startQueued(project)
+    }
+
+    /// The offer to draw the icon that was wanted while the turn had the app, made now it's over: the last
+    /// thing the turn leaves in the chat, under the reply and "… is ready". It's worked out afresh, since
+    /// the icon may have been drawn or designed again meanwhile, or the choice of what draws icons changed.
+    private func offerHeldDrawing(_ project: LampProject) {
+        guard heldDrawingOffers.remove(project.id) != nil, exists(project) else { return }
+        upgradeIconArt(project)
     }
 
     /// Renders the icon with its artwork and installs it, when there's a built app to install it into;
@@ -2591,10 +2627,15 @@ final class Store: ObservableObject {
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
             // The person's own phone gets the app when they press Play or a change is finished; the agent's
             // looks (not in front) stay on the simulator, which is the only screen Lamp can see.
-            if inFront, let udid = project.device {
-                return await installOnDevice(project, owner: owner, udid: udid)
+            let problem = if inFront, let udid = project.device {
+                await installOnDevice(project, owner: owner, udid: udid)
+            } else {
+                await installOnSimulator(project, owner: owner, inFront: inFront)
             }
-            return await installOnSimulator(project, owner: owner, inFront: inFront)
+            // As for a Mac app below: the artwork asked for while the icon was designed, before there was
+            // an app, is asked for again now there is one (an icon drawn by hand is only offered then).
+            upgradeIconArt(project)
+            return problem
         }
         await quit(project)
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
@@ -3025,10 +3066,20 @@ final class Store: ObservableObject {
         guard !offer.declined(in: fromAgent ? project : nil) else {
             return "The person said Not Now to setting this up. Don't offer it again; build so the app copes without it."
         }
-        guard !offers(in: project).contains(offer) else {
-            return "Lamp already offered this in the chat. Don't offer it again."
+        // An icon's card is answered apart from the app's pictures (it follows Settings' choices and the
+        // choice to draw by hand, not the app's own models), so it can be all set while this isn't.
+        let iconAnswered = AppAI.resolve(.pictures, for: project, in: .icon).tier == .best
+        switch LogLine.standing(of: offer, in: logs[project.id] ?? [], iconAnswered: iconAnswered) {
+        case .offered: return "Lamp already offered this in the chat. Don't offer it again."
+        case .replaces(let index):
+            // The card there was about the icon and is folded away, answered. This is about pictures the
+            // app makes, which aren't: it takes that card's place, and an icon the person draws gets its
+            // line instead.
+            logs[project.id]?.remove(at: index)
+            log(project, .offer, reason, offer: offer)
+            upgradeIconArt(project)
+        case .new: log(project, .offer, reason, offer: offer)
         }
-        log(project, .offer, reason, offer: offer)
         return "Lamp showed the person a card in the chat to set up \(offer.capability.title.lowercased()). Carry on; don't mention keys or settings in your reply."
     }
 
@@ -3059,18 +3110,24 @@ final class Store: ObservableObject {
     private func upgradeIconArt(_ project: LampProject) {
         guard let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
               Icons.cachedArt(project, spec: spec) == nil else { return }
+        // The person chose to draw icons themselves: Lamp draws nothing, key or no key, and asks for no key.
+        guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
         guard artInProgress.insert(project.id).inserted else { return }
         Task {
             defer { artInProgress.remove(project.id) }
             guard await AppAI.imageRoute() != nil else {
-                offerSetup(project, SetupOffer(capability: .pictures),
+                offerSetup(project, SetupOffer(capability: .pictures, icon: true),
                            because: "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) a proper icon, and your apps will be able to make pictures too.")
                 return
             }
+            // The person may choose to draw icons themselves during either wait here: from then on nothing
+            // Lamp drew is used, and the drawing is theirs to do.
+            guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
             do {
                 let art = try await Icons.generateBestArt(spec, appName: project.name) { [weak self] in
                     self?.log(project, .detail, $0)
                 }
+                guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
                 // A picture picked in Image Playground while these were being drawn is the person's choice: it stays.
                 guard Icons.cachedArt(project, spec: spec) == nil else { return }
                 let url = Icons.artURL(project, spec: spec)
@@ -3096,11 +3153,28 @@ final class Store: ObservableObject {
                 finish(project)
             } catch let failure as AppAI.Failure where failure.needs == .pictures {
                 // Codex signed out between the check and the pictures: the key card is still the right answer.
-                offerSetup(project, SetupOffer(capability: .pictures),
+                offerSetup(project, SetupOffer(capability: .pictures, icon: true),
                            because: "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) a proper icon, and your apps will be able to make pictures too.")
             } catch {
                 log(project, .detail, "Icon artwork failed: \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// Says in the chat that the app's icon is waiting to be drawn, with the button that opens Image
+    /// Playground: once per design, and once the app has been built. While a turn has the app (the agent
+    /// builds and opens it to look at it, long before it's done) the offer is held, like artwork that
+    /// arrives mid-turn, and made when the turn finishes (`offerHeldDrawing`), so it's the last line of
+    /// the turn and not one among its steps. An app whose chat has the card about its icon (from before
+    /// the person chose to draw icons) has the button there, for whatever design it has.
+    private func offerDrawing(_ project: LampProject, spec: IconSpec) {
+        let key = Icons.artKey(project, spec: spec)
+        switch LogLine.drawingOffer(key, after: logs[project.id] ?? [],
+                                    built: FileManager.default.fileExists(atPath: project.builtURL.path),
+                                    inTurn: turns[project.id] != nil) {
+        case .none: break
+        case .held: heldDrawingOffers.insert(project.id)
+        case .now: log(project, .drawIcon, key)
         }
     }
 
@@ -3114,6 +3188,11 @@ final class Store: ObservableObject {
         await renderIcon(project, spec: spec)
         if FileManager.default.fileExists(atPath: project.builtURL.path) {
             try? await deploy(project)
+        }
+        // Drawn by hand, the new design's artwork is the person's to make: the sheet opens for it now.
+        guard !AppAI.iconsByHand else {
+            log(project, .status, "New icon applied.")
+            return iconFromPlayground(project)
         }
         log(project, .status, AppAI.imageRoute != nil ? "New icon applied. Artwork is on its way." : "New icon applied.")
         Task { upgradeIconArt(project) }

@@ -26,8 +26,10 @@ enum Capability: String, CaseIterable, Codable, Identifiable {
 }
 
 /// Where the app is when it asks: on this Mac (or near it), or an app on the person's phone away from it,
-/// where only what the phone can carry (an OpenRouter key and model choices) can answer.
-enum AIContext: Equatable { case mac, phoneAway }
+/// where only what the phone can carry (an OpenRouter key and model choices) can answer. `icon` is Lamp
+/// itself asking, for the artwork of an app's icon: pictures, with one more way to get them, since for an
+/// icon the person can be the one who draws.
+enum AIContext: Equatable { case mac, phoneAway, icon }
 
 /// Something the person can do to make a capability better, shown the same way in the chat and in Settings.
 enum Upgrade: Hashable, Identifiable {
@@ -38,6 +40,9 @@ enum Upgrade: Hashable, Identifiable {
     /// The decision model on this Mac (`LocalModels.decisionCatalog`).
     case decisionModel
     case signIn(Engine)
+    /// Drawing each app's icon by hand in Image Playground (`Icons.byHand`): for icon artwork only, and
+    /// only on a Mac that has it.
+    case drawIcons
 
     var id: String {
         switch self {
@@ -45,6 +50,7 @@ enum Upgrade: Hashable, Identifiable {
         case .pictureModel: "pictureModel"
         case .decisionModel: "decisionModel"
         case .signIn(let engine): "signIn:\(engine.rawValue)"
+        case .drawIcons: "drawIcons"
         }
     }
 }
@@ -67,6 +73,7 @@ struct Resolution: Equatable {
     /// What answers, as the person would say it ("Sonnet via OpenRouter"); nil when nothing can.
     let answer: String?
     /// The Providers row doing the work, for its badges: "openrouter", `Builder.localProvider`, "engine:codex"…
+    /// For icon artwork the person draws themselves it's `Icons.byHand`, which is no row there.
     let provider: String?
     /// Why it isn't the best it could be, in a sentence the person can read as it is, without repeating
     /// `answer`; nil when it is.
@@ -89,12 +96,17 @@ extension AppAI {
     @MainActor static func resolve(_ capability: Capability, for project: LampProject? = nil, in context: AIContext = .mac) -> Resolution {
         let models = project.map(AppModels.load) ?? AppModels()
         switch (capability, context) {
-        case (.text, .mac): return resolveText(choice: models.text)
-        case (.decisions, .mac): return resolveDecisions(choice: models.decision, text: models.text)
+        // Only pictures are asked for an icon; the others are answered as for the app on this Mac.
+        case (.text, .mac), (.text, .icon): return resolveText(choice: models.text)
+        case (.decisions, .mac), (.decisions, .icon): return resolveDecisions(choice: models.decision, text: models.text)
         case (.pictures, .mac): return resolvePictures(choice: models.image, text: models.text)
+        case (.pictures, .icon): return resolveIconArt()
         case (_, .phoneAway): return resolveAway(capability, models: models)
         }
     }
+
+    /// Whether the person draws each app's icon themselves: what answers icon artwork is them.
+    @MainActor static var iconsByHand: Bool { resolve(.pictures, in: .icon).provider == Icons.byHand }
 
     /// A few words on a capability, for the agent: "Sonnet via OpenRouter", "nothing can answer yet".
     @MainActor static func summary(_ resolution: Resolution) -> String {
@@ -204,6 +216,21 @@ extension AppAI {
         return Resolution(capability: .pictures, tier: .best, answer: answer, provider: provider, note: nil, upgrades: [])
     }
 
+    /// The artwork of an app's icon. It's Lamp's own request, so no app's choices apply: whatever makes
+    /// pictures by Settings' choices draws it, unless the person chose to draw icons themselves in Image
+    /// Playground, which then is what answers, key or no key. Where nothing can draw, that choice is one
+    /// more way to get icons (on a Mac that has Image Playground: `UpgradeView.isOffered`).
+    @MainActor private static func resolveIconArt() -> Resolution {
+        if Icons.drawnByHand(choice: Icons.iconChoice, available: Icons.playgroundAvailable) {
+            return Resolution(capability: .pictures, tier: .best, answer: Icons.byHandLabel, provider: Icons.byHand,
+                              note: nil, upgrades: [])
+        }
+        let pictures = resolvePictures(choice: nil, text: nil)
+        guard pictures.tier == .none else { return pictures }
+        return Resolution(capability: .pictures, tier: .none, answer: nil, provider: nil, note: pictures.note,
+                          upgrades: pictures.upgrades + [.drawIcons])
+    }
+
     /// Away from the Mac a phone answers with what it carries: the OpenRouter key, and a TypeSafe key for
     /// decisions when they go there.
     @MainActor private static func resolveAway(_ capability: Capability, models: AppModels) -> Resolution {
@@ -255,8 +282,20 @@ extension AppAI {
 struct SetupOffer: Codable, Equatable, Hashable {
     let capability: Capability
     var away: Bool? = nil
+    /// The card is about the app's own icon (Lamp wanted artwork for it), not something the app tried.
+    /// Cards from before this was noted don't say.
+    var icon: Bool? = nil
 
-    var context: AIContext { away == true ? .phoneAway : .mac }
+    var context: AIContext { away == true ? .phoneAway : icon == true ? .icon : .mac }
+
+    /// One card per capability per app, on this Mac or away, whatever raised it: an app whose icon card is
+    /// in the chat isn't given another when it tries to make a picture, so `icon` is no part of which offer
+    /// this is.
+    static func == (a: SetupOffer, b: SetupOffer) -> Bool { a.capability == b.capability && (a.away == true) == (b.away == true) }
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(capability)
+        hasher.combine(away == true)
+    }
 
     /// "Not Now" is remembered for the app it was said in, and for every app: Lamp doesn't raise the same
     /// offer by itself elsewhere. The agent may still raise it in another app, with a reason of its own.
