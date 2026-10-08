@@ -3390,10 +3390,10 @@ final class Store: ObservableObject {
             // Whose command: Claude Code's and pi's come back wrapped (Sandbox); Codex runs inside the sandbox
             // whole, so its commands are confined already and go back as they are.
             let engine: Engine = request.path.contains("format=codex") ? .codex : request.path.contains("format=claude") ? .claude : .pi
-            let confined = shell && engine != .codex && Sandbox.confines(engine) ? Sandbox.wrap(command, for: project) : nil
-            let sandboxed = shell && (engine == .codex ? Sandbox.confines(.codex) : confined != nil)
+            let confined = shell && engine != .codex ? Sandbox.wrap(command, for: project) : nil
+            let sandboxed = shell
             // No sandbox, no shell: a command that can't be confined isn't run rather than run loose.
-            if shell && engine != .codex && Sandbox.confines(engine) && confined == nil {
+            if shell && engine != .codex && confined == nil {
                 log(project, .error, "A shell command was refused: Lamp could not set up the sandbox that keeps it inside the app.")
                 let reason = "Lamp could not confine this command; use the file tools instead."
                 if escalated {
