@@ -22,7 +22,7 @@ struct SetupCard: View {
         let resolution = AppAI.resolve(offer.capability, for: project, in: offer.context)
         let done = resolution.tier == .best
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .center, spacing: CardColumn.gap) {
                 badge
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.headline)
@@ -50,6 +50,7 @@ struct SetupCard: View {
                     if resolution.tier == .works, let answer = resolution.answer {
                         Text("For now it works through \(answer); the options above work better.")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            .padding(.leading, CardColumn.indent(compact: false))
                     }
                 }
                 .padding(14)
@@ -78,7 +79,7 @@ struct SetupCard: View {
             .background(shape.fill(LinearGradient(colors: [Color.accentColor.opacity(0.85), Color.accentColor],
                                                   startPoint: .top, endPoint: .bottom)))
             .overlay(shape.strokeBorder(.black.opacity(0.08)))
-            .frame(width: 44, height: 44)
+            .frame(width: CardColumn.icon, height: CardColumn.icon)
     }
 
     private var title: String {
@@ -168,6 +169,15 @@ struct UpgradeView: View {
     }
 }
 
+/// The card's columns: its rows' symbols sit in a column as wide as the header's tile, against its right
+/// edge, so every line of text in the card starts where the headline does.
+private enum CardColumn {
+    static let icon: CGFloat = 44
+    static let gap: CGFloat = 12
+    /// Where text under a row's title starts.
+    static func indent(compact: Bool) -> CGFloat { compact ? 28 : icon + gap }
+}
+
 /// A row of an upgrade list: a symbol, what it is and a line about it, and what to press.
 private struct OptionRow<Accessory: View>: View {
     let symbol: String
@@ -177,11 +187,11 @@ private struct OptionRow<Accessory: View>: View {
     @ViewBuilder let accessory: () -> Accessory
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: compact ? 10 : CardColumn.gap) {
             Image(systemName: symbol)
                 .font(compact ? .body : .title3)
                 .foregroundStyle(.secondary)
-                .frame(width: compact ? 18 : 24)
+                .frame(width: compact ? 18 : CardColumn.icon, alignment: compact ? .center : .trailing)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(compact ? .callout : .body)
                 Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -247,7 +257,7 @@ private struct KeyUpgrade: View {
                     }
                 }
                 .controlSize(.small)
-                .padding(.leading, 34)
+                .padding(.leading, CardColumn.indent(compact: compact))
                 HStack(spacing: 4) {
                     if let problem = check.problem {
                         Label(problem, systemImage: "exclamationmark.triangle.fill")
@@ -259,7 +269,7 @@ private struct KeyUpgrade: View {
                     }
                 }
                 .font(.caption)
-                .padding(.leading, 34)
+                .padding(.leading, CardColumn.indent(compact: compact))
             }
         }
     }
@@ -302,7 +312,7 @@ private struct PictureModelUpgrade: View {
             }
             if let error = tools.errors[.mflux] {
                 Label(error, systemImage: "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
-                    .font(.caption).padding(.leading, 34)
+                    .font(.caption).padding(.leading, CardColumn.indent(compact: compact))
             }
         }
     }
