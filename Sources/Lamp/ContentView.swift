@@ -1372,9 +1372,9 @@ struct ImportReviewView: View {
             }
 
             if let existing = pending.existing {
-                // Said before the choice is made: what Update replaces, what it keeps, and the way back.
+                // The buttons say what each does; this is what someone would worry about before choosing Update.
                 Label {
-                    Text("You already have this app\(existing.name == pending.package.name ? "" : ", as “\(existing.name)”"). Update replaces its code with this version and keeps its data and its chat. The app as it is now stays in Versions, so you can go back. Keep Both adds this one as a separate app.")
+                    Text("You already have this app\(existing.name == pending.package.name ? "" : ", as “\(existing.name)”"). Updating keeps your data, and you can go back if you change your mind.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {

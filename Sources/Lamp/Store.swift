@@ -1029,8 +1029,8 @@ final class Store: ObservableObject {
         guard let project = pending.existing.flatMap({ existing in projects.first { $0.id == existing.id } }),
               begin(project) != nil else {
             let alert = NSAlert()
-            alert.messageText = "“\(pending.existing?.name ?? pending.package.name)” is busy"
-            alert.informativeText = "Update it when it has finished what it's doing, or keep both."
+            alert.messageText = "“\(pending.existing?.name ?? pending.package.name)” is busy right now"
+            alert.informativeText = "Try again when it's done, or keep both."
             alert.runModal()
             return
         }
@@ -1045,7 +1045,7 @@ final class Store: ObservableObject {
             var kept = await Versions.head(project) == nil ? await initRepo(project, message: before) : true
             if kept, await Versions.hasUnsavedChanges(project) { kept = await Versions.save(project, message: before) }
             guard kept else {
-                log(project, .error, "Lamp couldn't save the app as it is, so it wasn't updated.")
+                log(project, .error, Self.updateFailed)
                 return
             }
             // Replaced files that can't be kept as a version go back to the one just saved, so the app's
@@ -1058,7 +1058,7 @@ final class Store: ObservableObject {
             let hadArt = fm.fileExists(atPath: art.path)
             if hadArt {
                 do { try fm.copyItem(at: art, to: artBefore) } catch {
-                    log(project, .error, "Lamp couldn't save the app as it is, so it wasn't updated.")
+                    log(project, .error, Self.updateFailed)
                     return
                 }
             }
@@ -1086,19 +1086,20 @@ final class Store: ObservableObject {
                 newArtwork = try Sharing.install(package, into: project, replacing: true)
             } catch {
                 let iconBack = await putBack()
-                log(project, .error, "Couldn't update the app: \(error.localizedDescription)" + (iconBack ? "" : " Its icon picture may be the new one."))
+                print("Update \(project.name) from a shared file failed: \(error)")
+                log(project, .error, Self.updateFailed + (iconBack ? "" : Self.updateChangedIcon))
                 return
             }
             if await Versions.hasUnsavedChanges(project) {
                 guard await Versions.save(project, message: "Updated from a shared file") else {
                     let iconBack = await putBack()
-                    log(project, .error, "Lamp couldn't save the update, so the app is as it was" + (iconBack ? "." : ", except that its icon picture may be the new one."))
+                    log(project, .error, Self.updateFailed + (iconBack ? "" : Self.updateChangedIcon))
                     return
                 }
                 Versions.rememberUpdate(project)
                 versionsRevision += 1
             } else if !newArtwork {
-                log(project, .status, "This is the version you already have.")
+                log(project, .status, "You already have this version.")
                 return
             }
             // The same code with a new icon picture still gets built, which is what draws and installs the icon.
@@ -1110,6 +1111,10 @@ final class Store: ObservableObject {
             }
         }
     }
+
+    /// An update that didn't happen, in the chat: the app is untouched or was put back, whatever the cause.
+    private static let updateFailed = "Lamp couldn't update this app. It's just as it was."
+    private static let updateChangedIcon = " Only its icon may have changed."
 
     private func finishImport(_ package: Sharing.Package) {
         defer { try? FileManager.default.removeItem(at: package.folder) }
