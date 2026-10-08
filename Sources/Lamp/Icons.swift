@@ -85,9 +85,78 @@ enum Icons {
     /// The image model for icon artwork (Settings → Building → Image generation): the builder's business,
     /// so it has its own choice; an app that makes pictures needn't pay for the model that draws icons best.
     /// Until it's chosen, icons keep using the apps' model, as they did when there was one choice.
+    /// With Image Playground chosen instead, this is the model that draws if it stops being available.
     static var iconModel: String {
-        get { UserDefaults.standard.string(forKey: "iconModel") == nil ? artModel : choice("iconModel") }
+        get { [nil, byHand].contains(iconChoice) ? artModel : choice("iconModel") }
+        set { iconChoice = newValue }
+    }
+
+    /// What's saved for icon artwork: a model's id, `byHand`, or nothing (never chosen, or set back to none).
+    static var iconChoice: String? {
+        get { UserDefaults.standard.string(forKey: "iconModel") }
         set { UserDefaults.standard.set(newValue, forKey: "iconModel") }
+    }
+
+    /// The choice that means the person draws each app's icon in Image Playground. It's for icons only:
+    /// Apple's picture maker has no way in but its own sheet, so nothing can be drawn while they're away,
+    /// which rules it out for pictures inside apps and makes it no route for `AppAI.resolve`.
+    static let byHand = "playground"
+    static let byHandLabel = "Image Playground (you pick each icon)"
+
+    /// Whether icons are drawn by hand: chosen, and Image Playground is still on this Mac. Where it has
+    /// gone (Apple Intelligence turned off), the choice is kept for its return and Lamp carries on as if
+    /// it hadn't been made: it draws with a model if one can, and says Not Ready if none can. Only
+    /// `AppAI.resolve` asks this (for `.icon`); everything else reads its answer.
+    static func drawnByHand(choice: String?, available: Bool) -> Bool { available && choice == byHand }
+
+    /// How the Image generation row shows what answers, once something does (`AppAI.resolve` says whether
+    /// anything does; with nothing, the row is Not Ready).
+    enum ArtMenu: Equatable {
+        /// One thing draws and there's nothing else to choose: it's named (by its id).
+        case named(String)
+        /// A menu of `ids` with `selected` shown: models, then `byHand`, then `none` (an empty id: no
+        /// choice saved) when by hand is the only thing there is, so it can still be undone.
+        case menu(ids: [String], selected: String)
+    }
+
+    /// The id of "None" in the menu, and of whatever draws with no model to choose (Codex's own).
+    static let noChoice = ""
+
+    /// `models` are the ones that can draw now, `selection` the one in use, `drawer` what draws when no
+    /// model can be chosen (Codex with its own). By hand is an entry where it's on offer, and the one
+    /// shown when it's what answers.
+    static func artMenu(models: [String], selection: String, drawer: String?, byHandAvailable: Bool,
+                        byHandChosen: Bool) -> ArtMenu {
+        let chosen = byHandAvailable && byHandChosen
+        let drawing = models.isEmpty && drawer != nil ? [noChoice] : models
+        guard byHandAvailable else {
+            if models.count > 1 { return .menu(ids: models, selected: models.contains(selection) ? selection : models[0]) }
+            return .named(models.first ?? noChoice)
+        }
+        // By hand is all there is, and what answers (or the row would be Not Ready).
+        if drawing.isEmpty { return .menu(ids: [byHand, noChoice], selected: byHand) }
+        return .menu(ids: drawing + [byHand],
+                     selected: chosen ? byHand : drawing.contains(selection) ? selection : drawing[0])
+    }
+
+    /// What picking an entry of the Image generation menu does. The menu ends in "Configure providers…",
+    /// as the Text generation one does: it's where a key or a download is added, whatever the menu holds.
+    enum MenuPick: Equatable { case providers, clear, choose(String) }
+    static let configureProviders = "configure-providers"
+    static func menuPick(_ id: String, forIcons: Bool) -> MenuPick {
+        if id == configureProviders { return .providers }
+        // "None" is only in the icon artwork menu; an empty id elsewhere is Codex drawing with its own.
+        return forIcons && id == noChoice ? .clear : .choose(id)
+    }
+
+    /// What names a design's artwork in the chat: the line that offers to draw it is for this design only.
+    static func artKey(_ project: LampProject, spec: IconSpec) -> String { artURL(project, spec: spec).lastPathComponent }
+
+    /// Whether a "Draw Icon…" line in the chat still has something to offer: icons are drawn by hand, the
+    /// line is about the design the app has now, and that design has no artwork yet.
+    static func awaitsDrawing(_ key: String, in project: LampProject, byHand: Bool) -> Bool {
+        guard byHand, let spec = load(project) else { return false }
+        return artKey(project, spec: spec) == key && cachedArt(project, spec: spec) == nil
     }
 
     private static func choice(_ key: String) -> String {

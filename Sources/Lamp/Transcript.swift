@@ -218,8 +218,12 @@ struct Transcript: View {
     /// worked on: that has to finish first.
     var sendAgain: ((LogLine) -> Void)?
     var retryPhone: ((String) -> Void)?
+    /// Read so the chat follows the choice of what draws icons: it decides whether a "Draw Icon…" line shows.
+    @AppStorage("iconModel") private var iconChoice = ""
 
     var body: some View {
+        let _ = iconChoice
+        let lines = Self.withoutSpentOffers(lines, dir: dir)
         let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(lines) : lines)
         let finalAnswers = Self.finalAnswers(in: lines, busy: busy)
         let latestRequest = lines.last { $0.kind == .user }?.id
@@ -236,6 +240,14 @@ struct Transcript: View {
             .padding(.top, ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item,
                                         isFinalAnswer: finalAnswers.contains(item.id)))
         }
+    }
+
+    /// Without the offers to draw an icon that have nothing left to offer: the icon was drawn or designed
+    /// again, or icons are no longer drawn by hand. A line that stayed would say what's no longer so.
+    @MainActor static func withoutSpentOffers(_ lines: [LogLine], dir: URL) -> [LogLine] {
+        guard lines.contains(where: { $0.kind == .drawIcon }) else { return lines }
+        let project = Store.shared.projects.first { $0.dir == dir }
+        return lines.filter { line in line.kind != .drawIcon || project.map { Icons.awaitsDrawing(line.text, in: $0, byHand: AppAI.iconsByHand) } ?? false }
     }
 
     /// Without the step at the end that's still going ("Building…"): the progress line is saying it.
@@ -392,6 +404,8 @@ struct LogRow: View, Equatable {
             }
         case .needsKey, .offer:
             if let offer = line.setupOffer { SetupCard(offer: offer, reason: line.text, dir: dir) }
+        case .drawIcon:
+            if let project = Store.shared.projects.first(where: { $0.dir == dir }) { DrawIconLine(project: project) }
         }
     }
 
