@@ -108,6 +108,22 @@ final class PhoneToolsChecks {
         expectEqual(PhoneTools.check(phone: "different-phone", probe: probe()).issue?.action, .retry)
     }
 
+    func testTheViewerIsSimulatorOrDeviceHubWhereverThisXcodeKeepsIt() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+        let developer = root.appendingPathComponent("Xcode.app/Contents/Developer").path
+        try fm.createDirectory(atPath: developer, withIntermediateDirectories: true)
+        expectEqual(PhoneTools.viewer(in: developer), nil)
+        // Xcode 27 has Device Hub beside the other apps, with no Simulator in Developer.
+        let hub = root.appendingPathComponent("Xcode.app/Contents/Applications/DeviceHub.app")
+        try fm.createDirectory(at: hub, withIntermediateDirectories: true)
+        expectEqual(PhoneTools.viewer(in: developer)?.lastPathComponent, "DeviceHub.app")
+        // Earlier Xcodes have Simulator in Developer, which comes first.
+        try fm.createDirectory(atPath: developer + "/Applications/Simulator.app", withIntermediateDirectories: true)
+        expectEqual(PhoneTools.viewer(in: developer)?.lastPathComponent, "Simulator.app")
+    }
+
     func testAnXcodeWithoutTheSimulatorAppIsNotReady() {
         var p = probe()
         p.hasViewer = { developer in expectEqual(developer, self.developer); return false }
