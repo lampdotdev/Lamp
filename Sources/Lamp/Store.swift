@@ -333,6 +333,7 @@ final class Store: ObservableObject {
     }
     private var artInProgress: Set<String> = []
     private var pendingIconArt: Set<String> = []     // artwork finished during a turn, to apply after it
+    private var heldInstalls = HeldInstalls()        // new icons waiting for their app to close
     private var heldDrawingOffers: Set<String> = []  // "Draw Icon…" wanted during a turn, to offer after it
     private var artApplied: [String: IconSpec] = [:] // the spec whose artwork the rendered icon includes
     private var iconDesigns: [String: Task<Void, Never>] = [:]   // icons designed from the first message
@@ -1482,8 +1483,34 @@ final class Store: ObservableObject {
         await renderIcon(project, spec: spec)
         let executable = project.builtURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
         guard FileManager.default.isExecutableFile(atPath: executable.path) else { return }
+        log(project, .status, await installIcon(project) ? "New icon artwork is in."
+            : "New icon artwork is in. \(project.name) gets it the next time it closes.")
+    }
+
+    /// Whether the app is open on this Mac.
+    private func isRunning(_ project: LampProject) -> Bool {
+        NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == project.bundleID && !$0.isTerminated }
+    }
+
+    /// Puts the build, with the icon as it is now, in the apps folder, unless the app is open: then it waits
+    /// for the app to close (HeldInstalls says why a running app is never replaced). False when it waits.
+    @discardableResult
+    private func installIcon(_ project: LampProject) async -> Bool {
+        guard heldInstalls.mayInstall(project.id, running: isRunning(project)) else { return false }
         try? await deploy(project)
-        log(project, .status, "New icon artwork is in. It shows in the Dock after the app restarts.")
+        return true
+    }
+
+    /// The apps that just closed get the icon that was waiting for them. Owning the app meanwhile, like
+    /// any install; when a turn has it, the turn's own install brings the icon.
+    private func installHeldIcons(for closed: Set<String>) {
+        for project in projects where heldInstalls.due(amongClosed: closed).contains(project.id) {
+            guard begin(project) != nil else { continue }
+            Task {
+                if FileManager.default.fileExists(atPath: project.builtURL.path) { await installIcon(project) }
+                finish(project)
+            }
+        }
     }
 
     /// Puts the messages in the chat and their files in Attachments/. Returns the saved file names.
@@ -2642,6 +2669,7 @@ final class Store: ObservableObject {
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
         do {
             try await deploy(project)
+            heldInstalls.installed(project.id)
         } catch {
             log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
             return nil
@@ -3185,7 +3213,8 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Designs a fresh icon (different from the current one) and applies it without restarting the app.
+    /// Designs a fresh icon (different from the current one). An app that's open keeps running: it gets the
+    /// icon when it closes.
     func newIcon(_ project: LampProject) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
@@ -3193,15 +3222,17 @@ final class Store: ObservableObject {
         let spec = await Icons.design(for: project, avoiding: Icons.load(project))
         Icons.save(spec, for: project)
         await renderIcon(project, spec: spec)
+        var waits = false
         if FileManager.default.fileExists(atPath: project.builtURL.path) {
-            try? await deploy(project)
+            waits = await !installIcon(project)
         }
+        let applied = waits ? "New icon made. \(project.name) gets it the next time it closes." : "New icon applied."
         // Drawn by hand, the new design's artwork is the person's to make: the sheet opens for it now.
         guard !AppAI.iconsByHand else {
-            log(project, .status, "New icon applied.")
+            log(project, .status, applied)
             return iconFromPlayground(project)
         }
-        log(project, .status, AppAI.imageRoute != nil ? "New icon applied. Artwork is on its way." : "New icon applied.")
+        log(project, .status, AppAI.imageRoute != nil ? applied + " Artwork is on its way." : applied)
         Task { upgradeIconArt(project) }
     }
 
@@ -3266,7 +3297,7 @@ final class Store: ObservableObject {
             guard begin(project) != nil else { continue }
             await prepareIcon(project)
             if FileManager.default.fileExists(atPath: project.builtURL.path) {
-                try? await deploy(project)
+                await installIcon(project)
             }
             finish(project)
             upgradeIconArt(project)
@@ -3297,7 +3328,9 @@ final class Store: ObservableObject {
         ids += simulatorApps.keys
         deviceApps = deviceApps.filter { $0.value.isRunning }
         ids += deviceApps.keys
+        let closed = openApps.subtracting(ids)
         if Set(ids) != openApps { openApps = Set(ids) }
+        if !closed.isEmpty { installHeldIcons(for: closed) }
     }
 
     /// Quits the app, for the Stop button. Asks it nicely first, then insists.
