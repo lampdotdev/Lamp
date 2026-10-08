@@ -217,17 +217,18 @@ final class IconsByHandTests: XCTestCase {
         let reply = LogLine(kind: .agent, text: "Tide Times is ready.")
         let iconCard = LogLine(kind: .offer, text: "Nothing on this Mac can draw pictures yet.", offer: SetupOffer(capability: .pictures, icon: true))
         let pictures = SetupOffer(capability: .pictures)
-        XCTAssertEqual(LogLine.standing(of: pictures, in: [reply], iconsByHand: true), .new)
-        // Folded to All set by drawing icons by hand, the icon's card would leave the app's pictures with
-        // no way to be set up: the app's own request replaces it.
-        XCTAssertEqual(LogLine.standing(of: pictures, in: [reply, iconCard], iconsByHand: true), .replaces(1))
-        // Still open (icons aren't drawn by hand), it offers the same ways: one card is enough.
-        XCTAssertEqual(LogLine.standing(of: pictures, in: [reply, iconCard], iconsByHand: false), .offered)
+        XCTAssertEqual(LogLine.standing(of: pictures, in: [reply], iconAnswered: true), .new)
+        // Folded to All set (the person draws icons, or Settings' model does while the app's own choice
+        // can't), the icon's card would leave the app's pictures with no way to be set up: the app's own
+        // request replaces it.
+        XCTAssertEqual(LogLine.standing(of: pictures, in: [reply, iconCard], iconAnswered: true), .replaces(1))
+        // Still open (nothing answers the icon), it offers the same ways: one card is enough.
+        XCTAssertEqual(LogLine.standing(of: pictures, in: [reply, iconCard], iconAnswered: false), .offered)
         // The icon's card isn't raised again over itself, nor over a card about the app's pictures.
-        XCTAssertEqual(LogLine.standing(of: SetupOffer(capability: .pictures, icon: true), in: [reply, iconCard], iconsByHand: true), .offered)
+        XCTAssertEqual(LogLine.standing(of: SetupOffer(capability: .pictures, icon: true), in: [reply, iconCard], iconAnswered: true), .offered)
         let picturesCard = LogLine(kind: .offer, text: "Tide Times just tried to make a picture.", offer: pictures)
-        XCTAssertEqual(LogLine.standing(of: pictures, in: [reply, picturesCard], iconsByHand: true), .offered)
-        XCTAssertEqual(LogLine.standing(of: SetupOffer(capability: .text), in: [reply, iconCard], iconsByHand: true), .new)
+        XCTAssertEqual(LogLine.standing(of: pictures, in: [reply, picturesCard], iconAnswered: true), .offered)
+        XCTAssertEqual(LogLine.standing(of: SetupOffer(capability: .text), in: [reply, iconCard], iconAnswered: true), .new)
     }
 
     func testTheLineInTheChatSurvivesItsFile() throws {

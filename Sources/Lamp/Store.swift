@@ -106,12 +106,13 @@ struct LogLine: Identifiable, Codable, Equatable {
     }
 
     /// Where an offer stands in a chat: not made yet, made already, or made only as the card about the app's
-    /// icon, which drawing icons by hand has answered while leaving the app's own pictures unanswered. An
-    /// offer that isn't about the icon then takes that card's place (the line at the index given).
+    /// icon, which is answered (the person draws icons, or something draws them by Settings' choices) and
+    /// folded away while the app's own pictures aren't. An offer that isn't about the icon then takes that
+    /// card's place (the line at the index given).
     enum Standing: Equatable { case new, offered, replaces(Int) }
-    static func standing(of offer: SetupOffer, in lines: [LogLine], iconsByHand: Bool) -> Standing {
+    static func standing(of offer: SetupOffer, in lines: [LogLine], iconAnswered: Bool) -> Standing {
         guard let index = lines.firstIndex(where: { $0.setupOffer == offer }) else { return .new }
-        return iconsByHand && lines[index].setupOffer?.icon == true && offer.icon != true ? .replaces(index) : .offered
+        return iconAnswered && lines[index].setupOffer?.icon == true && offer.icon != true ? .replaces(index) : .offered
     }
 
     /// Whether a chat with these lines should get a line offering to draw the design `key`: not when it has
@@ -3065,12 +3066,15 @@ final class Store: ObservableObject {
         guard !offer.declined(in: fromAgent ? project : nil) else {
             return "The person said Not Now to setting this up. Don't offer it again; build so the app copes without it."
         }
-        switch LogLine.standing(of: offer, in: logs[project.id] ?? [], iconsByHand: AppAI.iconsByHand) {
+        // An icon's card is answered apart from the app's pictures (it follows Settings' choices and the
+        // choice to draw by hand, not the app's own models), so it can be all set while this isn't.
+        let iconAnswered = AppAI.resolve(.pictures, for: project, in: .icon).tier == .best
+        switch LogLine.standing(of: offer, in: logs[project.id] ?? [], iconAnswered: iconAnswered) {
         case .offered: return "Lamp already offered this in the chat. Don't offer it again."
         case .replaces(let index):
-            // The card there was about the icon and is folded away, answered by drawing icons by hand.
-            // This is about pictures the app makes, which nothing answers: it takes that card's place, and
-            // the icon gets its line instead.
+            // The card there was about the icon and is folded away, answered. This is about pictures the
+            // app makes, which aren't: it takes that card's place, and an icon the person draws gets its
+            // line instead.
             logs[project.id]?.remove(at: index)
             log(project, .offer, reason, offer: offer)
             upgradeIconArt(project)
