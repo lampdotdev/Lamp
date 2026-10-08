@@ -11,6 +11,9 @@ plain "Lamp x.y.z" line.
   like things, so a new app starts out in your style, and on what you decided about each app and what you
   turned down, so it isn't offered again. The notes carry over when you switch the agent or model, and the
   AI opens them only when a request needs them. A Memory tab lists them, to read, change or clear.
+- When a key or sign-in is refused, or an account is out of credit, Lamp names the one that was used. It
+  used to name whatever builds your apps, so an OpenRouter key that didn't work could be reported as a
+  problem with ChatGPT Codex or Claude Code.
 
 ## 0.10.3
 

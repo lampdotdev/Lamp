@@ -456,7 +456,7 @@ enum AppAI {
                 }
             }
         }
-        if let failure { throw Failure(message: Provider.friendlyError(failure)) }
+        if let failure { throw Failure(message: Provider.friendlyError(failure, from: Provider.name(of: .pi))) }
         guard !text.isEmpty else { throw Failure(message: "The AI didn't answer.") }
         return (text, cost)
     }
@@ -521,7 +521,7 @@ enum AppAI {
                 }
             }
         }
-        if let failure { throw Failure(message: Provider.friendlyError(failure)) }
+        if let failure { throw Failure(message: Provider.friendlyError(failure, from: engine.title)) }
         guard !text.isEmpty else {
             throw Failure(message: status == 0 ? "The AI didn't answer." : "\(engine.title) didn't answer. Check it's signed in.")
         }
@@ -626,7 +626,7 @@ enum AppAI {
                 let error = obj["error"] as? [String: Any]
                 let detail = error?["message"] as? String ?? obj["detail"].map { "\($0)" } ?? "HTTP \(status)"
                 throw Failure(message: status == 422 ? "The decision request was invalid: \(detail)"
-                                                     : Provider.friendlyError("\(status) \(detail)"))
+                                                     : Provider.friendlyError("\(status) \(detail)", from: Provider.keyProvider(choice.provider)?.name ?? choice.provider))
             }
             let usage = obj["usage"] as? [String: Any] ?? [:]
             // Jev charges per input token ($0.042 per million); OpenRouter may report the exact cost.
@@ -696,7 +696,7 @@ enum AppAI {
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         guard status == 200, let given = obj["answers"] as? [[String: Any]] else {
             let detail = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-            throw Failure(message: Provider.friendlyError("\(status) \(detail)"))
+            throw Failure(message: Provider.friendlyError("\(status) \(detail)", from: "OpenAI"))
         }
         // Each answer is checked against its question: the API can refuse one (type "refusal", in a 200),
         // and an app must never be handed a choice outside the options it gave, so anything that doesn't
@@ -1000,7 +1000,7 @@ enum AppAI {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else {
             let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-            throw Failure(message: Provider.friendlyError("\(status) \(message)"))
+            throw Failure(message: Provider.friendlyError("\(status) \(message)", from: Provider.openRouter))
         }
         guard let base64 = (obj["data"] as? [[String: Any]])?.first?["b64_json"] as? String,
               let decoded = Data(base64Encoded: base64), NSImage(data: decoded) != nil else {
@@ -1054,7 +1054,7 @@ enum AppAI {
         _ = await Shell.run(command, cwd: folder, env: env) { line in
             for case .failed(let message) in Agent.parse(line, engine: .codex) { failure = message }
         }
-        if let failure { throw Failure(message: Provider.friendlyError(failure)) }
+        if let failure { throw Failure(message: Provider.friendlyError(failure, from: Engine.codex.title)) }
         guard let data = try? Data(contentsOf: folder.appendingPathComponent("image.png")), NSImage(data: data) != nil else {
             throw Failure(message: "ChatGPT Codex didn't make the picture. Check it's signed in (Lamp → Settings → Building).")
         }
@@ -1096,7 +1096,7 @@ enum AppAI {
             cost += (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0
             guard status == 200, let choice else {
                 let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-                throw Failure(message: Provider.friendlyError("\(status) \(message)"))
+                throw Failure(message: Provider.friendlyError("\(status) \(message)", from: Provider.openRouter))
             }
             let text = (choice["message"] as? [String: Any])?["content"] as? String ?? ""
             if choice["finish_reason"] as? String == "content_filter" {
