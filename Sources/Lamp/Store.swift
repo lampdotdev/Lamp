@@ -3056,6 +3056,10 @@ final class Store: ObservableObject {
         try fm.createDirectory(at: Self.installDir, withIntermediateDirectories: true)
         let staging = Self.installDir.appendingPathComponent(".\(project.exe)-\(UUID().uuidString).app")
         try fm.copyItem(at: project.builtURL, to: staging)
+        // The app isn't running by now (a build quits it, an icon waits for it to close), but its widget's
+        // process may be: ended here, last thing before the swap, so no program outlives the copy it came from.
+        let installedWidget = Template.widgetURL(in: project.installedURL, of: project)
+        await WidgetProcess.end(from: installedWidget.appendingPathComponent("Contents/MacOS/\(project.exe)Widget"))
         if fm.fileExists(atPath: project.installedURL.path) {
             _ = try fm.replaceItemAt(project.installedURL, withItemAt: staging)
         } else {
