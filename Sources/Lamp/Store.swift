@@ -1048,20 +1048,32 @@ final class Store: ObservableObject {
                 log(project, .error, "Lamp couldn't save the app as it is, so it wasn't updated.")
                 return
             }
-            do {
-                try Sharing.install(package, into: project, replacing: true)
-            } catch {
-                // Half-replaced files go back to the version just saved.
+            // Replaced files that can't be kept as a version go back to the one just saved, so the app's
+            // files, its versions and the installed app never disagree.
+            func putBack() async {
                 _ = await Shell.run("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
+            }
+            let newArtwork: Bool
+            do {
+                newArtwork = try Sharing.install(package, into: project, replacing: true)
+            } catch {
+                await putBack()
                 log(project, .error, "Couldn't update the app: \(error.localizedDescription)")
                 return
             }
-            guard await Versions.save(project, message: "Updated from a shared file") else {
+            if await Versions.hasUnsavedChanges(project) {
+                guard await Versions.save(project, message: "Updated from a shared file") else {
+                    await putBack()
+                    log(project, .error, "Lamp couldn't save the update, so the app is as it was.")
+                    return
+                }
+                Versions.rememberUpdate(project)
+                versionsRevision += 1
+            } else if !newArtwork {
                 log(project, .status, "This is the version you already have.")
                 return
             }
-            Versions.rememberUpdate(project)
-            versionsRevision += 1
+            // The same code with a new icon picture still gets built, which is what draws and installs the icon.
             log(project, .status, "Updated from a shared file. Building it now…")
             if await build(project) == nil {
                 await installReportingCrash(project)

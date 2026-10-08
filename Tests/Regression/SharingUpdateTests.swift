@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 @testable import Lamp
 
 /// A shared file says which app it is, so a Mac that already has the app can update it rather than make a
@@ -73,5 +74,25 @@ final class SharingUpdateTests: XCTestCase {
         XCTAssertEqual(text(".lamp/chat.json"), "[]")
         XCTAssertTrue(fm.fileExists(atPath: mine.dir.appendingPathComponent("\(Sharing.Assets.folder)/new.png").path))
         XCTAssertFalse(fm.fileExists(atPath: mine.dir.appendingPathComponent("\(Sharing.Assets.folder)/old.png").path))
+    }
+
+    /// The icon's picture is outside the app's versions, so installing says when it changed: a file that
+    /// differs only there is still an update, and the same file again is not.
+    func testInstallingSaysWhenTheIconPictureChanged() throws {
+        let fm = FileManager.default
+        let sender = try project("sender")
+        let spec = IconSpec(subject: "a tally counter", symbol: "number", background: "", tint: "#3366FF")
+        Icons.save(spec, for: sender)
+        let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 32, bitsPerSample: 8, samplesPerPixel: 4,
+                                                 hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let picture = try XCTUnwrap(rep.representation(using: .png, properties: [:]))   // all see-through: a cut-out
+        try fm.createDirectory(at: Icons.artURL(sender, spec: spec).deletingLastPathComponent(), withIntermediateDirectories: true)
+        try picture.write(to: Icons.artURL(sender, spec: spec))
+        let package = try Sharing.open(try Sharing.export(sender))
+
+        let mine = try project("mine")
+        XCTAssertTrue(try Sharing.install(package, into: mine, replacing: true))
+        XCTAssertEqual(try Data(contentsOf: Icons.artURL(mine, spec: spec)), picture)
+        XCTAssertFalse(try Sharing.install(package, into: mine, replacing: true))
     }
 }

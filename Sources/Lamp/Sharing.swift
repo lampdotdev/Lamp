@@ -222,8 +222,12 @@ enum Sharing {
     /// Puts a shared app's code, files, description and icon into an app's folder. A new app starts from a
     /// scaffold; an app being updated (`replacing`) loses the code and files it had, which is why the caller
     /// saves them as a version first. Lamp's own files, the chat and everything else in the folder stay.
-    static func install(_ package: Package, into project: LampProject, replacing: Bool = false) throws {
+    /// True when the icon's artwork is different now: it lives in Lamp's own folder, outside the app's
+    /// versions, so a file that changes nothing else still has something to show.
+    @discardableResult
+    static func install(_ package: Package, into project: LampProject, replacing: Bool = false) throws -> Bool {
         let fm = FileManager.default
+        var newArtwork = false
         // Swap the code there for the shared code; keep Lamp's own LampSupport.swift.
         let sources = project.dir.appendingPathComponent("Sources")
         for item in try fm.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)
@@ -261,10 +265,12 @@ enum Sharing {
             if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
                Icons.isCutOut(art) {
                 let url = Icons.artURL(project, spec: spec)
+                newArtwork = (try? Data(contentsOf: url)) != art
                 try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? art.write(to: url)
             }
         }
+        return newArtwork
     }
 
     struct ImportError: LocalizedError {
