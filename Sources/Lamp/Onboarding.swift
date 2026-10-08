@@ -136,11 +136,22 @@ struct OnboardingView: View {
             store.create()
             guard let project = store.selected else { return }
             store.setKind(project, kind)
-            // An iPhone or iPad app needs Xcode and a simulator first, checked as the chat's Send does. Set
-            // aside, the idea waits in the message box rather than being lost.
-            PhoneSetup.shared.perform(for: project, in: store, cancelled: {
-                if let current = store.current(project) { store.saveDraft(Store.Draft(text: idea), for: current) }
-            }) { store.send(idea, to: $0) }
+            // An iPhone or iPad app needs Xcode and a simulator first, checked as the chat's Send does, and the
+            // idea is kept the same way while that runs: in the message box (so it's on disk if Lamp quits) and
+            // as a pending submission (so the new app isn't discarded as unused). Cancelled, it stays there.
+            let captured = Store.Draft(text: idea)
+            guard let token = store.beginSubmission(project) else { return }
+            store.updateDraft(captured, for: project)
+            @MainActor func settle(_ sent: Bool) {
+                if let current = store.current(project) {
+                    store.updateDraft(store.draft(for: current).afterSubmission(captured, sent: sent), for: current)
+                }
+                store.endSubmission(token)
+            }
+            PhoneSetup.shared.perform(for: project, in: store, cancelled: { settle(false) }) { current in
+                store.send(idea, to: current)
+                settle(true)
+            }
         }
     }
 }

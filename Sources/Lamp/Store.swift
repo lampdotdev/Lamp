@@ -791,9 +791,11 @@ final class Store: ObservableObject {
     }
 
     /// An untitled app you left without ever using is deleted, so trying New App leaves nothing behind.
+    /// Words in its message box count as using it: they're kept, like a draft in any other app.
     private func discardIfUnused(_ id: String) {
         guard let project = projects.first(where: { $0.id == id }), project.untitled,
               (logs[id] ?? []).isEmpty, queued[id] == nil, !busy.contains(id), !pendingSubmissions.contains(id),
+              draft(for: project).text.trimmed.isEmpty,
               !FileManager.default.fileExists(atPath: project.builtURL.path) else { return }
         try? FileManager.default.removeItem(at: project.dir)
         projects.removeAll { $0.id == id }
