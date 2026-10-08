@@ -119,9 +119,15 @@ enum Versions {
                     next.append(path.hasPrefix("/") ? path : URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: file).deletingLastPathComponent()).standardizedFileURL.path)
                 }
             }
+            // The ignore and attributes files, from each settings file on its own for the same reason.
             var files = settings
-            for key in ["core.excludesFile", "core.attributesFile"] {
-                if let path = ask(["--global", "--includes", "--type=path", "--get", key])?.trimmed.nilIfEmpty { files.append(path) }
+            for file in settings {
+                let named = ask(["--file", file, "--type=path", "-z", "--get-regexp", #"^core\.(excludesfile|attributesfile)$"#]) ?? ""
+                for entry in named.split(separator: "\0") {
+                    if let path = entry.split(separator: "\n", maxSplits: 1).last.map(String.init), path.hasPrefix("/"), !files.contains(path) {
+                        files.append(path)
+                    }
+                }
             }
             known = (starts, settings, stamp(settings), files)
             return files
