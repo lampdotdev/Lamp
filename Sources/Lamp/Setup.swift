@@ -756,8 +756,15 @@ struct ExperimentalSettings: View {
                             Picker("Images away from this Mac", selection: Binding(get: { AppAI.awayImageModel }, set: { awayImageModel = $0 })) {
                                 ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
                             }
-                            Picker("Decisions away from this Mac", selection: Binding(get: { AppAI.awayDecisionModel.id }, set: { awayDecisionModel = $0 })) {
-                                ForEach(AppAI.awayDecisionModels, id: \.id) { Text($0.label).tag($0.id) }
+                            // Only what a phone can carry the key for; a choice whose key is gone shows the text
+                            // route that stands in for it, as Store.keysForPhone does.
+                            let awayDecisions = AppAI.awayDecisionModels.filter { $0.provider == "text" || $0.provider == "openrouter" || KeyStore.key(for: $0.provider) != nil }
+                            Picker("Decisions away from this Mac", selection: Binding(get: {
+                                _ = awayDecisionModel
+                                let chosen = AppAI.awayDecisionModel.id
+                                return awayDecisions.contains { $0.id == chosen } ? chosen : awayDecisions.first { $0.provider == "text" }!.id
+                            }, set: { awayDecisionModel = $0 })) {
+                                ForEach(awayDecisions, id: \.id) { Text($0.label).tag($0.id) }
                             }
                         } else {
                             CapabilityNote(capability: .text, context: .phoneAway)
