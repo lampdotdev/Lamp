@@ -170,6 +170,15 @@ final class SharedAppReviewTests: XCTestCase {
         XCTAssertEqual(risk["enum"] as? [String], ["low", "medium", "high"])
     }
 
+    // MARK: The sheet's height
+
+    func testTheSheetStopsAboveTheBottomOfTheScreen() {
+        // A 900-point screen with the Dock showing: the usable area starts 80 points up.
+        let visible = CGRect(x: 0, y: 80, width: 1440, height: 795)
+        XCTAssertEqual(ImportReviewView.room(below: 672, on: visible), 580)
+        XCTAssertEqual(ImportReviewView.room(below: 811, on: visible), 719)
+    }
+
     // MARK: Code that isn't text
 
     private func appFolder(sources: [String: Data]) throws -> URL {

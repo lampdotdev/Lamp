@@ -1286,6 +1286,28 @@ struct NewAppIntro: View {
     }
 }
 
+/// Hands over the window a view is in, once it is in one.
+private struct WindowFinder: NSViewRepresentable {
+    let found: (NSWindow) -> Void
+
+    final class Probe: NSView {
+        var found: ((NSWindow) -> Void)?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            // After this pass: a sheet's window knows its parent only once it has been attached.
+            if let window { DispatchQueue.main.async { [weak self] in self?.found?(window) } }
+        }
+    }
+
+    func makeNSView(context: Context) -> Probe {
+        let view = Probe()
+        view.found = found
+        return view
+    }
+
+    func updateNSView(_ view: Probe, context: Context) { view.found = found }
+}
+
 /// Shown before building an app someone else shared: what it does, what it can access, and any red flags.
 struct ImportReviewView: View {
     @EnvironmentObject private var store: Store
@@ -1296,6 +1318,18 @@ struct ImportReviewView: View {
     @State private var icon: NSImage?
     /// What the app says it does, in its sender's words, when the file has that.
     @State private var description: String?
+    /// How tall the sheet may be where it hangs: from its top down to the bottom of the screen's usable area
+    /// (above the Dock). Unlimited until the sheet is on screen.
+    @State private var room = CGFloat.infinity
+    @State private var sheet: NSWindow?
+    /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
+    /// verdict under the middle, and the buttons.
+    @State private var fixed: [Part: CGFloat] = [:]
+    private enum Part { case name, verdict, buttons }
+    /// How tall the scrolling middle may be: the height a long review always stopped at, or less when the
+    /// screen below the sheet's top is shorter than that. The 96 is the sheet's padding and the gaps
+    /// between its four parts.
+    private var limit: CGFloat { max(60, min(400, room - fixed.values.reduce(0, +) - 96)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1324,9 +1358,12 @@ struct ImportReviewView: View {
                 description = Sharing.description(of: pending.package)
                 icon = await Sharing.icon(of: pending.package)
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.name] = $0 }
 
             if let review {
-              // The review scrolls when it's long (an app that does many things); the buttons stay put.
+              // What the app does scrolls when it's long (an app that does many things) or the screen is short;
+              // the app's name above, and the verdict and buttons below, stay put, so the conclusion is never
+              // off screen.
               ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                 if !review.summary.isEmpty {
@@ -1346,6 +1383,12 @@ struct ImportReviewView: View {
                         }
                     }
                 }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+              }
+              .frame(maxHeight: limit)
+              .fixedSize(horizontal: false, vertical: true)   // no taller than its content, up to the limit
+              VStack(alignment: .leading, spacing: 16) {
                 verdict(review)
                 if let line = review.reviewerLine {
                     Text(verbatim: line).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -1355,11 +1398,9 @@ struct ImportReviewView: View {
                 }
                 Text("Lamp's check is a guide, not a guarantee. Only open apps from people you trust.")
                     .font(.caption).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
               }
-              .frame(maxHeight: 520)
-              .fixedSize(horizontal: false, vertical: true)   // no taller than its content, up to the limit
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.verdict] = $0 }
             } else {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
@@ -1385,9 +1426,25 @@ struct ImportReviewView: View {
                         .disabled(review == nil)
                 }
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.buttons] = $0 }
         }
         .padding(24)
         .frame(width: 500)
+        .background(WindowFinder { sheet = $0; fit() })
+        // The window can be moved with the sheet down, and the Dock can come and go.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)) { _ in fit() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in fit() }
+    }
+
+    private func fit() {
+        guard let window = sheet?.sheetParent, let screen = window.screen else { return }
+        room = Self.room(below: window.frame.minY + window.contentLayoutRect.maxY, on: screen.visibleFrame)
+    }
+
+    /// The height a sheet can take when its top edge sits at `top` (screen coordinates, y up) on a screen
+    /// whose usable area is `visible`: down to the bottom of that area, less a margin.
+    nonisolated static func room(below top: CGFloat, on visible: CGRect) -> CGFloat {
+        (top - visible.minY - 12).rounded(.down)
     }
 
     /// One row per kind of access the code was seen to use, worst first, like the permissions list in System
