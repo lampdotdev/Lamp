@@ -102,9 +102,9 @@ struct ToolCall {
 }
 
 extension LogLine {
-    /// About how many lines of a chat are on screen to begin with, and how many more each
-    /// Show Earlier Messages brings in. The chat lays out every row it shows, so this is what bounds the
-    /// cost of a long one.
+    /// About how many lines of a chat are on screen to begin with, and how many more come in each time
+    /// the chat is scrolled up towards the earliest of them. The chat lays out every row it shows, so this
+    /// is what bounds the cost of a long one.
     static let recentCount = 60
 
     /// Where the chat starts showing from: the request that opens a turn, far enough back that at least
