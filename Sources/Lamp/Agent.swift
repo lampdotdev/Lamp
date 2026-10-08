@@ -270,8 +270,9 @@ enum Agent {
         It may load from the web with URLSession. \(Template.WidgetSharing.rule) \
         Clicking it opens the app. `look_at_app` shows only the app's window, never the widget, so say it's \
         untested by sight. An app can't put its own widget on the desktop: end your reply by telling the user \
-        to right-click the desktop, choose Edit Widgets and pick the app there. To take the widget away, delete \
-        the files in Widget/.
+        to right-click the desktop, choose Edit Widgets and pick the app there. That is once: a widget they \
+        placed stays through your changes and shows them by itself, so never tell them to add it again. To take \
+        the widget away, delete the files in Widget/.
         """
 
         static let permissions = """
