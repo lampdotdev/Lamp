@@ -1292,6 +1292,10 @@ struct ImportReviewView: View {
     let pending: Store.PendingImport
 
     private var review: ImportReview? { pending.review }
+    /// The app's own icon, once drawn from the file; the plain app icon until then, and for a file without one.
+    @State private var icon: NSImage?
+    /// What the app says it does, in its sender's words, when the file has that.
+    @State private var description: String?
     /// Opening takes a deliberate click (no Return) when the AI rates the app high, when the code was seen to
     /// do something sensitive, or when nothing checked it and the fixed checks found real capabilities.
     private var deliberate: Bool {
@@ -1302,13 +1306,29 @@ struct ImportReviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
-                Image(nsImage: NSWorkspace.shared.icon(for: .applicationBundle)).resizable().frame(width: 44, height: 44)
+                // Lamp's icons carry their own margin, so one fills a larger frame to sit like the plain icon did.
+                Image(nsImage: icon ?? NSWorkspace.shared.icon(for: .applicationBundle)).resizable()
+                    .frame(width: icon == nil ? 44 : 56, height: icon == nil ? 44 : 56)
+                    .frame(width: 56, height: 56)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Open “\(pending.package.name)”?").font(.title2.bold())
-                    Text("Someone shared this app with you. Lamp builds it and opens it here, where it can do anything an app you run can do.")
+                    // The sender's words, so the line under them says whose they are.
+                    if let description {
+                        Text(verbatim: description).font(.callout).lineLimit(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.bottom, 2)
+                    }
+                    Text(description == nil
+                         ? "Someone shared this app with you. Lamp builds it and opens it here, where it can do anything an app you run can do."
+                         : "Someone shared this app with you, described above in their words. Lamp builds it and opens it here, where it can do anything an app you run can do.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+            }
+            .task {
+                description = Sharing.description(of: pending.package)
+                icon = await Sharing.icon(of: pending.package)
             }
 
             if let review {
