@@ -5,6 +5,24 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.10.8
+
+- One answer to what answers your apps. Lamp works out, in one place, what handles an app's text, decisions
+  and pictures, here and away on a phone, and how well. When an app needs something nothing here can do, a
+  card in its chat offers the ways to set it up: a key typed in place, a download, a sign-in, or Image
+  Playground for the icon. Settings → AI Providers shows what answers your apps, and the agent is told what
+  the app has when it finishes a request.
+- Settings, tidied: Experimental is its own tab (Remember how I like things, and Build iOS apps with the
+  Apple team, the away-from-this-Mac models and the setup check under it); Providers is AI Providers; menus
+  list only what works now, with Not Ready beside a choice that can't be used.
+- Shared apps: the review shows the app's own icon and description; opening one you already have offers
+  Update or Keep Both; one opened during setup or the welcome is kept, builds with its progress shown, and
+  its review opens once setup is done.
+- The chat stays where you scrolled while the agent works, and follows the end again when you scroll back
+  down or send a message.
+- Stop pressed while sign-ins are being checked keeps the agent from starting; a sign-in Lamp last found
+  signed out is checked again before it's used.
+
 ## 0.10.7
 
 - The Keychain prompt at launch is gone for good: a key item that another tool put there can't be replaced
