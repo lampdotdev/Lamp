@@ -162,6 +162,7 @@ struct AppSidebar: View {
                         ReadyDot()
                     }
                 }
+                .background(ShareAnchor(origin: .app(project.id)))
                 .tag(project.id)
             }
             Button { store.create() } label: {
@@ -200,6 +201,7 @@ struct AppSidebar: View {
                     }
                     .buttonStyle(.plain)
                     .simultaneousGesture(TapGesture(count: 2).onEnded { store.openPrepared(project) })
+                    .background(ShareAnchor(origin: .app(project.id)))
                     .contextMenu { AppMenu(project: project) }
                     .accessibilityLabel(project.name)
                     .accessibilityAddTraits(store.selection == project.id ? [.isSelected] : [])
@@ -385,7 +387,7 @@ struct AppMenu: View {
         Divider()
         if store.canShare(project) {
             Button("Copy App File") { store.copyAppFile(project) }
-            Button { Sharing.share(project) } label: {
+            Button { Sharing.share(project, from: .app(project.id)) } label: {
                 Label("Share…", systemImage: "square.and.arrow.up")
             }
             Button("Export…") { store.chooseExport(project) }
@@ -865,7 +867,7 @@ struct ProjectView: View {
             if store.canShare(project) {
                 Menu {
                     Button("Copy App File") { store.copyAppFile(project) }
-                    Button { Sharing.share(project) } label: {
+                    Button { Sharing.share(project, from: .toolbar) } label: {
                         Label("Share…", systemImage: "square.and.arrow.up")
                     }
                     Button("Export…") { store.chooseExport(project) }
@@ -874,6 +876,7 @@ struct ProjectView: View {
                 }
                 .disabled(!made)
                 .help(made ? "Send this app to someone with Lamp" : "Nothing to share until the app is built")
+                .background(ShareAnchor(origin: .toolbar))
             }
         }
         gap

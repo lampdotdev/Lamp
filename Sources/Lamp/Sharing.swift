@@ -21,9 +21,22 @@ enum Sharing {
     @MainActor private static var picker: NSSharingServicePicker?
     @MainActor private static var shareRequest = UUID()
 
-    @MainActor static func share(_ project: LampProject) {
-        guard let window = NSApp.keyWindow, let view = window.contentView else { return }
-        let point = view.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
+    /// Where a Share… command was chosen: the toolbar's Share button, or an app's row or tile in the sidebar.
+    enum Origin: Equatable { case toolbar, app(String) }
+
+    @MainActor private static let anchors = NSHashTable<ShareAnchor.Marker>.weakObjects()
+    @MainActor static func register(_ anchor: ShareAnchor.Marker) { anchors.add(anchor) }
+
+    /// The control a Share… command belongs to, while it's on screen in that window.
+    @MainActor static func anchor(for origin: Origin, in window: NSWindow) -> NSView? {
+        anchors.allObjects.first { $0.origin == origin && $0.window === window && !$0.isHiddenOrHasHiddenAncestor }
+    }
+
+    @MainActor static func share(_ project: LampProject, from origin: Origin) {
+        guard let window = NSApp.keyWindow, let content = window.contentView else { return }
+        // Where the command was clicked, for when its control has gone by the time the file is ready.
+        let clicked = NSRect(origin: content.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil),
+                             size: NSSize(width: 1, height: 1))
         let request = UUID()
         shareRequest = request
         Task {
@@ -34,7 +47,13 @@ enum Sharing {
                 // Separate native items keep the opening instructions beside the attachment in Mail and Messages.
                 let picker = NSSharingServicePicker(items: ["Open this with Lamp https://lamp.dev", file])
                 self.picker = picker
-                picker.show(relativeTo: NSRect(origin: point, size: .zero), of: view, preferredEdge: .minY)
+                // The picker opens from the control, as the system's own Share menus do; a rectangle with no
+                // size isn't a place to it, and it opens beside the window instead.
+                if let anchor = anchor(for: origin, in: window) {
+                    picker.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+                } else {
+                    picker.show(relativeTo: clicked, of: content, preferredEdge: .minY)
+                }
             } catch {
                 guard shareRequest == request, window.isVisible else { return }
                 NSAlert(error: error).runModal()
@@ -402,4 +421,23 @@ extension Sharing {
         }
         return review
     }
+}
+
+/// An invisible view behind a control that offers Share…, so the sharing picker has that control to open from.
+struct ShareAnchor: NSViewRepresentable {
+    let origin: Sharing.Origin
+
+    final class Marker: NSView {
+        var origin: Sharing.Origin?
+        // Behind a control, never in its way: clicks go to the control.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    func makeNSView(context: Context) -> Marker {
+        let view = Marker()
+        view.origin = origin
+        Sharing.register(view)
+        return view
+    }
+    func updateNSView(_ view: Marker, context: Context) { view.origin = origin }
 }
