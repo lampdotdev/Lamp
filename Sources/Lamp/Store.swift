@@ -1620,6 +1620,7 @@ final class Store: ObservableObject {
         guard let turn = turns[project.id] else { return false }   // only inside a turn (startQueued)
         turn.stopped = false
         let sessionFile = Self.sessionFile(for: project, engine: engine)
+        await EngineSignIn.refresh()   // what the agent is told about the app's AI follows the sign-ins as they are
         let run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
                             session: engine == .pi ? Self.piSession(for: project) : Self.savedSession(sessionFile),
                             token: turn.agentToken)
@@ -3284,7 +3285,7 @@ final class Store: ObservableObject {
         // A phone asking what it may keep is answered whatever the state of setup: a key just removed makes
         // setup incomplete, and that's exactly when the phone has to hear that its copy should go.
         if route == "/ai/keys" { return keysForPhone(project) }
-        if route == "/ai/status" { return aiStatus(for: project) }
+        if route == "/ai/status" { return await aiStatus(for: project) }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
     }
@@ -3388,6 +3389,9 @@ final class Store: ObservableObject {
 
     /// The routes a running app uses: text, pictures, decisions, and using the other apps on the Mac.
     private func appRequest(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
+        // A sign-in Lamp last found signed out may have been signed in since (from Terminal, say): what's
+        // older than a few minutes is checked again before choosing a route, so it can answer again.
+        await EngineSignIn.refresh()
         if request.path == "/ai/computer" { return await useComputer(for: project, request: request.body) }
         if request.path == "/ai/decide" {
             guard let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any],
@@ -3452,7 +3456,8 @@ final class Store: ObservableObject {
 
     /// `LampAI.isAvailable`: which capabilities can answer this app now, so it can leave out or explain a
     /// feature instead of failing at it.
-    private func aiStatus(for project: LampProject) -> (Int, [String: Any]) {
+    private func aiStatus(for project: LampProject) async -> (Int, [String: Any]) {
+        await EngineSignIn.refresh()
         var reply: [String: Any] = [:]
         for capability in Capability.allCases {
             reply[capability.rawValue] = setup.ready && AppAI.resolve(capability, for: project).tier != .none
