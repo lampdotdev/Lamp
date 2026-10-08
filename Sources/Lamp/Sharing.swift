@@ -413,10 +413,15 @@ extension Sharing {
     static let unreadableCode = Capability(label: "Has code Lamp can't read as text (can hide what it does)",
                                            icon: "eye.slash", level: .sensitive, patterns: [])
 
-    /// Which model is about to read the code: the OpenRouter model Lamp's own review uses when there's a
-    /// key, else the route apps use. The same choice `AppAI.complete` makes for a call that names a model.
-    static func reviewer(openRouterModel: String?, route: AppAI.TextRoute) -> ImportReview.Reviewer {
-        if let openRouterModel { return .init(name: "\(openRouterModel) via \(Provider.openRouter)", onThisMac: false) }
+    /// The route the review takes: the OpenRouter model Lamp's own review uses when there's a key, else the
+    /// route apps use. Settled once, so the model named on the sheet is the one that was asked.
+    static func reviewRoute(openRouterModel: String?, appRoute: AppAI.TextRoute) -> AppAI.TextRoute {
+        guard let model = openRouterModel else { return appRoute }
+        return AppAI.TextRoute(id: "review", label: "\(model) via \(Provider.openRouter)", group: Provider.openRouter,
+                               name: model, kind: .openRouter(model: model), available: true)
+    }
+
+    static func reviewer(for route: AppAI.TextRoute) -> ImportReview.Reviewer {
         if case .localModel = route.kind { return .init(name: route.label, onThisMac: true) }
         return .init(name: route.label, onThisMac: false)
     }
@@ -588,7 +593,7 @@ extension Sharing {
         if truncated { review.concerns.append("This app is too large for Lamp to check all of its code.") }
         // No AI to ask is an ordinary state for someone who was only sent an app, not a failure: the same
         // words whether nothing can answer at all or the route apps use is OpenRouter without a key.
-        let route = await AppAI.model
+        let route = reviewRoute(openRouterModel: Provider.hasKey ? Provider.model : nil, appRoute: await AppAI.model)
         var ready = AppAI.canAnswer
         if ready, !Provider.hasKey, case .openRouter = route.kind { ready = false }
         guard ready else {
@@ -597,11 +602,10 @@ extension Sharing {
         }
 
         review.asked = true
-        let reviewer = reviewer(openRouterModel: Provider.hasKey ? Provider.model : nil, route: route)
         let request = reviewRequest(name: package.name, about: found.about, files: found.files)
         do {
             let (text, _) = try await AppAI.complete(prompt: request.prompt, images: [], system: request.system, json: true,
-                                                     model: Provider.model, schema: answerSchema)
+                                                     schema: answerSchema, via: route)
             guard let answer = answer(from: text) else {
                 review.note = "Lamp's AI check gave an answer Lamp couldn't use, so nothing it said is shown. Look at the list above carefully."
                 return review
@@ -609,7 +613,7 @@ extension Sharing {
             review.summary = answer.summary
             review.capabilities = answer.capabilities
             review.concerns += answer.concerns
-            review.reviewer = reviewer
+            review.reviewer = reviewer(for: route)
             // Whatever the model says of the part it saw, it didn't see all of it.
             review.risk = truncated && answer.risk == .low ? .medium : answer.risk
         } catch let failure as AppAI.Failure {

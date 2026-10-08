@@ -74,12 +74,15 @@ final class SharedAppReviewTests: XCTestCase {
             AppAI.TextRoute(id: "x", label: label, group: "", name: "", kind: kind, available: true)
         }
         let ollama = route(.localModel(provider: "ext-ollama", model: "tiny"), "tiny via Ollama")
-        XCTAssertEqual(Sharing.reviewer(openRouterModel: nil, route: ollama), .init(name: "tiny via Ollama", onThisMac: true))
-        // With a key, the review goes to OpenRouter whatever apps use.
-        XCTAssertEqual(Sharing.reviewer(openRouterModel: "anthropic/claude-opus-5.5", route: ollama),
-                       .init(name: "anthropic/claude-opus-5.5 via OpenRouter", onThisMac: false))
+        XCTAssertEqual(Sharing.reviewer(for: Sharing.reviewRoute(openRouterModel: nil, appRoute: ollama)),
+                       .init(name: "tiny via Ollama", onThisMac: true))
+        // With a key, the review goes to OpenRouter whatever apps use, and is asked for by that route.
+        let keyed = Sharing.reviewRoute(openRouterModel: "anthropic/claude-opus-5.5", appRoute: ollama)
+        XCTAssertEqual(keyed.kind, .openRouter(model: "anthropic/claude-opus-5.5"))
+        XCTAssertEqual(Sharing.reviewer(for: keyed), .init(name: "anthropic/claude-opus-5.5 via OpenRouter", onThisMac: false))
         let claude = route(.engine(.claude, model: "sonnet"), "Sonnet via Claude Code")
-        XCTAssertEqual(Sharing.reviewer(openRouterModel: nil, route: claude), .init(name: "Sonnet via Claude Code", onThisMac: false))
+        XCTAssertEqual(Sharing.reviewer(for: Sharing.reviewRoute(openRouterModel: nil, appRoute: claude)),
+                       .init(name: "Sonnet via Claude Code", onThisMac: false))
     }
 
     // MARK: The answer's shape

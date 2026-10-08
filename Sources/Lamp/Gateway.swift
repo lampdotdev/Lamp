@@ -362,10 +362,13 @@ enum AppAI {
     /// `appModel` is an app's own text model (an id from `models`), when it has one.
     /// `schema` is a JSON Schema the reply must fit. OpenRouter holds the model to it; the other routes
     /// can't, so a caller that depends on the shape still checks the reply.
+    /// `via` is a route the caller has already settled on, for one that must know what answered: the call
+    /// goes that way or fails, and nothing is looked up again.
     static func complete(prompt: String, images: [Image], system: String, json: Bool,
                          model: String? = nil, appModel: String? = nil, engineModel: String? = nil,
-                         schema: [String: Any]? = nil) async throws -> (String, Double) {
-        let chosen = await route(for: appModel)
+                         schema: [String: Any]? = nil, via: TextRoute? = nil) async throws -> (String, Double) {
+        let chosen: TextRoute
+        if let via { chosen = via } else { chosen = await route(for: appModel) }
         var system = system
         if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
         var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel, schema: schema)
