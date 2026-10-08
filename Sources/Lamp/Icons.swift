@@ -323,6 +323,16 @@ enum Icons {
     /// Xcode 26, .lamp/AppIcon.icon and .lamp/Assets.car (what macOS 26 uses for Liquid Glass). Returns the
     /// preview image.
     @discardableResult
+    /// The icon as Lamp shows it, rendered in a temporary folder and nothing of the app's touched: for the
+    /// chat while a build that will write the real files is still running.
+    static func preview(_ spec: IconSpec, art: NSImage?) async -> NSImage {
+        let tile = await tile(spec, foreground: foregroundLayer(spec, art: art), artwork: art != nil)
+        let grid = onGrid(tile, size: 256)
+        let image = NSImage(size: NSSize(width: 256, height: 256))
+        image.addRepresentation(grid)
+        return image
+    }
+
     static func write(_ spec: IconSpec, art: NSImage?, for project: LampProject) async throws -> NSImage {
         let fm = FileManager.default
         try fm.createDirectory(at: project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
