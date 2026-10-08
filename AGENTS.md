@@ -73,9 +73,6 @@ A capability given to one engine must be given to all of them that can take it, 
   `SetupCard`, once per app and capability; "Not Now" keeps Lamp's own offers away from every app). The
   agent is told what the app has at the end of a request (`AIStatus.brief`, beside `Memory.brief` and sent
   the same way: once per conversation and when it changes) and raises the same card with `offer_setup`.
-  Icon artwork has one more choice, outside `resolve` because only the person can work it: drawing each
-  icon in Image Playground (`Icons.byHand`, in Settings → Building's Image generation). Chosen, Lamp draws
-  no icon itself, key or no key, and offers the drawing with one line in the chat (`Store.offerDrawing`).
   Before adding a capability, a way to make one better, or a new offer, read `design/setup-card/README.md`:
   when an offer is worth making, how the card and Settings rows are built, and how to write their copy (for
   someone who has never heard of a key or a model, never naming providers, routes or APIs).

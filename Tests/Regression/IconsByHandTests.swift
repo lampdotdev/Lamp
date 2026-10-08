@@ -29,11 +29,6 @@ final class IconsByHandTests: XCTestCase {
 
     // MARK: What Settings shows
 
-    func testNothingDrawsAndNothingIsChosen() {
-        XCTAssertEqual(setting(models: [], byHandAvailable: true, byHandChosen: false), .notReady)
-        XCTAssertEqual(setting(models: [], byHandAvailable: false, byHandChosen: false), .notReady)
-    }
-
     func testChosenAsTheOnlyThingItCanStillBeUndone() {
         XCTAssertEqual(setting(models: [], byHandAvailable: true, byHandChosen: true),
                        .menu(ids: [Icons.byHand, Icons.noChoice], selected: Icons.byHand))
@@ -58,7 +53,6 @@ final class IconsByHandTests: XCTestCase {
 
     func testWithoutImagePlaygroundTheRowIsAsItWas() {
         // Chosen, then gone from this Mac: never a choice on screen that can't be used.
-        XCTAssertEqual(setting(models: [], byHandAvailable: false, byHandChosen: true), .notReady)
         XCTAssertEqual(setting(models: models, selection: "gone", byHandAvailable: false, byHandChosen: true),
                        .menu(ids: models, selected: models[0]))
         XCTAssertEqual(setting(models: [models[0]], byHandAvailable: false, byHandChosen: false), .named(models[0]))
@@ -80,9 +74,61 @@ final class IconsByHandTests: XCTestCase {
     }
 
     private func setting(models: [String], selection: String = "", drawer: String? = nil, byHandAvailable: Bool,
-                         byHandChosen: Bool) -> Icons.ArtSetting {
-        Icons.artSetting(models: models, selection: selection, drawer: drawer, byHandAvailable: byHandAvailable,
+                         byHandChosen: Bool) -> Icons.ArtMenu {
+        Icons.artMenu(models: models, selection: selection, drawer: drawer, byHandAvailable: byHandAvailable,
                          byHandChosen: byHandChosen)
+    }
+
+    // MARK: What the resolver says
+
+    @MainActor func testIconArtworkIsAnsweredByTheResolver() {
+        let defaults = UserDefaults.standard
+        let before = defaults.string(forKey: "iconModel")
+        defer { defaults.set(before, forKey: "iconModel") }
+
+        // Chosen: the person is what answers, key or no key, on a Mac that has Image Playground. Without
+        // it the choice counts for nothing and icons are answered as pictures are.
+        Icons.iconChoice = Icons.byHand
+        let chosen = AppAI.resolve(.pictures, in: .icon)
+        if Icons.playgroundAvailable {
+            XCTAssertEqual(chosen.tier, .best)
+            XCTAssertEqual(chosen.provider, Icons.byHand)
+            XCTAssertEqual(chosen.upgrades, [])
+            XCTAssertTrue(AppAI.iconsByHand)
+        } else {
+            XCTAssertEqual(chosen.tier, AppAI.resolve(.pictures).tier)
+            XCTAssertFalse(AppAI.iconsByHand)
+        }
+
+        // Not chosen: answered as pictures are, and where nothing draws, drawing by hand is one more way.
+        Icons.iconChoice = nil
+        let pictures = AppAI.resolve(.pictures)
+        let icon = AppAI.resolve(.pictures, in: .icon)
+        XCTAssertFalse(AppAI.iconsByHand)
+        XCTAssertEqual(icon.tier, pictures.tier)
+        XCTAssertEqual(icon.answer, pictures.answer)
+        XCTAssertEqual(icon.upgrades, pictures.tier == .none ? pictures.upgrades + [.drawIcons] : pictures.upgrades)
+    }
+
+    @MainActor func testDrawingByHandIsNeverOfferedForPicturesInsideApps() {
+        let defaults = UserDefaults.standard
+        let before = defaults.string(forKey: "iconModel")
+        defer { defaults.set(before, forKey: "iconModel") }
+        for choice in [nil, Icons.byHand] {
+            Icons.iconChoice = choice
+            // The choice is for icons: an app's pictures are answered, and offered, as if it weren't there.
+            for context in [AIContext.mac, .phoneAway] {
+                let resolution = AppAI.resolve(.pictures, in: context)
+                XCTAssertFalse(resolution.upgrades.contains(.drawIcons))
+                XCTAssertNotEqual(resolution.provider, Icons.byHand)
+            }
+        }
+    }
+
+    func testTheIconsCardAsksAboutIconArtwork() {
+        XCTAssertEqual(SetupOffer(capability: .pictures, icon: true).context, .icon)
+        XCTAssertEqual(SetupOffer(capability: .pictures).context, .mac)
+        XCTAssertEqual(SetupOffer(capability: .pictures, away: true).context, .phoneAway)
     }
 
     // MARK: The card and the line in the chat

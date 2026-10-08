@@ -3065,7 +3065,7 @@ final class Store: ObservableObject {
         guard !offer.declined(in: fromAgent ? project : nil) else {
             return "The person said Not Now to setting this up. Don't offer it again; build so the app copes without it."
         }
-        switch LogLine.standing(of: offer, in: logs[project.id] ?? [], iconsByHand: Icons.drawnByHand) {
+        switch LogLine.standing(of: offer, in: logs[project.id] ?? [], iconsByHand: AppAI.iconsByHand) {
         case .offered: return "Lamp already offered this in the chat. Don't offer it again."
         case .replaces(let index):
             // The card there was about the icon and is folded away, answered by drawing icons by hand.
@@ -3107,7 +3107,7 @@ final class Store: ObservableObject {
         guard let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
               Icons.cachedArt(project, spec: spec) == nil else { return }
         // The person chose to draw icons themselves: Lamp draws nothing, key or no key, and asks for no key.
-        guard !Icons.drawnByHand else { return offerDrawing(project, spec: spec) }
+        guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
         guard artInProgress.insert(project.id).inserted else { return }
         Task {
             defer { artInProgress.remove(project.id) }
@@ -3118,12 +3118,12 @@ final class Store: ObservableObject {
             }
             // The person may choose to draw icons themselves during either wait here: from then on nothing
             // Lamp drew is used, and the drawing is theirs to do.
-            guard !Icons.drawnByHand else { return offerDrawing(project, spec: spec) }
+            guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
             do {
                 let art = try await Icons.generateBestArt(spec, appName: project.name) { [weak self] in
                     self?.log(project, .detail, $0)
                 }
-                guard !Icons.drawnByHand else { return offerDrawing(project, spec: spec) }
+                guard !AppAI.iconsByHand else { return offerDrawing(project, spec: spec) }
                 // A picture picked in Image Playground while these were being drawn is the person's choice: it stays.
                 guard Icons.cachedArt(project, spec: spec) == nil else { return }
                 let url = Icons.artURL(project, spec: spec)
@@ -3186,7 +3186,7 @@ final class Store: ObservableObject {
             try? await deploy(project)
         }
         // Drawn by hand, the new design's artwork is the person's to make: the sheet opens for it now.
-        guard !Icons.drawnByHand else {
+        guard !AppAI.iconsByHand else {
             log(project, .status, "New icon applied.")
             return iconFromPlayground(project)
         }

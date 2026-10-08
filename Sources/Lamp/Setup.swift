@@ -344,40 +344,44 @@ struct ImageModelRow: View {
     var body: some View {
         let _ = saved
         let images = Icons.usableChoices
-        let resolution = AppAI.resolve(.pictures)
-        let setting = Icons.artSetting(models: images.map(\.id), selection: selection,
-                                       drawer: resolution.tier == .none ? nil : resolution.answer,
-                                       byHandAvailable: forIcons && Icons.playgroundAvailable,
-                                       byHandChosen: Icons.iconChoice == Icons.byHand)
+        // What answers is the resolver's to say: pictures by Settings' choices, and for icon artwork
+        // whether the person draws it instead. The menu only lays that out.
+        let pictures = AppAI.resolve(.pictures)
+        let context: AIContext = forIcons ? .icon : .mac
+        let resolution = forIcons ? AppAI.resolve(.pictures, in: .icon) : pictures
         let label = { (id: String) -> String in
             switch id {
             case Icons.byHand: Icons.byHandLabel
-            case Icons.noChoice: resolution.answer ?? "None"
+            case Icons.noChoice: pictures.answer ?? "None"
             default: images.first { $0.id == id }?.label ?? id
             }
         }
-        switch setting {
-        case .notReady:
+        if resolution.tier == .none {
             NotReadyRow(title: "Image generation")
-            CapabilityNote(capability: .pictures, forIcons: forIcons)
-        case .named(let id):
-            // One model, or Codex drawing with its own: nothing to choose, so it's named.
-            LabeledContent("Image generation", value: label(id))
-        case .menu(let ids, let selected):
-            Picker("Image generation", selection: Binding(get: { selected }, set: { id in
-                switch Icons.menuPick(id, forIcons: forIcons) {
-                case .providers: tab = "providers"
-                case .clear: Icons.iconChoice = nil
-                case .choose(let id): selection = id
+            CapabilityNote(capability: .pictures, context: context)
+        } else {
+            switch Icons.artMenu(models: images.map(\.id), selection: selection, drawer: pictures.answer,
+                                 byHandAvailable: forIcons && UpgradeView.isOffered(.drawIcons),
+                                 byHandChosen: resolution.provider == Icons.byHand) {
+            case .named(let id):
+                // One model, or Codex drawing with its own: nothing to choose, so it's named.
+                LabeledContent("Image generation", value: label(id))
+            case .menu(let ids, let selected):
+                Picker("Image generation", selection: Binding(get: { selected }, set: { id in
+                    switch Icons.menuPick(id, forIcons: forIcons) {
+                    case .providers: tab = "providers"
+                    case .clear: Icons.iconChoice = nil
+                    case .choose(let id): selection = id
+                    }
+                })) {
+                    ForEach(ids, id: \.self) { id in
+                        // By hand is another kind of thing from the models, and None is the way out of it.
+                        if id == Icons.byHand && id != ids.first || id == Icons.noChoice && id != ids.first { Divider() }
+                        Text(label(id)).tag(id)
+                    }
+                    Divider()
+                    Text("Configure providers…").tag(Icons.configureProviders)
                 }
-            })) {
-                ForEach(ids, id: \.self) { id in
-                    // By hand is another kind of thing from the models, and None is the way out of it.
-                    if id == Icons.byHand && id != ids.first || id == Icons.noChoice && id != ids.first { Divider() }
-                    Text(label(id)).tag(id)
-                }
-                Divider()
-                Text("Configure providers…").tag(Icons.configureProviders)
             }
         }
     }

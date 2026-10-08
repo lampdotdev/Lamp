@@ -105,14 +105,13 @@ enum Icons {
 
     /// Whether icons are drawn by hand: chosen, and Image Playground is still on this Mac. Where it has
     /// gone (Apple Intelligence turned off), the choice is kept for its return and Lamp carries on as if
-    /// it hadn't been made: it draws with a model if one can, and says Not Ready if none can.
+    /// it hadn't been made: it draws with a model if one can, and says Not Ready if none can. Only
+    /// `AppAI.resolve` asks this (for `.icon`); everything else reads its answer.
     static func drawnByHand(choice: String?, available: Bool) -> Bool { available && choice == byHand }
-    static var drawnByHand: Bool { drawnByHand(choice: iconChoice, available: playgroundAvailable) }
 
-    /// What the Image generation row in Settings → Building shows, and what its menu holds.
-    enum ArtSetting: Equatable {
-        /// Nothing can draw and drawing by hand isn't chosen: Not Ready, and the ways to fix it under it.
-        case notReady
+    /// How the Image generation row shows what answers, once something does (`AppAI.resolve` says whether
+    /// anything does; with nothing, the row is Not Ready).
+    enum ArtMenu: Equatable {
         /// One thing draws and there's nothing else to choose: it's named (by its id).
         case named(String)
         /// A menu of `ids` with `selected` shown: models, then `byHand`, then `none` (an empty id: no
@@ -124,17 +123,18 @@ enum Icons {
     static let noChoice = ""
 
     /// `models` are the ones that can draw now, `selection` the one in use, `drawer` what draws when no
-    /// model can be chosen (Codex with its own).
-    static func artSetting(models: [String], selection: String, drawer: String?, byHandAvailable: Bool,
-                           byHandChosen: Bool) -> ArtSetting {
+    /// model can be chosen (Codex with its own). By hand is an entry where it's on offer, and the one
+    /// shown when it's what answers.
+    static func artMenu(models: [String], selection: String, drawer: String?, byHandAvailable: Bool,
+                        byHandChosen: Bool) -> ArtMenu {
         let chosen = byHandAvailable && byHandChosen
         let drawing = models.isEmpty && drawer != nil ? [noChoice] : models
         guard byHandAvailable else {
             if models.count > 1 { return .menu(ids: models, selected: models.contains(selection) ? selection : models[0]) }
-            if let only = models.first { return .named(only) }
-            return drawer != nil ? .named(noChoice) : .notReady
+            return .named(models.first ?? noChoice)
         }
-        if drawing.isEmpty { return chosen ? .menu(ids: [byHand, noChoice], selected: byHand) : .notReady }
+        // By hand is all there is, and what answers (or the row would be Not Ready).
+        if drawing.isEmpty { return .menu(ids: [byHand, noChoice], selected: byHand) }
         return .menu(ids: drawing + [byHand],
                      selected: chosen ? byHand : drawing.contains(selection) ? selection : drawing[0])
     }
@@ -154,7 +154,7 @@ enum Icons {
 
     /// Whether a "Draw Icon…" line in the chat still has something to offer: icons are drawn by hand, the
     /// line is about the design the app has now, and that design has no artwork yet.
-    static func awaitsDrawing(_ key: String, in project: LampProject, byHand: Bool = drawnByHand) -> Bool {
+    static func awaitsDrawing(_ key: String, in project: LampProject, byHand: Bool) -> Bool {
         guard byHand, let spec = load(project) else { return false }
         return artKey(project, spec: spec) == key && cachedArt(project, spec: spec) == nil
     }

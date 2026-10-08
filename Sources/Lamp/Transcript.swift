@@ -247,7 +247,7 @@ struct Transcript: View {
     @MainActor static func withoutSpentOffers(_ lines: [LogLine], dir: URL) -> [LogLine] {
         guard lines.contains(where: { $0.kind == .drawIcon }) else { return lines }
         let project = Store.shared.projects.first { $0.dir == dir }
-        return lines.filter { line in line.kind != .drawIcon || project.map { Icons.awaitsDrawing(line.text, in: $0) } ?? false }
+        return lines.filter { line in line.kind != .drawIcon || project.map { Icons.awaitsDrawing(line.text, in: $0, byHand: AppAI.iconsByHand) } ?? false }
     }
 
     /// Without the step at the end that's still going ("Building…"): the progress line is saying it.

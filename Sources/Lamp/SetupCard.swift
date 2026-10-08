@@ -21,8 +21,8 @@ struct SetupCard: View {
         let _ = revision
         let resolution = AppAI.resolve(offer.capability, for: project, in: offer.context)
         // An icon's card is also answered by the person choosing to draw icons themselves.
-        let byHand = offer.icon == true && Icons.drawnByHand
-        let done = resolution.tier == .best || byHand
+        let byHand = resolution.provider == Icons.byHand
+        let done = resolution.tier == .best
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: CardColumn.gap) {
                 badge
@@ -50,9 +50,6 @@ struct SetupCard: View {
                 Divider()
                 VStack(alignment: .leading, spacing: 12) {
                     UpgradeList(upgrades: resolution.upgrades) { revision += 1 }
-                    if offer.icon == true, resolution.tier == .none {
-                        PlaygroundUpgrade()
-                    }
                     // Something answers already, just not as well: say what, so nothing looks broken meanwhile.
                     if resolution.tier == .works, let answer = resolution.answer {
                         Text("For now it works through \(answer); the options above work better.")
@@ -164,6 +161,7 @@ struct UpgradeView: View {
         case .decisionModel: return LocalModels.decisionCatalog.first != nil
         case .key(let provider): return Provider.keyProvider(provider) != nil
         case .signIn: return true
+        case .drawIcons: return Icons.playgroundAvailable
         }
     }
 
@@ -177,6 +175,8 @@ struct UpgradeView: View {
             DecisionModelUpgrade(compact: compact, onChange: onChange)
         case .signIn(let engine):
             SignInUpgrade(engine: engine, compact: compact, onChange: onChange)
+        case .drawIcons:
+            DrawIconsUpgrade(compact: compact)
         }
     }
 }
@@ -379,18 +379,16 @@ private struct SignInUpgrade: View {
     }
 }
 
-/// Drawing icons by hand, offered where nothing can draw them: on the card about an app's icon and under
-/// Not Ready in Settings → Building. It's a choice for every app's icon (`Icons.byHand`), made once, and
-/// only the person can work Apple's picture maker, so it's never offered for pictures inside apps.
-struct PlaygroundUpgrade: View {
-    var compact = false
+/// Drawing icons by hand, one of the ways to get icon artwork where nothing can draw it (`Upgrade.drawIcons`,
+/// which `AppAI.resolve` lists for `.icon` alone): on the card about an app's icon and under Not Ready in
+/// Settings → Building. It's a choice for every app's icon, made once.
+private struct DrawIconsUpgrade: View {
+    let compact: Bool
 
     var body: some View {
-        if Icons.playgroundAvailable, !Icons.drawnByHand {
-            OptionRow(symbol: "paintbrush.pointed", title: "Draw icons yourself",
-                      detail: "Free, with Image Playground. You pick each app's picture.", compact: compact) {
-                Button("Use for Icons") { Icons.iconChoice = Icons.byHand }
-            }
+        OptionRow(symbol: "paintbrush.pointed", title: "Draw icons yourself",
+                  detail: "Free, with Image Playground. You pick each app's picture.", compact: compact) {
+            Button("Use for Icons") { Icons.iconChoice = Icons.byHand }
         }
     }
 }
@@ -418,8 +416,6 @@ struct CapabilityNote: View {
     let capability: Capability
     var project: LampProject? = nil
     var context: AIContext = .mac
-    /// Under icon artwork's own setting (Settings → Building), drawing icons by hand is one of the fixes.
-    var forIcons = false
     @ObservedObject private var local = LocalModels.shared
     @State private var revision = 0
 
@@ -434,7 +430,6 @@ struct CapabilityNote: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 UpgradeList(upgrades: resolution.upgrades, compact: true) { revision += 1 }
-                if forIcons { PlaygroundUpgrade(compact: true) }
             }
             // Keys, the choices in Settings and an app's own choices all change what a capability resolves to.
         .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in revision += 1 }
