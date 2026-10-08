@@ -5,13 +5,6 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
-## Unreleased
-
-- Fewer needless questions about commands. Reading, building, and creating, editing or deleting inside the
-  app's own folder run without asking, however the agent writes them. What reaches beyond the app (an
-  install for the whole Mac, a push, an upload, anything touching sign-ins or keys) still comes to you, and
-  once Lamp has flagged a command that way nothing waves it through without you.
-
 ## 0.11.1
 
 - Before an app goes on your own iPhone or iPad, Lamp checks that an Apple Account is signed in to Xcode
