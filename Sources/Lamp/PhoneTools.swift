@@ -21,9 +21,9 @@ enum PhoneTools {
         return report
     }
 
-    enum Step: CaseIterable { case xcode, tools, firstLaunch, platform, runtime, simulator, phone }
+    enum Step: CaseIterable { case xcode, tools, firstLaunch, platform, runtime, simulator, account, phone }
 
-    enum Action { case installXcode, useXcode, openXcode, components, simulator, updatePhone, retry }
+    enum Action { case installXcode, useXcode, openXcode, components, simulator, settings, updatePhone, retry }
     /// The message names the setup window's buttons, so each one says them exactly as `button` does.
     struct Issue {
         let step: Step
@@ -37,6 +37,7 @@ enum PhoneTools {
             case .openXcode: return "Open Xcode"
             case .components: return "Open Xcode"
             case .simulator: return "Open Simulator"
+            case .settings: return "Open Settings"
             case .updatePhone: return "How to Update"
             case .retry: return "Check Again"
             }
@@ -63,6 +64,34 @@ enum PhoneTools {
             let app = URL(fileURLWithPath: developer).deletingLastPathComponent().deletingLastPathComponent()
             return NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist"))?["CFBundleShortVersionString"] as? String
         }
+        var hasViewer: (String) -> Bool = { viewer(in: $0) != nil }
+        var teams: () -> [(id: String, name: String)] = xcodeTeams
+        var team: () -> String = { (UserDefaults.standard.string(forKey: teamPreference) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased() }
+        var chooseTeam: (String) -> Void = { UserDefaults.standard.set($0, forKey: teamPreference) }
+    }
+
+    /// The app that puts simulators on the Mac's screen, in this Xcode: Simulator, or Device Hub, which took
+    /// its place in Xcode 27 (`Simulator.viewer`).
+    static func viewer(in developer: String) -> URL? {
+        let xcode = URL(fileURLWithPath: developer).deletingLastPathComponent()
+        return [URL(fileURLWithPath: developer + "/Applications/Simulator.app"), xcode.appendingPathComponent("Applications/DeviceHub.app")]
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// The team phone builds are signed for, as Settings → Building keeps it (`Devices.team`).
+    static let teamPreference = "appleTeam"
+
+    /// The teams of the accounts signed in to Xcode: the ones its automatic signing can sign for.
+    static func xcodeTeams() -> [(id: String, name: String)] {
+        let accounts = UserDefaults(suiteName: "com.apple.dt.Xcode")?.dictionary(forKey: "IDEProvisioningTeamByIdentifier") ?? [:]
+        var teams: [(id: String, name: String)] = []
+        for case let list as [[String: Any]] in accounts.values {
+            for team in list {
+                guard let id = team["teamID"] as? String, id.count == 10, !teams.contains(where: { $0.id == id }) else { continue }
+                teams.append((id, team["teamName"] as? String ?? id))
+            }
+        }
+        return teams.sorted { $0.name < $1.name }
     }
 
     static func isXcode(_ developer: String) -> Bool {
@@ -192,8 +221,27 @@ enum PhoneTools {
         guard devices.ok, Simulator.device(family, listing: devices.output) != nil else {
             return stop(.simulator, "Add an \(family.name) simulator", "There's no \(family.name) for Lamp to try your app on yet. Click Open Simulator, then choose File → New Simulator from the menu bar. Pick any \(family.name) with iOS \(minimumIOS) or later, click Create, and come back to Lamp.", .simulator)
         }
+        // The devices are run by a service and shown by an app (Simulator, or Device Hub in Xcode 27): an Xcode
+        // without it would run the app on a screen nobody can see.
+        guard probe.hasViewer(developer) else {
+            return stop(.simulator, "Finish installing Xcode", "The simulator is the iPhone or iPad that appears on your Mac's screen, and the Xcode on this Mac is missing the app that shows it. Click Open Xcode, choose Xcode → Settings from the menu bar, then click Components and make sure iOS and its simulator are installed. If they are, reinstall Xcode from the App Store. Come back to Lamp when it has finished.", .components)
+        }
         report.passed.append(.simulator)
         if let phone {
+            // Xcode signs the app for the phone with an account signed in to it, for the team chosen in
+            // Settings → Building; without those the build would only fail later, after the phone is paired.
+            // One signed-in team is chosen by itself, as Settings does.
+            let teams = probe.teams()
+            guard !teams.isEmpty else {
+                return stop(.account, "Sign in to Xcode", "Putting an app on your own iPhone or iPad needs an Apple Account signed in to Xcode; a free one will do. Click Open Xcode, choose Xcode → Settings from the menu bar, click Accounts, then click + and sign in. Come back to Lamp and click Check Again.", .openXcode)
+            }
+            if !teams.contains(where: { $0.id == probe.team() }) {
+                guard teams.count == 1 else {
+                    return stop(.account, "Choose your Apple team", "Xcode is signed in with more than one team, and Lamp needs to know which one signs apps for your phone. Click Open Settings and choose it under Building, then click Check Again.", .settings)
+                }
+                probe.chooseTeam(teams[0].id)
+            }
+            report.passed.append(.account)
             let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-phone-version-\(UUID().uuidString).json")
             defer { try? FileManager.default.removeItem(at: file) }
             let result = probe.run("/usr/bin/xcrun", ["devicectl", "list", "devices", "--timeout", "5", "--json-output", file.path], env)
