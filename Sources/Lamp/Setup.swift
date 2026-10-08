@@ -710,7 +710,6 @@ struct ExperimentalSettings: View {
             .toggleStyle(.checkbox)
             .frame(maxWidth: .infinity, alignment: .leading)
             if iosApps {
-                Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() }
                 Group {
                     if teams.isEmpty {
                         TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
@@ -725,6 +724,7 @@ struct ExperimentalSettings: View {
                     if !Provider.hasKey {
                         KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")
                     }
+                    Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() }
                 }
                 .padding(.leading, 20)
             }
