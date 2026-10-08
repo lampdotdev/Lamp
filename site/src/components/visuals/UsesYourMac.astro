@@ -100,6 +100,9 @@
       const scale = frame.width / stage.offsetWidth;
       return { x: (box.left - frame.left + box.width * across) / scale - 5, y: (box.top - frame.top + box.height * down) / scale - 3 };
     };
+    // Where the pointer's tip is now, for the click's ring. Set before anything can place the pointer, including
+    // the still last step shown for reduced motion below.
+    let tip = { x: 0, y: 0 };
     const place = (point: { x: number; y: number }, instantly = false) => {
       tip = point;
       if (instantly) pointer.style.transitionDuration = "0s";
@@ -126,7 +129,6 @@
       new Promise<void>((done) => setTimeout(() => (visible ? done() : (waiting = done)), ms));
     // A click is the pointer dipping in size for a moment, and a ring spreading from its tip. Nothing else
     // moves, so it reads as a click rather than a nudge.
-    let tip = { x: 0, y: 0 };
     const press = () => {
       pointer.animate([{ scale: "1" }, { scale: "0.82" }, { scale: "1" }], { duration: 220, easing: "ease-out" });
       pulse.style.left = `${tip.x + 5}px`;
