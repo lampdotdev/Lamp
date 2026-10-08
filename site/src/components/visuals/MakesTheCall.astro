@@ -1,7 +1,7 @@
 ---
 // For "Makes the call.": an app that watches what's running and judges each thing, not just by its size: the
 // heavy one gets the setting that fixes it, the idle one gets quit, and the busy one is left alone because it's
-// busy for a reason. A white window on a 656×280 canvas, the tile's size on a laptop (six columns of ten),
+// busy for a reason. A white window on a 656×340 canvas, tall enough for all three verdicts, the tile's size on a laptop (six columns of ten),
 // starting 40px in to line up with the words and running off the right edge.
 const rows = [
   { name: "Chrome", use: "4.2 GB", bar: 0.92, verdict: "31 tabs are awake in the background. Turn on Memory Saver in Chrome's Performance settings.", action: "Show Me", strong: true },
@@ -10,7 +10,7 @@ const rows = [
 ];
 ---
 
-<div aria-hidden="true" class="relative h-[200px] overflow-hidden select-none sm:h-[280px]">
+<div aria-hidden="true" class="relative h-[243px] overflow-hidden select-none sm:h-[340px]">
   <!-- On a phone the scene is drawn at the desktop tile's size and shrunk, keeping the same arrangement. -->
   <div class="absolute inset-0 h-[140%] w-[140%] origin-top-left scale-[0.714] sm:h-full sm:w-full sm:scale-100">
     <div class="absolute top-10 left-10 w-[640px] rounded-xl bg-white p-4 text-ink shadow-[0_14px_34px_rgba(0,0,0,0.22)]">

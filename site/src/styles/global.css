@@ -27,13 +27,14 @@
   --color-mint-from: #5fd97f;
   --color-mint-to: #34c759;
   /* The AI tiles' colours, unlike the feature tiles' so the two sections read apart. Indigo, coral and teal take
-     white words, darkest where the words sit; butter takes dark ones. */
+     white words, darkest where the words sit and dark enough there for 4.5:1 with the words' 85% white; butter
+     takes dark ones. */
   --color-indigo-from: #7b78ff;
   --color-indigo-to: #3d38c9;
-  --color-coral-from: #ff9a76;
-  --color-coral-to: #f2385a;
-  --color-teal-from: #3fd0c4;
-  --color-teal-to: #0c8a85;
+  --color-coral-from: #ee6446;
+  --color-coral-to: #a3102c;
+  --color-teal-from: #169c91;
+  --color-teal-to: #044f4c;
   --color-butter-from: #fff3b8;
   --color-butter-to: #ffd84d;
 
