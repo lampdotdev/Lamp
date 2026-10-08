@@ -2901,8 +2901,17 @@ final class Store: ObservableObject {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try png.write(to: url)
             artApplied[project.id] = nil   // the icon on show was made with other artwork, or none
-            // As with generated artwork: a turn that has the app installs the picture when it ends.
-            guard begin(project) != nil else { pendingIconArt.insert(project.id); return }
+            // As with generated artwork: a turn that has the app installs the picture when it ends. The chat
+            // shows it at once and says so, or picking it would look like nothing happened.
+            guard begin(project) != nil else {
+                pendingIconArt.insert(project.id)
+                let preview = await Icons.preview(spec, art: NSImage(data: png))
+                if exists(project), Icons.load(project) == spec {
+                    icons[project.id] = preview
+                    log(project, .status, "Your picture is \(project.name)'s icon now. It goes on the app when this turn ends.")
+                }
+                return
+            }
             await applyIconArt(project, spec: spec)
             finish(project)
         } catch {
