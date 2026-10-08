@@ -10,7 +10,9 @@ final class CommandApprovalEvalTests: XCTestCase {
         let environment = ProcessInfo.processInfo.environment
         guard let path = environment["LAMP_EVAL_CORPUS"], let key = environment["OPENROUTER_API_KEY"] else { throw XCTSkip("No corpus to judge.") }
         let runs = Int(environment["LAMP_EVAL_RUNS"] ?? "") ?? 5
-        let corpus = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as? [[String: String]] ?? []
+        let corpus = (try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as? [[String: Any]] ?? [])
+            .map { $0.compactMapValues { $0 as? String } }
+        XCTAssertFalse(corpus.isEmpty, "Nothing to judge in \(path).")
         let folder = URL(fileURLWithPath: environment["LAMP_EVAL_APP"] ?? "/Users/Shared/lamp-eval/Apps/tally")
         // As when the command will run confined to the app (Sandbox): where it reads isn't asked then.
         let sandboxed = environment["LAMP_EVAL_SANDBOXED"] != "0"
