@@ -237,8 +237,6 @@ final class Store: ObservableObject {
         let summary: String
         let risk: String     // "low", "medium" or "high"; empty when nothing rated it
         let why: String
-        /// Nothing could describe the command: the card says so and shows the command itself.
-        var unexplained = false
     }
     @Published var approvals: [String: PendingApproval] = [:]   // project id → the command waiting
     private var approving: Set<String> = []                       // project ids between the queue check and the card

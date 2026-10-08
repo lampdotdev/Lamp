@@ -213,16 +213,11 @@ final class CommandRiskTests: XCTestCase {
     /// doesn't have. A check's own reason still stands when there was one.
     func testTheCardSaysSoWhenNothingCanDescribeTheCommand() {
         let plain = Store.CommandExplanation.unexplained(flagged: nil)
-        XCTAssertEqual([plain.summary, plain.risk, plain.why], ["Lamp couldn't work out what this does.", "", "Read the command before you allow it."])
-        XCTAssertTrue(plain.unexplained)
+        XCTAssertEqual([plain.summary, plain.risk, plain.why],
+                       ["Lamp couldn't work out what this does.", "", "Show the command and read it before you allow it."])
         let flagged = Store.CommandExplanation.unexplained(flagged: .sendsOut)
         XCTAssertEqual([flagged.summary, flagged.risk, flagged.why],
                        ["Lamp couldn't work out what this does.", "high", "It sends files or data from this Mac somewhere else."])
-        XCTAssertTrue(flagged.unexplained)
-        // A described command is never marked that way, raised or not.
-        let described = Store.CommandExplanation(summary: "Installs a tool.", risk: "low", why: "x")
-        XCTAssertFalse(described.unexplained)
-        XCTAssertFalse(described.raised(for: .reachesBeyond).unexplained)
         // It isn't "low", so it can't run a command without the card.
         XCTAssertNotEqual(plain.risk, "low")
     }

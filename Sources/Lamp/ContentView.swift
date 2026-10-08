@@ -1651,8 +1651,7 @@ struct ApprovalCard: View {
                 }
             }
             // Not a DisclosureGroup: on the Mac only its chevron toggles it, so clicking the words did nothing.
-            // With nothing to describe the command, it's shown outright: it's all there is to go on.
-            if explanation?.unexplained != true { Button {
+            Button {
                 withAnimation(.easeInOut(duration: 0.15)) { showCommand.toggle() }
             } label: {
                 HStack(spacing: 4) {
@@ -1664,8 +1663,8 @@ struct ApprovalCard: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary) }
-            if showCommand || explanation?.unexplained == true {
+            .foregroundStyle(.secondary)
+            if showCommand {
                 // A short command takes only the room it needs; a long one scrolls rather than pushing the chat
                 // out of the window. The limit goes on a scroll view sized to what's in it: a frame with only
                 // a maximum takes all the height it's offered, which made a one-line command a five-line box.
