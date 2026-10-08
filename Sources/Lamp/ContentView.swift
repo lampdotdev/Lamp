@@ -435,8 +435,11 @@ struct ProjectView: View {
     private var submissionPending: Bool { store.pendingSubmissions.contains(store.current(project)?.id ?? project.id) }
     /// A request on its way out again: what it replaces stays out of sight until the chat has let go of it.
     @State private var sendingAgain: UUID?
-    /// How many lines before the latest request the chat reaches back for. Show Earlier Messages raises it.
+    /// How many lines before the latest request the chat reaches back for. Scrolling up towards the earliest
+    /// of them raises it.
     @State private var reach = LogLine.recentCount
+    /// The chat's scrolling is being watched, so earlier messages come in by themselves.
+    @State private var earlierOnScroll = false
     /// What the toolbar knows of the app's history, for which of its buttons can do anything. Nil until read.
     @State private var history: History?
 
@@ -496,12 +499,12 @@ struct ProjectView: View {
                     // they scroll into view has to guess the height of the rest, and during a turn that
                     // guessing could go round without ever settling, with Lamp stuck for good.
                     VStack(alignment: .leading, spacing: 0) {
-                        if start > 0 {
+                        // Earlier messages come in as the chat is scrolled up towards them (see `earlier`).
+                        // The button is only for when that can't be watched for.
+                        if start > 0, !earlierOnScroll {
                             Button("Show Earlier Messages") {
                                 guard let top = shown.first?.id else { return }
-                                // From what's shown, not from what was asked for: a long turn can take the
-                                // chat further back than that, and the next lot has to start beyond it.
-                                reach = LogLine.reach(in: lines, from: start) + LogLine.recentCount
+                                showEarlier(lines, from: start)
                                 // They come in above what's being read, which stays where it is.
                                 Task { @MainActor in
                                     await Task.yield()
@@ -518,6 +521,7 @@ struct ProjectView: View {
                         chatRows(shown, height: area.size.height,
                                  cardPinned: building != nil && area.size.height >= Self.roomToPinCard)
                     }
+                    .background(EarlierOnScroll(more: start > 0, watching: $earlierOnScroll) { showEarlier(lines, from: start) })
                     // A readable line length; wide windows get margins instead of longer lines.
                     .frame(maxWidth: 640)
                     .padding(.horizontal, 20).padding(.vertical, 16)
@@ -535,6 +539,12 @@ struct ProjectView: View {
                 .onChange(of: store.progress[project.id]?.screenshot != nil) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
         }
+    }
+
+    /// Reaches one more lot back. From what's shown, not from what was asked for: a long turn can take the
+    /// chat further back than that, and the next lot has to start beyond it.
+    private func showEarlier(_ lines: [LogLine], from start: Int) {
+        reach = LogLine.reach(in: lines, from: start) + LogLine.recentCount
     }
 
     /// The chat's rows: the intro for a new app, the transcript with its build card or activity, and the
