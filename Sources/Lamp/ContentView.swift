@@ -1279,7 +1279,7 @@ struct NewAppIntro: View {
                 .frame(maxWidth: 360)
                 .help("Rename this app")
             Text(project.untitled
-                 ? "Describe the app you wish you had, and Lamp will build it."
+                 ? "Describe the \(AppKind(project).rawValue) app you wish you had, and Lamp will build it."
                  : "Describe what \(project.name) should do. Lamp builds it and opens it for you.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
