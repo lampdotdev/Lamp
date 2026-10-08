@@ -103,7 +103,8 @@ extension Simulator {
     /// the Mac shows the iPhone's whole accessibility tree through the Mac's accessibility system, so Lamp
     /// finds what's under a point, taps it, fills in fields and reads what things are, the same way the Mac
     /// apps' own driver does inside them. Gestures (swipes, scrolls) are real mouse events sent to the
-    /// Simulator. This needs Lamp to be allowed to control the computer (System Settings → Privacy &
+    /// Simulator. The same tree, read whole, is the screen as text that follows every look and use
+    /// (`screenText`). This needs Lamp to be allowed to control the computer (System Settings → Privacy &
     /// Security → Accessibility); the first use asks.
     @MainActor
     enum Driver {
@@ -276,6 +277,136 @@ extension Simulator {
                 return "waited \(seconds) s"
             default:
                 return "\(action.action): not something an iPhone app has; use click, double_click, right_click (a long press), type, key (return or escape), scroll, swipe or wait"
+            }
+        }
+
+        // MARK: The screen as text
+
+        /// One thing on the iPhone's screen, as its accessibility tree names it. `frame` is in the picture's
+        /// pixels (points on the device), so what the agent reads lines up with what it sees and taps.
+        struct Item: Equatable {
+            var role: String
+            var label = ""
+            var value = ""
+            var frame: CGRect
+            var selected = false
+            var disabled = false
+        }
+
+        /// The most things listed: a full screen is a few dozen, and past this the list costs more than it tells.
+        static let itemLimit = 120
+
+        /// The whole screen in words, for the agent to read beside the picture: what's there, what each thing
+        /// holds and where to tap it. Nil when the screen shows nothing with a name.
+        static func screenText(on screen: Screen) -> String? { text(for: items(on: screen)) }
+
+        /// Everything on this device's screen that says something or can be tapped, in the order the screen
+        /// reads. Containers with no name of their own are left out, and so is a control's own caption (a
+        /// button's text is the button).
+        static func items(on screen: Screen) -> [Item] {
+            var found: [Item] = []
+            let wanted = [kAXRoleAttribute, kAXSubroleAttribute, kAXDescriptionAttribute, kAXTitleAttribute, kAXValueAttribute,
+                          kAXPositionAttribute, kAXSizeAttribute, kAXSelectedAttribute, kAXEnabledAttribute, kAXChildrenAttribute]
+            func visit(_ element: AXUIElement, depth: Int, under: String) {
+                guard depth < 40, found.count < 400 else { return }
+                let read = attributes(element, wanted)
+                let role = read[0] as? String ?? "", subrole = read[1] as? String ?? ""
+                var origin = CGPoint.zero, size = CGSize.zero
+                if let position = read[5] { AXValueGetValue(position as! AXValue, .cgPoint, &origin) }
+                if let extent = read[6] { AXValueGetValue(extent as! AXValue, .cgSize, &size) }
+                let rect = CGRect(origin: origin, size: size)
+                // The rest of the Simulator's window (its own buttons and lists) isn't the iPhone's screen.
+                guard rect.isEmpty || screen.rect.intersects(rect) else { return }
+                var label = ((read[2] as? String)?.nilIfEmpty ?? (read[3] as? String)?.nilIfEmpty ?? "").trimmed
+                var value = (read[4].flatMap { $0 as? String ?? ($0 as? NSNumber).map(number) } ?? "").trimmed
+                // Plain text keeps its words in its value; a field's value is what it shows, typed or not.
+                if label.isEmpty, !textRoles.contains(role) { (label, value) = (value, "") }
+                var caption = under
+                let onScreen = !rect.isEmpty && screen.rect.contains(CGPoint(x: rect.midX, y: rect.midY))
+                // Listed even with no name: something to tap, or a row of segments, which comes with nothing inside.
+                let control = interactiveRoles.contains(role) || role == kAXTabGroupRole
+                let named = !label.isEmpty && role != kAXWindowRole
+                if onScreen, control || (named && !(label == under && role == kAXStaticTextRole)) {
+                    let item = Item(role: subrole == "AXSearchField" || subrole == "AXSecureTextField" ? subrole : role,
+                                    label: label, value: value,
+                                    frame: CGRect(x: (rect.minX - screen.origin.x) / screen.zoom, y: (rect.minY - screen.origin.y) / screen.zoom,
+                                                  width: rect.width / screen.zoom, height: rect.height / screen.zoom),
+                                    selected: (read[7] as? Bool) == true, disabled: (read[8] as? Bool) == false)
+                    // The Simulator can show the same screen twice in its tree: each thing is listed once.
+                    if !found.contains(item) { found.append(item) }
+                    if control { caption = label }
+                }
+                for child in read[9] as? [AXUIElement] ?? [] { visit(child, depth: depth + 1, under: caption) }
+            }
+            visit(screen.window, depth: 0, under: "")
+            return found
+        }
+
+        private static let textRoles: Set<String> = [kAXTextFieldRole, kAXTextAreaRole]
+
+        /// A number as a person would write it: a slider at 0.3076923 is at 0.31.
+        private static func number(_ value: NSNumber) -> String {
+            let rounded = (value.doubleValue * 100).rounded() / 100
+            return rounded == rounded.rounded() ? String(Int(rounded)) : String(rounded)
+        }
+
+        /// Several attributes in one round trip to the Simulator: asked for one at a time, a whole screen
+        /// takes seconds to read.
+        private static func attributes(_ element: AXUIElement, _ names: [String]) -> [CFTypeRef?] {
+            var values: CFArray?
+            guard AXUIElementCopyMultipleAttributeValues(element, names as CFArray, [], &values) == .success,
+                  let list = values as? [AnyObject], list.count == names.count else { return names.map { attribute(element, $0) } }
+            return list.map { value in
+                // What an element doesn't have comes back as an error value in its place.
+                if value is NSNull || (CFGetTypeID(value) == AXValueGetTypeID() && AXValueGetType(value as! AXValue) == .axError) { return nil }
+                return value
+            }
+        }
+
+        /// One short line for each thing: what it is, its name, what it holds, the point to tap and its size.
+        static func text(for items: [Item]) -> String? {
+            guard !items.isEmpty else { return nil }
+            func short(_ text: String, _ limit: Int) -> String {
+                let line = text.replacingOccurrences(of: "\n", with: " ")
+                return line.count > limit ? line.prefix(limit - 1) + "…" : line
+            }
+            var lines = items.prefix(itemLimit).map { item -> String in
+                var line = word(for: item.role)
+                if !item.label.isEmpty { line += " \"\(short(item.label, 80))\"" }
+                var value = item.value == item.label ? "" : item.value
+                if item.role == kAXCheckBoxRole { value = value == "1" ? "on" : value == "0" ? "off" : value }
+                if item.role == kAXRadioButtonRole || item.role == kAXButtonRole, value == "1" || value == "0" { value = "" }
+                if !value.isEmpty { line += " = \(short(value, 60))" }
+                if item.selected || (item.role == kAXRadioButtonRole && item.value == "1") { line += ", selected" }
+                if item.disabled { line += ", dimmed" }
+                return line + " @\(Int(item.frame.midX.rounded())),\(Int(item.frame.midY.rounded())) \(Int(item.frame.width.rounded()))x\(Int(item.frame.height.rounded()))"
+            }
+            if items.count > itemLimit { lines.append("… and \(items.count - itemLimit) more") }
+            return "The screen as text, in reading order. Each line is what a thing is, its name, \"= \" what it holds, " +
+                "then @x,y (its middle in the picture: where to tap it) and its size:\n" + lines.joined(separator: "\n")
+        }
+
+        private static func word(for role: String) -> String {
+            switch role {
+            case kAXButtonRole: "button"
+            case kAXRadioButtonRole: "choice"
+            case kAXTextFieldRole: "text field"
+            case kAXTextAreaRole: "text area"
+            case "AXSearchField": "search field"
+            case "AXSecureTextField": "password field"
+            case kAXStaticTextRole: "text"
+            case kAXCheckBoxRole: "switch"
+            case kAXSliderRole: "slider"
+            case kAXImageRole: "picture"
+            case "AXLink": "link"
+            case "AXHeading": "heading"
+            case kAXTabGroupRole: "tabs"
+            case kAXPopUpButtonRole: "picker"
+            case kAXMenuItemRole: "menu item"
+            case kAXIncrementorRole: "stepper"
+            case kAXProgressIndicatorRole: "progress"
+            case "AXCell": "row"
+            default: "thing"
             }
         }
 

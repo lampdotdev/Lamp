@@ -1940,6 +1940,8 @@ final class Store: ObservableObject {
             text += "\n\nThis is the app as last built: it doesn't have the changes you've made to the code since. " +
                 "Call look_at_app to build and open them."
         }
+        // The screen in words goes wherever its picture does: what's on it is the same thing either way.
+        if Privacy.sharesPictures, let words = Simulator.Driver.screenText(on: screen) { text += "\n\n" + words }
         text += Privacy.sharesPictures
             ? "\n\nA picture of the iPhone's screen follows. Points for the next use_app are pixels in it."
             : "\n\n" + Privacy.picturesOff
@@ -3461,6 +3463,13 @@ final class Store: ObservableObject {
             var text = note + " " + (screenshots.isEmpty ? "No picture of the iPhone could be taken."
                 : Privacy.sharesPictures ? "A picture of the iPhone's screen follows. Points for use_app are pixels in it." : Privacy.picturesOff)
             if !Privacy.sharesLog { text += " " + Privacy.logOff }
+            // The screen in words, beside its picture. Reading it needs the same permission as use_app, which
+            // is what asks for it: until then a look is the picture alone, as it always was.
+            if Privacy.sharesPictures, Simulator.Driver.isAllowed, let running = simulatorApps[project.id],
+               let screen = await Simulator.Driver.screen(of: running.udid, owner: "\(project.id):\(running.pid)"),
+               let words = Simulator.Driver.screenText(on: screen) {
+                text += "\n\n" + words
+            }
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
             return (200, ["text": text, "screenshots": Privacy.sharesPictures ? screenshots.map(\.path) : []])
         }

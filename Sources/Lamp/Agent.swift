@@ -448,7 +448,10 @@ enum Agent {
         types, scrolls and swipes on it like a finger (click at a point in the picture, right_click for a long \
         press, type into the field you tapped last, which replaces what it held, key return or escape, scroll, \
         swipe with a direction and \
-        `item` to tap what the swipe uncovered), and tells you what each action landed on. There are no menus \
+        `item` to tap what the swipe uncovered), and tells you what each action landed on. Both also give you the \
+        screen as text: every control and piece of text on it with its name, what it holds and the point to tap \
+        it. Read it with the picture: aim taps with its points, and trust it over the picture for exact words \
+        and values. A control it lists with no name has no accessibility label: give it one. There are no menus \
         or keyboard shortcuts on an iPhone. The simulator has no camera, motion sensors, Bluetooth, NFC, Face ID \
         or health data: try everything else there, and for those parts tell the user plainly that they're for \
         their phone, never that they're broken.
