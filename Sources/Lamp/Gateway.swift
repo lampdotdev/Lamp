@@ -926,17 +926,23 @@ enum AppAI {
     static var imageRoute: ImageRoute? {
         if Provider.hasKey { return .openRouter }
         if ImageModels.ready { return .local }
-        if ToolLocator.path(for: .codex) != nil, codexSignedIn != false { return .codex }
+        if codexChosen, ToolLocator.path(for: .codex) != nil, codexSignedIn != false { return .codex }
         return nil
     }
 
-    /// The route to use now. Codex counts only when it's signed in (the copy inside the ChatGPT app is there
-    /// whether or not anyone ever logged in); that's checked at most every few minutes. A model on this Mac
-    /// makes pictures from words only, so a request that edits existing pictures skips it.
+    /// Codex draws pictures only when the person chose it for something: to build apps, or to answer inside
+    /// them. A Codex sign-in that merely happens to be on the Mac isn't spent on pictures.
+    private static var codexChosen: Bool {
+        Builder.engine == .codex || (UserDefaults.standard.string(forKey: "appModel") ?? "").hasPrefix("engine:codex")
+    }
+
+    /// The route to use now. Codex counts only when it's chosen (above) and signed in (the copy inside the
+    /// ChatGPT app is there whether or not anyone ever logged in); that's checked at most every few minutes.
+    /// A model on this Mac makes pictures from words only, so a request that edits existing pictures skips it.
     static func imageRoute(editing: Bool = false) async -> ImageRoute? {
         if Provider.hasKey { return .openRouter }
         if ImageModels.ready, !editing { return .local }
-        if ToolLocator.path(for: .codex) != nil {
+        if codexChosen, ToolLocator.path(for: .codex) != nil {
             if codexSignedIn == nil || Date().timeIntervalSince(codexChecked) > 300 {
                 codexSignedIn = await EngineSignIn.isSignedIn(.codex) ?? true
                 codexChecked = Date()
