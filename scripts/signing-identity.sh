@@ -23,6 +23,16 @@ if [[ ! -f "$KEYCHAIN" || ! -f "$PASSFILE" ]]; then
 fi
 security unlock-keychain -p "$(cat "$PASSFILE")" "$KEYCHAIN"
 
+# On some versions of macOS (seen on 26.6) codesign answers "no identity found" for a keychain that isn't on
+# the person's search list, even when it's named with --keychain. So Lamp's goes on the list, after the ones
+# already there, which stay as they are. Not being able to is no reason to stop: where codesign doesn't
+# need this, signing still works.
+LISTED=(${(f)"$(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//')"})
+if (( ! ${LISTED[(Ie)$KEYCHAIN]} )); then
+  security list-keychains -d user -s "${LISTED[@]}" "$KEYCHAIN" \
+    || echo "Couldn't add Lamp's keychain to the keychain search list." >&2
+fi
+
 if ! security find-identity -p codesigning "$KEYCHAIN" 2>/dev/null | grep -q "\"$NAME\""; then
   TMP="$(mktemp -d)"
   trap 'rm -rf "$TMP"' EXIT

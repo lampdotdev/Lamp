@@ -2989,9 +2989,12 @@ final class Store: ObservableObject {
         print("Install \(project.name): identity=\(identity) signed=\(signed)")
         if !signed {
             // Ad hoc keeps the app installable, but macOS won't remember its permissions across rebuilds and
-            // won't ask for Location Services at all, so this is logged rather than silent.
+            // won't ask for Location Services at all, so the person is told, once.
             _ = await Shell.run("codesign --force -s - \"$LAMP_APP\"", cwd: project.dir,
                                 env: ["LAMP_APP": project.builtURL.path]) { _ in }
+            if AppSigning.needsAdHocNotice(after: logs[project.id] ?? []) {
+                log(project, .status, AppSigning.adHocNotice(for: project.name))
+            }
         }
 
         // What the copy being replaced was signed as, to notice when this build is signed differently.
@@ -3016,9 +3019,10 @@ final class Store: ObservableObject {
            await AppSigning.forgetPermissions(of: project.bundleID) {
             print("\(project.name) is signed differently from the copy it replaced, so its macOS permissions were cleared:\n"
                   + "  was: \(replaced)\n  now: \(requirement)")
-            log(project, .status, signed
-                ? "If you gave \(project.name) a permission in System Settings (such as Full Disk Access or Screen Recording), macOS needs it once more: Lamp signs apps with a new certificate. After that it stays on."
-                : "Lamp couldn't sign \(project.name) properly, so macOS will ask for its permissions again after every change.")
+            // An app signed ad hoc is signed differently every time: that was said when it was signed.
+            if signed {
+                log(project, .status, "If you gave \(project.name) a permission in System Settings (such as Full Disk Access or Screen Recording), macOS needs it once more: Lamp signs apps with a new certificate. After that it stays on.")
+            }
         }
     }
 
