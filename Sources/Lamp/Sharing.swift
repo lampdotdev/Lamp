@@ -499,8 +499,9 @@ extension Sharing {
     /// route apps use. Settled once, so the model named on the sheet is the one that was asked.
     static func reviewRoute(openRouterModel: String?, appRoute: AppAI.TextRoute) -> AppAI.TextRoute {
         guard let model = openRouterModel else { return appRoute }
-        return AppAI.TextRoute(id: "review", label: "\(model) via \(Provider.openRouter)", group: Provider.openRouter,
-                               name: model, kind: .openRouter(model: model), available: true)
+        let name = Provider.modelName(model)
+        return AppAI.TextRoute(id: "review", label: "\(name) via \(Provider.openRouter)", group: Provider.openRouter,
+                               name: name, kind: .openRouter(model: model), available: true)
     }
 
     static func reviewer(for route: AppAI.TextRoute) -> ImportReview.Reviewer {

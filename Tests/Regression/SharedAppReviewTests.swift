@@ -79,10 +79,23 @@ final class SharedAppReviewTests: XCTestCase {
         // With a key, the review goes to OpenRouter whatever apps use, and is asked for by that route.
         let keyed = Sharing.reviewRoute(openRouterModel: "anthropic/claude-opus-5.5", appRoute: ollama)
         XCTAssertEqual(keyed.kind, .openRouter(model: "anthropic/claude-opus-5.5"))
-        XCTAssertEqual(Sharing.reviewer(for: keyed), .init(name: "anthropic/claude-opus-5.5 via OpenRouter", onThisMac: false))
+        // Named the way the pickers name it, not by its id.
+        XCTAssertEqual(Sharing.reviewer(for: keyed), .init(name: "Claude Opus via OpenRouter", onThisMac: false))
+        // A model Lamp has no name for is given as it is.
+        let other = Sharing.reviewRoute(openRouterModel: "example/some-model", appRoute: ollama)
+        XCTAssertEqual(Sharing.reviewer(for: other).name, "example/some-model via OpenRouter")
         let claude = route(.engine(.claude, model: "sonnet"), "Sonnet via Claude Code")
         XCTAssertEqual(Sharing.reviewer(for: Sharing.reviewRoute(openRouterModel: nil, appRoute: claude)),
                        .init(name: "Sonnet via Claude Code", onThisMac: false))
+    }
+
+    func testEveryModelLampListsHasAPlainName() {
+        XCTAssertEqual(Provider.modelName(Provider.defaultModel), "Claude Opus")
+        XCTAssertEqual(Provider.modelName("anthropic/claude-haiku-4.5"), "Claude Haiku")
+        for id in Provider.models.map(\.id) + AppAI.anthropicModels.map(\.openRouter) {
+            let name = Provider.modelName(id)
+            XCTAssertFalse(name.isEmpty || name.contains("(") || name.contains("/"), "\(id): \(name)")
+        }
     }
 
     // MARK: The answer's shape

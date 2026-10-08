@@ -63,6 +63,16 @@ enum Provider {
         return defaultModel
     }
 
+    /// A model's name as someone would say it ("Claude Opus"), for an OpenRouter id Lamp lists: the name its
+    /// label in the pickers carries in brackets, after what the model is good for. An id Lamp has no label
+    /// for is given as it is, which is how the pickers show one too.
+    static func modelName(_ id: String) -> String {
+        guard let label = models.first(where: { $0.id == id })?.label
+                ?? AppAI.anthropicModels.first(where: { $0.openRouter == id })?.label else { return id }
+        guard label.hasSuffix(")"), let open = label.lastIndex(of: "(") else { return label }
+        return String(label[label.index(after: open)..<label.index(before: label.endIndex)])
+    }
+
     /// OpenRouter's name, for the calls that go to it whatever builds apps.
     static let openRouter = "OpenRouter"
 
