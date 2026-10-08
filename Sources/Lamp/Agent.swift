@@ -177,7 +177,7 @@ enum Agent {
         - You can read, search and edit files and read web pages without asking. You can also run shell commands \
         (to clone a repo, convert data, run a script); Lamp may ask the user to approve them. Never use the shell to \
         read, list, search or edit files (no cat, ls, head, grep, find, sed or heredocs): use your file tools for that, which need \
-        no approval. Save the shell for what the file tools can't do. Don't build or run the app yourself: when \
+        no approval; Lamp declines a shell command that edits files. Save the shell for what the file tools can't do. Don't build or run the app yourself: when \
         you finish, Lamp {{RELAUNCH}}, and if the build fails your next message will contain the \
         compiler errors to fix. If something you need is denied or unavailable, say plainly what you need (for \
         example "attach the files" or "allow the clone"). To read a GitHub repo, clone it shallowly into \

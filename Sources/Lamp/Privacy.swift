@@ -78,6 +78,27 @@ enum Privacy {
     /// Why reading outside the app's folder is the user's call, on a file tool's card and a command's alike.
     static let outsideRead = "It's outside this app's folder, and what's read goes to the AI model."
 
+    /// What the agent is told when a shell edit is declined: the file tools do the same without a card.
+    static let shellEditRefusal = "Lamp doesn't run file edits through the shell. Use your file tools (read, edit, write, search) " +
+        "instead: they do the same and need no approval."
+
+    /// Whether a command edits files the way the agent's file tools would (`sed -i`, `perl -i`, a Python or Perl
+    /// script fed from a heredoc, `tee`, or a redirect into a file). Such a command is declined with a word
+    /// rather than put to the user: the file tools do it without asking, and the prompt says to use them.
+    static func editsFilesThroughShell(_ command: String) -> Bool {
+        let words = words(in: command)
+        for (index, word) in words.enumerated() {
+            let following = words[(index + 1)..<min(index + 4, words.count)]
+            let inPlace = following.contains { $0.hasPrefix("-i") || $0.hasPrefix("-pi") || $0.hasPrefix("-ni") }
+            if (word == "sed" || word == "perl") && inPlace { return true }
+            if (word == "python" || word == "python3" || word == "perl") && following.first == "-" { return true }   // a script from a heredoc
+            if word == "tee" { return true }
+        }
+        // `> file` or `>> file`, but not `2>&1` or `> /dev/null`.
+        let redirect = try! NSRegularExpression(pattern: #"(?:^|[^0-9&<])>{1,2}\s*(?!/dev/null|&)[^\s|;&>]+"#)
+        return redirect.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) != nil
+    }
+
     /// Whether a shell command names something the rule above would ask about: a file or folder outside the
     /// app's folder that isn't a system, developer or temporary one. Such a command always goes to the user
     /// (Store.commandLooksSafe) and is never rated low risk (Store.explain), whatever the models make of it,

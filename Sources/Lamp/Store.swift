@@ -3374,6 +3374,22 @@ final class Store: ObservableObject {
             }
             // Claude Code already ran its own classifier before asking ("claude-permission"), so ask the user.
             let escalated = request.path.contains("format=claude-permission")
+            // An edit the file tools would make, written as a shell command: declined with the reason, rather than
+            // a card the user has to answer for something the file tools do silently.
+            if shell, Privacy.editsFilesThroughShell(command), !Privacy.reachesOutside(command, project: project) {
+                log(project, .detail, "Declined a shell command that edits files: the agent's own file tools do that without asking.")
+                let reason = Privacy.shellEditRefusal
+                if request.path.contains("format=codex") {
+                    return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason]])
+                }
+                if escalated {
+                    return (200, ["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": ["behavior": "deny", "message": reason]]])
+                }
+                if request.path.contains("format=claude") {
+                    return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason]])
+                }
+                return (200, ["allow": false, "reason": reason])
+            }
             if request.path.contains("format=codex") {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.
                 let allowed = await approveCommand(command, for: project, escalated: false)
