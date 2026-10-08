@@ -1,7 +1,7 @@
 import Foundation
 
 /// A shared app opened before setup finished. Lamp keeps a copy and remembers it on disk, like the requests
-/// waiting for setup, so its review opens by itself once setup is done, in this run or the next.
+/// waiting for setup, so its review opens by itself once the person is through setup, in this run or the next.
 struct WaitingImport {
     static let key = "waitingSharedApp"
     var defaults = UserDefaults.standard
@@ -28,7 +28,10 @@ struct WaitingImport {
     }
 
     /// Hands the kept file over, once: asking again gives nothing, so its review can't open twice.
-    func take() -> URL? {
+    /// Not while the welcome is still up, even with everything in place: the review would land in the middle
+    /// of setup, the moment an agent is chosen. It waits for "Start building", or a launch that needs no welcome.
+    func take(setupReady: Bool, welcomeOver: Bool) -> URL? {
+        guard setupReady, welcomeOver else { return nil }
         guard let path = defaults.string(forKey: Self.key) else { return nil }
         defaults.removeObject(forKey: Self.key)
         return FileManager.default.fileExists(atPath: path) ? URL(fileURLWithPath: path) : nil

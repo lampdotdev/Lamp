@@ -963,10 +963,12 @@ final class Store: ObservableObject {
         let id = UUID()
         let package: Sharing.Package
         var review: ImportReview?
+        /// Opened during setup and kept until now: the review says so, since it arrives unasked.
+        var waited = false
     }
 
     /// Opens a shared `.lampapp`: unpacks it, then shows a review (fixed checklist + AI check) before building.
-    func importApp(from file: URL) {
+    func importApp(from file: URL, waited: Bool = false) {
         NSApp.activate()
         guard setup.ready else {
             let alert = NSAlert()
@@ -993,7 +995,7 @@ final class Store: ObservableObject {
                 return
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
-            let pending = PendingImport(package: package)
+            let pending = PendingImport(package: package, waited: waited)
             pendingImport = pending
             let review = await Sharing.review(package)
             if pendingImport?.id == pending.id { pendingImport?.review = review }
@@ -1004,9 +1006,11 @@ final class Store: ObservableObject {
 
     private var waitingImport: WaitingImport { WaitingImport(folder: waitingFiles) }
 
-    /// A shared app opened before setup finished gets its review now.
-    private func openWaitingImport() {
-        if let file = waitingImport.take() { importApp(from: file) }
+    /// A shared app opened before setup finished gets its review once the person is through setup: called when
+    /// setup becomes ready and when the welcome ends, whichever comes last.
+    func openWaitingImport() {
+        let file = waitingImport.take(setupReady: setup.checked && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
+        if let file { importApp(from: file, waited: true) }
     }
 
     func cancelImport() {

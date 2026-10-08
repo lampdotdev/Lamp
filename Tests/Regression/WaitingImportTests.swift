@@ -1,7 +1,8 @@
 import XCTest
 @testable import Lamp
 
-/// A shared app opened before setup is done is kept, through a relaunch too, and handed to its review once.
+/// A shared app opened before setup is done is kept, through a relaunch too, and handed to its review once,
+/// when the person is through setup: everything in place and the welcome over.
 final class WaitingImportTests: XCTestCase {
     private let suite = "lamp-waiting-import-\(UUID().uuidString)"
     private let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
@@ -32,7 +33,7 @@ final class WaitingImportTests: XCTestCase {
         // Opened straight from Mail or Messages, the original can be a temporary file.
         try FileManager.default.removeItem(at: original)
 
-        let kept = try XCTUnwrap(waiting.take())
+        let kept = try XCTUnwrap(waiting.take(setupReady: true, welcomeOver: true))
         XCTAssertEqual(kept.lastPathComponent, "Tally.lampapp")
         XCTAssertEqual(try Data(contentsOf: kept), Data([1, 2, 3]))
     }
@@ -43,7 +44,7 @@ final class WaitingImportTests: XCTestCase {
         let relaunched = try launch()
         // Clearing out old waiting files on launch must leave this one alone.
         let folder = try XCTUnwrap(relaunched.keptFolder)
-        let kept = try XCTUnwrap(relaunched.take())
+        let kept = try XCTUnwrap(relaunched.take(setupReady: true, welcomeOver: true))
         XCTAssertEqual(kept.deletingLastPathComponent().path, folder)
         XCTAssertEqual(try Data(contentsOf: kept), Data([1, 2, 3]))
     }
@@ -52,15 +53,46 @@ final class WaitingImportTests: XCTestCase {
         let waiting = try launch()
         XCTAssertTrue(waiting.keep(try sharedFile("Tally.lampapp")))
 
-        XCTAssertNotNil(waiting.take())
+        XCTAssertNotNil(waiting.take(setupReady: true, welcomeOver: true))
         // Setup being found ready a second time, in this run or the next, opens nothing more.
-        XCTAssertNil(waiting.take())
-        XCTAssertNil(try launch().take())
+        XCTAssertNil(waiting.take(setupReady: true, welcomeOver: true))
+        XCTAssertNil(try launch().take(setupReady: true, welcomeOver: true))
         XCTAssertNil(try launch().keptFolder)
     }
 
+    func testItWaitsForStartBuildingEvenOnceAnAgentIsChosen() throws {
+        let waiting = try launch()
+        XCTAssertTrue(waiting.keep(try sharedFile("Tally.lampapp")))
+
+        // An agent chosen on the welcome's setup step makes setup ready; the person is still in the welcome.
+        XCTAssertNil(waiting.take(setupReady: true, welcomeOver: false))
+        XCTAssertNotNil(waiting.keptFolder)
+        // "Start building" ends the welcome.
+        XCTAssertEqual(try XCTUnwrap(waiting.take(setupReady: true, welcomeOver: true)).lastPathComponent, "Tally.lampapp")
+    }
+
+    func testAfterTheWelcomeItStillWaitsForSetup() throws {
+        let waiting = try launch()
+        XCTAssertTrue(waiting.keep(try sharedFile("Tally.lampapp")))
+
+        // The welcome is over but Apple's tools are still installing.
+        XCTAssertNil(waiting.take(setupReady: false, welcomeOver: true))
+        XCTAssertNotNil(waiting.keptFolder)
+        XCTAssertNotNil(waiting.take(setupReady: true, welcomeOver: true))
+    }
+
+    func testARelaunchThatIsAlreadySetUpOpensIt() throws {
+        let waiting = try launch()
+        XCTAssertTrue(waiting.keep(try sharedFile("Tally.lampapp")))
+        // Quit in the welcome with an agent chosen: nothing was handed over.
+        XCTAssertNil(waiting.take(setupReady: true, welcomeOver: false))
+
+        // The next launch finds setup done and no welcome to go through, so no button will be clicked.
+        XCTAssertEqual(try XCTUnwrap(try launch().take(setupReady: true, welcomeOver: true)).lastPathComponent, "Tally.lampapp")
+    }
+
     func testNothingKeptMeansNothingToOpen() throws {
-        XCTAssertNil(try launch().take())
+        XCTAssertNil(try launch().take(setupReady: true, welcomeOver: true))
         XCTAssertNil(try launch().keptFolder)
     }
 
@@ -71,10 +103,10 @@ final class WaitingImportTests: XCTestCase {
         XCTAssertTrue(waiting.keep(try sharedFile("Recipes.lampapp", [2])))
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: first))
-        let kept = try XCTUnwrap(waiting.take())
+        let kept = try XCTUnwrap(waiting.take(setupReady: true, welcomeOver: true))
         XCTAssertEqual(kept.lastPathComponent, "Recipes.lampapp")
         XCTAssertEqual(try Data(contentsOf: kept), Data([2]))
-        XCTAssertNil(waiting.take())
+        XCTAssertNil(waiting.take(setupReady: true, welcomeOver: true))
     }
 
     func testTheSameFileOpenedTwiceIsKeptOnce() throws {
@@ -85,8 +117,8 @@ final class WaitingImportTests: XCTestCase {
 
         let copies = try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("Waiting").path)
         XCTAssertEqual(copies.count, 1)
-        XCTAssertNotNil(waiting.take())
-        XCTAssertNil(waiting.take())
+        XCTAssertNotNil(waiting.take(setupReady: true, welcomeOver: true))
+        XCTAssertNil(waiting.take(setupReady: true, welcomeOver: true))
     }
 
     func testAFileThatCouldNotBeCopiedIsNotPromised() throws {
@@ -99,7 +131,7 @@ final class WaitingImportTests: XCTestCase {
 
         XCTAssertFalse(waiting.keep(original))
         XCTAssertNil(waiting.keptFolder)
-        XCTAssertNil(waiting.take())
+        XCTAssertNil(waiting.take(setupReady: true, welcomeOver: true))
         XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
     }
 
@@ -109,6 +141,6 @@ final class WaitingImportTests: XCTestCase {
         // Gone before Lamp could copy it.
         XCTAssertFalse(waiting.keep(root.appendingPathComponent("Missing.lampapp")))
 
-        XCTAssertEqual(try XCTUnwrap(waiting.take()).lastPathComponent, "Tally.lampapp")
+        XCTAssertEqual(try XCTUnwrap(waiting.take(setupReady: true, welcomeOver: true)).lastPathComponent, "Tally.lampapp")
     }
 }
