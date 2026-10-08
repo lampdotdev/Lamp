@@ -2164,7 +2164,7 @@ final class Store: ObservableObject {
                 progress[project.id]?.tickWrittenParts()
                 (status, answer) = (200, ["text": "The user can see the plan."])
             case "delete_file":
-                (status, answer) = deleteFile(arguments["path"] as? String ?? "", in: project)
+                (status, answer) = Self.deleteFile(arguments["path"] as? String ?? "", in: project)
             case "list_versions": (status, answer) = await versions("", [:], of: project)
             case "name_version": (status, answer) = await versions("/name", arguments, of: project)
             case "restore_version": (status, answer) = await versions("/restore", arguments, of: project)
@@ -2222,7 +2222,7 @@ final class Store: ObservableObject {
 
     /// The agent's `delete_file`: one file inside the app's folder, never Lamp's own files, never through a
     /// link that leads out. The same rules as pi's version in lamp-tools.ts.
-    private func deleteFile(_ path: String, in project: LampProject) -> (Int, [String: Any]) {
+    static func deleteFile(_ path: String, in project: LampProject) -> (Int, [String: Any]) {
         let root = project.dir.resolvingSymlinksInPath().standardizedFileURL
         let target = URL(fileURLWithPath: path, relativeTo: project.dir).standardizedFileURL
         let relative = target.path.hasPrefix(root.path + "/") || target.path.hasPrefix(project.dir.path + "/")

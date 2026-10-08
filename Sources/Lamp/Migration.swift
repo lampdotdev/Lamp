@@ -140,16 +140,11 @@ enum Migration {
         }
         guard fm.fileExists(atPath: dir.appendingPathComponent(".git").path) else { return }
         // The folder was committed by an earlier version of this migration: take it back out.
-        if !git(["ls-files", ".lamp"], in: dir).isEmpty {
-            _ = git(["rm", "-r", "-q", "--cached", ".lamp"], in: dir)
+        if !Versions.gitBlocking("git ls-files .lamp", cwd: dir).output.trimmed.isEmpty {
+            _ = Versions.gitBlocking("git rm -r -q --cached .lamp", cwd: dir)
             touched = true
         }
         guard touched, commit else { return }
-        _ = Subprocess.runBlocking("/bin/zsh", ["-c", "\(Versions.stage) && \(Versions.commit) -qm 'Rename to Lamp'"], cwd: dir,
-                                   env: Versions.environment, timeout: 120)
-    }
-
-    private static func git(_ arguments: [String], in dir: URL) -> String {
-        Subprocess.runBlocking("/usr/bin/git", arguments, cwd: dir, env: Versions.environment, mergeErrors: false, timeout: 120).output.trimmed
+        _ = Versions.gitBlocking("\(Versions.stage) && \(Versions.commit) -qm 'Rename to Lamp'", cwd: dir)
     }
 }

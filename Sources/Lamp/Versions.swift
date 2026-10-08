@@ -37,22 +37,50 @@ enum Versions {
     static let commit = "git -c user.name=Lamp -c user.email=lamp@localhost commit"
 
     /// Lamp's own git, which runs outside the sandbox on a folder the agent's commands can write. Git runs
-    /// programs named by what it finds in a repository, so three things keep that to what Lamp put there:
-    /// the app's `.git` is read-only to a confined command and to the file tools (Sandbox, Privacy); a
-    /// repository inside the app's folder (a clone, say), whose `.git` they can write, is never entered
-    /// (`stage` keeps such folders out of the history, and status doesn't look inside them); and hooks and the
-    /// file-watcher command are off whatever a repository says, which also covers a `.git` written before any
-    /// of this. Settings given this way reach the git that git itself starts.
+    /// programs named by what it finds in a repository, so four things keep that to what Lamp put there:
+    /// the app's `.git` is read-only to a confined command and to the file tools (Sandbox, Privacy); its
+    /// settings are cut back to the ones Lamp knows before every call (`own`), which is what covers a `.git`
+    /// written before any of this; hooks and the file-watcher command are off whatever a repository says;
+    /// and a repository inside the app's folder (a clone, say), whose `.git` the agent can write, is never
+    /// entered (`stage` keeps such folders out of the history, and status doesn't look inside them).
     static func git(_ command: String, cwd: URL, env: [String: String] = [:],
                     onLine: @escaping @MainActor (String) -> Void = { _ in }) async -> Int32 {
-        await Shell.run(command, cwd: cwd, env: env.merging(environment) { $1 }, onLine: onLine)
+        await Shell.run(script(command), cwd: cwd, env: env.merging(environment) { $1 }, onLine: onLine)
     }
 
+    /// The same, for the one caller that can't await (the migration, at launch).
+    static func gitBlocking(_ command: String, cwd: URL) -> Subprocess.Result {
+        Subprocess.runBlocking("/bin/zsh", ["-c", script(command)], cwd: cwd, env: environment, mergeErrors: false, timeout: 120)
+    }
+
+    /// What is run for a git command: nothing at all unless the history is Lamp's to trust.
+    static func script(_ command: String) -> String { "\(own) && {\n\(command)\n}" }
+
+    /// Settings given this way win over the repository's, and reach the git that git itself starts.
     static let environment = [
         "GIT_CONFIG_COUNT": "2",
         "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": "/dev/null",
         "GIT_CONFIG_KEY_1": "core.fsmonitor", "GIT_CONFIG_VALUE_1": "false",
     ]
+
+    /// Makes the history's settings Lamp's own before git reads them. Git has no way to be told "don't trust
+    /// this repository's settings", and the ones that make it run a program are too many to switch off one
+    /// by one (filters, text converters, signing programs, includes, hooks named in settings, and more with
+    /// each release), so every setting but the plain ones below is removed, with git's own command for it.
+    /// An app's history from before `.git` was closed can hold anything; one written since holds nothing else.
+    ///
+    /// First, the history has to be a real folder in the app, with its settings a real file of its own: a
+    /// `.git` that points somewhere else (a file or a link, or a shared folder named inside it) leads to a
+    /// place the agent can still write, and a settings file with a second name can be written by that name.
+    /// Then git isn't run at all, and Lamp saves nothing until the folder is put right.
+    private static let own = #"""
+    { { [ ! -e .git ] && [ ! -L .git ]; } || { [ -d .git ] && [ ! -L .git ] && [ ! -e .git/commondir ] && [ ! -L .git/config ] \
+    && { [ ! -e .git/config ] || [ "$(stat -f %l .git/config)" = 1 ] || { cp .git/config .git/config.lamp && mv -f .git/config.lamp .git/config; }; } \
+    && git config --file .git/config --name-only -z --list 2>/dev/null | sort -zu | while IFS= read -r -d '' key; do case "$key" in \
+    core.repositoryformatversion|core.filemode|core.bare|core.logallrefupdates|core.ignorecase|core.precomposeunicode|core.symlinks) ;; \
+    extensions.objectformat|user.name|user.email|remote.*.url|remote.*.fetch|branch.*.remote|branch.*.merge) ;; \
+    *) git config --file .git/config --unset-all "$key" || exit 1 ;; esac; done; }; }
+    """#
 
     /// `git add -A`, without the repositories inside the app's folder. Git records one as a link to a commit
     /// (none of its files), and from then on runs git inside it, with its settings, to see whether it changed.

@@ -86,7 +86,14 @@ final class SandboxHistoryTests: XCTestCase {
     /// Nor can the history be swapped for another: moved aside, removed, or started again.
     func testTheHistoryCantBeReplaced() async throws {
         let (project, _) = try project()
-        for command in ["mv .git .git-aside", "rm -rf .git", "rm -f .git/HEAD", "mv .git/config .git/config-aside"] {
+        _ = try loose(script("Sources/hook", touching: project.dir), in: project)
+        // Moved aside or removed; then the ways in that aren't a plain write: a clone, a move, a link in, and a
+        // second name for a file inside (which could then be written by that name).
+        for command in ["mv .git .git-aside", "rm -rf .git", "rm -f .git/HEAD", "mv .git/config .git/config-aside",
+                        "cp -c Sources/hook .git/hooks/post-commit", "mv Sources/hook .git/hooks/post-commit",
+                        "ln Sources/hook .git/hooks/post-commit", "ln -s ../../Sources/hook .git/hooks/post-commit",
+                        "ln .git/config Sources/settings-by-another-name", "ln -s ../.git Sources/history && echo x > Sources/history/planted",
+                        "chmod 777 .git/config", "cd .git && echo x > planted"] {
             let result = try confined(command, in: project)
             XCTAssertNotEqual(result.status, 0, "\(command): \(result.output)")
             XCTAssertTrue(result.output.contains("not permitted"), "\(command): \(result.output)")
@@ -151,6 +158,8 @@ final class SandboxHistoryTests: XCTestCase {
         let look = try confined("git status --porcelain && git diff --stat && git log --format=%s && git show --stat --format= HEAD", in: project)
         XCTAssertEqual(look.status, 0, look.output)
         XCTAssertTrue(look.output.contains("M Sources/App.swift") && look.output.contains("first"), look.output)
+        // Reading doesn't complain either: git only writes the history here to save itself work next time.
+        XCTAssertFalse(look.output.contains("not permitted") || look.output.contains("warning") || look.output.contains("error"), look.output)
         let clone = try confined("git clone -q . .lamp/reference/copy && cd .lamp/reference/copy && git log --format=%s", in: project)
         XCTAssertEqual(clone.status, 0, clone.output)
         XCTAssertTrue(clone.output.contains("first"), clone.output)
