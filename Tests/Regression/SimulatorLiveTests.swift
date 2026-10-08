@@ -22,7 +22,7 @@ final class SimulatorLiveTests: XCTestCase {
             return
         }
         print("LIVE screen \(screen.rect) zoom \(screen.zoom) in \(screen.viewer)")
-        if let json = environment["LAMP_LIVE_ACTIONS"]?.data(using: .utf8) {
+        if let json = environment["LAMP_LIVE_ACTIONS"]?.data(using: .utf8), !json.isEmpty {
             let actions = try JSONDecoder().decode([Simulator.Driver.Action].self, from: json)
             let picture = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-live-\(udid).png")
             _ = await Simulator.screenshot(on: udid, to: picture)
