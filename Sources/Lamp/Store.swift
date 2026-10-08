@@ -1051,27 +1051,48 @@ final class Store: ObservableObject {
             // Replaced files that can't be kept as a version go back to the one just saved, so the app's
             // files, its versions and the installed app never disagree.
             // The icon's pictures are outside the versions, so they're set aside here and put back by hand.
+            // Pictures that can't be set aside aren't risked: nothing is replaced.
             let fm = FileManager.default
             let art = project.dir.appendingPathComponent(".lamp/art")
             let artBefore = package.folder.appendingPathComponent("art-before-update")
-            let hadArt = (try? fm.copyItem(at: art, to: artBefore)) != nil
-            func putBack() async {
+            let hadArt = fm.fileExists(atPath: art.path)
+            if hadArt {
+                do { try fm.copyItem(at: art, to: artBefore) } catch {
+                    log(project, .error, "Lamp couldn't save the app as it is, so it wasn't updated.")
+                    return
+                }
+            }
+            /// False when the icon's pictures couldn't be returned; the ones there are then left alone.
+            func putBack() async -> Bool {
                 _ = await Shell.run("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
-                try? fm.removeItem(at: art)
-                if hadArt { try? fm.copyItem(at: artBefore, to: art) }
+                guard hadArt else {
+                    try? fm.removeItem(at: art)
+                    return true
+                }
+                // The copy is made beside the folder first, so the old pictures are never the only ones removed.
+                let returning = art.deletingLastPathComponent().appendingPathComponent("art-returning")
+                try? fm.removeItem(at: returning)
+                do {
+                    try fm.copyItem(at: artBefore, to: returning)
+                    _ = try fm.replaceItemAt(art, withItemAt: returning)
+                    return true
+                } catch {
+                    try? fm.removeItem(at: returning)
+                    return false
+                }
             }
             let newArtwork: Bool
             do {
                 newArtwork = try Sharing.install(package, into: project, replacing: true)
             } catch {
-                await putBack()
-                log(project, .error, "Couldn't update the app: \(error.localizedDescription)")
+                let iconBack = await putBack()
+                log(project, .error, "Couldn't update the app: \(error.localizedDescription)" + (iconBack ? "" : " Its icon picture may be the new one."))
                 return
             }
             if await Versions.hasUnsavedChanges(project) {
                 guard await Versions.save(project, message: "Updated from a shared file") else {
-                    await putBack()
-                    log(project, .error, "Lamp couldn't save the update, so the app is as it was.")
+                    let iconBack = await putBack()
+                    log(project, .error, "Lamp couldn't save the update, so the app is as it was" + (iconBack ? "." : ", except that its icon picture may be the new one."))
                     return
                 }
                 Versions.rememberUpdate(project)
