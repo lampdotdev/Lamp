@@ -183,23 +183,50 @@ struct SetupView: View {
         }
     }
 
+    /// What OpenRouter said about a key.
+    enum KeyVerdict: Equatable {
+        case accepted
+        /// OpenRouter answered, and the key is no use as it is: mistyped, revoked or out of credit.
+        case refused(String)
+        /// Nothing to go on (offline, or OpenRouter in trouble), so the key may well be a good one.
+        case unchecked(String)
+
+        var problem: String? {
+            switch self {
+            case .accepted: nil
+            case .refused(let problem), .unchecked(let problem): problem
+            }
+        }
+    }
+
     /// nil if OpenRouter accepts the key; otherwise what's wrong, in plain words.
     static func checkOpenRouterKey(_ key: String) async -> String? {
+        await openRouterVerdict(key).problem
+    }
+
+    /// Asks OpenRouter about a key. Where the person can wait for the answer (the first key, in the Welcome
+    /// and the chat) anything but `accepted` stops the save; Settings turns away only a key OpenRouter refused.
+    static func openRouterVerdict(_ key: String) async -> KeyVerdict {
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/key")!)
         request.timeoutInterval = 20
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         guard let (data, response) = try? await URLSession.shared.data(for: request) else {
-            return "Couldn't reach OpenRouter. Check your internet connection."
+            return .unchecked("Couldn't reach OpenRouter. Check your internet connection.")
         }
-        switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
+        return verdict(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: data)
+    }
+
+    /// What OpenRouter's answer to "whose key is this?" means for the key.
+    static func verdict(status: Int, body: Data) -> KeyVerdict {
+        switch status {
         case 200:
-            let info = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["data"] as? [String: Any]
+            let info = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["data"] as? [String: Any]
             if let remaining = info?["limit_remaining"] as? Double, remaining <= 0 {
-                return "That key works, but it has no credit left. Add credit at openrouter.ai, then try again."
+                return .refused("That key works, but it has no credit left. Add credit at openrouter.ai, then try again.")
             }
-            return nil
-        case 401, 403: return "OpenRouter didn't accept that key. Copy it again from openrouter.ai/keys."
-        default: return "OpenRouter couldn't check the key right now. Try again in a moment."
+            return .accepted
+        case 401, 403: return .refused("OpenRouter didn't accept that key. Copy it again from openrouter.ai/keys.")
+        default: return .unchecked("OpenRouter couldn't check the key right now. Try again in a moment.")
         }
     }
 
@@ -1151,6 +1178,7 @@ private struct ProviderSheet: View {
     var onChange: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var key = ""
+    @StateObject private var check = KeyCheck()
     private let hasKey: Bool
 
     init(provider: PiProvider, onChange: @escaping () -> Void) {
@@ -1172,8 +1200,13 @@ private struct ProviderSheet: View {
             Form {
                 SecureField(hasKey ? "New key" : "API key", text: $key, prompt: Text("Paste key"))
                     .onSubmit(save)
+                    .onChange(of: key) { check.edited() }
                 Link("Get a key from \(provider.name)", destination: URL(string: provider.keyURL)!)
                     .font(.callout)
+            }
+            if let problem = check.problem {
+                Label(problem, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
                 if hasKey {
@@ -1182,23 +1215,83 @@ private struct ProviderSheet: View {
                         onChange()
                         dismiss()
                     }
+                    .disabled(check.checking)
                 }
                 Spacer()
+                if check.checking { ProgressView().controlSize(.small) }
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(hasKey ? "Save" : "Add", action: save)
+                Button(check.canSaveUnchecked ? "Save Anyway" : hasKey ? "Save" : "Add", action: save)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(key.trimmed.isEmpty)
+                    .disabled(key.trimmed.isEmpty || check.checking)
             }
         }
         .padding(20)
         .frame(width: 400)
+        .onDisappear { check.cancel() }   // closed while OpenRouter was being asked: nothing is saved
     }
 
     private func save() {
-        guard !key.trimmed.isEmpty else { return }
-        KeyStore.setKey(key, for: provider.id)
-        onChange()
-        dismiss()
+        check.save(key, for: provider) {
+            onChange()
+            dismiss()
+        }
+    }
+}
+
+/// Saves a key typed into Settings, asking OpenRouter about its own first, as the key card in the chat does:
+/// a key it refuses isn't saved, so a slip shows up here and not later as a build or a picture that fails.
+/// The other providers' keys are saved as typed; each would need its own question.
+///
+/// Settings is also where a key is put in ahead of time, perhaps with no connection, so when OpenRouter
+/// can't be asked the key isn't turned away: the person is told, and saving again keeps it unchecked.
+@MainActor
+final class KeyCheck: ObservableObject {
+    @Published private(set) var checking = false
+    @Published private(set) var problem: String?
+    /// The key OpenRouter couldn't be asked about; saving it again goes ahead without asking.
+    @Published private var unchecked: String?
+    private var task: Task<Void, Never>?
+
+    var canSaveUnchecked: Bool { unchecked != nil }
+
+    /// The field changed: what was said about the old text no longer holds.
+    func edited() {
+        cancel()
+        problem = nil
+        unchecked = nil
+    }
+
+    func cancel() {
+        task?.cancel()
+        task = nil
+        checking = false
+    }
+
+    func save(_ typed: String, for provider: PiProvider, saved: @escaping () -> Void) {
+        let key = typed.trimmed
+        guard !key.isEmpty, !checking else { return }
+        guard provider.id == "openrouter", key != unchecked else {
+            KeyStore.setKey(key, for: provider.id)
+            edited()
+            return saved()
+        }
+        checking = true
+        problem = nil
+        task = Task {
+            let verdict = await SetupView.openRouterVerdict(key)
+            guard !Task.isCancelled else { return }
+            checking = false
+            switch verdict {
+            case .accepted:
+                KeyStore.setKey(key, for: provider.id)
+                saved()
+            case .refused(let why):
+                problem = why
+            case .unchecked(let why):
+                problem = why + " You can save the key without checking it."
+                unchecked = key
+            }
+        }
     }
 }
 
@@ -1266,6 +1359,7 @@ struct KeyRow: View {
     var onChange: () -> Void
     @State private var key = ""
     @State private var saved = false
+    @StateObject private var check = KeyCheck()
 
     var body: some View {
         Group {
@@ -1285,21 +1379,32 @@ struct KeyRow: View {
                     HStack {
                         SecureField("", text: $key, prompt: Text("Paste key"))
                             .onSubmit(save)
-                        Button("Save", action: save).disabled(key.trimmed.isEmpty)
+                            .onChange(of: key) { check.edited() }
+                        if check.checking {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Button(check.canSaveUnchecked ? "Save Anyway" : "Save", action: save).disabled(key.trimmed.isEmpty)
+                        }
                         Link("Get one", destination: URL(string: provider.keyURL)!)
                     }
+                }
+                if let problem = check.problem {
+                    Label(problem, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
         .onAppear { saved = KeyStore.key(for: provider.id) != nil }
         .onChange(of: provider) { saved = KeyStore.key(for: provider.id) != nil; key = "" }
+        .onDisappear { check.cancel() }
     }
 
     private func save() {
-        KeyStore.setKey(key, for: provider.id)
-        key = ""
-        saved = true
-        onChange()
+        check.save(key, for: provider) {
+            key = ""
+            saved = true
+            onChange()
+        }
     }
 }
 
