@@ -1034,9 +1034,12 @@ final class Store: ObservableObject {
             }
             if !package.attachments.isEmpty {
                 let folder = project.dir.appendingPathComponent(Sharing.Assets.folder)
-                try fm.createDirectory(at: folder, withIntermediateDirectories: true)
                 for file in package.attachments {
-                    try fm.copyItem(at: file, to: folder.appendingPathComponent(file.lastPathComponent))
+                    let relative = package.assetPath(of: file)
+                    guard !relative.contains("..") else { continue }
+                    let target = folder.appendingPathComponent(relative)
+                    try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try fm.copyItem(at: file, to: target)
                 }
             }
             let appMd = package.folder.appendingPathComponent("APP.md")
@@ -2711,13 +2714,20 @@ final class Store: ObservableObject {
                 """, cwd: project.dir, env: ["LAMP_APP": project.builtURL.path]) { _ in }
         }
         // The app's own files (Assets/) ship inside it, where LampAssets finds them; the chat's attachments
-        // don't. An older bundle's copy of them goes.
+        // don't. A binary built by an older Lamp (a new icon installed without a rebuild) still looks for
+        // Attachments, so that folder is kept for it until it's rebuilt.
         Sharing.Assets.adopt(in: project)
         let assets = project.dir.appendingPathComponent(Sharing.Assets.folder)
-        try? fm.removeItem(at: resources.appendingPathComponent(Attachments.folder))
         try? fm.removeItem(at: resources.appendingPathComponent(Sharing.Assets.folder))
         if fm.fileExists(atPath: assets.path) {
             try fm.copyItem(at: assets, to: resources.appendingPathComponent(Sharing.Assets.folder))
+        }
+        try? fm.removeItem(at: resources.appendingPathComponent(Attachments.folder))
+        if BuildStamp.read(project.builtURL)?.isOutdated ?? true {
+            let attachments = project.dir.appendingPathComponent(Attachments.folder)
+            if fm.fileExists(atPath: attachments.path) {
+                try fm.copyItem(at: attachments, to: resources.appendingPathComponent(Attachments.folder))
+            }
         }
         // Signed from Lamp's own keychain, which the script unlocks, so nobody is asked for keychain access.
         // Files copied into the bundle (attachments, icon artwork, an edited Info.plist) can carry Finder
