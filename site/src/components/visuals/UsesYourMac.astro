@@ -1,77 +1,197 @@
 <!--
-  For "Apps that use your Mac": a browser window running off the tile's right edge, and a pointer that glides
-  to the page's Download PDF button and clicks it, the first time the tile scrolls into view. Drawn in HTML so
-  it stays sharp. Without motion (or JavaScript) the pointer simply rests on the button.
+  For "Apps that do the clicking": a browser window running off the tile's right edge, where a pointer does a
+  small errand in steps, over and over while the tile is in view: it clicks the site's search field and types,
+  opens the article that turns up, clicks its Download PDF button, and a note says it's saved. Drawn in HTML so
+  it stays sharp. Without motion (or JavaScript) it rests on the last step: the article, the pointer on the
+  button and the note shown.
 -->
-<div data-uses-mac aria-hidden="true" class="relative h-[196px] overflow-hidden select-none sm:h-[280px]">
+<div data-errand aria-hidden="true" class="relative h-[196px] overflow-hidden select-none sm:h-[280px]">
   <!-- On a phone the whole scene is drawn at desktop size and shrunk, so it keeps the same arrangement. -->
-  <div class="absolute inset-0 h-[143%] w-[143%] origin-top-left scale-[0.7] sm:h-full sm:w-full sm:scale-100">
+  <div data-stage class="absolute inset-0 h-[143%] w-[143%] origin-top-left scale-[0.7] sm:h-full sm:w-full sm:scale-100">
     <!-- Lined up with the words below: their 40px inset (32px on a phone, where the scene is shrunk to 70%). -->
     <div class="absolute top-4 left-[46px] w-[40rem] overflow-hidden rounded-xl bg-white text-ink shadow-[0_30px_60px_rgba(0,0,0,0.35)] ring-1 ring-white/10 sm:left-10">
       <div class="flex h-10 items-center gap-2 border-b border-black/5 bg-[#f6f6f7] px-4">
         <span class="size-3 rounded-full bg-[#ff5f57]"></span>
         <span class="size-3 rounded-full bg-[#febc2e]"></span>
         <span class="size-3 rounded-full bg-[#28c840]"></span>
-        <span class="mx-auto h-6 w-72 rounded-md bg-black/5 text-center text-[11px] leading-6 text-black/45">fieldnotes.design/quiet-onboarding</span>
+        <span data-address class="mx-auto h-6 w-72 rounded-md bg-black/5 text-center text-[11px] leading-6 text-black/45">fieldnotes.design/quiet-onboarding</span>
       </div>
-      <div class="px-10 pt-5 pb-10">
-        <p class="text-[10px] font-semibold tracking-wider text-black/40 uppercase">Field Notes on Design</p>
-        <p class="mt-2 font-serif text-[22px] leading-tight font-semibold">The Quiet Onboarding:<br />Teaching Without Tutorials</p>
-        <div class="mt-4 space-y-2">
-          <div class="h-2 w-[26rem] rounded bg-black/8"></div>
-          <div class="h-2 w-[24rem] rounded bg-black/8"></div>
-          <div class="h-2 w-[20rem] rounded bg-black/8"></div>
+
+      <div class="relative h-[260px]">
+        <!-- Step one: the site's search -->
+        <div data-screen="search" class="absolute inset-0 px-10 pt-5 opacity-0 transition-opacity duration-300">
+          <p class="text-[10px] font-semibold tracking-wider text-black/40 uppercase">Field Notes on Design</p>
+          <div data-field class="mt-3 flex h-9 w-80 items-center gap-2 rounded-lg px-3 text-[13px] ring-1 ring-black/15 transition-shadow">
+            <svg viewBox="0 0 24 24" class="size-4 fill-none stroke-black/40 stroke-2 [stroke-linecap:round]"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" /></svg>
+            <span data-typed></span><span data-caret class="hidden h-4 w-px bg-ink"></span>
+            <span data-placeholder class="text-black/35">Search articles</span>
+          </div>
+          <div data-results class="mt-3 w-80 space-y-1 opacity-0 transition-opacity duration-300">
+            <div data-result class="rounded-lg px-3 py-2 transition-colors">
+              <p class="font-serif text-[15px] font-semibold">The Quiet Onboarding</p>
+              <p class="text-[11px] text-black/45">Teaching without tutorials · 6 min read</p>
+            </div>
+            <div class="px-3 py-2"><div class="h-2 w-52 rounded bg-black/8"></div><div class="mt-2 h-1.5 w-36 rounded bg-black/5"></div></div>
+          </div>
         </div>
-        <span
-          data-target
-          class="relative mt-5 inline-flex items-center gap-1.5 rounded-full bg-ink px-4 py-1.5 text-[12px] font-medium text-white ring-4 ring-sky-400/0 transition-[box-shadow] duration-500"
-        >
-          Download PDF
-          <!-- Where the pointer's tip lands (84% across, halfway down): the click's ripple starts here. -->
-          <span data-ripple class="absolute top-1/2 left-[84%] size-8 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-sky-400 opacity-0"></span>
-          <svg
-            data-pointer
-            viewBox="0 0 24 24"
-            class="absolute top-1/2 left-[84%] size-6 -translate-x-[5px] -translate-y-[3px] drop-shadow-[0_2px_3px_rgba(0,0,0,0.4)] transition-transform duration-[1200ms] ease-[cubic-bezier(.3,.7,.2,1)]"
-          >
-            <path d="M5 3l14 8.5-6.2 1.3 3.6 6.9-2.6 1.3-3.6-6.9L5 18.6z" fill="#000" stroke="#fff" stroke-width="1.4" stroke-linejoin="round" />
-          </svg>
-        </span>
+
+        <!-- Step two: the article -->
+        <div data-screen="article" class="absolute inset-0 px-10 pt-5 transition-opacity duration-300">
+          <p class="text-[10px] font-semibold tracking-wider text-black/40 uppercase">Field Notes on Design</p>
+          <p class="mt-2 font-serif text-[22px] leading-tight font-semibold">The Quiet Onboarding:<br />Teaching Without Tutorials</p>
+          <div class="mt-4 space-y-2">
+            <div class="h-2 w-[26rem] rounded bg-black/8"></div>
+            <div class="h-2 w-[24rem] rounded bg-black/8"></div>
+            <div class="h-2 w-[20rem] rounded bg-black/8"></div>
+          </div>
+          <span data-download class="relative mt-5 inline-flex items-center gap-1.5 rounded-full bg-ink px-4 py-1.5 text-[12px] font-medium text-white ring-4 ring-sky-400/40 transition-[box-shadow] duration-500">
+            Download PDF
+          </span>
+        </div>
+
+        <!-- Step three: saved -->
+        <div data-toast class="absolute top-4 left-[300px] flex items-center gap-2 rounded-xl bg-white/95 px-3 py-2 text-[12px] font-medium shadow-[0_8px_24px_rgba(0,0,0,0.18)] ring-1 ring-black/5 transition-[opacity,translate] duration-300">
+          <span class="grid size-5 place-items-center rounded-full bg-[#28c840] text-white">
+            <svg viewBox="0 0 24 24" class="size-3.5 fill-none stroke-white stroke-[3] [stroke-linecap:round] [stroke-linejoin:round]"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+          </span>
+          Saved to Downloads
+        </div>
       </div>
     </div>
+
+    <!-- A click: a soft ring spreading from the pointer's tip, placed there by the script -->
+    <span data-pulse class="absolute top-0 left-0 size-8 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-sky-500/70 bg-sky-400/15 opacity-0"></span>
+
+    <!-- The pointer, placed by the script at what it's about to click (its tip is 5,3 into the drawing, which is
+         also where it shrinks towards when it clicks, so the tip stays put) -->
+    <svg
+      data-pointer
+      viewBox="0 0 24 24"
+      class="absolute top-0 left-0 size-6 origin-[5px_3px] drop-shadow-[0_2px_3px_rgba(0,0,0,0.4)] transition-transform duration-[900ms] ease-[cubic-bezier(.3,.7,.2,1)]"
+    >
+      <path d="M5 3l14 8.5-6.2 1.3 3.6 6.9-2.6 1.3-3.6-6.9L5 18.6z" fill="#000" stroke="#fff" stroke-width="1.4" stroke-linejoin="round" />
+    </svg>
   </div>
 </div>
 
 <script>
-  // Once the tile is in view: the pointer glides in from lower right, then clicks, with the button pressing in,
-  // a ripple spreading from the pointer's tip, and the button keeping a highlight after.
-  for (const scene of document.querySelectorAll<HTMLElement>("[data-uses-mac]")) {
-    if (matchMedia("(prefers-reduced-motion: reduce)").matches) continue;
-    const pointer = scene.querySelector<SVGElement>("[data-pointer]")!;
-    const target = scene.querySelector<HTMLElement>("[data-target]")!;
-    const ripple = scene.querySelector<HTMLElement>("[data-ripple]")!;
-    pointer.style.transitionDuration = "0s";
-    pointer.style.transform = "translate(150px, 24px)";
-    pointer.getBoundingClientRect();   // settle the starting place before transitions come back
-    pointer.style.transitionDuration = "";
+  // The errand, step by step, while the tile is on screen; it waits where it is while it's scrolled away.
+  for (const scene of document.querySelectorAll<HTMLElement>("[data-errand]")) {
+    const $ = <T extends Element>(selector: string) => scene.querySelector<T>(selector)!;
+    const stage = $<HTMLElement>("[data-stage]");
+    const pointer = $<SVGElement>("[data-pointer]");
+    const search = $<HTMLElement>('[data-screen="search"]');
+    const article = $<HTMLElement>('[data-screen="article"]');
+    const field = $<HTMLElement>("[data-field]");
+    const typed = $<HTMLElement>("[data-typed]");
+    const caret = $<HTMLElement>("[data-caret]");
+    const placeholder = $<HTMLElement>("[data-placeholder]");
+    const results = $<HTMLElement>("[data-results]");
+    const result = $<HTMLElement>("[data-result]");
+    const download = $<HTMLElement>("[data-download]");
+    const pulse = $<HTMLElement>("[data-pulse]");
+    const toast = $<HTMLElement>("[data-toast]");
+    const address = $<HTMLElement>("[data-address]");
 
-    const click = () => {
-      target.animate([{ scale: "1" }, { scale: "0.94" }, { scale: "1" }], { duration: 280, easing: "ease-out" });
-      pointer.animate([{ scale: "1" }, { scale: "0.88" }, { scale: "1" }], { duration: 280, easing: "ease-out" });
-      ripple.animate(
-        [{ opacity: 0.9, scale: "0.3" }, { opacity: 0, scale: "1.8" }],
-        { duration: 600, easing: "cubic-bezier(.2,.7,.3,1)" },
-      );
-      target.classList.replace("ring-sky-400/0", "ring-sky-400/40");
+    // Where on an element the pointer's tip goes, in the stage's own (unshrunk) pixels.
+    const at = (element: HTMLElement, across = 0.5, down = 0.5) => {
+      const box = element.getBoundingClientRect();
+      const frame = stage.getBoundingClientRect();
+      const scale = frame.width / stage.offsetWidth;
+      return { x: (box.left - frame.left + box.width * across) / scale - 5, y: (box.top - frame.top + box.height * down) / scale - 3 };
+    };
+    // Where the pointer's tip is now, for the click's ring. Set before anything can place the pointer, including
+    // the still last step shown for reduced motion below.
+    let tip = { x: 0, y: 0 };
+    const place = (point: { x: number; y: number }, instantly = false) => {
+      tip = point;
+      if (instantly) pointer.style.transitionDuration = "0s";
+      // The `translate` property rather than `transform`: a click's `scale` is applied before `transform`, so it
+      // would shrink the offset too and throw the pointer towards the corner; `translate` comes first, so it doesn't.
+      pointer.style.translate = `${point.x}px ${point.y}px`;
+      if (instantly) { pointer.getBoundingClientRect(); pointer.style.transitionDuration = ""; }
     };
 
-    new IntersectionObserver((entries, observer) => {
-      if (!entries.some((entry) => entry.isIntersecting)) return;
-      observer.disconnect();
-      setTimeout(() => {
-        pointer.style.transform = "";
-        setTimeout(click, 1250);
-      }, 300);
-    }, { threshold: 0.6 }).observe(scene);
+    const restOnLastStep = () => {
+      search.style.opacity = "0";
+      article.style.opacity = "1";
+      toast.style.opacity = "1";
+      place(at(download, 0.84), true);
+    };
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      requestAnimationFrame(restOnLastStep);
+      continue;
+    }
+
+    let visible = false;
+    let waiting: (() => void) | undefined;
+    const pause = (ms: number) =>
+      new Promise<void>((done) => setTimeout(() => (visible ? done() : (waiting = done)), ms));
+    // A click is the pointer dipping in size for a moment, and a ring spreading from its tip. Nothing else
+    // moves, so it reads as a click rather than a nudge.
+    const press = () => {
+      pointer.animate([{ scale: "1" }, { scale: "0.82" }, { scale: "1" }], { duration: 220, easing: "ease-out" });
+      pulse.style.left = `${tip.x + 5}px`;
+      pulse.style.top = `${tip.y + 3}px`;
+      pulse.animate([{ opacity: 0.85, scale: "0.4" }, { opacity: 0, scale: "1.6" }], { duration: 520, easing: "cubic-bezier(.2,.7,.3,1)" });
+    };
+
+    const reset = () => {
+      article.style.opacity = "0";
+      search.style.opacity = "1";
+      toast.style.opacity = "0";
+      toast.style.translate = "0 -6px";
+      results.style.opacity = "0";
+      result.style.background = "";
+      typed.textContent = "";
+      placeholder.hidden = false;
+      caret.classList.add("hidden");
+      field.style.boxShadow = "";
+      download.classList.replace("ring-sky-400/40", "ring-sky-400/0");
+      address.textContent = "fieldnotes.design";
+      place({ x: 470, y: 240 }, true);
+    };
+
+    const errand = async () => {
+      for (;;) {
+        reset();
+        await pause(700);
+        place(at(field, 0.7));   // clear of the words it types
+        await pause(1000);
+        press();
+        field.style.boxShadow = "0 0 0 3px rgba(56,189,248,0.45)";
+        placeholder.hidden = true;
+        caret.classList.remove("hidden");
+        for (const letter of "onboarding") {
+          typed.textContent += letter;
+          await pause(70);
+        }
+        results.style.opacity = "1";
+        await pause(500);
+        place(at(result, 0.3));
+        await pause(1000);
+        result.style.background = "rgba(0,0,0,0.05)";
+        press();
+        await pause(250);
+        search.style.opacity = "0";
+        article.style.opacity = "1";
+        address.textContent = "fieldnotes.design/quiet-onboarding";
+        await pause(600);
+        place(at(download, 0.84));
+        await pause(1000);
+        press();
+        download.classList.replace("ring-sky-400/0", "ring-sky-400/40");
+        await pause(350);
+        toast.style.opacity = "1";
+        toast.style.translate = "0 0";
+        await pause(2400);
+      }
+    };
+
+    new IntersectionObserver((entries) => {
+      visible = entries.some((entry) => entry.isIntersecting);
+      if (visible && waiting) { const done = waiting; waiting = undefined; done(); }
+    }, { threshold: 0.3 }).observe(scene);
+    errand();
   }
 </script>
