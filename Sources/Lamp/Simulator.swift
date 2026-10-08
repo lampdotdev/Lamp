@@ -191,6 +191,7 @@ extension Simulator {
         /// Why the iPhone's screen can't be read or tapped just now. Each is its own case because each has
         /// its own remedy, and the agent is told the one that happened.
         enum Trouble: Error, Equatable {
+            case locked             // the Mac's screen is locked: no window can be read or tapped
             case notOpen            // the app that shows simulators isn't running, and didn't open
             case notAnswering       // it's running but not answering accessibility calls
             case noDevice           // the simulator itself couldn't be asked about its screen
@@ -203,6 +204,9 @@ extension Simulator {
             /// Xcode has (Simulator, or Device Hub from Xcode 27) and `device` what's being tried (iPhone, iPad).
             func message(viewer: String, device: String) -> String {
                 switch self {
+                case .locked:
+                    "The Mac's screen is locked, and \(viewer)'s window can't be read or tapped while it is. Nothing was tapped. " +
+                        "Go by the picture from look_at_app, and tell the user in plain words that trying the app by hand has to wait until the Mac is unlocked."
                 case .notOpen:
                     "\(viewer), the app from Xcode that shows the \(device), isn't open, and Lamp couldn't open it. Nothing was tapped. " +
                         "Tell the user in plain words that \(viewer) needs to be open, and try again once they say it is."
@@ -262,6 +266,8 @@ extension Simulator {
         // MARK: Finding the screen
 
         static func screen(of udid: String, owner: String) async -> Result<Screen, Trouble> {
+            // Behind a locked screen every window reads as empty, which would pass for a device that isn't listed.
+            guard !isLocked else { return .failure(.locked) }
             var found = viewer()
             if found == nil {
                 // A look in the background never opened it: Lamp does, behind whatever the person is doing.
@@ -320,6 +326,10 @@ extension Simulator {
                                    zoom: box.rect.width / points.width, pid: pid, title: title, oneAtATime: oneAtATime))
         }
 
+        nonisolated static var isLocked: Bool {
+            (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool ?? false
+        }
+
         /// Whether the window still shows this device, where it did.
         static func shows(_ screen: Screen) -> Bool { lost(screen) == nil }
 
@@ -331,6 +341,7 @@ extension Simulator {
             let title = attribute(screen.window, kAXTitleAttribute) as? String
             let chosen = !screen.oneAtATime || isChosen(screen.udid, in: screen.app)
             let rect = frame(of: screen.box)
+            if isLocked { return "the Mac's screen was locked, and nothing can be tapped or read while it is." }
             if notAnswering { return "\(screen.viewer) stopped answering Lamp. Try once more; if it still isn't answering, tell the user it seems stuck." }
             guard title == screen.title, chosen else { return "the simulator is showing another device now. Call look_at_app to bring this one back." }
             guard rect == screen.rect else { return "\(screen.viewer)'s window was moved or resized, so the points no longer line up. Call use_app again." }

@@ -6,7 +6,7 @@ import ApplicationServices
 /// iPhone's screen can't be used, the agent is told the reason that happened, in the words of the Xcode in use.
 final class SimulatorDriverTests: XCTestCase {
     private typealias Trouble = Simulator.Driver.Trouble
-    private let all: [Simulator.Driver.Trouble] = [.notOpen, .notAnswering, .noDevice, .notListed, .noWindow, .connecting, .unclear]
+    private let all: [Simulator.Driver.Trouble] = [.locked, .notOpen, .notAnswering, .noDevice, .notListed, .noWindow, .connecting, .unclear]
 
     private nonisolated static func onMainThread() -> Bool { Thread.isMainThread }
     private nonisolated static func pause(_ seconds: TimeInterval) { Thread.sleep(forTimeInterval: seconds) }
