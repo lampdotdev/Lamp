@@ -3,21 +3,24 @@ import Foundation
 /// The scaffold every generated app starts from.
 enum Template {
     static func scaffold(name: String, untitled: Bool = false, platform: Platform = .mac, family: DeviceFamily = .iphone,
-                         in root: URL) throws -> LampProject {
-        let project = try draft(name: name, untitled: untitled, platform: platform, family: family, in: root)
+                         instance: String? = nil, in root: URL) throws -> LampProject {
+        let project = try draft(name: name, untitled: untitled, platform: platform, family: family, instance: instance, in: root)
         try fill(project)
         return project
     }
 
     /// An app's folder with nothing in it but what Lamp knows of it. New App makes one, so the app can still
     /// change its name and kind for free; its scaffold is written (`fill`) when there's first something to build.
+    /// `instance` carries an existing app's identity into its replacement (rescaffolding under a new name);
+    /// a new app gets a fresh one.
     static func draft(name rawName: String, untitled: Bool = false, platform: Platform = .mac, family: DeviceFamily = .iphone,
-                      in root: URL) throws -> LampProject {
+                      instance: String? = nil, in root: URL) throws -> LampProject {
         let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
         let exe = identifier(from: name)
         let slug = freeSlug(for: exe, in: root)
         let project = LampProject(id: slug, name: name.isEmpty ? exe : name, exe: exe,
-                                   dir: root.appendingPathComponent(slug), untitled: untitled, platform: platform, family: family)
+                                   dir: root.appendingPathComponent(slug), instance: instance ?? UUID().uuidString,
+                                   untitled: untitled, platform: platform, family: family)
         try FileManager.default.createDirectory(at: project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
         try saveMeta(project)
         return project
@@ -37,7 +40,7 @@ enum Template {
     static func saveMeta(_ project: LampProject) throws {
         try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
                                              platform: project.platform, family: project.platform == .iphone ? project.family : nil,
-                                             device: project.device))
+                                             device: project.device, instance: project.instance.isEmpty ? nil : project.instance))
             .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
     }
 

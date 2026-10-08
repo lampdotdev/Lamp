@@ -19,6 +19,10 @@ struct LampProject: Identifiable, Hashable {
     let name: String    // display name
     let exe: String     // Swift target / executable name
     let dir: URL
+    /// Who this app is, whatever its folder is called: given when it's made and kept through renames, so
+    /// something started on a draft still finds the app it became, and a later draft that takes the same
+    /// folder name is a different app. Apps from before it existed use their folder name.
+    var instance: String = ""
     /// Made with New App and not named yet. The first message names it.
     var untitled = false
     var platform: Platform = .mac
@@ -44,6 +48,7 @@ struct ProjectMeta: Codable {
     var platform: Platform?   // nil in apps made before iPhone apps existed: a Mac app
     var family: DeviceFamily?  // iOS apps: which simulator they open on; nil means iPhone
     var device: String?        // iOS apps: the person's own phone (its udid) that Play puts the app on, if any
+    var instance: String?      // LampProject.instance
 }
 
 struct AppUsage: Codable {
@@ -373,6 +378,7 @@ final class Store: ObservableObject {
             guard let data = try? Data(contentsOf: dir.appendingPathComponent(".lamp/meta.json")),
                   let meta = try? JSONDecoder().decode(ProjectMeta.self, from: data) else { return nil }
             return LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
+                                instance: meta.instance ?? dir.lastPathComponent,
                                 untitled: meta.untitled ?? false, platform: meta.platform ?? .mac, family: meta.family ?? .iphone,
                                 device: meta.device)
         }
@@ -653,9 +659,7 @@ final class Store: ObservableObject {
         clearPhoneRetry(project)
         var changed = project
         changed.device = udid
-        try? JSONEncoder().encode(ProjectMeta(name: changed.name, exe: changed.exe, untitled: changed.untitled ? true : nil,
-                                              platform: changed.platform, family: changed.family, device: udid))
-            .write(to: changed.dir.appendingPathComponent(".lamp/meta.json"))
+        try? Template.saveMeta(changed)
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
         updateLocalNetwork()
         let name = devices.first(where: { $0.udid == udid })?.name
@@ -727,9 +731,7 @@ final class Store: ObservableObject {
         guard project.platform == .iphone, project.family != family, begin(project) != nil else { return }
         var changed = project
         changed.family = family
-        try? JSONEncoder().encode(ProjectMeta(name: changed.name, exe: changed.exe, untitled: changed.untitled ? true : nil,
-                                              platform: changed.platform, family: family, device: changed.device))
-            .write(to: changed.dir.appendingPathComponent(".lamp/meta.json"))
+        try? Template.saveMeta(changed)
         // In the list straight away, so nothing that starts meanwhile sees the old choice; the app itself is
         // quit so its next open is a fresh launch on the other device.
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
@@ -779,10 +781,9 @@ final class Store: ObservableObject {
         }
 
         let fm = FileManager.default
-        let renamed = LampProject(id: current.id, name: unique, exe: current.exe, dir: current.dir, platform: current.platform,
-                                  family: current.family, device: current.device)
-        try? JSONEncoder().encode(ProjectMeta(name: unique, exe: current.exe, platform: current.platform, family: current.family, device: current.device))
-            .write(to: current.dir.appendingPathComponent(".lamp/meta.json"))
+        let renamed = LampProject(id: current.id, name: unique, exe: current.exe, dir: current.dir, instance: current.instance,
+                                  platform: current.platform, family: current.family, device: current.device)
+        try? Template.saveMeta(renamed)
         if fm.fileExists(atPath: current.installedURL.path) {
             try? fm.moveItem(at: current.installedURL, to: renamed.installedURL)
             _ = await Shell.run(Self.lsregister + " -f \"$LAMP_APP\"", cwd: current.dir,
@@ -813,7 +814,8 @@ final class Store: ObservableObject {
         let fm = FileManager.default
         let project: LampProject
         do {
-            project = try Template.scaffold(name: name, platform: old.platform, family: old.family, in: root)
+            // The same app under its new name: it keeps its identity, so a snapshot from before still finds it.
+            project = try Template.scaffold(name: name, platform: old.platform, family: old.family, instance: old.instance, in: root)
         } catch {
             NSAlert(error: error).runModal()
             return old
@@ -830,9 +832,9 @@ final class Store: ObservableObject {
         try? fm.removeItem(at: old.dir)
 
         if let device = old.device {   // the phone chosen before the first message stays chosen
-            try? JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, platform: project.platform,
-                                                  family: project.family, device: device))
-                .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
+            var kept = project
+            kept.device = device
+            try? Template.saveMeta(kept)
         }
         follow(old, to: project)
         return project
@@ -842,7 +844,7 @@ final class Store: ObservableObject {
     private func renameDraft(_ old: LampProject, to name: String) -> LampProject {
         let exe = Template.identifier(from: name)
         let slug = exe.lowercased() == old.id ? old.id : Template.freeSlug(for: exe, in: root)
-        let project = LampProject(id: slug, name: name, exe: exe, dir: root.appendingPathComponent(slug),
+        let project = LampProject(id: slug, name: name, exe: exe, dir: root.appendingPathComponent(slug), instance: old.instance,
                                   platform: old.platform, family: old.family, device: old.device)
         do {
             if slug != old.id { try FileManager.default.moveItem(at: old.dir, to: project.dir) }
@@ -891,7 +893,10 @@ final class Store: ObservableObject {
     /// The app as it is now, following any rescaffold since `project` was taken (one step: `moved` always
     /// points straight at the latest id).
     func current(_ project: LampProject) -> LampProject? {
-        projects.first { $0.id == moved[project.id] ?? project.id }
+        // The app itself, under whatever folder it has now; the folder's id only for apps from before
+        // instances existed, and the signpost for a snapshot of an app that moved since.
+        if !project.instance.isEmpty, let same = projects.first(where: { $0.instance == project.instance }) { return same }
+        return projects.first { $0.id == moved[project.id] ?? project.id }
     }
 
     /// Display names must be unique: each app installs as "<name>.app" in the apps folder (Edition.appsFolder).
