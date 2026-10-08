@@ -440,6 +440,10 @@ struct ProjectView: View {
     @State private var reach = LogLine.recentCount
     /// The chat's scrolling is being watched, so earlier messages come in by themselves.
     @State private var earlierOnScroll = false
+    /// Whether the chat is at its end, and so follows what's added there.
+    @State private var follow = ChatFollow()
+    /// Goes up with each message sent from here, which takes the chat back to its end.
+    @State private var sends = 0
     /// What the toolbar knows of the app's history, for which of its buttons can do anything. Nil until read.
     @State private var history: History?
 
@@ -521,7 +525,7 @@ struct ProjectView: View {
                         chatRows(shown, height: area.size.height,
                                  cardPinned: building != nil && area.size.height >= Self.roomToPinCard)
                     }
-                    .background(EarlierOnScroll(more: start > 0, watching: $earlierOnScroll) { showEarlier(lines, from: start) })
+                    .background(EarlierOnScroll(more: start > 0, follow: follow, watching: $earlierOnScroll) { showEarlier(lines, from: start) })
                     // A readable line length; wide windows get margins instead of longer lines.
                     .frame(maxWidth: 640)
                     .padding(.horizontal, 20).padding(.vertical, 16)
@@ -532,13 +536,23 @@ struct ProjectView: View {
                 // A chat opens on its latest messages: the scroll view starts at the bottom, with
                 // no scrolling to get there.
                 .defaultScrollAnchor(.bottom)
-                .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
-                .onChange(of: written(lines)) { proxy.scrollTo("bottom", anchor: .bottom) }
-                .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
-                .onChange(of: store.progress[project.id]?.plan.count) { proxy.scrollTo("bottom", anchor: .bottom) }
-                .onChange(of: store.progress[project.id]?.screenshot != nil) { proxy.scrollTo("bottom", anchor: .bottom) }
+                // The chat follows what's added at its end, but only from the end: scrolled up to read
+                // something earlier, it stays there. Sending a message goes back to the end.
+                .onChange(of: lines.count) { followEnd(proxy) }
+                .onChange(of: written(lines)) { followEnd(proxy) }
+                .onChange(of: queued.count) { followEnd(proxy) }
+                .onChange(of: store.progress[project.id]?.plan.count) { followEnd(proxy) }
+                .onChange(of: store.progress[project.id]?.screenshot != nil) { followEnd(proxy) }
+                .onChange(of: sends) {
+                    follow.atEnd = true
+                    followEnd(proxy)
+                }
             }
         }
+    }
+
+    private func followEnd(_ proxy: ScrollViewProxy) {
+        if follow.atEnd { proxy.scrollTo("bottom", anchor: .bottom) }
     }
 
     /// Reaches one more lot back. From what's shown, not from what was asked for: a long turn can take the
@@ -923,6 +937,7 @@ struct ProjectView: View {
         let submitted = Store.Draft(text: draft, attachments: attachments, replacing: replacing,
                                     setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? [])
         guard let token = store.beginSubmission(project) else { return }
+        sends += 1
         store.saveDraft(submitted, for: project)
         PhoneSetup.shared.perform(for: project, in: store, cancelled: {
             finishSubmission(token, captured: submitted, sent: false)
