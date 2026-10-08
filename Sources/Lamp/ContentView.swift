@@ -1002,7 +1002,7 @@ struct ProjectView: View {
 struct AppInfoView: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
-    /// This app's own model choices; nil fields follow Settings.
+    /// This app's own model choices, from an earlier Lamp that let it make them; nil fields follow Settings.
     @State private var models: AppModels
 
     init(project: LampProject) {
@@ -1011,6 +1011,8 @@ struct AppInfoView: View {
     }
     /// Bumped when Settings changes, so the defaults shown are current.
     @State private var settingsRevision = 0
+    @AppStorage("settingsTab") private var settingsTab = "building"
+    @Environment(\.openSettings) private var openSettings
 
     private var usage: AppUsage { store.usage[project.id] ?? AppUsage() }
     private var requests: Int { (store.logs[project.id] ?? []).filter { $0.kind == .user }.count }
@@ -1041,43 +1043,34 @@ struct AppInfoView: View {
                     Text(runs(usage.calls, "call") + " · " + dollars(usage.cost))
                 }
             }
+            // What answers this app, read-only: models are chosen in Settings. Nothing that answers is Not Ready.
             Section {
-                let _ = settingsRevision
-                Picker("Text", selection: choice(\.text, default: AppAI.model.id)) {
-                    ForEach(AppAI.textRouteGroups(including: models.text), id: \.title) { group in
-                        Section(group.title) { ForEach(group.routes) { Text(Self.short($0.name)).tag($0.id) } }
-                    }
+                let _ = (settingsRevision, models)
+                ForEach(Capability.allCases) { capability in
+                    answerRow(capability.title, AppAI.resolve(capability, for: project))
                 }
-                Picker("Making images", selection: choice(\.image, default: Icons.artModel)) {
-                    ForEach(Icons.imageChoices, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
-                }
-                Picker("Decisions", selection: choice(\.decision, default: AppAI.decisionModel.id)) {
-                    ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }
-                }
-                if project.platform == .iphone {
-                    Picker("Away from this Mac", selection: choice(\.away, default: AppAI.awayModel.id)) {
-                        ForEach(AppAI.anthropicModels, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
-                    }
-                    Picker("Pictures away", selection: choice(\.awayImage, default: AppAI.awayImageModel)) {
-                        ForEach(Icons.artModels, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
-                    }
-                    Picker("Decisions away", selection: choice(\.awayDecision, default: AppAI.awayDecisionModel.id)) {
-                        ForEach(AppAI.awayDecisionModels, id: \.id) { Text($0.label).tag($0.id) }
+                if project.platform == .iphone, Experiments.iosApps {
+                    // Away from the Mac a phone answers only through the OpenRouter key: without one, one row says so.
+                    if Provider.hasKey {
+                        ForEach(Capability.allCases) { capability in
+                            answerRow("\(capability.title) away", AppAI.resolve(capability, for: project, in: .phoneAway))
+                        }
+                    } else {
+                        NotReadyRow(title: "Away from this Mac")
                     }
                 }
             } header: {
                 Text("AI inside this app")
             } footer: {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Starts as your choices in Settings. Changes apply straight away, without rebuilding.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    // What this app's choices come to, and what would make them better: the same as Settings says.
-                    let _ = (settingsRevision, models)
-                    ForEach(Capability.allCases) { CapabilityNote(capability: $0, project: project) }
-                    if project.platform == .iphone, Experiments.iosApps {
-                        CapabilityNote(capability: .text, project: project, context: .phoneAway)
+                HStack {
+                    Button("Configure Providers…") { settingsTab = "providers"; openSettings() }
+                    // Choices an earlier Lamp let this app make for itself: the one thing left to change here.
+                    if models != AppModels() {
+                        Button("Use Settings' Choices") { models = AppModels(); models.save(project) }
                     }
                 }
+                .controlSize(.small)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             Section {
                 let _ = settingsRevision
@@ -1095,8 +1088,8 @@ struct AppInfoView: View {
             } header: {
                 Text("Building")
             } footer: {
-                SettingsLink { Text("Change in Settings…") }
-                    .buttonStyle(.link)
+                Button("Building Settings…") { settingsTab = "building"; openSettings() }
+                    .controlSize(.small)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             Section("App") {
@@ -1129,13 +1122,13 @@ struct AppInfoView: View {
         return inside.hasPrefix("Claude") ? inside : String(label[..<open]).trimmed
     }
 
-    /// One of this app's model choices. Picking the model Settings uses means following Settings, so the app
-    /// keeps up if that default changes; any other pick is this app's own.
-    private func choice(_ field: WritableKeyPath<AppModels, String?>, default fallback: String) -> Binding<String> {
-        Binding(get: { models[keyPath: field] ?? fallback }, set: {
-            models[keyPath: field] = $0 == fallback ? nil : $0
-            models.save(project)
-        })
+    /// What answers one capability, named short (the panel is narrow), or Not Ready.
+    @ViewBuilder private func answerRow(_ title: String, _ resolution: Resolution) -> some View {
+        if resolution.tier == .none {
+            NotReadyRow(title: title)
+        } else {
+            LabeledContent(title, value: Self.short(resolution.answer ?? ""))
+        }
     }
 
     private var providerName: String {

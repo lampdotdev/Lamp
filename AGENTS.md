@@ -44,7 +44,7 @@ A capability given to one engine must be given to all of them that can take it, 
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
   Where an app's text AI goes is an `AppAI.TextRoute` (an OpenRouter model, the Claude Code or Codex sign-in,
   pi with its key provider, or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in
-  Settings → Apps and an app's info panel, and dispatched by kind in `AppAI.dispatch`. The default
+  Settings → Apps (an app's info panel only shows what answers it), and dispatched by kind in `AppAI.dispatch`. The default
   (`AppAI.defaultRoute`) is the local model that builds apps when there is one, else Sonnet through
   OpenRouter with a key, else the builder's own sign-in. Settings → AI Providers lists each provider and
   sign-in with its state, not what it's used for: that's in the menus that choose it. Decisions
