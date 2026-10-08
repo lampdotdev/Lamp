@@ -186,7 +186,8 @@ const description = `${pitch} ${noCode}`;
       <!-- The name small under the icon, as Apple labels a product, and the promise as the page's heading. -->
       <div class="hero-words flex flex-col items-center">
         <p class="mt-3 text-[15px] font-semibold tracking-tight">Lamp</p>
-        <h1 class="mt-5 font-display text-5xl leading-[1.05] font-bold tracking-tight sm:text-7xl sm:whitespace-nowrap">
+        <!-- Full size and on one line only from lg, where the card is wide enough for it; narrower, it may wrap. -->
+        <h1 class="mt-5 font-display text-5xl leading-[1.05] font-bold tracking-tight sm:text-6xl lg:text-7xl lg:whitespace-nowrap">
           Wish apps into existence.
         </h1>
         <p class="mt-5 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">{together(pitch)}<br />{together(noCode)}</p>
