@@ -5,11 +5,17 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
-## Unreleased
+## 0.10.6
 
 - What you attach in the chat stays on your Mac. An app's own files (a logo, a data file) live in its new
   `Assets` folder, the only folder bundled inside the app and shared with it; the agent copies an attachment
   there when the app should use it. Apps that already use an attachment get it copied over at their next build.
+- Making an iPhone or iPad app no longer crashes Lamp when the setup window appears.
+- The Keychain stops asking for Lamp's key at every launch: a key item that was put there by another tool is
+  made Lamp's own after the first read.
+- A picture picked in Image Playground shows on the app in the chat at once, with a word that it goes on
+  the app when the current turn ends.
+- A long chat shows its end first, and earlier messages come in as you scroll up to them.
 
 ## 0.10.5
 
