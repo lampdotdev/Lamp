@@ -46,6 +46,17 @@ enum AppSigning {
         return identity
     }
 
+    /// What the chat says when an app could only be signed ad hoc. The app works, so nothing else would tell
+    /// the person why macOS keeps asking for what they already allowed.
+    static func adHocNotice(for name: String) -> String { "Lamp couldn't sign \(name) properly, " + adHocNoticeEnd }
+    private static let adHocNoticeEnd = "so macOS will ask for its permissions again after every change."
+
+    /// Whether a chat with these lines should be told: once, not after every build, and under any name the
+    /// app has had.
+    static func needsAdHocNotice(after lines: [LogLine]) -> Bool {
+        !lines.contains { $0.kind == .status && $0.text.hasSuffix(adHocNoticeEnd) }
+    }
+
     /// What macOS checks an app against before honoring a permission it was given: its bundle ID and the
     /// certificate it's signed with ("designated => identifier … and certificate leaf = H"…""), or for an
     /// ad-hoc signature the hash of that one build. Nil when there's no signed app there.
