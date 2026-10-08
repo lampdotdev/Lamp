@@ -19,17 +19,26 @@ enum Sharing {
     static let formatVersion = 2
 
     @MainActor private static var picker: NSSharingServicePicker?
+    @MainActor private static var shareRequest = UUID()
 
     @MainActor static func share(_ project: LampProject) {
         guard let window = NSApp.keyWindow, let view = window.contentView else { return }
-        do {
-            // Separate native items keep the opening instructions beside the attachment in Mail and Messages.
-            let picker = NSSharingServicePicker(items: ["Open this with Lamp https://lamp.dev", try export(project)])
-            self.picker = picker
-            let point = view.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
-            picker.show(relativeTo: NSRect(origin: point, size: .zero), of: view, preferredEdge: .minY)
-        } catch {
-            NSAlert(error: error).runModal()
+        let point = view.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
+        let request = UUID()
+        shareRequest = request
+        Task {
+            do {
+                // Copying assets and compressing the file must leave the interface free to respond.
+                let file = try await Task.detached(priority: .userInitiated) { try export(project) }.value
+                guard shareRequest == request, window.isVisible else { return }
+                // Separate native items keep the opening instructions beside the attachment in Mail and Messages.
+                let picker = NSSharingServicePicker(items: ["Open this with Lamp https://lamp.dev", file])
+                self.picker = picker
+                picker.show(relativeTo: NSRect(origin: point, size: .zero), of: view, preferredEdge: .minY)
+            } catch {
+                guard shareRequest == request, window.isVisible else { return }
+                NSAlert(error: error).runModal()
+            }
         }
     }
 
