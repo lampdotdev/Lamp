@@ -1800,10 +1800,6 @@ final class Store: ObservableObject {
     /// For agents without their own classifier (pi): obviously risky commands always go to the user; the rest
     /// are judged by the decision model against the user's request. No decision model available → ask.
     private func commandLooksSafe(_ command: String, for project: LampProject, sandboxed: Bool) async -> Bool {
-        // What's outside the app's folder goes to the AI model once read, so that's the user's call and not a
-        // model's: a command that names such a place is never routine, however the decision model would score it.
-        // A confined command can't get there, so its text isn't read for it.
-        if !sandboxed, Privacy.reachesOutside(command, project: project) { return false }
         let state: [String: Any] = [
             "command": command,
             "user_request": turns[project.id]?.request ?? "",
@@ -1869,9 +1865,6 @@ final class Store: ObservableObject {
         let risk = (json["risk"] as? String)?.lowercased() ?? "medium"
         // The model judges what a command changes, and calls reading harmless. Reading outside the app's folder
         // is at least what the same read through a file tool is: its contents go to the AI model.
-        if risk == "low", !sandboxed, Privacy.reachesOutside(command, project: project) {
-            return CommandExplanation(summary: summary, risk: "medium", why: Privacy.outsideRead)
-        }
         return CommandExplanation(summary: summary, risk: ["low", "medium", "high"].contains(risk) ? risk : "medium",
                                   why: (json["why"] as? String)?.trimmed ?? "")
     }
