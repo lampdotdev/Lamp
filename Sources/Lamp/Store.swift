@@ -1824,11 +1824,11 @@ final class Store: ObservableObject {
     /// Whether a command is plainly fine, for every engine: the decision model's answers (CommandRisk),
     /// against the user's request. No decision model available → not plainly fine.
     private func commandVerdict(_ command: String, for project: LampProject, sandboxed: Bool) async -> CommandRisk.Verdict {
-        // A command that reads is held to the privacy setting the file tools follow: what's outside the app's
-        // folder goes to the AI model once read, so it's the user's call, however harmless the command looks.
-        // Confined, it can't read there, so that question isn't asked.
-        await CommandRisk.judge(command: command, request: turns[project.id]?.request ?? "", folder: project.dir.path,
-                                asksOutside: Privacy.asksOutsideFolder && !sandboxed) { state, questions in
+        // What a command does can be judged from its words; where it reaches can't (a link in the app's
+        // folder that leads out of it, a variable, a script). Confined, macOS answers that. Not confined,
+        // nothing does, so it's the person's call every time, whatever a model makes of the words.
+        guard sandboxed else { return .risky }
+        return await CommandRisk.judge(command: command, request: turns[project.id]?.request ?? "", folder: project.dir.path) { state, questions in
             try await AppAI.decide(state: state, questions: questions).0
         }
     }
