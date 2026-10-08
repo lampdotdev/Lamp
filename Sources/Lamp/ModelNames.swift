@@ -1,7 +1,7 @@
 import Foundation
 
-/// The names OpenRouter gives its models ("Anthropic: Claude Opus 5.5"), from the list it publishes, for
-/// saying which model did something. The list is public and asking for it sends nothing about the person.
+/// The names OpenRouter gives its models, from the list it publishes, for saying which model did something
+/// ("Claude Opus 5.5": the list's "Anthropic: Claude Opus 5.5" without the vendor, see `short`). The list is public and asking for it sends nothing about the person.
 ///
 /// The names are kept in Lamp's support folder and read from there, so nothing that shows one waits on the
 /// network or goes without offline. `refresh` brings a newer list when the kept one is over a day old; it is
@@ -25,8 +25,23 @@ enum ModelNames {
                 kept = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode(Kept.self, from: $0) }
                     ?? Kept(fetched: .distantPast, names: [:])
             }
-            return kept?.names[id]
+            return kept?.names[id].map { short($0, id: id) }
         }
+    }
+
+    /// A published name without the vendor OpenRouter puts in front of it ("Anthropic: Claude Opus 5.5" is
+    /// "Claude Opus 5.5"): the model is what's being named, and its maker is no part of that. The front is
+    /// dropped only when it is the vendor, which is the first part of the model's id ("anthropic/…", give or
+    /// take spacing and punctuation: "Z.ai" is "z-ai"). A name with no such front, or whose colon is
+    /// something else ("Venice: Uncensored"), is kept whole.
+    static func short(_ name: String, id: String) -> String {
+        guard let colon = name.range(of: ": ") else { return name }
+        func plain(_ text: Substring) -> String { text.lowercased().filter { $0.isLetter || $0.isNumber } }
+        let front = plain(name[..<colon.lowerBound])
+        let vendor = plain(id.prefix { $0 != "/" })
+        let rest = name[colon.upperBound...].trimmingCharacters(in: .whitespaces)
+        guard !front.isEmpty, !vendor.isEmpty, !rest.isEmpty, front.contains(vendor) || vendor.contains(front) else { return name }
+        return rest
     }
 
     /// Fetches the list when there's none or it's over a day old (or doesn't have `id`), and keeps it.

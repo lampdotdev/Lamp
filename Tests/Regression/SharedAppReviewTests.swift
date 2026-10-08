@@ -80,9 +80,9 @@ final class SharedAppReviewTests: XCTestCase {
         let keyed = Sharing.reviewRoute(openRouterModel: "anthropic/claude-opus-5.5", appRoute: ollama)
         XCTAssertEqual(keyed.kind, .openRouter(model: "anthropic/claude-opus-5.5"))
         // Named by what OpenRouter calls the model, when Lamp has its list.
-        let published = ["anthropic/claude-opus-5.5": "Anthropic: Claude Opus 5.5"]
+        let published = ["anthropic/claude-opus-5.5": "Claude Opus 5.5"]
         XCTAssertEqual(Sharing.reviewer(for: keyed) { Provider.modelName($0) { published[$0] } },
-                       .init(name: "Anthropic: Claude Opus 5.5 via OpenRouter", onThisMac: false))
+                       .init(name: "Claude Opus 5.5 via OpenRouter", onThisMac: false))
         // Without the list (offline, never fetched): Lamp's own name for a model it lists, else the id.
         XCTAssertEqual(Sharing.reviewer(for: keyed) { Provider.modelName($0) { _ in nil } }.name, "Claude Opus via OpenRouter")
         let other = Sharing.reviewRoute(openRouterModel: "example/some-model", appRoute: ollama)
@@ -124,6 +124,23 @@ final class SharedAppReviewTests: XCTestCase {
         XCTAssertNil(names["x/none"])
         XCTAssertEqual(names.count, 3)
         XCTAssertEqual(ModelNames.names(inList: Data("not json".utf8)), [:])
+    }
+
+    func testAPublishedNameIsShownWithoutItsVendor() {
+        XCTAssertEqual(ModelNames.short("Anthropic: Claude Opus 5.5", id: "anthropic/claude-opus-5.5"), "Claude Opus 5.5")
+        XCTAssertEqual(ModelNames.short("OpenAI: GPT-4o-mini", id: "openai/gpt-4o-mini"), "GPT-4o-mini")
+        XCTAssertEqual(ModelNames.short("Google: Gemini 3.1 Flash", id: "google/gemini-3.1-flash"), "Gemini 3.1 Flash")
+        // The vendor as the list writes it and as the id does needn't be letter for letter the same.
+        XCTAssertEqual(ModelNames.short("Meta: Llama 3.1 8B Instruct", id: "meta-llama/llama-3.1-8b-instruct"), "Llama 3.1 8B Instruct")
+        XCTAssertEqual(ModelNames.short("Z.ai: GLM 5", id: "z-ai/glm-5"), "GLM 5")
+        XCTAssertEqual(ModelNames.short("ByteDance Seed: Seed 2", id: "bytedance-seed/seed-2"), "Seed 2")
+        // Kept whole: no vendor in front, a colon that isn't the vendor's, or nothing left after it.
+        XCTAssertEqual(ModelNames.short("Mistral Large 2407", id: "mistralai/mistral-large-2407"), "Mistral Large 2407")
+        XCTAssertEqual(ModelNames.short("Venice: Uncensored", id: "cognitivecomputations/dolphin-mistral-24b-venice-edition"), "Venice: Uncensored")
+        XCTAssertEqual(ModelNames.short("Anthropic: ", id: "anthropic/x"), "Anthropic: ")
+        XCTAssertEqual(ModelNames.short("Anthropic:Claude", id: "anthropic/x"), "Anthropic:Claude")
+        XCTAssertEqual(ModelNames.short("Claude: the 2:1 mix", id: "anthropic/x"), "Claude: the 2:1 mix")
+        XCTAssertEqual(ModelNames.short("Anthropic: Claude: Opus", id: "anthropic/x"), "Claude: Opus")
     }
 
     // MARK: The answer's shape
