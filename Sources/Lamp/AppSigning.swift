@@ -76,7 +76,16 @@ enum AppSigning {
         var lines: [String] = []
         _ = await Shell.run("codesign -d -r- \"$LAMP_APP\" 2>&1", cwd: FileManager.default.temporaryDirectory,
                             env: ["LAMP_APP": app.path]) { lines.append($0) }
-        return lines.first { $0.hasPrefix("designated => ") }
+        return requirement(in: lines)
+    }
+
+    /// The requirement in what codesign printed. For a certificate signature the line is "designated => …";
+    /// for an ad hoc one codesign has no stored requirement and prints the one it worked out as
+    /// "# designated => cdhash …". Both are a signature to compare: read only the first way, an app going
+    /// from ad hoc to Lamp's certificate looked as if nothing had been there before, and its old permissions
+    /// were left in System Settings.
+    static func requirement(in output: [String]) -> String? {
+        output.lazy.map { $0.hasPrefix("# ") ? String($0.dropFirst(2)) : $0 }.first { $0.hasPrefix("designated => ") }
     }
 
     /// Clears what macOS remembers of an app's permissions (System Settings ▸ Privacy & Security).
