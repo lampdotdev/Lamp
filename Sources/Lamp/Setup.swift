@@ -297,6 +297,34 @@ private struct SettingsPane: ViewModifier {
     }
 }
 
+/// A section's on/off options, as checkboxes with the box first, as Finder's settings have them: in a stack,
+/// so the form doesn't lay each out as a label with its switch at the far end.
+struct SettingsCheckboxes<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) { content }
+            .toggleStyle(.checkbox)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension View {
+    /// Lined up with a checkbox's words: its note, or an option that's a part of it (shown only while it's on).
+    func underCheckbox() -> some View { padding(.leading, 20) }
+
+    /// A checkbox's note, under its words. Most options need none; one that does gets a sentence or two.
+    func checkboxNote(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            self
+            Text(text)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .underCheckbox()
+        }
+    }
+}
+
 /// Which agent, provider and model build apps.
 struct BuildingSettings: View {
     @EnvironmentObject private var store: Store
@@ -423,14 +451,14 @@ struct BuildingSettings: View {
         // and its fix shown.
         if ToolLocator.path(for: .claude) != nil {
             // The tool's own default stays on offer, so the account's choice can be returned to.
-            groups.append(TextGroup(title: "Claude Code", items: Builder.claudeModels.map { TextChoice(id: "claude:\($0.id)", label: $0.label) }))
+            groups.append(TextGroup(title: Engine.claude.title, items: Builder.claudeModels.map { TextChoice(id: "claude:\($0.id)", label: $0.label) }))
         } else {
-            groups.append(TextGroup(title: "Claude Code", items: [TextChoice(id: "claude:", label: "Not installed")]))
+            groups.append(TextGroup(title: Engine.claude.title, items: [TextChoice(id: "claude:", label: "Not installed")]))
         }
         if ToolLocator.path(for: .codex) != nil {
-            groups.append(TextGroup(title: "Codex", items: Builder.codexModels.map { TextChoice(id: "codex:\($0.id)", label: $0.label) }))
+            groups.append(TextGroup(title: Engine.codex.title, items: Builder.codexModels.map { TextChoice(id: "codex:\($0.id)", label: $0.label) }))
         } else {
-            groups.append(TextGroup(title: "Codex", items: [TextChoice(id: "codex:", label: "Not installed")]))
+            groups.append(TextGroup(title: Engine.codex.title, items: [TextChoice(id: "codex:", label: "Not installed")]))
         }
         for api in addedProviders {
             var items: [TextChoice] = []
@@ -540,16 +568,12 @@ struct BuildingSettings: View {
                 }
             }
             Section("Permissions and Privacy") {
-                // One row of checkboxes, box first, as Finder's settings have them: in a stack, so the form
-                // doesn't lay each out as a label with its control at the far end.
-                VStack(alignment: .leading, spacing: 10) {
+                SettingsCheckboxes {
                     Toggle("Ask before the agent opens files outside an app's folder", isOn: $askOutsideFolder)
                     Toggle("Show the agent what an app prints while it runs", isOn: $shareLog)
                     Toggle("Let the agent see the content of app windows", isOn: $sharePictures)
                     Toggle("Notify me when an app is ready or needs me", isOn: $notify)
                 }
-                .toggleStyle(.checkbox)
-                .frame(maxWidth: .infinity, alignment: .leading)
                 if notify && notificationsDenied {
                     HStack {
                         Text("Notifications are turned off for Lamp in System Settings.")
@@ -587,11 +611,7 @@ struct BuildingSettings: View {
 /// The AI, images and decisions that apps use while they run.
 struct AppsSettings: View {
     @AppStorage("appModel") private var appModel = AppAI.defaultRoute.id
-    @AppStorage("awayModel") private var awayModel = ""
-    @AppStorage("awayImageModel") private var awayImageModel = ""
-    @AppStorage("awayDecisionModel") private var awayDecisionModel = ""
     @ObservedObject private var local = LocalModels.shared
-    @AppStorage("experimentIOSApps") private var iosApps = false
     @AppStorage("settingsTab") private var settingsTab = "building"
     @AppStorage("settingsSheet") private var settingsSheet = ""
     @AppStorage("imageModel") private var imageModel = Icons.artModels[0].id
@@ -645,36 +665,12 @@ struct AppsSettings: View {
                         }
                     }
                 case "text":
-                    Text("A small text model (\(AppAI.fastModelName)) answers the questions as JSON: slower and less exact than a decision model, but needs nothing more.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    EmptyView()
                 default:
                     if KeyStore.openRouterKey == nil {
                         KeyNote(text: AppAI.canAnswer
                                 ? "Needs an OpenRouter key. Until there is one, decisions are made by \(AppAI.fastModelName) instead: slower and less exact than Jev."
                                 : "Needs an OpenRouter key, or pick another.")
-                    }
-                }
-                Text("Fast, cheap typed judgments for apps: yes/no probabilities, picking from options, and rating on a scale, each with a calibrated confidence.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if iosApps {
-                // An app on the person's phone can only reach OpenRouter when it can't reach this Mac, so the
-                // choice here is among OpenRouter's models, and it's the one thing a phone needs a key for.
-                Section("iOS apps away from this Mac (through OpenRouter)") {
-                    Picker("Text generation", selection: Binding(get: { AppAI.awayModel.id }, set: { awayModel = $0 })) {
-                        ForEach(AppAI.anthropicModels, id: \.id) { Text($0.label).tag($0.id) }
-                    }
-                    Picker("Image generation", selection: Binding(get: { AppAI.awayImageModel }, set: { awayImageModel = $0 })) {
-                        ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
-                    }
-                    Picker("Decision model", selection: Binding(get: { AppAI.awayDecisionModel.id }, set: { awayDecisionModel = $0 })) {
-                        ForEach(AppAI.awayDecisionModels, id: \.id) { Text($0.label).tag($0.id) }
-                    }
-                    if Provider.hasKey {
-                        Text("When an app can't reach this Mac it goes to OpenRouter with your key. What it spends then isn't shown in Lamp.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")
                     }
                 }
             }
@@ -691,25 +687,25 @@ struct ExperimentalSettings: View {
     @AppStorage("experimentIOSApps") private var iosApps = false
     @AppStorage(Memory.switchKey) private var memory = false
     @AppStorage("appleTeam") private var team = ""
-    @AppStorage("settingsTab") private var settingsTab = "building"
-    @AppStorage("settingsSheet") private var settingsSheet = ""
+    @AppStorage("awayModel") private var awayModel = ""
+    @AppStorage("awayImageModel") private var awayImageModel = ""
+    @AppStorage("awayDecisionModel") private var awayDecisionModel = ""
     @State private var teams: [(id: String, name: String)] = []
 
     var body: some View {
         Section {
-            // A checkbox, as in Permissions and Privacy. Where an app opens (a simulator or the person's own
-            // phone) is chosen per app under Try On, so there's nothing more to switch here: just the team the
-            // phone builds are signed for.
-            VStack(alignment: .leading, spacing: 2) {
+            // Build iOS apps comes last so its parts, which are form rows rather than checkboxes, sit right
+            // under it.
+            SettingsCheckboxes {
+                Toggle("Remember how I like things", isOn: $memory)
                 Toggle("Build iOS apps", isOn: $iosApps)
                     .onChange(of: iosApps) { store.updateLocalNetwork() }
-                Text("Choose iPhone or iPad when you start a new app, then where it opens under Try On: a simulator on this Mac, or your own iPhone or iPad. Needs Xcode.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .padding(.leading, 20)
             }
-            .toggleStyle(.checkbox)
-            .frame(maxWidth: .infinity, alignment: .leading)
             if iosApps {
+                // Where an app opens (a simulator or the person's own phone) is chosen per app under Try On, so
+                // what's here is for the phone: the team its builds are signed for, and what an app on it uses
+                // when it can't reach this Mac. Then it can only reach OpenRouter, so these are OpenRouter's
+                // models, and that's the one thing a phone needs a key for.
                 Group {
                     if teams.isEmpty {
                         TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
@@ -719,24 +715,22 @@ struct ExperimentalSettings: View {
                             if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
                         }
                     }
-                    Text("For putting an app on your own iPhone or iPad: sign in to your Apple account in Xcode, plug the phone in, and Try On offers to pair it. What the app uses away from this Mac is chosen under Apps.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Picker("Text away from this Mac", selection: Binding(get: { AppAI.awayModel.id }, set: { awayModel = $0 })) {
+                        ForEach(AppAI.anthropicModels, id: \.id) { Text($0.label).tag($0.id) }
+                    }
+                    Picker("Images away from this Mac", selection: Binding(get: { AppAI.awayImageModel }, set: { awayImageModel = $0 })) {
+                        ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
+                    }
+                    Picker("Decisions away from this Mac", selection: Binding(get: { AppAI.awayDecisionModel.id }, set: { awayDecisionModel = $0 })) {
+                        ForEach(AppAI.awayDecisionModels, id: \.id) { Text($0.label).tag($0.id) }
+                    }
                     if !Provider.hasKey {
                         KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")
                     }
                     Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() }
                 }
-                .padding(.leading, 20)
+                .underCheckbox()
             }
-            VStack(alignment: .leading, spacing: 2) {
-                Toggle("Remember how I like things", isOn: $memory)
-                Text(memory ? "Lamp keeps short notes on your taste and on what you decided about each app, whichever AI is building. See and change them under Memory, above."
-                     : "Lamp keeps short notes on your taste and on what you decided about each app, so a new app starts out in your style, whichever AI is building.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .padding(.leading, 20)
-            }
-            .toggleStyle(.checkbox)
-            .frame(maxWidth: .infinity, alignment: .leading)
         } header: { Text("Experimental") }
         .task {
             teams = await Devices.knownTeams()
@@ -760,36 +754,29 @@ struct ComputerUseSettings: View {
 
     var body: some View {
         Section("Permissions and Privacy") {
-            // Checkboxes with their descriptions under their words, as in Building's Permissions and Privacy;
-            // the choice of what does the clicking is a part of the first, so it's indented under it.
-            VStack(alignment: .leading, spacing: 4) {
+            // The choice of what does the clicking is a part of the first checkbox, so it's indented under it.
+            SettingsCheckboxes {
                 Toggle("Let apps use your other apps", isOn: Binding(get: { enabled }, set: { on in
                     if on { Task { await turnOn() } } else { enabled = false; problem = nil }
                 }))
                 .disabled(working != nil)
-                note("Lets your apps read and use your other apps, such as Slack, Mail, or Gmail and LinkedIn in your browser, with the accounts you're already signed in to. Apps ask before every click or keystroke.")
+                .checkboxNote("Lets your apps read and use your other apps, such as Slack, Mail, or Gmail and LinkedIn in your browser, with the accounts you're already signed in to. Apps ask before every click or keystroke."
+                              + (CodexComputerUse.server == nil ? " Turning it on adds CuaDriver (from Cua, open source) to Applications, and macOS asks you to allow it Accessibility and Screen Recording." : ""))
                 if CodexComputerUse.server != nil {
                     // The ChatGPT app's Computer Use is on this Mac: it does the looking and clicking, unless the
                     // person would rather keep CuaDriver.
-                    VStack(alignment: .leading, spacing: 4) {
-                        Toggle("Use the ChatGPT app's Computer Use", isOn: Binding(get: { !codexOff }, set: { useCodex in
-                            codexOff = !useCodex
-                            // Back to CuaDriver while the feature is on: it has to be installed and allowed, like a first turn-on.
-                            Task { if enabled, !useCodex { await turnOn() } else { status = await ComputerUse.status() } }
-                        }))
-                        .disabled(working != nil)
-                        note(codexOff
-                             ? "CuaDriver (from Cua, open source) does the looking and clicking: turning the setting above on adds it to Applications, and macOS asks you to allow it Accessibility and Screen Recording."
-                             : "The ChatGPT app has Computer Use installed, so it does the looking and clicking, with the permissions you gave it there. It sends real clicks to the app in the background and reads its contents without moving your pointer. Turn it off to use CuaDriver instead.")
-                    }
-                    .padding(.top, 6)
-                    .padding(.leading, 20)
-                } else {
-                    note("Turning it on adds CuaDriver (from Cua, open source) to Applications, and macOS asks you to allow it Accessibility and Screen Recording. With the ChatGPT app and its Computer Use plugin installed, Lamp uses that instead.")
+                    Toggle("Use the ChatGPT app's Computer Use", isOn: Binding(get: { !codexOff }, set: { useCodex in
+                        codexOff = !useCodex
+                        // Back to CuaDriver while the feature is on: it has to be installed and allowed, like a first turn-on.
+                        Task { if enabled, !useCodex { await turnOn() } else { status = await ComputerUse.status() } }
+                    }))
+                    .disabled(working != nil)
+                    .checkboxNote(codexOff
+                                  ? "CuaDriver (from Cua, open source) does the looking and clicking instead: macOS asks you to allow it Accessibility and Screen Recording."
+                                  : "It does the looking and clicking in the background, with the permissions you gave it there. Turn it off to use CuaDriver instead.")
+                    .underCheckbox()
                 }
             }
-            .toggleStyle(.checkbox)
-            .frame(maxWidth: .infinity, alignment: .leading)
             if let working {
                 HStack(spacing: 6) { ProgressView().controlSize(.small); Text(working).foregroundStyle(.secondary) }
                     .font(.callout)
@@ -803,14 +790,6 @@ struct ComputerUseSettings: View {
             }
         }
         .task { status = await ComputerUse.status() }
-    }
-
-    /// A checkbox's description, lined up with its words.
-    private func note(_ text: String) -> some View {
-        Text(text)
-            .font(.caption).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.leading, 20)
     }
 
     private func turnOn() async {
@@ -947,14 +926,10 @@ struct ProvidersSettings: View {
         Form {
             Section {
                 list(onThisMac)
-                if Experiments.iosApps {
-                    Text("These stay on this Mac: iOS apps can use them only on the same Wi‑Fi network as it.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
             } header: { Text("On this Mac") }
             Section {
                 if added.isEmpty {
-                    Text("No keys yet. OpenRouter gives apps the most to choose from and makes pictures\(Experiments.iosApps ? ", and goes with an app to your iPhone or iPad" : "").")
+                    Text("No keys yet. Click + to add one; OpenRouter's gives apps the most to choose from.")
                         .font(.callout).foregroundStyle(.secondary)
                 } else {
                     list(added.map(\.id))
@@ -981,9 +956,6 @@ struct ProvidersSettings: View {
                     .disabled(selection.flatMap(Provider.keyProvider) == nil)
                     .help("Only keys can be removed")
                     Spacer()
-                    if Experiments.iosApps {
-                        Text("A key can go with an app to your iPhone or iPad.").font(.caption).foregroundStyle(.secondary)
-                    }
                 }
             } header: { Text("With your key") }
         }
