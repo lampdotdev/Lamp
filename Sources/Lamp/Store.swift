@@ -2829,7 +2829,10 @@ final class Store: ObservableObject {
                 // shows the artwork now, so "designed an icon" isn't a tick beside the old one.
                 guard begin(project) != nil else {
                     pendingIconArt.insert(project.id)
-                    if Icons.load(project) == spec { icons[project.id] = await Icons.preview(spec, art: art) }
+                    // Rendering takes a moment, and the turn may redesign the icon meanwhile (or restore a version
+                    // with another): the preview is kept only if the design is still this one.
+                    let preview = await Icons.preview(spec, art: art)
+                    if exists(project), Icons.load(project) == spec { icons[project.id] = preview }
                     return
                 }
                 await applyIconArt(project, spec: spec)
