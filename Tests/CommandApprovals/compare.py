@@ -73,6 +73,8 @@ def enforce(profile):
         env = dict(os.environ, **dict(pair.split("=", 1) for pair in item["env"].split() if "=" in pair))
         argv = ([ "/usr/bin/sandbox-exec", "-f", profile] if confined else []) + [shell, "-c", item["command"]]
         out = subprocess.run(argv, cwd=APP, env=env, capture_output=True, text=True, timeout=30)
+        # A profile macOS won't load stops the shell before it starts: that's nothing run, not something refused.
+        if confined and "sandbox-exec:" in out.stderr: sys.exit(f"The sandbox didn't start for {item['id']}: {out.stderr.strip()[:200]}")
         # Its content printed or copied into the app, its name listed, or the file itself changed.
         leaked = CANARY in out.stdout or "private.txt" in out.stdout or inside_has_canary() or not intact()
         # Put everything back for the next one.
@@ -81,6 +83,14 @@ def enforce(profile):
         for name in ["audit.txt", "Sources/audit.txt", "Sources/private.txt"]:
             if os.path.exists(os.path.join(APP, name)): os.remove(os.path.join(APP, name))
         return leaked
+    # First, that a confined shell runs at all and can still work inside the app: without this, a profile that
+    # stops everything would look like one that stops the right things.
+    for shell in ("/bin/bash", "/bin/zsh"):
+        inside = {"id": "inside", "env": "", "command": "cd Sources; grep -c . App.swift > ../build/enforce-check; cd ..; cat build/enforce-check; rm build/enforce-check"}
+        argv = ["/usr/bin/sandbox-exec", "-f", profile, shell, "-c", inside["command"]]
+        out = subprocess.run(argv, cwd=APP, capture_output=True, text=True, timeout=30)
+        if out.returncode != 0 or not out.stdout.strip().isdigit():
+            sys.exit(f"Confined, {shell} couldn't read and write inside the app, so nothing below would mean anything: {out.stderr.strip()[:200] or out.stdout[:200]}")
     print("| Command | Judged plainly fine | Not confined: reaches outside (bash, zsh) | Confined: reaches outside (bash, zsh) |\n| --- | --- | --- | --- |")
     through = 0
     for item in links:
