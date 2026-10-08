@@ -2059,8 +2059,10 @@ final class Store: ObservableObject {
             return (200, ["text": "Lamp isn't allowed to control the simulator yet. The user has just been asked to allow it (System Settings → " +
                           "Privacy & Security → Accessibility). Say so to the user in plain words, and try again on their next request."])
         }
-        guard let screen = await Simulator.Driver.screen(of: running.udid, owner: "\(project.id):\(running.pid)") else {
-            return (200, ["text": "Lamp can't find the iPhone's screen in the Simulator window. Make sure the Simulator is open and showing the iPhone, then try again."])
+        let screen: Simulator.Driver.Screen
+        switch await Simulator.Driver.screen(of: running.udid, owner: "\(project.id):\(running.pid)") {
+        case .success(let found): screen = found
+        case .failure(let trouble): return (200, ["text": trouble.message(viewer: Simulator.viewerName(), device: project.family.name)])
         }
         guard let data = json.data(using: .utf8), let decoded = try? JSONDecoder().decode([Simulator.Driver.Action].self, from: data) else {
             return (400, ["error": "use_app needs a list of actions."])
@@ -2088,7 +2090,7 @@ final class Store: ObservableObject {
                 "Call look_at_app to build and open them."
         }
         // The screen in words goes wherever its picture does: what's on it is the same thing either way.
-        if Privacy.sharesPictures, let words = Simulator.Driver.screenText(on: screen) { text += "\n\n" + words }
+        if Privacy.sharesPictures, let words = await Simulator.Driver.screenText(on: screen) { text += "\n\n" + words }
         text += Privacy.sharesPictures
             ? "\n\nA picture of the iPhone's screen follows. Points for the next use_app are pixels in it."
             : "\n\n" + Privacy.picturesOff
@@ -2657,7 +2659,7 @@ final class Store: ObservableObject {
             }
             guard stillOwns() else { return giveBack("The app was deleted or stopped before it opened.") }
             Runtime.startLog(project)
-            Simulator.Driver.forget(project.id)
+            await Simulator.Driver.forget(project.id)
             let pid = try await Simulator.launch(project.bundleID, on: udid, log: Runtime.logURL(project))
             // The same could have happened during the launch itself: then the app just started belongs to
             // nobody, and is stopped before anything records it.
@@ -3705,10 +3707,15 @@ final class Store: ObservableObject {
             if !Privacy.sharesLog { text += " " + Privacy.logOff }
             // The screen in words, beside its picture. Reading it needs the same permission as use_app, which
             // is what asks for it: until then a look is the picture alone, as it always was.
-            if Privacy.sharesPictures, Simulator.Driver.isAllowed, let running = simulatorApps[project.id],
-               let screen = await Simulator.Driver.screen(of: running.udid, owner: "\(project.id):\(running.pid)"),
-               let words = Simulator.Driver.screenText(on: screen) {
-                text += "\n\n" + words
+            if Privacy.sharesPictures, Simulator.Driver.isAllowed, let running = simulatorApps[project.id] {
+                switch await Simulator.Driver.screen(of: running.udid, owner: "\(project.id):\(running.pid)") {
+                case .success(let screen):
+                    if let words = await Simulator.Driver.screenText(on: screen) { text += "\n\n" + words }
+                case .failure(let trouble):
+                    // The picture came from the simulator itself and is good; only the words and use_app need the window.
+                    text += "\n\nThe screen as text is missing, and use_app would be refused for the same reason: " +
+                        trouble.message(viewer: Simulator.viewerName(), device: project.family.name)
+                }
             }
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
             return (200, ["text": text, "screenshots": Privacy.sharesPictures ? screenshots.map(\.path) : []])

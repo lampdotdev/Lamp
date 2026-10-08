@@ -100,15 +100,38 @@ enum Simulator {
 
     /// Brings the simulator's window to the front, showing this iPhone when the app shows one device at a time.
     static func show(_ udid: String? = nil) async {
-        guard let developer = PhoneTools.discover(), let viewer = viewer(in: developer) else { return }
-        _ = await Subprocess.run("/usr/bin/open", [viewer.path], timeout: 30)
+        guard await open(inFront: true) else { return }
         if let udid { await Driver.choose(udid) }
+    }
+
+    /// Opens that app, in front or behind whatever the person is doing. False when this Xcode has none.
+    static func open(inFront: Bool) async -> Bool {
+        guard let developer = PhoneTools.discover(), let viewer = viewer(in: developer) else { return false }
+        return await Subprocess.run("/usr/bin/open", (inFront ? [] : ["-g"]) + [viewer.path], timeout: 30).ok
+    }
+
+    /// What the person knows that app as, for telling them or the agent about it.
+    static func viewerName(oneAtATime: Bool) -> String { oneAtATime ? "Device Hub" : "Simulator" }
+
+    /// The same, before it's running: by which of the two this Xcode has.
+    static func viewerName() -> String {
+        viewerName(oneAtATime: PhoneTools.discover().flatMap(viewer(in:))?.lastPathComponent == "DeviceHub.app")
     }
 }
 
 // MARK: - Driving the simulator
 
 import AppKit
+
+/// Where another app's accessibility tree is read: one queue of Lamp's own, never the main thread. Each
+/// read is a message to that app and waits for its answer, so a busy or stuck Device Hub would otherwise
+/// hold up Lamp's own windows for as long as it took.
+@globalActor
+actor AccessibilityActor {
+    static let shared = AccessibilityActor()
+    private static let queue = DispatchSerialQueue(label: "dev.lamp.accessibility", qos: .userInitiated)
+    nonisolated var unownedExecutor: UnownedSerialExecutor { Self.queue.asUnownedSerialExecutor() }
+}
 
 extension Simulator {
     /// Uses the app in the simulator the way a person would, for the agent's `use_app`. The Simulator app on
@@ -118,9 +141,13 @@ extension Simulator {
     /// Simulator. The same tree, read whole, is the screen as text that follows every look and use
     /// (`screenText`). This needs Lamp to be allowed to control the computer (System Settings → Privacy &
     /// Security → Accessibility); the first use asks.
-    @MainActor
+    ///
+    /// It is another app's window being driven, so nothing here may wait on it without a limit: every call
+    /// to it gives up after `patience`, and once one has, the rest are skipped for a moment (`notAnswering`)
+    /// rather than each waiting its turn to time out.
+    @AccessibilityActor
     enum Driver {
-        struct Action: Decodable {
+        struct Action: Decodable, Sendable {
             let action: String
             var x: Double?
             var y: Double?
@@ -131,19 +158,20 @@ extension Simulator {
             var direction: String?
         }
 
-        static var isAllowed: Bool { AXIsProcessTrusted() }
+        nonisolated static var isAllowed: Bool { AXIsProcessTrusted() }
 
         /// Asks macOS to let Lamp control the computer: the system opens the Accessibility list once.
-        static func ask() {
+        nonisolated static func ask() {
             _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
         }
 
         /// The simulated iPhone's screen as the Mac sees it: the Simulator's accessibility app element, the
         /// screen's origin on the Mac's display, and the device's pixel scale, for turning picture pixels
         /// into points on screen.
-        struct Screen {
+        struct Screen: @unchecked Sendable {
             let app: AXUIElement
             let window: AXUIElement     // the one Simulator window showing this device: lookups stay inside it
+            let box: AXUIElement        // the screen itself in that window; `rect` is where it was when found
             let rect: CGRect            // the device's screen on the Mac's display
             let udid: String
             let owner: String           // the project and launch these actions are for; remembered fields are theirs
@@ -153,21 +181,105 @@ extension Simulator {
             var title = ""              // the window's title when found: "<device> – <runtime>"
             var oneAtATime = false      // Device Hub: one window for whichever device is chosen in its list
             var origin: CGPoint { rect.origin }
+            /// What the person calls the app showing it.
+            var viewer: String { Simulator.viewerName(oneAtATime: oneAtATime) }
             /// Pictures are made at point size (`screenshot`), so a pixel in them is a point on the device, which
             /// the Simulator shows `zoom` times as large.
             func point(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: origin.x + x * zoom, y: origin.y + y * zoom) }
         }
 
-        static func screen(of udid: String, owner: String) async -> Screen? {
-            guard let (pid, oneAtATime) = viewer() else { return nil }
+        /// Why the iPhone's screen can't be read or tapped just now. Each is its own case because each has
+        /// its own remedy, and the agent is told the one that happened.
+        enum Trouble: Error, Equatable {
+            case notOpen            // the app that shows simulators isn't running, and didn't open
+            case notAnswering       // it's running but not answering accessibility calls
+            case noDevice           // the simulator itself couldn't be asked about its screen
+            case notListed          // Device Hub has no row for this device, or wouldn't select it
+            case noWindow           // no window is showing this device
+            case connecting         // the window is this device's, but its screen isn't up in it yet
+            case unclear            // more than one thing could be the screen: no guessing
+
+            /// For the agent: what's wrong, that nothing was touched, and what to do. `viewer` is the app this
+            /// Xcode has (Simulator, or Device Hub from Xcode 27) and `device` what's being tried (iPhone, iPad).
+            func message(viewer: String, device: String) -> String {
+                switch self {
+                case .notOpen:
+                    "\(viewer), the app from Xcode that shows the \(device), isn't open, and Lamp couldn't open it. Nothing was tapped. " +
+                        "Tell the user in plain words that \(viewer) needs to be open, and try again once they say it is."
+                case .notAnswering:
+                    "\(viewer) is open but isn't answering Lamp (it's busy or stuck), so nothing was tapped. Try once more; " +
+                        "if it still isn't answering, tell the user in plain words that \(viewer) seems stuck and may need quitting and opening again."
+                case .noDevice:
+                    "Lamp couldn't ask the \(device) simulator about its screen, so nothing was tapped. Call look_at_app, which opens the app again, then try again."
+                case .notListed:
+                    "\(viewer) is open but this \(device) isn't in its list of devices, so Lamp can't bring up its screen. Nothing was tapped. " +
+                        "Call look_at_app and try again; if it's the same, tell the user in plain words that \(viewer) isn't showing their \(device)."
+                case .noWindow:
+                    "\(viewer) is open but has no window showing this \(device). Nothing was tapped. " +
+                        "Call look_at_app and try again; if it's the same, tell the user in plain words that \(viewer) isn't showing their \(device)."
+                case .connecting:
+                    "\(viewer) has this \(device) up but is still connecting to its screen, so there's nothing to tap yet. Nothing was tapped. " +
+                        "Try again; if it's still connecting after two more tries, tell the user in plain words that \(viewer) is stuck connecting to the \(device)."
+                case .unclear:
+                    "Lamp found more than one thing in \(viewer)'s window that could be the \(device)'s screen, and won't guess which. Nothing was tapped. " +
+                        "Go by the picture from look_at_app, and tell the user in plain words that you could look at the app but not use it this time."
+                }
+            }
+        }
+
+        // MARK: Not waiting on a stuck app
+
+        /// The longest one call to the other app may take. A screen's whole tree is read in a fifth of a
+        /// second, so an answer this late isn't coming.
+        nonisolated static var patience: TimeInterval { 2 }
+
+        /// Until when the other app is taken as not answering: a short while after a call to it timed out.
+        private static var silentUntil = Date.distantPast
+        private static var hurried = false
+
+        /// Whether a call to the other app just timed out. While it is true nothing more is asked of it.
+        static var notAnswering: Bool { Date() < silentUntil }
+
+        /// Makes every call give up after `patience` instead of the system's six seconds. It is set for all
+        /// of Lamp's accessibility calls, which are only the ones here.
+        private static func hurry() {
+            guard !hurried else { return }
+            hurried = true
+            AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), Float(patience))
+        }
+
+        /// One call to the other app. Skipped while it isn't answering; and a call that fails only after
+        /// the whole wait is what a stuck app looks like (one that has quit fails at once).
+        static func call(_ body: () -> AXError) -> AXError {
+            guard !notAnswering else { return .cannotComplete }
+            hurry()
+            let began = Date()
+            let result = body()
+            if result == .cannotComplete, Date().timeIntervalSince(began) > patience * 0.75 { silentUntil = Date().addingTimeInterval(patience) }
+            return result
+        }
+
+        // MARK: Finding the screen
+
+        static func screen(of udid: String, owner: String) async -> Result<Screen, Trouble> {
+            var found = viewer()
+            if found == nil {
+                // A look in the background never opened it: Lamp does, behind whatever the person is doing.
+                guard await Simulator.open(inFront: false) else { return .failure(.notOpen) }
+                for _ in 0..<40 where found == nil {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    found = viewer()
+                }
+            }
+            guard let (pid, oneAtATime) = found else { return .failure(.notOpen) }
             let width = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_WIDTH"], timeout: 20)).output.trimmed) ?? 0
             let height = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_HEIGHT"], timeout: 20)).output.trimmed) ?? 0
             let scale = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_SCALE"], timeout: 20)).output.trimmed) ?? 0
-            guard width > 0, height > 0, scale > 0 else { return nil }
+            guard width > 0, height > 0, scale > 0 else { return .failure(.noDevice) }
             let app = AXUIElementCreateApplication(pid)
             // Each window is titled "<device> – <runtime>", which is the whole identity it shows: the one
             // window with exactly this device's title, and none when two devices share it.
-            guard let title = deviceTitle(udid) else { return nil }
+            guard let title = deviceTitle(udid) else { return .failure(.noDevice) }
             func titled() -> [AXUIElement] {
                 (attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? []).filter { attribute($0, kAXTitleAttribute) as? String == title }
             }
@@ -175,55 +287,80 @@ extension Simulator {
             // Device Hub has one window for whichever device is chosen in its list: choose this one. Always
             // by its identifier, since a title alone could be another device of the same name and runtime.
             if oneAtATime {
-                let already = isChosen(udid, in: app)
-                guard already || choose(udid, in: app) else { return nil }
+                // Just opened, or the device just booted: its row takes a moment to arrive.
+                var row = row(for: udid, in: app)
+                for _ in 0..<20 where row == nil && !notAnswering {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    row = self.row(for: udid, in: app)
+                }
+                guard let row else { return .failure(notAnswering ? .notAnswering : .notListed) }
+                let already = isSelected(row)
+                guard already || select(row) else { return .failure(notAnswering ? .notAnswering : .notListed) }
                 if !already { windows = [] }   // what was there showed the device chosen before
-                for _ in 0..<10 where windows.isEmpty {
+                for _ in 0..<15 where windows.isEmpty && !notAnswering {
                     try? await Task.sleep(for: .milliseconds(200))
                     windows = titled()
                 }
             }
-            guard windows.count == 1, let window = windows.first else { return nil }
+            guard !notAnswering else { return .failure(.notAnswering) }
+            guard let window = windows.first else { return .failure(.noWindow) }
+            guard windows.count == 1 else { return .failure(.unclear) }
             let points = CGSize(width: width / scale, height: height / scale)
-            // The picture of the screen can arrive a moment after the window does.
-            var found = screenFrame(in: window, shaped: points)
-            for _ in 0..<10 where found == nil {
+            // The screen arrives after the window does: Device Hub says it's connecting the display first.
+            var boxes = screenBoxes(in: window, shaped: points)
+            for _ in 0..<40 where boxes.isEmpty && !notAnswering {
                 try? await Task.sleep(for: .milliseconds(200))
-                found = screenFrame(in: window, shaped: points)
+                boxes = screenBoxes(in: window, shaped: points)
             }
-            guard let frame = found else { return nil }
-            return Screen(app: app, window: window, rect: frame, udid: udid, owner: owner, scale: scale,
-                          zoom: frame.width / points.width, pid: pid, title: title, oneAtATime: oneAtATime)
+            guard !notAnswering else { return .failure(.notAnswering) }
+            guard let box = boxes.first else { return .failure(.connecting) }
+            // Shape is all that marks the screen, so two things with it are one too many to tap on.
+            guard boxes.count == 1 else { return .failure(.unclear) }
+            return .success(Screen(app: app, window: window, box: box.element, rect: box.rect, udid: udid, owner: owner, scale: scale,
+                                   zoom: box.rect.width / points.width, pid: pid, title: title, oneAtATime: oneAtATime))
         }
 
-        /// Whether the window still shows this device. Device Hub's one window goes to whichever device is
-        /// chosen next (by the person, or by Lamp for another app), and what was this iPhone's screen is
-        /// then another's: nothing more may be tapped or read there.
-        static func shows(_ screen: Screen) -> Bool {
-            guard attribute(screen.window, kAXTitleAttribute) as? String == screen.title else { return false }
-            return !screen.oneAtATime || isChosen(screen.udid, in: screen.app)
+        /// Whether the window still shows this device, where it did.
+        static func shows(_ screen: Screen) -> Bool { lost(screen) == nil }
+
+        /// Why nothing more may be tapped or read on this screen, if so. Device Hub's one window goes to
+        /// whichever device is chosen next (by the person, or by Lamp for another app), and what was this
+        /// iPhone's screen is then another's; a window that was moved or resized has the screen somewhere
+        /// else than the points were worked out for.
+        static func lost(_ screen: Screen) -> String? {
+            let title = attribute(screen.window, kAXTitleAttribute) as? String
+            let chosen = !screen.oneAtATime || isChosen(screen.udid, in: screen.app)
+            let rect = frame(of: screen.box)
+            if notAnswering { return "\(screen.viewer) stopped answering Lamp. Try once more; if it still isn't answering, tell the user it seems stuck." }
+            guard title == screen.title, chosen else { return "the simulator is showing another device now. Call look_at_app to bring this one back." }
+            guard rect == screen.rect else { return "\(screen.viewer)'s window was moved or resized, so the points no longer line up. Call use_app again." }
+            return nil
         }
 
-        /// The screen is the group shaped like the device's screen (it may be drawn smaller or larger than
-        /// its size in points: the window can be zoomed), the largest such if several. Simulator has it at
-        /// the top of its window and Device Hub a few layers down, so the window is searched; not inside a
-        /// match, where the app's own full-screen views have the same shape.
-        private static func screenFrame(in window: AXUIElement, shaped points: CGSize) -> CGRect? {
-            let ratio = points.width / points.height
-            var matches: [CGRect] = []
+        /// A rectangle the shape of a device's screen, however large it's drawn: the window can be zoomed.
+        nonisolated static func isShaped(_ rect: CGRect, like points: CGSize) -> Bool {
+            rect.width > 50 && rect.height > 50 && abs(rect.width / rect.height - points.width / points.height) < 0.02
+        }
+
+        /// Everything in the window that could be the device's screen: a group shaped like it. Nothing in
+        /// either app names the screen, so shape is what there is, and the caller takes it only when it is
+        /// the one such thing. Simulator has it at the top of its window and Device Hub a few layers down, so
+        /// the window is searched; not inside a match, where the app's own full-screen views have the same
+        /// shape.
+        private static func screenBoxes(in window: AXUIElement, shaped points: CGSize) -> [(element: AXUIElement, rect: CGRect)] {
+            var matches: [(element: AXUIElement, rect: CGRect)] = []
             func visit(_ element: AXUIElement, depth: Int) {
                 for child in children(element) {
                     let rect = frame(of: child)
-                    if attribute(child, kAXRoleAttribute) as? String == kAXGroupRole, rect.width > 50, rect.height > 50,
-                       abs(rect.width / rect.height - ratio) < 0.02 {
-                        matches.append(rect)
+                    if attribute(child, kAXRoleAttribute) as? String == kAXGroupRole, isShaped(rect, like: points) {
+                        matches.append((child, rect))
                     } else if depth < 8, rect.width > 50, rect.height > 50 {
                         visit(child, depth: depth + 1)
                     }
                 }
             }
             visit(window, depth: 0)
-            return matches.max(by: { $0.width < $1.width })
+            return matches
         }
 
         /// The process showing simulators on screen (Simulator.viewers), if it's running.
@@ -247,22 +384,21 @@ extension Simulator {
         static func choose(_ udid: String) async {
             guard isAllowed else { return }
             // Just opened: its window takes a moment to arrive.
-            for _ in 0..<15 {
-                if let pid = viewer()?.pid, choose(udid, in: AXUIElementCreateApplication(pid)) { return }
+            for _ in 0..<15 where !notAnswering {
+                if let pid = viewer()?.pid, let row = row(for: udid, in: AXUIElementCreateApplication(pid)), isSelected(row) || select(row) { return }
                 if NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.iphonesimulator").first != nil { return }
                 try? await Task.sleep(for: .milliseconds(200))
             }
         }
 
-        @discardableResult
-        private static func choose(_ udid: String, in app: AXUIElement) -> Bool {
-            guard let row = row(for: udid, in: app) else { return false }
-            if (attribute(row, kAXSelectedAttribute) as? Bool) == true { return true }
-            return AXUIElementSetAttributeValue(row, kAXSelectedAttribute as CFString, kCFBooleanTrue) == .success
+        private static func isSelected(_ row: AXUIElement) -> Bool { (attribute(row, kAXSelectedAttribute) as? Bool) == true }
+
+        private static func select(_ row: AXUIElement) -> Bool {
+            call { AXUIElementSetAttributeValue(row, kAXSelectedAttribute as CFString, kCFBooleanTrue) } == .success
         }
 
         private static func isChosen(_ udid: String, in app: AXUIElement) -> Bool {
-            row(for: udid, in: app).map { (attribute($0, kAXSelectedAttribute) as? Bool) == true } ?? false
+            row(for: udid, in: app).map(isSelected) ?? false
         }
 
         /// The device's row in Device Hub's list: the one something in it names with the device's identifier.
@@ -286,18 +422,25 @@ extension Simulator {
         /// Carries out the actions in order and says what each one did, like the Mac apps' driver. `live` is
         /// asked before every action: when the turn was stopped, the app deleted or the app gone, the rest of
         /// the batch is dropped rather than carried out on whatever the simulator shows next.
-        static func perform(_ actions: [Action], on screen: Screen, picture: URL, live: () -> Bool) async -> String {
+        static func perform(_ actions: [Action], on screen: Screen, picture: URL, live: @MainActor @Sendable () -> Bool) async -> String {
             var lines: [String] = []
             var before = try? Data(contentsOf: picture)
             // Asked again after every wait inside an action too: the screen has to be this iPhone's each time.
-            func here() -> Bool { live() && shows(screen) }
+            func here() async -> Bool { await live() && shows(screen) }
             for action in actions {
-                guard here() else {
-                    lines.append(shows(screen) ? "stopped before the rest: the app was stopped, deleted or closed"
-                        : "stopped before the rest: the simulator is showing another device now. Call look_at_app to bring this one back.")
+                guard await live() else {
+                    lines.append("stopped before the rest: the app was stopped, deleted or closed")
+                    break
+                }
+                if let reason = lost(screen) {
+                    lines.append("stopped before the rest: " + reason)
                     break
                 }
                 lines.append(await carryOut(action, on: screen, live: here))
+                // An action that ran into a stuck app found nothing where there was something: say which it was.
+                if notAnswering {
+                    lines[lines.count - 1] += " (\(screen.viewer) stopped answering Lamp during this, so it may not have happened; look at the picture)"
+                }
                 try? await Task.sleep(for: .milliseconds(350))
                 _ = await Simulator.screenshot(on: screen.udid, to: picture)
                 let after = try? Data(contentsOf: picture)
@@ -310,7 +453,7 @@ extension Simulator {
         /// The app was relaunched: whatever field was remembered for the project is gone.
         static func forget(_ projectID: String) { lastFields = lastFields.filter { !$0.key.hasPrefix(projectID + ":") } }
 
-        private static func carryOut(_ action: Action, on screen: Screen, live: () -> Bool) async -> String {
+        private static func carryOut(_ action: Action, on screen: Screen, live: () async -> Bool) async -> String {
             let at = "\(Int(action.x ?? 0)), \(Int(action.y ?? 0))"
             let point = screen.point(action.x ?? 0, action.y ?? 0)
             switch action.action {
@@ -327,13 +470,13 @@ extension Simulator {
                     mouse(.leftMouseUp, at: point, pid: screen.pid)   // the finger comes up whatever happened meanwhile
                     return "long press at \(at): \(name)"
                 }
-                var pressed = AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
-                if !pressed {   // not everything takes a press through accessibility: a real tap then
+                var pressed = press(element)
+                if !pressed, !notAnswering {   // not everything takes a press through accessibility: a real tap then
                     mouse(.leftMouseDown, at: point, pid: screen.pid); mouse(.leftMouseUp, at: point, pid: screen.pid); pressed = true
                 }
                 if action.action == "double_click" {
                     try? await Task.sleep(for: .milliseconds(80))
-                    if live() { _ = AXUIElementPerformAction(element, kAXPressAction as CFString) }
+                    if await live() { _ = press(element) }
                 }
                 return "\(action.action == "double_click" ? "double tap" : "tap") at \(at): \(name)"
             case "type":
@@ -345,7 +488,7 @@ extension Simulator {
                 }
                 // The text replaces what the field holds: a tapped field on an iPhone shows its old value
                 // formatted ("0.00"), and typing after it would make nonsense of a number.
-                let result = AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, text as CFTypeRef)
+                let result = call { AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, text as CFTypeRef) }
                 return result == .success ? "typed \"\(text)\" into \(describe(field)); it now holds that" : "couldn't type into \(describe(field))"
             case "key":
                 let key = (action.key ?? "").lowercased()
@@ -355,7 +498,7 @@ extension Simulator {
                 // Keys reach the simulated iPhone only while the Simulator is the active app.
                 NSRunningApplication(processIdentifier: screen.pid)?.activate()
                 try? await Task.sleep(for: .milliseconds(300))
-                guard live() else { return "stopped before pressing \(key)" }
+                guard await live() else { return "stopped before pressing \(key)" }
                 let code: CGKeyCode = key.hasPrefix("ret") || key == "enter" ? 36 : 53
                 CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true)?.postToPid(screen.pid)
                 CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false)?.postToPid(screen.pid)
@@ -376,10 +519,10 @@ extension Simulator {
                 swipe(from: point, by: delta, pid: screen.pid)
                 if let item = action.item {
                     try? await Task.sleep(for: .milliseconds(500))
-                    guard live() else { return "swiped \(direction) at \(at), then stopped before tapping \"\(item)\"" }
+                    guard await live() else { return "swiped \(direction) at \(at), then stopped before tapping \"\(item)\"" }
                     // What the swipe uncovered (a row's actions, say): tap the one named.
                     if let button = button(named: item, in: screen) {
-                        _ = AXUIElementPerformAction(button, kAXPressAction as CFString)
+                        _ = press(button)
                         return "swiped \(direction) at \(at) and tapped \"\(item)\""
                     }
                     return "swiped \(direction) at \(at), but nothing called \"\(item)\" appeared"
@@ -398,7 +541,7 @@ extension Simulator {
 
         /// One thing on the iPhone's screen, as its accessibility tree names it. `frame` is in the picture's
         /// pixels (points on the device), so what the agent reads lines up with what it sees and taps.
-        struct Item: Equatable {
+        struct Item: Equatable, Sendable {
             var role: String
             var label = ""
             var value = ""
@@ -408,21 +551,31 @@ extension Simulator {
         }
 
         /// The most things listed: a full screen is a few dozen, and past this the list costs more than it tells.
-        static let itemLimit = 120
+        nonisolated static var itemLimit: Int { 120 }
 
         /// The whole screen in words, for the agent to read beside the picture: what's there, what each thing
         /// holds and where to tap it. Nil when the screen shows nothing with a name.
-        static func screenText(on screen: Screen) -> String? { shows(screen) ? text(for: items(on: screen)) : nil }
+        /// A screen that couldn't be read whole says so in a line instead: half a screen would pass for all of it.
+        static func screenText(on screen: Screen) -> String? {
+            guard shows(screen) else { return notAnswering ? unread(screen) : nil }
+            guard let items = items(on: screen) else { return unread(screen) }
+            return text(for: items)
+        }
+
+        private static func unread(_ screen: Screen) -> String {
+            "The screen as text is missing this time: \(screen.viewer) didn't answer Lamp in time. Go by the picture."
+        }
 
         /// Everything on this device's screen that says something or can be tapped, in the order the screen
         /// reads. Containers with no name of their own are left out, and so is a control's own caption (a
-        /// button's text is the button).
-        static func items(on screen: Screen) -> [Item] {
+        /// button's text is the button). Nil when the app stopped answering or took too long partway.
+        static func items(on screen: Screen) -> [Item]? {
             var found: [Item] = []
+            let limit = Date().addingTimeInterval(readLimit)
             let wanted = [kAXRoleAttribute, kAXSubroleAttribute, kAXDescriptionAttribute, kAXTitleAttribute, kAXValueAttribute,
                           kAXPositionAttribute, kAXSizeAttribute, kAXSelectedAttribute, kAXEnabledAttribute, kAXChildrenAttribute]
             func visit(_ element: AXUIElement, depth: Int, under: String) {
-                guard depth < 40, found.count < 400 else { return }
+                guard depth < 40, found.count < 400, Date() < limit, !notAnswering else { return }
                 let read = attributes(element, wanted)
                 let role = read[0] as? String ?? "", subrole = read[1] as? String ?? ""
                 var origin = CGPoint.zero, size = CGSize.zero
@@ -451,13 +604,16 @@ extension Simulator {
                 for child in read[9] as? [AXUIElement] ?? [] { visit(child, depth: depth + 1, under: caption) }
             }
             visit(screen.window, depth: 0, under: "")
-            return found
+            return Date() < limit && !notAnswering ? found : nil
         }
+
+        /// The longest a whole screen may take to read or search. Usually a fifth of a second.
+        nonisolated static var readLimit: TimeInterval { 4 }
 
         /// What a thing is called and what it holds. Plain text keeps its words in its value, so they are
         /// its name; a control's value is its state (a switch on, a field's contents), and stays that even
         /// when the control has no name, which is then plain to see.
-        static func naming(control: Bool, label: String, value: String) -> (label: String, value: String) {
+        nonisolated static func naming(control: Bool, label: String, value: String) -> (label: String, value: String) {
             let label = label.trimmed, value = value.trimmed
             return label.isEmpty && !control ? (value, "") : (label, value)
         }
@@ -472,7 +628,7 @@ extension Simulator {
         /// takes seconds to read.
         private static func attributes(_ element: AXUIElement, _ names: [String]) -> [CFTypeRef?] {
             var values: CFArray?
-            guard AXUIElementCopyMultipleAttributeValues(element, names as CFArray, [], &values) == .success,
+            guard call({ AXUIElementCopyMultipleAttributeValues(element, names as CFArray, [], &values) }) == .success,
                   let list = values as? [AnyObject], list.count == names.count else { return names.map { attribute(element, $0) } }
             return list.map { value in
                 // What an element doesn't have comes back as an error value in its place.
@@ -482,7 +638,7 @@ extension Simulator {
         }
 
         /// One short line for each thing: what it is, its name, what it holds, the point to tap and its size.
-        static func text(for items: [Item]) -> String? {
+        nonisolated static func text(for items: [Item]) -> String? {
             guard !items.isEmpty else { return nil }
             func short(_ text: String, _ limit: Int) -> String {
                 let line = text.replacingOccurrences(of: "\n", with: " ")
@@ -504,7 +660,7 @@ extension Simulator {
                 "then @x,y (its middle in the picture: where to tap it) and its size:\n" + lines.joined(separator: "\n")
         }
 
-        private static func word(for role: String) -> String {
+        nonisolated private static func word(for role: String) -> String {
             switch role {
             case kAXButtonRole: "button"
             case kAXRadioButtonRole: "choice"
@@ -546,7 +702,7 @@ extension Simulator {
 
         private static func element(at point: CGPoint, in screen: Screen) -> AXUIElement? {
             var element: AXUIElement?
-            guard AXUIElementCopyElementAtPosition(screen.app, Float(point.x), Float(point.y), &element) == .success, let element else { return nil }
+            guard call({ AXUIElementCopyElementAtPosition(screen.app, Float(point.x), Float(point.y), &element) }) == .success, let element else { return nil }
             return element
         }
 
@@ -560,8 +716,9 @@ extension Simulator {
         /// Everything that can be tapped on this device's screen, as the Mac sees it: its window only.
         private static func interactiveElements(in screen: Screen) -> [AXUIElement] {
             var found: [AXUIElement] = []
+            let limit = Date().addingTimeInterval(readLimit)
             func visit(_ element: AXUIElement, depth: Int) {
-                guard depth < 40, found.count < 400 else { return }
+                guard depth < 40, found.count < 400, Date() < limit, !notAnswering else { return }
                 if isInteractive(element), screen.rect.intersects(frame(of: element)) { found.append(element) }
                 for child in children(element) { visit(child, depth: depth + 1) }
             }
@@ -633,8 +790,12 @@ extension Simulator {
 
         private static func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
             var value: CFTypeRef?
-            AXUIElementCopyAttributeValue(element, name as CFString, &value)
+            _ = call { AXUIElementCopyAttributeValue(element, name as CFString, &value) }
             return value
+        }
+
+        private static func press(_ element: AXUIElement) -> Bool {
+            call { AXUIElementPerformAction(element, kAXPressAction as CFString) } == .success
         }
 
         private static func children(_ element: AXUIElement) -> [AXUIElement] {
