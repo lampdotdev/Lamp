@@ -49,7 +49,8 @@ enum Provider {
 
     /// A model Lamp lists by name. `id` is what a setting keeps and `openRouter` what OpenRouter calls it
     /// (the same thing in the building list). The pickers show `label`: what the model is good for, then
-    /// its name in brackets; `name` alone is for a sentence ("Checked by Claude Opus").
+    /// its name in brackets; `name` alone is for a sentence when OpenRouter's own name for the model isn't
+    /// to hand (`modelName`).
     struct ListedModel {
         let id: String
         let name: String
@@ -74,10 +75,11 @@ enum Provider {
         return defaultModel
     }
 
-    /// A model's name as someone would say it ("Claude Opus"), for an OpenRouter id Lamp lists. An id Lamp
-    /// doesn't list is given as it is, which is how the pickers show one too.
-    static func modelName(_ id: String) -> String {
-        (models + AppAI.anthropicModels).first { $0.openRouter == id }?.name ?? id
+    /// A model's name for a sentence ("Checked by …"), for an OpenRouter id: the name OpenRouter publishes
+    /// for it when Lamp has that (`ModelNames`), else the name in Lamp's own lists, else the id as it is,
+    /// which is how the pickers show a model Lamp doesn't list.
+    static func modelName(_ id: String, published: (String) -> String? = ModelNames.openRouter) -> String {
+        published(id) ?? (models + AppAI.anthropicModels).first { $0.openRouter == id }?.name ?? id
     }
 
     /// OpenRouter's name, for the calls that go to it whatever builds apps.

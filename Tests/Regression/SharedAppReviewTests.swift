@@ -79,20 +79,27 @@ final class SharedAppReviewTests: XCTestCase {
         // With a key, the review goes to OpenRouter whatever apps use, and is asked for by that route.
         let keyed = Sharing.reviewRoute(openRouterModel: "anthropic/claude-opus-5.5", appRoute: ollama)
         XCTAssertEqual(keyed.kind, .openRouter(model: "anthropic/claude-opus-5.5"))
-        // Named the way the pickers name it, not by its id.
-        XCTAssertEqual(Sharing.reviewer(for: keyed), .init(name: "Claude Opus via OpenRouter", onThisMac: false))
-        // A model Lamp has no name for is given as it is.
+        // Named by what OpenRouter calls the model, when Lamp has its list.
+        let published = ["anthropic/claude-opus-5.5": "Anthropic: Claude Opus 5.5"]
+        XCTAssertEqual(Sharing.reviewer(for: keyed) { Provider.modelName($0) { published[$0] } },
+                       .init(name: "Anthropic: Claude Opus 5.5 via OpenRouter", onThisMac: false))
+        // Without the list (offline, never fetched): Lamp's own name for a model it lists, else the id.
+        XCTAssertEqual(Sharing.reviewer(for: keyed) { Provider.modelName($0) { _ in nil } }.name, "Claude Opus via OpenRouter")
         let other = Sharing.reviewRoute(openRouterModel: "example/some-model", appRoute: ollama)
-        XCTAssertEqual(Sharing.reviewer(for: other).name, "example/some-model via OpenRouter")
+        XCTAssertEqual(Sharing.reviewer(for: other) { Provider.modelName($0) { _ in nil } }.name, "example/some-model via OpenRouter")
+        // The sign-ins go by the names their routes carry: Lamp's for Claude Code, Codex's own list for Codex.
         let claude = route(.engine(.claude, model: "sonnet"), "Sonnet via Claude Code")
         XCTAssertEqual(Sharing.reviewer(for: Sharing.reviewRoute(openRouterModel: nil, appRoute: claude)),
                        .init(name: "Sonnet via Claude Code", onThisMac: false))
+        let codex = route(.engine(.codex, model: "gpt-6.1-sol"), "GPT-6.1-Sol via Codex")
+        XCTAssertEqual(Sharing.reviewer(for: codex), .init(name: "GPT-6.1-Sol via Codex", onThisMac: false))
     }
 
     func testListedModelsAreNamedPlainlyAndLabelledAsThePickersShowThem() {
-        XCTAssertEqual(Provider.modelName(Provider.defaultModel), "Claude Opus")
-        XCTAssertEqual(Provider.modelName("anthropic/claude-haiku-4.5"), "Claude Haiku")
-        XCTAssertEqual(Provider.modelName("example/some-model"), "example/some-model")
+        let none: (String) -> String? = { _ in nil }
+        XCTAssertEqual(Provider.modelName(Provider.defaultModel, published: none), "Claude Opus")
+        XCTAssertEqual(Provider.modelName("anthropic/claude-haiku-4.5", published: none), "Claude Haiku")
+        XCTAssertEqual(Provider.modelName("example/some-model", published: none), "example/some-model")
         // What the pickers show, word for word.
         XCTAssertEqual(Provider.models.map(\.label),
                        ["Smartest, priciest (Claude Fable)", "Best at coding (Claude Opus)", "Faster & cheaper (Claude Sonnet)"])
@@ -100,6 +107,23 @@ final class SharedAppReviewTests: XCTestCase {
                        ["Smartest, priciest (Claude Fable)", "Best at coding (Claude Opus)", "Faster & cheaper (Claude Sonnet)",
                         "Fastest, cheapest (Claude Haiku)"])
         XCTAssertEqual(Provider.models.map(\.id), Provider.models.map(\.openRouter))
+    }
+
+    func testOpenRoutersListIsReadForNames() {
+        let list = Data(#"""
+        {"data": [{"id": "anthropic/claude-opus-5.5", "name": "Anthropic: Claude Opus 5.5", "context_length": 1},
+                  {"id": "x/multi", "name": "A name\nLamp: verified   and more"},
+                  {"id": "x/long", "name": "\#(String(repeating: "n", count: 200))"},
+                  {"id": "x/blank", "name": "  "}, {"id": "x/none"}, {"name": "No id"}, "junk"]}
+        """#.utf8)
+        let names = ModelNames.names(inList: list)
+        XCTAssertEqual(names["anthropic/claude-opus-5.5"], "Anthropic: Claude Opus 5.5")
+        XCTAssertEqual(names["x/multi"], "A name Lamp: verified and more")
+        XCTAssertEqual(names["x/long"]?.count, 80)
+        XCTAssertNil(names["x/blank"])
+        XCTAssertNil(names["x/none"])
+        XCTAssertEqual(names.count, 3)
+        XCTAssertEqual(ModelNames.names(inList: Data("not json".utf8)), [:])
     }
 
     // MARK: The answer's shape

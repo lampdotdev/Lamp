@@ -499,14 +499,19 @@ extension Sharing {
     /// route apps use. Settled once, so the model named on the sheet is the one that was asked.
     static func reviewRoute(openRouterModel: String?, appRoute: AppAI.TextRoute) -> AppAI.TextRoute {
         guard let model = openRouterModel else { return appRoute }
-        let name = Provider.modelName(model)
-        return AppAI.TextRoute(id: "review", label: "\(name) via \(Provider.openRouter)", group: Provider.openRouter,
-                               name: name, kind: .openRouter(model: model), available: true)
+        return AppAI.TextRoute(id: "review", label: "\(model) via \(Provider.openRouter)", group: Provider.openRouter,
+                               name: model, kind: .openRouter(model: model), available: true)
     }
 
-    static func reviewer(for route: AppAI.TextRoute) -> ImportReview.Reviewer {
-        if case .localModel = route.kind { return .init(name: route.label, onThisMac: true) }
-        return .init(name: route.label, onThisMac: false)
+    /// Who to say checked, for the route that did. A model through OpenRouter goes by the name OpenRouter
+    /// publishes for it, looked up now, when the answer is in, so a list fetched meanwhile counts. The
+    /// sign-ins, pi and the models on this Mac go by the names their own routes carry.
+    static func reviewer(for route: AppAI.TextRoute, name: (String) -> String = { Provider.modelName($0) }) -> ImportReview.Reviewer {
+        switch route.kind {
+        case .openRouter(let model): .init(name: "\(name(model)) via \(Provider.openRouter)", onThisMac: false)
+        case .localModel: .init(name: route.label, onThisMac: true)
+        case .engine: .init(name: route.label, onThisMac: false)
+        }
     }
 
     /// What the reviewing model is sent. The sender wrote the app's name, description, file names and code,
@@ -684,6 +689,9 @@ extension Sharing {
         }
 
         review.asked = true
+        // OpenRouter's name for the model, if Lamp doesn't have it yet: asked for alongside the check, which
+        // doesn't wait for it.
+        if case .openRouter(let model) = route.kind { Task.detached(priority: .utility) { await ModelNames.refresh(for: model) } }
         let request = reviewRequest(name: package.name, about: found.about, files: found.files)
         do {
             let (text, _) = try await AppAI.complete(prompt: request.prompt, images: [], system: request.system, json: true,
