@@ -312,10 +312,10 @@ private struct IdeaTile: View {
             HStack(alignment: .top, spacing: 12) {
                 IdeaIcon(symbol: idea.symbol, hue: idea.hue, size: 36, lit: hovering || selected)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(idea.title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(Palette.ink)
+                    // Room for the same number of lines in every tile, so the grid holds still as ideas change.
+                    Text(idea.title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
                     Text(idea.blurb).font(.system(size: 12)).foregroundStyle(.secondary)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(3, reservesSpace: true)
                 }
                 Spacer(minLength: 0)
             }
