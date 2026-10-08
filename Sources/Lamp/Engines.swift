@@ -36,9 +36,10 @@ enum Engine: String, CaseIterable, Identifiable {
 
 /// When the agent needs the user's go-ahead to run a shell command (Settings → Building).
 enum CommandApproval: String, CaseIterable, Identifiable {
-    /// risky: routine commands run, and so does anything the in-app model rates low risk; the card is for
-    /// medium and high. unusual: the same, but low-risk ones wait for the person too (the older "auto").
-    case risky, unusual, always, never
+    /// risky: commands the decision model's answers show to be plainly fine run; the card is for the rest.
+    /// There was an "unusual" beside it, which differed only in not letting the in-app model's "low" run a
+    /// command; nothing does that now, so a saved "unusual" (or the older "auto") is risky.
+    case risky, always, never
 
     var id: String { rawValue }
 
@@ -46,7 +47,7 @@ enum CommandApproval: String, CaseIterable, Identifiable {
         get {
             let saved = UserDefaults.standard.string(forKey: "commandApproval") ?? ""
             if let mode = CommandApproval(rawValue: saved) { return mode }
-            // "auto", from before "risky" existed: written back, so the picker shows the choice it stands for.
+            // "auto" or "unusual", from earlier versions: written back, so the picker shows the choice it stands for.
             if !saved.isEmpty { UserDefaults.standard.set(CommandApproval.risky.rawValue, forKey: "commandApproval") }
             return .risky
         }
@@ -54,7 +55,7 @@ enum CommandApproval: String, CaseIterable, Identifiable {
     }
 
     /// The modes where a classifier or model decides, as opposed to the person every time or never.
-    var isAutomatic: Bool { self == .risky || self == .unusual }
+    var isAutomatic: Bool { self == .risky }
 
     /// Claude Code's auto mode turned out to be unavailable for this account; use "always" instead.
     static var claudeAutoUnavailable: Bool {
@@ -65,7 +66,6 @@ enum CommandApproval: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .risky: "Only when risky"
-        case .unusual: "Anything unusual"
         case .always: "Always"
         case .never: "Never"
         }
@@ -366,15 +366,14 @@ extension Agent {
             var preToolUse: [[String: Any]] = [["matcher": "Read|Edit|Write|Glob|Grep", "hooks": [hook("LAMP_FILE_URL", event: "PreToolUse")]]]
             var hooks: [String: Any] = [:]
             // Every shell command goes to Lamp before it runs, in every mode but Never, so the setting means
-            // the same with Claude Code as with pi and Codex: Lamp's decision model and risk rating decide what
-            // is routine, and the user sees the rest. "Only when risky" and "Anything unusual" differ in how
-            // much that is; Claude's own classifier never gets to wave a command through on its own.
+            // the same with Claude Code as with pi and Codex: Lamp's decision model decides what is routine, and
+            // the user sees the rest. Claude's own classifier never gets to wave a command through on its own.
             // In every mode, Never included: the hook is also how a command comes back confined (Sandbox); with
             // Never, Lamp answers at once without a card.
             env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude"
             preToolUse.append(["matcher": "Bash", "hooks": [hook("LAMP_APPROVE_URL", event: "PreToolUse")]])
             switch approval {
-            case .risky, .unusual:
+            case .risky:
                 // For the tools that aren't shell commands (a fetch, a web search), Claude's automatic mode asks
                 // Lamp only about what its classifier escalates.
                 permissionMode = "auto"
@@ -411,8 +410,8 @@ extension Agent {
             env["LAMP_TOOL"] = ToolLocator.path(for: .codex) ?? "codex"
             env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt(for: project) + tryRules + Self.codexNote + sandboxNote)
             // Approvals (Settings → Building): a PreToolUse hook sends each shell command to Lamp before it runs,
-            // and Lamp applies the setting: the decision model, then the in-app model's risk rating, then the
-            // user (Only when risky, Anything unusual), or the user every time (Always). "Never" has no hook. In
+            // and Lamp applies the setting: the decision model, then the user (Only when risky), or the user
+            // every time (Always). "Never" has no hook. In
             // every mode Codex stays in its sandbox (writes only in the app's folder), with network access.
             // Codex has no file tools of its own, and a shell command can read anything on the Mac without
             // Lamp knowing what. So it reads with Lamp's `read`, `ls`, `find` and `grep` (FileTools, listed for

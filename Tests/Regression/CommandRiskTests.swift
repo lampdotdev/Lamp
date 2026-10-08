@@ -4,9 +4,9 @@ import XCTest
 /// "Ask before running commands": what runs without a card is decided in code from the decision model's
 /// answers, so each rule can be checked without a model.
 final class CommandRiskTests: XCTestCase {
-    private func answers(risk: Double, sure: Double = 0.95, reads: Double = 0.02, out: Double = 0.02,
+    private func answers(risk: Double, sure: Double = 0.95, beyond: Double = 0.02, reads: Double = 0.02, out: Double = 0.02,
                          secrets: Double = 0.02, hides: Double = 0.04, match: Double? = 0.1) -> CommandRisk.Answers {
-        CommandRisk.Answers(risk: risk, riskConfidence: sure, onlyReads: reads, sendsOut: out,
+        CommandRisk.Answers(risk: risk, riskConfidence: sure, reach: beyond, onlyReads: reads, sendsOut: out,
                             readsSecrets: secrets, hidesWhatItDoes: hides, matchesRequest: match)
     }
 
@@ -65,6 +65,46 @@ final class CommandRiskTests: XCTestCase {
         XCTAssertNil(CommandRisk.questions(hasRequest: false)["matchesRequest"])
     }
 
+    /// A level that averages 2 can be a download, or an answer split between "edits files" and "reaches
+    /// beyond the app". What Jev answered for a wrapper script that loads the home folder's settings (level
+    /// 2.1, 0.57 on level 3 and up) and for clearing a downloaded app's quarantine and opening it (1.8,
+    /// 0.34): neither runs because the request names it, as a clone does (2.05, 0.04).
+    func testASplitAnswerIsNotADownload() {
+        XCTAssertEqual(CommandRisk.verdict(answers(risk: 2.05, sure: 0.93, beyond: 0.04, match: 0.93)), .run)
+        XCTAssertEqual(CommandRisk.verdict(answers(risk: 1.8, sure: 0.33, beyond: 0.34, match: 0.93)), .unsure)
+        let wrapper = answers(risk: 2.1, sure: 0.28, beyond: 0.57, match: 0.93)
+        XCTAssertEqual(CommandRisk.verdict(wrapper), .risky)
+        XCTAssertEqual(CommandRisk.reason(wrapper), .reachesBeyond)
+        // Nor does an edit the model half takes for more, however sure the average looks.
+        XCTAssertEqual(CommandRisk.verdict(answers(risk: 1.3, sure: 0.8, beyond: 0.3)), .unsure)
+        // Reading is judged on its own question and still runs.
+        XCTAssertEqual(CommandRisk.verdict(answers(risk: 0.3, sure: 0.5, beyond: 0.2, reads: 0.9)), .run)
+    }
+
+    /// How likely level 3 and up is comes from the weight the model gave each level.
+    func testReachIsReadFromTheLevelsWeights() {
+        let asked = CommandRisk.questions(hasRequest: false)
+        var reply = self.reply().filter { asked[$0.key] != nil }
+        reply["risk"] = ["score": 2.14, "confidence": 0.28, "probabilities": ["0": 0, "1": 0.43, "2": 0, "3": 0.5, "4": 0.07]]
+        XCTAssertEqual(CommandRisk.Answers(reply, asked: asked)?.reach ?? -1, 0.57, accuracy: 0.001)
+        // Without the weights there's no telling a split from a download: not an answer.
+        reply["risk"] = ["score": 2.14, "confidence": 0.28]
+        XCTAssertNil(CommandRisk.Answers(reply, asked: asked))
+        reply["risk"] = ["score": 2.14, "confidence": 0.28, "probabilities": ["1": 0.4, "3": 7.0]]
+        XCTAssertNil(CommandRisk.Answers(reply, asked: asked))
+    }
+
+    /// "Anything unusual" was the setting that kept the in-app model's "low" from running a command. Nothing
+    /// lets it now, so the choice is gone and a saved one reads as "Only when risky".
+    func testASavedUnusualIsOnlyWhenRisky() {
+        let saved = UserDefaults.standard.string(forKey: "commandApproval")
+        defer { UserDefaults.standard.set(saved, forKey: "commandApproval") }
+        UserDefaults.standard.set("unusual", forKey: "commandApproval")
+        XCTAssertEqual(CommandApproval.current, .risky)
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "commandApproval"), "risky")
+        XCTAssertEqual(CommandApproval.allCases.map(\.title), ["Only when risky", "Always", "Never"])
+    }
+
     // MARK: What comes back from the model
 
     private func reply(_ changes: [String: Any?] = [:]) -> [String: Any] {
@@ -99,7 +139,8 @@ final class CommandRiskTests: XCTestCase {
         verdicts.append(await judged(reply(["sendsOut": ["noul": "0.0"]])))
         verdicts.append(await judged(reply(["hidesWhatItDoes": ["noul": -1.0]])))
         verdicts.append(await judged(reply(["risk": ["score": 1.0]])))
-        verdicts.append(await judged(reply(["risk": ["score": 9.0, "confidence": 1.0]])))
+        verdicts.append(await judged(reply(["risk": ["score": 9.0, "confidence": 1.0, "probabilities": ["1": 0.9]]])))
+        verdicts.append(await judged(reply(["risk": ["score": 1.1, "confidence": 0.93]])))
         XCTAssertEqual(verdicts, Array(repeating: .unsure, count: verdicts.count))
     }
 
@@ -131,7 +172,7 @@ final class CommandRiskTests: XCTestCase {
     }
 
     /// A command that's risky on what it does stays risky when the question about the request fails, is left
-    /// out or comes back broken, and isn't even asked it: unsure there would let the text model's "low" run it.
+    /// out or comes back broken, and isn't even asked it: unsure there would lose the reason on its card.
     func testARiskyCommandStaysRiskyWhateverBecomesOfTheRequestsQuestion() async {
         let risky: [String: Any?] = ["sendsOut": ["noul": 0.97]]
         for answer in [nil, [:], ["matchesRequest": ["noul": "yes"]], ["matchesRequest": ["noul": 0.99]]] as [[String: Any]?] {
@@ -169,7 +210,7 @@ final class CommandRiskTests: XCTestCase {
         let verdict = await CommandRisk.judge(command: "ls", request: " ", folder: "/tmp/app") { _, questions in
             calls += 1
             XCTAssertNil(questions["matchesRequest"])
-            return self.reply(["onlyReads": ["noul": 0.97], "risk": ["score": 0.0, "confidence": 1.0]]).filter { questions[$0.key] != nil }
+            return self.reply(["onlyReads": ["noul": 0.97], "risk": ["score": 0.0, "confidence": 1.0, "probabilities": ["0": 1.0]]]).filter { questions[$0.key] != nil }
         }.verdict
         XCTAssertEqual(calls, 1)
         XCTAssertEqual(verdict, .run)
@@ -218,7 +259,7 @@ final class CommandRiskTests: XCTestCase {
         let flagged = Store.CommandExplanation.unexplained(flagged: .sendsOut)
         XCTAssertEqual([flagged.summary, flagged.risk, flagged.why],
                        ["Lamp couldn't work out what this does.", "high", "It sends files or data from this Mac somewhere else."])
-        // It isn't "low", so it can't run a command without the card.
+        // It isn't "low": the card never calls a command low risk on no answer.
         XCTAssertNotEqual(plain.risk, "low")
     }
 
