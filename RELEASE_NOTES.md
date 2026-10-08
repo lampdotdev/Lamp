@@ -5,7 +5,7 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
-## Unreleased
+## 0.10.4
 
 - Lamp remembers, as an experiment you switch on in Settings → Building: it keeps short notes on how you
   like things, so a new app starts out in your style, and on what you decided about each app and what you
@@ -14,6 +14,11 @@ plain "Lamp x.y.z" line.
 - When a key or sign-in is refused, or an account is out of credit, Lamp names the one that was used. It
   used to name whatever builds your apps, so an OpenRouter key that didn't work could be reported as a
   problem with ChatGPT Codex or Claude Code.
+- An app's icon can be made in Image Playground, on a Mac that has it: from the app's right-click menu, and
+  offered when nothing else can draw.
+- Settings checks an OpenRouter key with OpenRouter before saving it, so a mistyped key is caught at once
+  rather than failing later as a build or a picture. When OpenRouter can't be reached, you can save anyway.
+- Settings → Experimental: the iPhone & iPad setup check sits under its notes.
 
 ## 0.10.3
 
