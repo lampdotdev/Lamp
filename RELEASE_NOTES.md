@@ -5,6 +5,12 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## Unreleased
+
+- The Keychain prompt at launch is gone for good: a key item that another tool put there can't be replaced
+  by Lamp, so Lamp keeps that key in its own file (readable by your account only) and stops asking the
+  Keychain for it.
+
 ## 0.10.6
 
 - What you attach in the chat stays on your Mac. An app's own files (a logo, a data file) live in its new

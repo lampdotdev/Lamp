@@ -173,12 +173,18 @@ enum KeyStore {
         let value: String?
         if usesKeychain {
             _ = movedFileToKeychain
-            let (status, key) = KeychainItem.read(provider)
-            // Don't cache a denied or cancelled prompt, so the next use can ask again.
-            guard status == errSecSuccess || status == errSecItemNotFound else { return key }
-            if let key { KeychainItem.adopt(key, provider) }
-            // A key the Keychain wouldn't take stays in the file (moveToKeychain tries again each launch).
-            value = key ?? (status == errSecItemNotFound ? KeyFile.stored()?[provider] : nil)
+            // A key still in the file is one the Keychain wouldn't take: an item under that name that isn't
+            // Lamp's and can't be replaced (made by the security tool, say). The file is Lamp's own; the
+            // item would ask at every read, so it isn't read.
+            if let kept = KeyFile.stored()?[provider] {
+                value = kept
+            } else {
+                let (status, key) = KeychainItem.read(provider)
+                // Don't cache a denied or cancelled prompt, so the next use can ask again.
+                guard status == errSecSuccess || status == errSecItemNotFound else { return key }
+                if let key { KeychainItem.adopt(key, provider) }
+                value = key
+            }
         } else {
             value = KeyFile.read()[provider]
         }
@@ -212,6 +218,10 @@ enum KeyStore {
         defer { lock.unlock() }
         if usesKeychain {
             _ = movedFileToKeychain   // the keys file first: its key is the saved one, pi's copy may be older
+            // What the launch-time read found (or the file holds) is the saved key; the Keychain is asked
+            // only when neither has one, so a foreign item isn't read here, on the main thread.
+            if let cached = cached(provider), cached != nil { return true }
+            if KeyFile.stored()?[provider] != nil { return true }
             let status = KeychainItem.read(provider).0
             if status == errSecSuccess { return true }
             guard status == errSecItemNotFound else { return false }
@@ -250,10 +260,12 @@ enum KeyStore {
         }
 
         @discardableResult
-        static func write(_ key: String, _ account: String) -> Bool {
+        static func write(_ key: String, _ account: String) -> Bool { add(key, account) == errSecSuccess }
+
+        static func add(_ key: String, _ account: String) -> OSStatus {
             var q = query(account)
             q[kSecValueData as String] = Data(key.utf8)
-            return SecItemAdd(q as CFDictionary, nil) == errSecSuccess
+            return SecItemAdd(q as CFDictionary, nil)
         }
 
         static func delete(_ account: String) { SecItemDelete(query(account) as CFDictionary) }
@@ -278,6 +290,8 @@ enum KeyStore {
             }
             all[account] = key
             guard KeyFile.write(all), KeyFile.stored()?[account] == key else { return }
+            // Deleting an item another tool made isn't allowed (errSecInvalidOwnerEdit): then the key lives in
+            // the file from here on, read before the Keychain, and the item is never asked about again.
             delete(account)
             if write(key, account) { KeyFile.forget(account) }
         }
@@ -382,13 +396,11 @@ enum KeyStore {
             }
         }
 
-        /// True once the Keychain holds a key for the provider: its own, or this one.
+        /// True once the key is in the Keychain as Lamp's own item. An item already there under that name is
+        /// one Lamp couldn't replace (not its own); it isn't read, since reading it is what asks every time,
+        /// and the key stays in the file, which is read instead.
         private static func moved(_ key: String, to provider: String) -> Bool {
-            switch KeychainItem.read(provider).0 {
-            case errSecSuccess: return true
-            case errSecItemNotFound: return KeychainItem.write(key, provider)
-            default: return false
-            }
+            KeychainItem.add(key, provider) == errSecSuccess
         }
 
         /// A key set or removed in a signed build is the last word on that provider: whatever the file
