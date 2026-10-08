@@ -385,8 +385,9 @@ struct AppMenu: View {
         Divider()
         if store.canShare(project) {
             Button("Copy App File") { store.copyAppFile(project) }
-            ShareLink("Share…", item: SharedApp(project: project),
-                      preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
+            Button { Sharing.share(project) } label: {
+                Label("Share…", systemImage: "square.and.arrow.up")
+            }
             Button("Export…") { store.chooseExport(project) }
             Divider()
         }
@@ -864,8 +865,9 @@ struct ProjectView: View {
             if store.canShare(project) {
                 Menu {
                     Button("Copy App File") { store.copyAppFile(project) }
-                    ShareLink("Share…", item: SharedApp(project: project),
-                              preview: SharePreview(project.name, image: Image(systemName: "app.gift")))
+                    Button { Sharing.share(project) } label: {
+                        Label("Share…", systemImage: "square.and.arrow.up")
+                    }
                     Button("Export…") { store.chooseExport(project) }
                 } label: {
                     Label("Share App", systemImage: "square.and.arrow.up")

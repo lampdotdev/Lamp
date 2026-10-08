@@ -18,6 +18,21 @@ enum Sharing {
     /// 2: the app's own files travel in Assets/ (1 bundled the chat's attachments the code named).
     static let formatVersion = 2
 
+    @MainActor private static var picker: NSSharingServicePicker?
+
+    @MainActor static func share(_ project: LampProject) {
+        guard let window = NSApp.keyWindow, let view = window.contentView else { return }
+        do {
+            // Separate native items keep the opening instructions beside the attachment in Mail and Messages.
+            let picker = NSSharingServicePicker(items: ["Open this with Lamp https://lamp.dev", try export(project)])
+            self.picker = picker
+            let point = view.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
+            picker.show(relativeTo: NSRect(origin: point, size: .zero), of: view, preferredEdge: .minY)
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
     struct Manifest: Codable {
         var format: Int
         var name: String
@@ -377,17 +392,5 @@ extension Sharing {
             review.note = "Lamp's AI check didn't run. Look at the list above carefully."
         }
         return review
-    }
-}
-
-/// Lets SwiftUI's ShareLink export a project lazily, only when someone actually shares it.
-struct SharedApp: Transferable {
-    let project: LampProject
-
-    static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(exportedContentType: .lampApp) { shared in
-            SentTransferredFile(try Sharing.export(shared.project))
-        }
-        .suggestedFileName { "\($0.project.name).lampapp" }
     }
 }
