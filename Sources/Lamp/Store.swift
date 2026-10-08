@@ -344,6 +344,7 @@ final class Store: ObservableObject {
     private func becameReady() async {
         for project in projects where !(queued[project.id] ?? []).isEmpty { startQueued(project) }
         saveWaiting()
+        openWaitingImport()
         await backfillIcons()
     }
 
@@ -962,20 +963,26 @@ final class Store: ObservableObject {
         let id = UUID()
         let package: Sharing.Package
         var review: ImportReview?
+        /// Opened during setup and kept until now: the review says so, since it arrives unasked.
+        var waited = false
     }
 
     /// Opens a shared `.lampapp`: unpacks it, then shows a review (fixed checklist + AI check) before building.
-    func importApp(from file: URL) {
+    func importApp(from file: URL, waited: Bool = false) {
         NSApp.activate()
         guard setup.ready else {
             let alert = NSAlert()
             alert.messageText = "Finish setting up Lamp first"
-            alert.informativeText = "Then open the shared app again."
+            alert.informativeText = waitingImport.keep(file)
+                ? "Lamp will open the shared app as soon as setup is done."
+                : "Then open the shared app again."
             alert.runModal()
             return
         }
         // The newest request wins: a file opened while an earlier one is still unpacking, or a Cancel
-        // meanwhile, makes the earlier result unwanted when it arrives.
+        // meanwhile, makes the earlier result unwanted when it arrives. So does one still kept from before
+        // setup was ready (an agent chosen in the welcome, "Start building" not yet clicked).
+        waitingImport.discard()
         let request = UUID()
         importRequest = request
         if let previous = pendingImport { try? FileManager.default.removeItem(at: previous.package.folder) }
@@ -990,7 +997,7 @@ final class Store: ObservableObject {
                 return
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
-            let pending = PendingImport(package: package)
+            let pending = PendingImport(package: package, waited: waited)
             pendingImport = pending
             let review = await Sharing.review(package)
             if pendingImport?.id == pending.id { pendingImport?.review = review }
@@ -998,6 +1005,15 @@ final class Store: ObservableObject {
     }
 
     private var importRequest: UUID?
+
+    private var waitingImport: WaitingImport { WaitingImport(folder: waitingFiles) }
+
+    /// A shared app opened before setup finished gets its review once the person is through setup: called when
+    /// setup becomes ready and when the welcome ends, whichever comes last.
+    func openWaitingImport() {
+        let file = waitingImport.take(setupReady: setup.checked && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
+        if let file { importApp(from: file, waited: true) }
+    }
 
     func cancelImport() {
         importRequest = nil
@@ -1127,6 +1143,7 @@ final class Store: ObservableObject {
                 }
             }
         }
+        if let shared = waitingImport.keptFolder { kept.insert(shared) }
         let folders = (try? FileManager.default.contentsOfDirectory(at: waitingFiles, includingPropertiesForKeys: nil)) ?? []
         for folder in folders where !kept.contains(folder.path) { try? FileManager.default.removeItem(at: folder) }
     }

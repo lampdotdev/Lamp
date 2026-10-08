@@ -126,6 +126,7 @@ struct OnboardingView: View {
             // Once Lamp's own view is in, so the welcome's fixed size doesn't hold the window back.
             try? await Task.sleep(for: .seconds(0.05))
             if let window { Chrome.restore(window, to: Onboarding.appSize) }
+            store.openWaitingImport()
             guard !idea.isEmpty else { return }
             store.create()
             if let project = store.selected { store.send(idea, to: project) }
