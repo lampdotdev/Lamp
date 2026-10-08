@@ -4,5 +4,3 @@ build/
 vendor/
 .claude/
 dist/
-# What the command-approval measurement writes: evidence is linked from a PR, not committed
-Tests/CommandApprovals/results/

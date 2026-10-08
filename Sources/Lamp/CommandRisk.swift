@@ -122,7 +122,7 @@ enum CommandRisk {
         }
     }
 
-    // Measured with Jev over Tests/CommandApprovals, several runs a command (about 2,500 judgments).
+    // Measured with Jev, several runs a command (about 2,500 judgments).
     // Plainly fine commands answered the "must not" questions at 0.25 or less; work on files scored level
     // 1.0 to 1.1, and a clone the request names 2.1. Commands that must ask answered 0.57 or more on the
     // "must not" that applies to them, or scored level 2.5 and up. The two closest: a git hook that phones
