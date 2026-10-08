@@ -202,6 +202,33 @@ final class HistoryInTheSandboxTests: XCTestCase {
         try await saveUndoAndGoBack(app, "settings in several files")
     }
 
+    /// The person's settings open their own git files to Lamp's git, and nothing more: a setting that names
+    /// a folder, or a file in Lamp's own folder (keys, sign-ins, other apps), opens neither.
+    func testAPersonsSettingsOpenOnlyTheirOwnGitFiles() async throws {
+        let app = try escape.app()
+        let beside = app.root.appendingPathComponent("beside.txt")
+        try "private".write(to: beside, atomically: true, encoding: .utf8)
+        let lamps = Sandbox.folder.appendingPathComponent("test-\(UUID().uuidString).txt")
+        try FileManager.default.createDirectory(at: Sandbox.folder, withIntermediateDirectories: true)
+        try "a key".write(to: lamps, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: lamps) }
+        let link = app.root.appendingPathComponent(".gitignore_global")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: lamps)
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        for named in [home, home + "/", app.root.path, lamps.path, link.path, Sandbox.folder.deletingLastPathComponent().path] {
+            try macWide("[core]\n\texcludesFile = \"\(named)\"\n\tattributesFile = \"\(named)\"\n")
+            var output = ""
+            _ = await Versions.git("cat \(Sandbox.quoted(beside.path)) \(Sandbox.quoted(lamps.path)) 2>/dev/null; ls \(Sandbox.quoted(app.root.path)) 2>/dev/null", cwd: app.project.dir) { output += $0 + "\n" }
+            XCTAssertFalse(output.contains("private"), "\(named): a file beside the app was read")
+            XCTAssertFalse(output.contains("a key"), "\(named): a file in Lamp's own folder was read")
+            XCTAssertFalse(output.contains("beside.txt"), "\(named): a folder outside the app was listed")
+        }
+        // The app still saves with any of them set.
+        try write("two\n", app)
+        let saved = await Versions.save(app.project, message: "two")
+        XCTAssertTrue(saved)
+    }
+
     // MARK: What can't escape can't stall a save either
 
     func testAHookThatHangsOrFailsDoesNotStopASave() async throws {

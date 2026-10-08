@@ -85,12 +85,32 @@ enum Versions {
     }()
 
     /// The person's own git files that the sandbox doesn't already open: Mac-wide settings kept in more than
-    /// one file (git stops, saving nothing, at a settings file it is told to read and can't), a settings file
+    /// one file (git stops, saving nothing, at a settings file it is told to read and isn't allowed to; one
+    /// that isn't there it passes over), a settings file
     /// moved with GIT_CONFIG_GLOBAL, and the ignore and attributes files those settings name (a
     /// `~/.gitignore_global`, say: without it Lamp would save what the person ignores everywhere). They are
     /// worked out away from any app's folder, and again only when one of the settings files has changed:
-    /// asking git costs more than the git command it is asked for.
+    /// asking git costs more than the git command it is asked for. That asking is git reading the person's
+    /// own settings files, which the sandbox closes, so it is the one git call of Lamp's that isn't confined:
+    /// it reads files the agent can't write and runs no program.
+    ///
+    /// What the settings name is opened only when it is a file, and never when it is in Lamp's own folders
+    /// (keys, sign-ins, every other app): a setting that names a folder, the home folder say, would
+    /// otherwise open all of it, Lamp's included.
     private static func personalFiles() -> [String] {
+        let lamps = ["Lamp", "Lamp Dev"].map {
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/\($0)")
+                .resolvingSymlinksInPath().standardizedFileURL.path
+        }
+        return namedFiles().filter { named in
+            let path = URL(fileURLWithPath: named).resolvingSymlinksInPath().standardizedFileURL.path
+            var folder: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &folder), !folder.boolValue else { return false }
+            return !lamps.contains { path == $0 || path.hasPrefix($0 + "/") }
+        }
+    }
+
+    private static func namedFiles() -> [String] {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser.path
         let moved = ProcessInfo.processInfo.environment["GIT_CONFIG_GLOBAL"]?.nilIfEmpty

@@ -50,7 +50,10 @@ A capability given to one engine must be given to all of them that can take it, 
   same sandbox, through `Versions.git` (`gitBlocking` where it can't await): the app's folder is the agent's
   to write, its `.git` included, and git runs the programs a repository names (hooks, filters, a signing
   program), so unconfined it would run whatever the agent left there. A new git call on an app's folder
-  belongs in that helper, never in `Shell.run` directly. Nothing in an app's history is checked, cleaned or
+  belongs in that helper, never in `Shell.run` directly. The one exception is the helper's own look at the
+  person's Mac-wide git settings (`Versions.personalFiles`), which the sandbox closes: it reads files the agent
+  can't write, runs no program, and opens to Lamp's git only the files those settings name, never a folder
+  and never anything in Lamp's own folders. Nothing in an app's history is checked, cleaned or
   refused, and the agent may use git on it as it likes. On Lamp's own runs signing, hooks and the
   file-watcher command are off (`Versions.environment`): the sandbox closes the person's keys, and a hook
   could only stall a save.
