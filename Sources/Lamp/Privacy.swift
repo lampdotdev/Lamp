@@ -80,19 +80,23 @@ enum Privacy {
 
     /// Whether a shell command names something the rule above would ask about: a file or folder outside the
     /// app's folder that isn't a system, developer or temporary one. Such a command always goes to the user
-    /// (Store.commandLooksSafe) and is never rated low risk (Store.explain), whatever the models make of it,
+    /// (Store.commandVerdict) and is never rated low risk (Store.explain), whatever the models make of it,
     /// so it errs towards yes. It reads the words of the command and can't see what a script or a variable
-    /// would open: the models still judge those.
+    /// would open: the models still judge those. The one thing it follows is a `cd` into the app's own
+    /// folders and back (`stepsBack`).
     static func reachesOutside(_ command: String, project: LampProject) -> Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return words(in: command).contains { word in
+        // `cd Sources; …; cd ..` comes back to the app's folder: that `..` leads nowhere outside it.
+        var returns = stepsBack(in: command, project: project)
+        for word in words(in: command) {
+            if word == "..", returns > 0 { returns -= 1; continue }
             // `--from=/path` and `VAR=/path` carry a path after the sign.
             var path = word.split(separator: "=", maxSplits: 1).last.map(String.init) ?? word
             for name in ["${HOME}", "$HOME"] where path.hasPrefix(name) { path = home + path.dropFirst(name.count) }
             if path.hasPrefix("/") {
                 // A search pattern like /api/ looks like a path: only something whose top folder exists is one.
                 guard let top = path.split(separator: "/").first,
-                      FileManager.default.fileExists(atPath: "/" + top) else { return false }
+                      FileManager.default.fileExists(atPath: "/" + top) else { continue }
             } else if isHomePath(path) || path == ".." || path.hasPrefix("../") || path.contains("/../") {
                 // A home folder (the user's or a named user's), or a step up out of the app's folder: a path
                 // wherever it leads.
@@ -101,12 +105,160 @@ enum Privacy {
                 // a bare name: it can be a link that leads out, which the rule works out below. Code written
                 // through the shell is full of words that only look like paths (`0..<n`, `~=`, `...`): they
                 // aren't, so they're judged by whether they exist like everything else.
-                guard FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(path).path) else { return false }
+                guard FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(path).path) else { continue }
             }
             // Outside the app's folder, whether that means asking (another folder) or never (sign-ins and keys):
             // either way the command isn't routine and needs the user's say-so.
-            return verdict(tool: "read", path: path, project: project) != .allow
+            if verdict(tool: "read", path: path, project: project) != .allow { return true }
         }
+        return false
+    }
+
+    /// How many `cd ..` in a command only undo a `cd` into one of the app's own folders, so never leave it:
+    /// `cd Sources; sed …; cd ..`. Counted only where that can be told for certain from the words: the `cd`
+    /// going in comes first in the command, names a folder that exists inside the app's folder, and stands
+    /// on its own (not after `&&`, in a pipe, a subshell or a condition, where it might not happen); and
+    /// nothing in between could move the shell some other way (`eval`, `source`, another `cd`). Anything
+    /// else counts none, and every `..` is then a step out of the app's folder, as before.
+    static func stepsBack(in command: String, project: LampProject) -> Int {
+        guard let steps = steps(of: command) else { return 0 }
+        let home = resolved(project.dir.path, in: project.dir)
+        let moves: Set<String> = ["eval", "source", ".", "builtin", "command", "exec", "pushd", "popd", "alias", "set", "setopt", "trap"]
+        var folder = home
+        var onlyGoneIn = true   // every step so far was a `cd` into the app's folder
+        var count = 0
+        for step in steps {
+            guard let first = step.words.first else { continue }
+            guard first.text == "cd" else {
+                // Something that can change folder without saying so, or a `cd` that isn't the command itself.
+                if moves.contains(first.text) || first.text.contains("=") || step.words.contains(where: { $0.text == "cd" }) { return count }
+                onlyGoneIn = false
+                continue
+            }
+            guard step.words.count == 2 else { return count }
+            let target = step.words[1]
+            if target.text == ".." {
+                // Back up one, when that's still inside the app's folder. If the shell skips this `cd`
+                // (after `&&`), it's deeper inside than counted, which leaves nothing.
+                guard folder != home else { return count }
+                folder = (folder as NSString).deletingLastPathComponent
+                count += 1
+                continue
+            }
+            var isFolder: ObjCBool = false
+            let path = resolved(target.text, in: URL(fileURLWithPath: folder))
+            guard onlyGoneIn, target.literal, step.alone, path.hasPrefix(home + "/"),
+                  FileManager.default.fileExists(atPath: path, isDirectory: &isFolder), isFolder.boolValue else { return count }
+            folder = path
+        }
+        return count
+    }
+
+    /// The commands of a shell line in the order they run, each with its words, or nil when the line is more
+    /// than commands one after another: a subshell, a group, a substitution, a background job, a loop or a
+    /// condition. A heredoc's text is left out (it's input, not commands). `alone`: the command always runs,
+    /// by itself (it follows the start, `;` or a new line, and isn't piped). `literal`: the word is exactly
+    /// what's written, with nothing the shell would fill in (`$x`, `*`, `~`).
+    static func steps(of command: String) -> [(words: [(text: String, literal: Bool)], alone: Bool)]? {
+        let characters = Array(command)
+        var steps: [(words: [(text: String, literal: Bool)], alone: Bool)] = []
+        var words: [(text: String, literal: Bool)] = []
+        var current = "", started = false, literal = true
+        var quote: Character?
+        var alone = true          // for the step being read
+        var heredocs: [(mark: String, tabs: Bool)] = []
+        var index = 0
+        func endWord() {
+            if started { words.append((current, literal)) }
+            (current, started, literal) = ("", false, true)
+        }
+        func endStep(piped: Bool = false, nextAlone: Bool) {
+            endWord()
+            if !words.isEmpty { steps.append((words, alone && !piped)) }
+            words = []
+            alone = nextAlone
+        }
+        while index < characters.count {
+            let character = characters[index]
+            index += 1
+            if let open = quote {
+                if character == open { quote = nil; continue }
+                if character == "\\", open == "\"", index < characters.count { current.append(characters[index]); index += 1; continue }
+                if open == "\"", character == "$" || character == "`" { literal = false }
+                current.append(character)
+                continue
+            }
+            switch character {
+            case "\\":
+                guard index < characters.count else { return nil }
+                if characters[index] != "\n" { current.append(characters[index]); started = true }
+                index += 1
+            case "'", "\"":
+                quote = character
+                started = true
+            case "\n":
+                endStep(nextAlone: true)
+                // The text of each heredoc opened on this line: up to a line that is its mark.
+                for heredoc in heredocs {
+                    var closed = false
+                    while index < characters.count, !closed {
+                        let end = characters[index...].firstIndex(of: "\n") ?? characters.count
+                        var line = String(characters[index..<end])
+                        if heredoc.tabs { line = String(line.drop { $0 == "\t" }) }
+                        closed = line == heredoc.mark
+                        index = min(end + 1, characters.count)
+                    }
+                    guard closed else { return nil }
+                }
+                heredocs = []
+            case ";":
+                endStep(nextAlone: true)
+            case "&":
+                guard index < characters.count, characters[index] == "&" else { return nil }
+                index += 1
+                endStep(nextAlone: false)
+            case "|":
+                if index < characters.count, characters[index] == "|" { index += 1 }
+                endStep(piped: true, nextAlone: false)
+            case "(", ")", "`", "{", "}":
+                return nil
+            case "<":
+                endWord()
+                guard index < characters.count, characters[index] == "<" else { continue }
+                index += 1
+                if index < characters.count, characters[index] == "<" { index += 1; continue }   // <<< "text"
+                var tabs = false
+                if index < characters.count, characters[index] == "-" { tabs = true; index += 1 }
+                while index < characters.count, characters[index] == " " { index += 1 }
+                var mark = ""
+                while index < characters.count, !characters[index].isWhitespace, !";|&<>()".contains(characters[index]) {
+                    if !"'\"\\".contains(characters[index]) { mark.append(characters[index]) }
+                    index += 1
+                }
+                guard !mark.isEmpty else { return nil }
+                heredocs.append((mark, tabs))
+            case ">":
+                endWord()
+                // `2>&1`, `>&2`: one stream into another, not a job in the background.
+                if index < characters.count, characters[index] == "&" {
+                    index += 1
+                    while index < characters.count, characters[index].isNumber || characters[index] == "-" { index += 1 }
+                }
+            case "#" where !started:
+                while index < characters.count, characters[index] != "\n" { index += 1 }
+            case _ where character.isWhitespace:
+                endWord()
+            default:
+                if "$*?[~".contains(character) { literal = false }
+                current.append(character)
+                started = true
+            }
+        }
+        guard quote == nil, heredocs.isEmpty else { return nil }
+        endStep(nextAlone: true)
+        let syntax: Set<String> = ["if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac",
+                                   "function", "select", "time", "!", "[["]
+        return steps.contains(where: { syntax.contains($0.words[0].text) }) ? nil : steps
     }
 
     /// `~`, `~/Documents`, `~matt` or `~matt/Documents`: the shell's home-folder shorthand. Not `~=` or other

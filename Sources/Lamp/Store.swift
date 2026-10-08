@@ -1786,47 +1786,28 @@ final class Store: ObservableObject {
             log(project, .status, "Ran: \(command)")
             return true
         case .risky where !escalated, .unusual where !escalated:
-            if await commandLooksSafe(command, for: project) {
+            let verdict = await commandVerdict(command, for: project)
+            if verdict == .run {
                 log(project, .status, "Ran: \(command)")
                 return true
             }
-            return await requestApproval(for: project, command: command, shell: shell)
+            return await requestApproval(for: project, command: command, shell: shell, flagged: verdict == .risky)
         default:
             return await requestApproval(for: project, command: command, shell: shell)
         }
     }
 
-    /// For agents without their own classifier (pi): obviously risky commands always go to the user; the rest
-    /// are judged by the decision model against the user's request. No decision model available → ask.
-    private func commandLooksSafe(_ command: String, for project: LampProject) async -> Bool {
+    /// Whether a command is plainly fine, for every engine: a command that names a place outside the app's
+    /// folder is flagged outright; the rest are judged by the decision model's answers (CommandRisk) against
+    /// the user's request. No decision model available → not plainly fine.
+    private func commandVerdict(_ command: String, for project: LampProject) async -> CommandRisk.Verdict {
         // What's outside the app's folder goes to the AI model once read, so that's the user's call and not a
         // model's: a command that names such a place is never routine, however the decision model would score it.
-        if Privacy.reachesOutside(command, project: project) { return false }
-        let state: [String: Any] = [
-            "command": command,
-            "user_request": turns[project.id]?.request ?? "",
-            "working_folder": "The app's own project folder: \(project.dir.path)",
-        ]
-        // A command that reads is held to the privacy setting the file tools follow: what's outside the app's
-        // folder goes to the AI model once read, so it's the user's call, however harmless the command looks.
-        let asks = Privacy.asksOutsideFolder
-        let question: [String: Any] = [
-            "type": "noul",
-            "instructions": "Is it safe to run `command` without asking the user first, given `user_request`?",
-            "criteria": [
-                "true": "Routine and low-risk for building this app: listing, reading or searching files"
-                    + (asks ? " inside the working folder, in system or developer folders (/usr, /System, /Library/Developer, Xcode, Homebrew) or in temporary folders" : "")
-                    + "; git status, log, diff, or cloning a repository the user mentioned; creating, editing, converting or deleting files inside the working folder (what the agent's own file tools do anyway, and every change is kept in the app's history); fetching a public web page; running the app's own build or tests.",
-                "false": "Could cause harm or surprise: "
-                    + (asks ? "reading, listing, searching or copying anything else outside the working folder (the user's home folder, documents, keys, settings, other apps' data), even when the user asked for it; " : "")
-                    + "reading sign-ins, keys, passwords, tokens or browser data wherever they are, even when the user asked for it; "
-                    + "deleting or overwriting files outside the working folder, needing administrator rights, changing system settings, installing software system-wide, running downloaded scripts, sending files or data somewhere, pushing to a remote, or doing something the user didn't ask for.",
-            ],
-        ]
-        guard let (answers, cost) = try? await AppAI.decide(state: state, questions: ["safe": question]),
-              let probability = (answers["safe"] as? [String: Any])?["noul"] as? Double else { return false }
-        _ = cost
-        return probability >= 0.85
+        if Privacy.reachesOutside(command, project: project) { return .risky }
+        return await CommandRisk.judge(command: command, request: turns[project.id]?.request ?? "", folder: project.dir.path,
+                                       asksOutside: Privacy.asksOutsideFolder) { state, questions in
+            try await AppAI.decide(state: state, questions: questions).0
+        }
     }
 
     /// Applies Settings → Building → Permissions and Privacy to one of the agent's file tools, about to touch `path`: pi's own
@@ -1875,8 +1856,9 @@ final class Store: ObservableObject {
 
     /// Waits for the user to allow or deny a shell command. One request per app at a time; others queue.
     /// There's no timeout: commands wait until the user answers, stops the turn, or the turn ends.
+    /// `flagged`: a check found the command risky, so no model's low rating runs it without the card.
     func requestApproval(for project: LampProject, command: String, title: String? = nil,
-                         explanation given: CommandExplanation? = nil, shell: Bool = true) async -> Bool {
+                         explanation given: CommandExplanation? = nil, shell: Bool = true, flagged: Bool = false) async -> Bool {
         guard !command.trimmed.isEmpty else { return false }
         if turns[project.id]?.allowAll == true {
             log(project, .detail, "Ran (allowed for this turn): \(command)")
@@ -1888,9 +1870,11 @@ final class Store: ObservableObject {
         guard let turn = turns[project.id], turn.agent != nil else { return false }   // the agent is gone: nobody to answer for
         turn.approving = true
         defer { turn.approving = false }
-        // "Only when risky": a shell command the in-app model rates low risk runs without the card.
+        // "Only when risky": a shell command the in-app model rates low risk runs without the card, unless a
+        // check already flagged it: that model reads the command as text, and a command can be written to
+        // talk it round.
         var given = given
-        if shell, title == nil, CommandApproval.current == .risky {
+        if shell, title == nil, !flagged, CommandApproval.current == .risky {
             note("Checking a command", for: project)
             if given == nil { given = await explain(command, for: project) }
             guard turn.agent != nil else { return false }
