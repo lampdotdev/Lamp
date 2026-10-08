@@ -22,10 +22,14 @@ enum Sandbox {
         return "\(executable) -f \(quoted(file.path)) /bin/bash -c \(quoted(command))"
     }
 
-    /// A whole engine run, confined to the app with the engine's own folder opened as well (Codex's
-    /// ~/.codex: its sign-in, sessions and caches). Nil when the sandbox tool isn't there.
-    static func wrapEngine(_ command: String, for project: LampProject, opening folders: [String], reading: [String] = []) -> String? {
-        guard let file = writeProfile(for: project, opening: folders, reading: reading) else { return nil }
+    /// A whole engine run, confined to the app with what the engine itself needs opened as well: `opening`
+    /// for reading and writing, `reading` for reading, `writing` the files directly inside a folder only
+    /// read (Codex keeps its databases and sign-in beside its settings), and `keeping` single files that
+    /// stay read-only whatever else was opened. Nil when the sandbox tool isn't there or the profile can't
+    /// be written.
+    static func wrapEngine(_ command: String, for project: LampProject, opening folders: [String], reading: [String] = [],
+                           writing: [String] = [], keeping: [String] = []) -> String? {
+        guard let file = writeProfile(for: project, opening: folders, reading: reading, writing: writing, keeping: keeping) else { return nil }
         return "\(executable) -f \(quoted(file.path)) /bin/bash -c \(quoted(command))"
     }
 
@@ -51,7 +55,8 @@ enum Sandbox {
     /// (a command may wait that long for the user), then cleared.
     static let folder = Edition.supportFolder.appendingPathComponent("Sandbox")
 
-    private static func writeProfile(for project: LampProject, opening folders: [String] = [], reading: [String] = []) -> URL? {
+    private static func writeProfile(for project: LampProject, opening folders: [String] = [], reading: [String] = [],
+                                     writing: [String] = [], keeping: [String] = []) -> URL? {
         guard FileManager.default.isExecutableFile(atPath: executable) else { return nil }
         let fm = FileManager.default
         try? fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -61,7 +66,8 @@ enum Sandbox {
             try? fm.removeItem(at: old)
         }
         let file = folder.appendingPathComponent("\(project.id)-\(UUID().uuidString).sb")
-        guard fm.createFile(atPath: file.path, contents: Data(profile(for: project, opening: folders, reading: reading).utf8),
+        let text = profile(for: project, opening: folders, reading: reading, writing: writing, keeping: keeping)
+        guard fm.createFile(atPath: file.path, contents: Data(text.utf8),
                             attributes: [.posixPermissions: 0o600]) else { return nil }
         return file
     }
@@ -70,7 +76,8 @@ enum Sandbox {
     /// included, and anything mounted), then the places under this home a build needs opened again, Lamp's
     /// own folders closed, and the app's folder opened last (it sits inside Lamp's). Later rules win, so the
     /// order is the meaning. `folders` are opened too, for reading and writing; `reading` for reading.
-    static func profile(for project: LampProject, opening folders: [String] = [], reading: [String] = []) -> String {
+    static func profile(for project: LampProject, opening folders: [String] = [], reading: [String] = [], writing: [String] = [],
+                        keeping: [String] = []) -> String {
         let fm = FileManager.default
         let home = real(fm.homeDirectoryForCurrentUser.path)
         let app = real(project.dir.path)
@@ -99,6 +106,13 @@ enum Sandbox {
         for folder in reading {
             lines.append("(allow file-read* (subpath \(quotedPath(real(folder)))))")
         }
+        // The files directly in a folder, not what's in its subfolders.
+        for folder in writing {
+            lines.append("(allow file-write* (regex #\"^\(NSRegularExpression.escapedPattern(for: real(folder)))/[^/]*$\"))")
+        }
+        for path in keeping {
+            lines.append("(deny file-write* (literal \(quotedPath(real(path)))))")
+        }
         // The folders on the way to each opened one, the home folder included, can be looked at (not read):
         // a program resolving a path stats every step of it, and Node refuses to start otherwise.
         var ancestors: [String] = []
@@ -110,6 +124,8 @@ enum Sandbox {
                 path = (path as NSString).deletingLastPathComponent
             }
         }
+        // The folder of homes too: Node resolves a program's real path one component at a time.
+        ancestors.append((home as NSString).deletingLastPathComponent)
         for path in ancestors { lines.append("(allow file-read-metadata (literal \(quotedPath(path))))") }
         // What the app shows and prints is shared with the agent only when the settings say so.
         if !Privacy.sharesPictures || !Privacy.sharesLog {
