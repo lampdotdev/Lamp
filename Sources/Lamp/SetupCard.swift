@@ -20,16 +20,23 @@ struct SetupCard: View {
     var body: some View {
         let _ = revision
         let resolution = AppAI.resolve(offer.capability, for: project, in: offer.context)
+        // An icon's card is also answered by the person choosing to draw icons themselves.
+        let byHand = resolution.provider == Icons.byHand
         let done = resolution.tier == .best
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: CardColumn.gap) {
                 badge
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.headline)
-                    status(resolution, done: done).font(.body).foregroundStyle(.secondary)
+                    status(resolution, done: done, byHand: byHand).font(.body).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
+                // Answered by drawing icons by hand, the card is where this app's is drawn, while it's plain.
+                if byHand, let project, let spec = Icons.load(project), Icons.cachedArt(project, spec: spec) == nil {
+                    Button("Draw Icon…") { Store.shared.iconFromPlayground(project) }
+                        .controlSize(.small)
+                }
                 if !done && !declined {
                     Button("Not Now") {
                         if let project { offer.decline(in: project) }
@@ -43,9 +50,6 @@ struct SetupCard: View {
                 Divider()
                 VStack(alignment: .leading, spacing: 12) {
                     UpgradeList(upgrades: resolution.upgrades) { revision += 1 }
-                    if offer.capability == .pictures, offer.context == .mac, resolution.tier == .none, let project {
-                        PlaygroundUpgrade(project: project)
-                    }
                     // Something answers already, just not as well: say what, so nothing looks broken meanwhile.
                     if resolution.tier == .works, let answer = resolution.answer {
                         Text("For now it works through \(answer); the options above work better.")
@@ -69,6 +73,8 @@ struct SetupCard: View {
         .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in revision += 1 }
         .onReceive(NotificationCenter.default.publisher(for: AppModels.changed)) { _ in revision += 1 }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in revision += 1 }
+        // A drawn icon takes Draw Icon… off the card.
+        .onReceive(Store.shared.$icons) { _ in revision += 1 }
     }
 
     /// What's being offered, on a tile the size of the build card's app icon. Not the app's own icon: it's
@@ -105,10 +111,10 @@ struct SetupCard: View {
 
     /// Why it's offered; once it's set up, what answers now; after Not Now, where to find it later.
     @ViewBuilder
-    private func status(_ resolution: Resolution, done: Bool) -> some View {
+    private func status(_ resolution: Resolution, done: Bool, byHand: Bool) -> some View {
         if done {
             Label {
-                Text(doneText(resolution.answer ?? ""))
+                Text(byHand ? "All set. You draw each app's icon with Image Playground." : doneText(resolution.answer ?? ""))
             } icon: {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
             }
@@ -155,6 +161,7 @@ struct UpgradeView: View {
         case .decisionModel: return LocalModels.decisionCatalog.first != nil
         case .key(let provider): return Provider.keyProvider(provider) != nil
         case .signIn: return true
+        case .drawIcons: return Icons.playgroundAvailable
         }
     }
 
@@ -168,6 +175,8 @@ struct UpgradeView: View {
             DecisionModelUpgrade(compact: compact, onChange: onChange)
         case .signIn(let engine):
             SignInUpgrade(engine: engine, compact: compact, onChange: onChange)
+        case .drawIcons:
+            DrawIconsUpgrade(compact: compact)
         }
     }
 }
@@ -370,18 +379,34 @@ private struct SignInUpgrade: View {
     }
 }
 
-/// The backup for when nothing else can draw: Apple's own picture maker, which only the person can work,
-/// so it's for this app's icon and not for pictures inside apps.
-struct PlaygroundUpgrade: View {
+/// Drawing icons by hand, one of the ways to get icon artwork where nothing can draw it (`Upgrade.drawIcons`,
+/// which `AppAI.resolve` lists for `.icon` alone): on the card about an app's icon and under Not Ready in
+/// Settings → Building. It's a choice for every app's icon, made once.
+private struct DrawIconsUpgrade: View {
+    let compact: Bool
+
+    var body: some View {
+        OptionRow(symbol: "paintbrush.pointed", title: "Draw icons yourself",
+                  detail: "Free, with Image Playground. You pick each app's picture.", compact: compact) {
+            Button("Use for Icons") { Icons.iconChoice = Icons.byHand }
+        }
+    }
+}
+
+/// The line in the chat that offers to draw an app's icon, for someone who chose to draw icons themselves:
+/// what's so, and the button that opens Image Playground. It's shown only while it has something to offer
+/// (`Icons.awaitsDrawing`).
+struct DrawIconLine: View {
     let project: LampProject
 
     var body: some View {
-        if Icons.playgroundAvailable, !project.untitled, Icons.load(project) != nil {
-            OptionRow(symbol: "paintbrush.pointed", title: "Draw the icon yourself",
-                      detail: "Image Playground, Apple's picture maker, can make \(project.name)'s icon for free. It's for the icon only, not for pictures inside your apps.") {
-                Button("Open…") { Store.shared.iconFromPlayground(project) }
-            }
+        HStack(spacing: 8) {
+            Image(systemName: "paintbrush.pointed").foregroundStyle(.secondary)
+            Text("\(project.name) has a plain icon for now.").foregroundStyle(.secondary)
+            Button("Draw Icon…") { Store.shared.iconFromPlayground(project) }
+                .controlSize(.small)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

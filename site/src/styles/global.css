@@ -16,6 +16,28 @@
   --color-graphite: #33302e;
   --color-graphite-deep: #141311;
 
+  /* The feature tiles' own colours, strong like the app icons. Amber and mint take the page's dark words; sky and
+     lilac are deep enough for white ones, darkest where the words sit (the top of sky, the bottom of lilac). */
+  --color-amber-from: #ffd25e;
+  --color-amber-to: #ff9f1c;
+  --color-sky-from: #0b5ccc;
+  --color-sky-to: #3d9bff;
+  --color-lilac-from: #a77bff;
+  --color-lilac-to: #6a32cf;
+  --color-mint-from: #5fd97f;
+  --color-mint-to: #34c759;
+  /* The AI tiles' colours, unlike the feature tiles' so the two sections read apart. Indigo, coral and teal take
+     white words, darkest where the words sit and dark enough there for 4.5:1 with the words' 85% white; butter
+     takes dark ones. */
+  --color-indigo-from: #7b78ff;
+  --color-indigo-to: #3d38c9;
+  --color-coral-from: #ee6446;
+  --color-coral-to: #a3102c;
+  --color-teal-from: #169c91;
+  --color-teal-to: #044f4c;
+  --color-butter-from: #fff3b8;
+  --color-butter-to: #ffd84d;
+
   /* Where the feature tiles go side by side: the page's full width (max-w-6xl), the width their illustrations
      are drawn for. Narrower than that, the tiles stack, each as wide as the page. */
   --breakpoint-bento: 72rem;
@@ -37,4 +59,41 @@
   h1, h2, h3, p, li {
     text-wrap: pretty;
   }
+}
+
+/* The hero's opening (index.astro): the card starts as tall as the window, with the icon large in its middle,
+   then shrinks to its own height (its minimum height falls to nothing, so it stops where its content does) as
+   the icon settles and the words rise under it; the button follows, and the lamp comes up from the bottom. */
+/* The hero's card: the page's light grey, washed from the top with a faint, see-through indigo (the night sky of
+   the app icon, barely there), and a hint of the lamp's warm light behind the porcelain at the bottom. */
+.hero-sky {
+  background:
+    linear-gradient(180deg, rgb(44 38 110 / 0.13) 0%, rgb(44 38 110 / 0.04) 40%, rgb(44 38 110 / 0) 65%),
+    radial-gradient(55% 45% at 50% 100%, rgb(255 176 92 / 0.22), rgb(255 176 92 / 0) 70%),
+    var(--color-panel);
+}
+
+@keyframes hero-card {
+  0%, 18% { min-height: calc(100svh - 0.75rem); }
+  100% { min-height: 0; }
+}
+@keyframes hero-icon {
+  0%, 18% { translate: 0 calc(50svh - 120px); scale: 2.6; }
+  100% { translate: 0 0; scale: 1; }
+}
+@keyframes hero-rise {
+  from { opacity: 0; translate: 0 36px; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes hero-lamp {
+  from { opacity: 0; translate: 0 45%; }
+  to { opacity: 1; translate: 0 0; }
+}
+.hero-card { animation: hero-card 1.3s cubic-bezier(.22,.8,.2,1) both; }
+.hero-icon { animation: hero-icon 1.3s cubic-bezier(.22,.8,.2,1) both; }
+.hero-words { animation: hero-rise 0.9s cubic-bezier(.22,.8,.2,1) 0.55s both; }
+.hero-button { animation: hero-rise 0.8s cubic-bezier(.22,.8,.2,1) 0.8s both; }
+.hero-lamp { animation: hero-lamp 1.3s cubic-bezier(.22,.8,.2,1) 0.95s both; }
+@media (prefers-reduced-motion: reduce) {
+  .hero-card, .hero-icon, .hero-words, .hero-button, .hero-lamp { animation: none; }
 }

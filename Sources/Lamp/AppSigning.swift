@@ -46,6 +46,17 @@ enum AppSigning {
         return identity
     }
 
+    /// What the chat says when an app could only be signed ad hoc. The app works, so nothing else would tell
+    /// the person why macOS keeps asking for what they already allowed.
+    static func adHocNotice(for name: String) -> String { "Lamp couldn't sign \(name) properly, " + adHocNoticeEnd }
+    private static let adHocNoticeEnd = "so macOS will ask for its permissions again after every change."
+
+    /// Whether a chat with these lines should be told: once, not after every build, and under any name the
+    /// app has had.
+    static func needsAdHocNotice(after lines: [LogLine]) -> Bool {
+        !lines.contains { $0.kind == .status && $0.text.hasSuffix(adHocNoticeEnd) }
+    }
+
     /// What macOS checks an app against before honoring a permission it was given: its bundle ID and the
     /// certificate it's signed with ("designated => identifier … and certificate leaf = H"…""), or for an
     /// ad-hoc signature the hash of that one build. Nil when there's no signed app there.
@@ -54,7 +65,16 @@ enum AppSigning {
         var lines: [String] = []
         _ = await Shell.run("codesign -d -r- \"$LAMP_APP\" 2>&1", cwd: FileManager.default.temporaryDirectory,
                             env: ["LAMP_APP": app.path]) { lines.append($0) }
-        return lines.first { $0.hasPrefix("designated => ") }
+        return requirement(in: lines)
+    }
+
+    /// The requirement in what codesign printed. For a certificate signature the line is "designated => …";
+    /// for an ad hoc one codesign has no stored requirement and prints the one it worked out as
+    /// "# designated => cdhash …". Both are a signature to compare: read only the first way, an app going
+    /// from ad hoc to Lamp's certificate looked as if nothing had been there before, and its old permissions
+    /// were left in System Settings.
+    static func requirement(in output: [String]) -> String? {
+        output.lazy.map { $0.hasPrefix("# ") ? String($0.dropFirst(2)) : $0 }.first { $0.hasPrefix("designated => ") }
     }
 
     /// Clears what macOS remembers of an app's permissions (System Settings ▸ Privacy & Security).

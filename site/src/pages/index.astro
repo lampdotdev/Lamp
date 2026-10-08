@@ -5,7 +5,12 @@ import Base from "../layouts/Base.astro";
 import Carousel from "../components/Carousel.astro";
 import DownloadButton from "../components/DownloadButton.astro";
 import QuickLook from "../components/QuickLook.astro";
+import Bento, { type Point } from "../components/Bento.astro";
 import { together } from "../lib/text";
+import MakesTheCall from "../components/visuals/MakesTheCall.astro";
+import DrawsOnDemand from "../components/visuals/DrawsOnDemand.astro";
+import MakesSense from "../components/visuals/MakesSense.astro";
+import FindsTheWords from "../components/visuals/FindsTheWords.astro";
 import UsesYourMac from "../components/visuals/UsesYourMac.astro";
 import BeautifulByDefault from "../components/visuals/BeautifulByDefault.astro";
 import WorksWithYourMac from "../components/visuals/WorksWithYourMac.astro";
@@ -13,6 +18,8 @@ import ChangeItAnyTime from "../components/visuals/ChangeItAnyTime.astro";
 import AppleSilicon from "../components/visuals/AppleSilicon.astro";
 import ShareWithAnyone from "../components/visuals/ShareWithAnyone.astro";
 import icon from "../assets/AppIcon.png";
+// The welcome's porcelain lamp, rendered for the hero card in Blender (see RELEASING.md).
+import heroLamp from "../assets/hero-lamp-reflection.png";
 import anthropic from "../assets/logos/anthropic.png";
 import openai from "../assets/logos/openai.png";
 import openrouter from "../assets/logos/openrouter.png";
@@ -20,12 +27,15 @@ import ollama from "../assets/logos/ollama.png";
 import lmstudio from "../assets/logos/lmstudio.png";
 
 // Lamp's window just after building an app, and windows of apps it built, all taken from Lamp Dev with
-// made-up data (see RELEASING.md).
+// made-up data (see RELEASING.md). The iPhone and iPad apps are the simulator's screens in a drawn frame.
 import lampWindow from "../assets/lamp.png";
 import readingQueue from "../assets/apps/reading-queue.png";
 import neonBricks from "../assets/apps/neon-bricks.png";
 import habitStreaks from "../assets/apps/habit-streaks.png";
 import paletteStudio from "../assets/apps/palette-studio.png";
+import trailLog from "../assets/apps/trail-log.png";
+import tripTab from "../assets/apps/trip-tab.png";
+import mealPlanner from "../assets/apps/meal-planner.png";
 
 const lampWindowLarge = await getImage({ src: lampWindow, width: lampWindow.width, format: "webp" });
 
@@ -37,16 +47,34 @@ const apps = [
     alt: "Reading Queue: articles ranked against what you're working on, with why each one matters",
   },
   {
+    image: trailLog,
+    name: "Trail Log",
+    request: "Trail Log: a hiking journal. Each hike has its route drawn on a map, the distance, the climb, how long it took and a few notes, and the list shows this year's totals at the top.",
+    alt: "Trail Log on two iPhones: this year's hikes with their totals, and Helvellyn's route on a map with its distance, climb and notes",
+  },
+  {
     image: neonBricks,
     name: "Neon Bricks",
     request: "A brick breaker arcade game with a glowing neon look: a paddle I move with the mouse or arrow keys, colourful bricks, a few levels, power-ups and a high score table.",
     alt: "Neon Bricks: a glowing brick breaker game mid-play",
   },
   {
+    image: mealPlanner,
+    name: "Meal Planner",
+    request: "Meal Planner: the week laid out side by side, each day with breakfast, lunch and dinner cards I can drag between days, and a shopping list on the side built from the week's meals, grouped by aisle, that I can tick off.",
+    alt: "Meal Planner on an iPad: a week of family meals and the shopping list for it",
+  },
+  {
     image: habitStreaks,
     name: "Habit Streaks",
     request: "A habit tracker: a handful of daily habits with streaks, a heat map of the last three months and a chart of each week.",
     alt: "Habit Streaks: daily habits with streaks, a three-month heat map and a weekly chart",
+  },
+  {
+    image: tripTab,
+    name: "Trip Tab",
+    request: "Trip Tab: splits what a group spends on a trip. I add who paid for what and who it was for, and it shows everyone's balance, who's up and who's behind, and the fewest payments to settle up.",
+    alt: "Trip Tab on two iPhones: four friends' balances after a weekend in Lisbon, and the three payments that settle up",
   },
   {
     image: paletteStudio,
@@ -56,56 +84,89 @@ const apps = [
   },
 ];
 
-// Icons Lamp made for apps it built, in one row under "Real Mac apps", all the same size. The row is centred
+// Icons Lamp made for apps it built, in one row under "Real apps. Really yours.", all the same size. The row is centred
 // on the tile and wider than it, so it runs off both edges; at the tile's full width (1104px) the 136px icons
 // and 24px gaps put each edge through the middle of an icon. The order mixes the colours, as several are
 // purple. A name missing from src/assets/icons/ is skipped.
 const icons = import.meta.glob<ImageMetadata>("../assets/icons/*.png", { eager: true, import: "default" });
 const shelf = [
-  "mine-1", "mine-6", "mine-3", "mine-8", "habit-streaks", "mine-2", "palette-studio",
-  "mine-4", "neon-bricks", "mine-10", "mine-9", "mine-5", "mine-7", "reading-queue",
+  "mine-1", "mine-6", "trip-tab", "mine-3", "mine-8", "habit-streaks", "mine-2", "palette-studio", "trail-log",
+  "mine-4", "neon-bricks", "mine-10", "meal-planner", "mine-9", "mine-5", "reading-queue",
 ].flatMap((name) => icons[`../assets/icons/${name}.png`] ?? []);
 
-// The rest of the features as a bento box on ten columns: rows split 4/6 or 5/5, a few tiles in colour. A tile
-// with a `visual` shows that illustration across its top, running off its edges, with the words beneath; with
-// `below`, the words come first and the illustration sits at the bottom, for variety.
-const points: { title: string; text: string; tile: string; visual?: (props: object) => unknown; below?: boolean }[] = [
+// AI as part of what an app does, not only how Lamp builds it: four things it can do inside an app, in two rows
+// split 6/4 and 4/6. Judgment leads, as it's the one people don't expect; drawing beside it for the games and
+// the stories. No providers, models or technical words here: which AI answers is the section further down.
+const smarts: Point[] = [
   {
-    title: "Change it any time",
-    text: "Always finding ways to improve? No worries, continue making changes to your apps. Saved versions let you try new things and roll back if it doesn't work out.",
-    tile: "bento:col-span-4 bg-panel",
-    visual: ChangeItAnyTime,
+    title: "Makes the call.",
+    text: "Quick judgments, all day long. Which app is slowing your Mac down, and the setting that fixes it.",
+    tile: "bento:col-span-6 bg-linear-to-b from-indigo-from to-indigo-to text-white",
+    visual: MakesTheCall,
   },
   {
-    title: "Apps that use your Mac",
-    text: "An app can use your other apps to get things done, browser included, with whatever you're already signed in to.",
-    tile: "bento:col-span-6 bg-night text-white",
-    visual: UsesYourMac,
+    title: "Draws on demand.",
+    text: "Pictures for a bedtime story, characters for a game, art for anything.",
+    tile: "bento:col-span-4 bg-linear-to-b from-coral-from to-coral-to text-white",
+    visual: DrawsOnDemand,
   },
   {
-    title: "Works with what's on your Mac",
-    text: "Apps can read and add to your calendar, reminders and contacts, find and send mail, and send you notifications. Through your other apps, they can reach Notes, Messages and more.",
-    tile: "bento:col-span-5 bg-panel",
+    title: "Makes sense of anything.",
+    text: "Sums up the long thread, explains the small print, finds what matters in a pile of PDFs.",
+    tile: "bento:col-span-4 bg-linear-to-b from-teal-from to-teal-to text-white",
+    visual: MakesSense,
+  },
+  {
+    title: "Finds the words.",
+    text: "Drafts the reply, names the thing, makes it friendlier.",
+    tile: "bento:col-span-6 bg-linear-to-br from-butter-from to-butter-to",
+    visual: FindsTheWords,
+  },
+];
+
+// The rest of the features as a bento box, rows split 6/4, 5/5, 4/6, telling a story: what you get (row one),
+// what it can do (row two, the two dark tiles), and living with it (row three). Each tile has a strong colour of
+// its own, close to the app icons'.
+const points: Point[] = [
+  {
+    title: "Gorgeous by default.",
+    text: "Native controls, proper menus and shortcuts, and an icon of its own. Feels made-in-Cupertino, never made-by-AI.",
+    tile: "bento:col-span-6 bg-linear-to-br from-amber-from to-amber-to",
+    visual: BeautifulByDefault,
+  },
+  {
+    title: "Plugged into your day.",
+    text: "Your calendar, reminders, contacts and notifications, on your Mac and your iPhone. On the Mac, Mail, Notes and Messages too.",
+    tile: "bento:col-span-4 bg-linear-to-b from-sky-from to-sky-to text-white",
     visual: WorksWithYourMac,
     below: true,
   },
   {
-    title: "Always gorgeous",
-    text: "By default, every app looks and feels made in Cupertino: native controls, proper menus and keyboard shortcuts, and an icon of its own. But make it your own if you want. Never a vibe-coded look.",
-    tile: "bento:col-span-5 bg-glow",
-    visual: BeautifulByDefault,
+    title: "Apps that do the clicking.",
+    text: "An app can use your other apps to get things done, your browser included, signed in as you.",
+    tile: "bento:col-span-5 bg-night bg-[radial-gradient(120%_90%_at_80%_0%,#5b4be0_0%,transparent_65%)] text-white",
+    visual: UsesYourMac,
   },
   {
-    title: "Made for Apple silicon",
-    text: "Apps use what's built into your Mac, like reading text in pictures, understanding speech and translating, instantly and privately. Lamp can also run AI models on your Mac's own chip, both to build your apps and inside them.",
-    tile: "bento:col-span-4 bg-graphite text-white",
+    title: "Smart, and private.",
+    text: "Apps read text in pictures, understand speech and translate, right on your Mac. Lamp can even run the AI on your Mac's own chip.",
+    tile: "bento:col-span-5 bg-graphite-deep bg-[radial-gradient(90%_75%_at_50%_25%,#8f4c0c_0%,transparent_72%)] text-white",
     visual: AppleSilicon,
+    centre: true,
   },
   {
-    title: "Share with anyone",
-    text: "Send an app to a friend by AirDrop, Messages or Mail. They get their own copy to make their own, and Lamp shows them what it does before it opens.",
-    tile: "bento:col-span-6 bg-panel",
+    title: "Made to share.",
+    // A line break in the text starts a new line on the tile.
+    text: "Send a Mac app by AirDrop, message, email, even Slack.\nYour friend gets their own copy, and Lamp shows them what it does.",
+    tile: "bento:col-span-6 bg-linear-to-b from-lilac-from to-lilac-to text-white",
     visual: ShareWithAnyone,
+  },
+  {
+    title: "Change your mind. No regrets.",
+    text: "Ask for a change whenever you like. Lamp saves a version each time, so you can try anything and go back.",
+    tile: "bento:col-span-4 bg-linear-to-b from-mint-from to-mint-to",
+    visual: ChangeItAnyTime,
+    centre: true,
   },
 ];
 
@@ -122,102 +183,131 @@ const providers = [
 ];
 
 // On the page the last sentence gets a line of its own; elsewhere (search results, link previews) it's one run.
-const pitch = "Describe what you want, and Lamp builds a real Mac app, with AI inside when it helps. Keep using it, change it whenever you like, and share it.";
-const noCode = "No need to know how to code or deploy anything.";
+const pitch = "Describe what you want and Lamp builds a Mac, iPhone or iPad app just for you.";
+const noCode = "No coding needed, and you get way more than 3 wishes.";
 const description = `${pitch} ${noCode}`;
 ---
 
-<Base title="Lamp: wish Mac apps into existence" description={description} image="/og.jpg">
+<Base title="Lamp: wish Mac, iPhone and iPad apps into existence" description={description} image="/og.jpg">
   <!--
     Full-width bands that alternate white and light grey, in the manner of Apple's product pages, each with the
     content in the same centred column. Tiles take the other shade from the band they sit on.
   -->
   <main>
-    <div class="mx-auto max-w-6xl px-4 sm:px-6">
-    <section class="flex flex-col items-center pt-20 pb-10 text-center sm:pt-28">
+    <!-- The hero sits in a card of its own across the window, like the tiles below, to set it apart from what
+         follows. -->
+    <div class="px-2 pt-2 sm:px-3 sm:pt-3">
+    <!--
+      Opens like Apple's product pages: the card starts as tall as the window with the icon large in its middle,
+      then the card shrinks to its own height as the icon settles and the words come up under it, the button
+      appears, and the porcelain lamp (the welcome's, rendered for this card) slides up from the bottom edge. Once, on load, and not at all for people who've asked for less
+      motion (global.css).
+    -->
+    <section class="hero-card hero-sky relative flex flex-col items-center overflow-hidden rounded-[28px] px-6 pt-14 text-center sm:pt-16">
+      <div class="hero-icon">
+        <Image
+          src={icon}
+          alt=""
+          width={88}
+          height={88}
+          densities={[1, 2]}
+          loading="eager"
+          class="size-18 drop-shadow-[0_10px_22px_rgba(217,122,6,0.28)] sm:size-22"
+        />
+      </div>
+      <!-- The name small under the icon, as Apple labels a product, and the promise as the page's heading. -->
+      <div class="hero-words flex flex-col items-center">
+        <p class="mt-3 text-[15px] font-semibold tracking-tight">Lamp</p>
+        <!-- Full size and on one line only from lg, where the card is wide enough for it; narrower, it may wrap. -->
+        <h1 class="mt-5 font-display text-5xl leading-[1.05] font-bold tracking-tight sm:text-6xl lg:text-7xl lg:whitespace-nowrap">
+          Wish apps into existence.
+        </h1>
+        <p class="mt-5 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">{together(pitch)}<br />{together(noCode)}</p>
+      </div>
+      <div class="hero-button relative z-10 mt-9"><DownloadButton /></div>
+      <!-- As wide as the card allows, but no taller than leaves the whole card in the window: the words above
+           take about 530px with the space under them, and the render is 2.98 times as wide as it is tall. -->
       <Image
-        src={icon}
-        alt="Lamp"
-        width={176}
-        height={176}
-        densities={[1, 2]}
+        src={heroLamp}
+        alt=""
+        widths={[800, 1200, 1600, 2400]}
+        sizes="100vw"
         loading="eager"
-        class="size-36 drop-shadow-[0_14px_30px_rgba(217,122,6,0.28)] sm:size-44"
-      />
-      <h1 class="mt-6 font-display text-5xl font-bold tracking-tight sm:text-6xl">Lamp</h1>
-      <p class="mt-4 font-display text-3xl leading-tight font-bold tracking-tight sm:text-4xl sm:whitespace-nowrap">
-        Wish Mac apps into existence.
-      </p>
-      <p class="mt-5 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">{together(pitch)}<br />{together(noCode)}</p>
-      <div class="mt-9"><DownloadButton /></div>
-    </section>
-
-    <section class="pb-12">
-      <Image
-        src={lampWindow}
-        alt="Lamp having just built a Reading Queue app: the request, the plan and a picture of the finished app"
-        widths={[640, 1024, 1600, 2048]}
-        sizes="(min-width: 1152px) 1104px, 100vw"
-        loading="eager"
-        data-quicklook={lampWindowLarge.src}
-        class="mx-auto h-auto w-full"
+        class="hero-lamp pointer-events-none mt-6 h-auto max-w-none select-none sm:mt-4"
+        style="width: min(100%, calc((100svh - 530px) * 2.98))"
       />
     </section>
 
     </div>
 
-    <section class="bg-panel">
+    <section>
       <div class="mx-auto max-w-6xl px-4 pt-20 sm:px-6 sm:pt-24">
-        <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Make a tool for the task that bugs you.</h2>
+        <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">For work. For play. For&nbsp;you.</h2>
         <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
-          {together("Or a game for when you're done. Here are a few single-prompt examples:")}
+          {together("Something for the task that bugs you, or a game for when you're done.")}<br />{together("Each of these started as a single request:")}
         </p>
         <Carousel slides={apps} />
       </div>
     </section>
 
-    <section class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-      <div class="grid gap-4 bento:grid-cols-10">
-        <div class="overflow-hidden rounded-[28px] bg-panel pt-12 text-center bento:col-span-10 sm:pt-16">
-          <h3 class="px-8 font-display text-3xl font-bold tracking-tight sm:text-5xl">Real Mac apps</h3>
-          <p class="mx-auto mt-4 max-w-[50rem] px-8 text-xl leading-[1.4] text-muted">
-            {together("Each one is an app of its own, in your Applications folder and in Spotlight. No browser tab, no subscription to someone else's tool. No server or security to worry about.")}
-          </p>
-          <div aria-hidden="true" class="mt-8 pb-10 sm:mt-10 sm:pb-12">
-            <div class="relative left-1/2 flex w-max -translate-x-1/2 gap-4 sm:gap-6">
-              {
-                shelf.map((icon) => (
-                  <Image
-                    src={icon}
-                    alt=""
-                    width={136}
-                    height={136}
-                    densities={[1, 2]}
-                    class="size-24 drop-shadow-[0_12px_18px_rgba(0,0,0,0.14)] sm:size-34"
-                  />
-                ))
-              }
-            </div>
-          </div>
-        </div>
-        {
-          points.map((point) => (
-            <div class:list={["flex min-h-56 flex-col overflow-hidden rounded-[28px]", point.below ? "justify-between" : "justify-end", point.tile]}>
-              {point.visual && !point.below && <point.visual />}
-              <div class:list={["p-8 sm:p-10", point.below && "pb-2 sm:pb-4"]}>
-                <h3 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">{point.title}</h3>
-                <p class="mt-3 text-xl leading-[1.4] opacity-75">{together(point.text)}</p>
-              </div>
-              {point.visual && point.below && <point.visual />}
-            </div>
-          ))
-        }
+    <section class="bg-panel">
+      <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
+      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Feels like a genie, not&nbsp;like&nbsp;work.</h2>
+      <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
+        {together("Download it. Describe your app. No account, minimal setup.")}<br />{together("Then just chat to make it perfectly yours.")}
+      </p>
+      <Image
+        src={lampWindow}
+        alt="Lamp having just built a Reading Queue app: the request, the plan and a picture of the finished app"
+        widths={[640, 1024, 1600, 2048]}
+        sizes="(min-width: 1152px) 1104px, 100vw"
+        loading="lazy"
+        data-quicklook={lampWindowLarge.src}
+        class="mx-auto mt-10 h-auto w-full"
+      />
       </div>
     </section>
 
+    <section class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
+      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Apps with AI&nbsp;inside.</h2>
+      <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
+        {together("AI doesn't just build your apps.")}<br />{together("It can be part of what they do.")}
+      </p>
+      <div class="mt-10"><Bento points={smarts} /></div>
+    </section>
+
     <section class="bg-panel">
+      <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
+      <Bento points={points}>
+          <div class="overflow-hidden rounded-[28px] bg-page pt-12 text-center bento:col-span-10 sm:pt-16">
+            <h3 class="px-8 font-display text-3xl font-bold tracking-tight sm:text-5xl">Real apps. Really&nbsp;yours.</h3>
+            <p class="mx-auto mt-4 max-w-[50rem] px-8 text-xl leading-[1.4] text-muted">
+              {together("In your Applications folder, in your Dock and on your Home Screen.")}<br />{together("No browser tab, no subscription, no server to worry about.")}
+            </p>
+            <div aria-hidden="true" class="mt-8 pb-10 sm:mt-10 sm:pb-12">
+              <div class="relative left-1/2 flex w-max -translate-x-1/2 gap-4 sm:gap-6">
+                {
+                  shelf.map((icon) => (
+                    <Image
+                      src={icon}
+                      alt=""
+                      width={136}
+                      height={136}
+                      densities={[1, 2]}
+                      class="size-24 drop-shadow-[0_12px_18px_rgba(0,0,0,0.14)] sm:size-34"
+                    />
+                  ))
+                }
+              </div>
+            </div>
+          </div>
+      </Bento>
+      </div>
+    </section>
+
+    <section>
       <div class="mx-auto max-w-6xl px-4 py-20 text-center sm:px-6 sm:py-24">
-      <h2 class="font-display text-4xl font-bold tracking-tight sm:text-5xl">Use the AI you already have.</h2>
+      <h2 class="font-display text-4xl font-bold tracking-tight sm:text-5xl">Use the AI you already&nbsp;have.</h2>
       <p class="mx-auto mt-4 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">
         {together("Lamp is free. It builds with your Claude or ChatGPT subscription, a key from more than a dozen AI providers, or a model that runs right on your Mac.")}
       </p>
@@ -244,10 +334,12 @@ const description = `${pitch} ${noCode}`;
       </div>
     </section>
 
-    <section class="mx-auto max-w-6xl px-4 py-24 text-center sm:px-6 sm:py-28">
+    <section class="bg-panel">
+      <div class="mx-auto max-w-6xl px-4 py-24 text-center sm:px-6 sm:py-28">
       <Image src={icon} alt="" width={96} height={96} densities={[1, 2]} class="mx-auto size-24 drop-shadow-[0_12px_24px_rgba(217,122,6,0.25)]" />
       <h2 class="mt-6 font-display text-4xl font-bold tracking-tight sm:text-5xl">Let your genie out.</h2>
       <div class="mt-9"><DownloadButton /></div>
+      </div>
     </section>
   </main>
 

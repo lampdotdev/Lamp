@@ -332,24 +332,57 @@ struct NotReadyRow: View {
 
 /// Image generation, in Building (icon artwork) and Apps (apps' pictures): the models that can make pictures
 /// now, showing what's used when the saved one can't be; Codex's name when it draws with its own model; Not
-/// Ready, and how to get pictures, when nothing can.
+/// Ready, and how to get pictures, when nothing can. Icon artwork (`forIcons`) can also be drawn by hand in
+/// Image Playground, on a Mac that has it: a fix under Not Ready, and an entry in the menu from then on.
 struct ImageModelRow: View {
     @Binding var selection: String
+    var forIcons = false
+    /// Read so the row follows the choice wherever it's made (the chat's card makes it too).
+    @AppStorage("iconModel") private var saved = ""
+    @AppStorage("settingsTab") private var tab = "building"
 
     var body: some View {
+        let _ = saved
         let images = Icons.usableChoices
-        let resolution = AppAI.resolve(.pictures)
+        // What answers is the resolver's to say: pictures by Settings' choices, and for icon artwork
+        // whether the person draws it instead. The menu only lays that out.
+        let pictures = AppAI.resolve(.pictures)
+        let context: AIContext = forIcons ? .icon : .mac
+        let resolution = forIcons ? AppAI.resolve(.pictures, in: .icon) : pictures
+        let label = { (id: String) -> String in
+            switch id {
+            case Icons.byHand: Icons.byHandLabel
+            case Icons.noChoice: pictures.answer ?? "None"
+            default: images.first { $0.id == id }?.label ?? id
+            }
+        }
         if resolution.tier == .none {
             NotReadyRow(title: "Image generation")
-            CapabilityNote(capability: .pictures)
-        } else if images.count > 1 {
-            Picker("Image generation", selection: Binding(get: { images.contains { $0.id == selection } ? selection : images[0].id },
-                                                          set: { selection = $0 })) {
-                ForEach(images, id: \.id) { Text($0.label).tag($0.id) }
-            }
+            CapabilityNote(capability: .pictures, context: context)
         } else {
-            // One model, or Codex drawing with its own: nothing to choose, so it's named.
-            LabeledContent("Image generation", value: images.first?.label ?? resolution.answer ?? "")
+            switch Icons.artMenu(models: images.map(\.id), selection: selection, drawer: pictures.answer,
+                                 byHandAvailable: forIcons && UpgradeView.isOffered(.drawIcons),
+                                 byHandChosen: resolution.provider == Icons.byHand) {
+            case .named(let id):
+                // One model, or Codex drawing with its own: nothing to choose, so it's named.
+                LabeledContent("Image generation", value: label(id))
+            case .menu(let ids, let selected):
+                Picker("Image generation", selection: Binding(get: { selected }, set: { id in
+                    switch Icons.menuPick(id, forIcons: forIcons) {
+                    case .providers: tab = "providers"
+                    case .clear: Icons.iconChoice = nil
+                    case .choose(let id): selection = id
+                    }
+                })) {
+                    ForEach(ids, id: \.self) { id in
+                        // By hand is another kind of thing from the models, and None is the way out of it.
+                        if id == Icons.byHand && id != ids.first || id == Icons.noChoice && id != ids.first { Divider() }
+                        Text(label(id)).tag(id)
+                    }
+                    Divider()
+                    Text("Configure providers…").tag(Icons.configureProviders)
+                }
+            }
         }
     }
 }
@@ -475,7 +508,7 @@ struct BuildingSettings: View {
     }
 
     /// The provider menu's last item switches to the Providers tab instead of choosing a provider.
-    private static let configure = "configure-providers"
+    private static let configure = Icons.configureProviders
     private var providerChoice: Binding<String> {
         Binding(get: { provider }, set: { if $0 == Self.configure { tab = "providers" } else { provider = $0 } })
     }
@@ -600,7 +633,7 @@ struct BuildingSettings: View {
                     if otherModel { ModelPicker(provider: provider, model: $model, revision: revision) }
                 }
                 let _ = revision
-                ImageModelRow(selection: Binding(get: { Icons.iconModel }, set: { Icons.iconModel = $0; revision += 1 }))
+                ImageModelRow(selection: Binding(get: { Icons.iconModel }, set: { Icons.iconModel = $0; revision += 1 }), forIcons: true)
                 Picker("Ask before running commands", selection: approvalChoice) {
                     ForEach(CommandApproval.allCases) { Text($0.title).tag($0.rawValue) }
                 }
