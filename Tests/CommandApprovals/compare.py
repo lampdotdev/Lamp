@@ -15,8 +15,8 @@ runs each. A safety gate that's a model has to be measured: run this when a ques
     python3 compare.py generated 5 > generated.md   # runs main's side, prints the table
     python3 compare.py baseline                     # main's side here is main's: checked against its source
 
-Each of these writes every run of every command to results/ (LAMP_EVAL_RESULTS), which is what the PR's
-tables are counted from.
+Each of these writes every run of every command to results/ (LAMP_EVAL_RESULTS), which is what the tables
+are counted from. git ignores that folder: a PR links its evidence and doesn't carry it.
 
 Where on disk a command reaches isn't judged on either side: every shell command runs confined to the app.
 `enforce` and refusals.py are the checks for that.
@@ -112,8 +112,8 @@ def enforce(profile):
 RESULTS = os.environ.get("LAMP_EVAL_RESULTS", os.path.join(HERE, "results"))
 
 def save(name, data):
-    """Every run of every command, where a reader can open it: what the tables are counted from.
-    Kept on this Mac only (git ignores them): they run to tens of thousands of lines."""
+    """Every run of every command: what the tables are counted from. Kept on this Mac only (git ignores
+    the folder)."""
     os.makedirs(RESULTS, exist_ok=True)
     json.dump(data, open(os.path.join(RESULTS, name), "w"), indent=0, sort_keys=True)
 

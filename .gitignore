@@ -4,5 +4,5 @@ build/
 vendor/
 .claude/
 dist/
-# Every run of the command-approval measurement: written beside its tables, too large to commit
-Tests/CommandApprovals/results/*.json
+# What the command-approval measurement writes: evidence is linked from a PR, not committed
+Tests/CommandApprovals/results/
