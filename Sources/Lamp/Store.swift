@@ -2971,16 +2971,23 @@ final class Store: ObservableObject {
         // certificate one ("resource fork, Finder information, or similar detritus not allowed"), which is
         // how apps silently ended up ad hoc. Strip them first.
         _ = await Shell.run("xattr -cr \"$LAMP_APP\"", cwd: project.dir, env: ["LAMP_APP": project.builtURL.path]) { _ in }
+        // A widget keeps its own signature inside the app's (AppSigning.command), with entitlements Lamp
+        // writes here rather than takes from the build folder, where anything could have changed them.
+        let widget = Template.widgetURL(in: project.builtURL, of: project)
+        let hasWidget = fm.fileExists(atPath: widget.path)
+        let entitlements = project.dir.appendingPathComponent(".lamp/widget-entitlements.plist")
+        if hasWidget { try Template.widgetEntitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8) }
+        var signingEnv = ["LAMP_APP": project.builtURL.path, "LAMP_WIDGET": widget.path, "LAMP_WIDGET_ENTITLEMENTS": entitlements.path]
         let identity = await AppSigning.identity()
         var signed = false
         if identity != "-" {
             var output: [String] = []
-            signed = await Shell.run("codesign --force --keychain \"$LAMP_KEYCHAIN\" -s \"$LAMP_IDENTITY\" \"$LAMP_APP\" 2>&1",
-                                     cwd: project.dir,
-                                     env: ["LAMP_APP": project.builtURL.path, "LAMP_IDENTITY": identity,
-                                           "LAMP_KEYCHAIN": AppSigning.keychain]) { output.append($0) } == 0
+            signingEnv["LAMP_IDENTITY"] = identity
+            signingEnv["LAMP_KEYCHAIN"] = AppSigning.keychain
+            signed = await Shell.run(AppSigning.command(adHoc: false, widget: hasWidget),
+                                     cwd: project.dir, env: signingEnv) { output.append($0) } == 0
             // Trust the result, not the exit status: check the app really carries the certificate.
-            if signed && !AppSigning.isCertificateSigned(project.builtURL) {
+            if signed && !(AppSigning.isCertificateSigned(project.builtURL) && (!hasWidget || AppSigning.isCertificateSigned(widget))) {
                 signed = false
                 output.append("codesign returned 0 but the app is not certificate-signed")
             }
@@ -2990,8 +2997,7 @@ final class Store: ObservableObject {
         if !signed {
             // Ad hoc keeps the app installable, but macOS won't remember its permissions across rebuilds and
             // won't ask for Location Services at all, so this is logged rather than silent.
-            _ = await Shell.run("codesign --force -s - \"$LAMP_APP\"", cwd: project.dir,
-                                env: ["LAMP_APP": project.builtURL.path]) { _ in }
+            _ = await Shell.run(AppSigning.command(adHoc: true, widget: hasWidget), cwd: project.dir, env: signingEnv) { _ in }
         }
 
         // What the copy being replaced was signed as, to notice when this build is signed differently.

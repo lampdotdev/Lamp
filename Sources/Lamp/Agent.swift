@@ -135,7 +135,7 @@ enum Agent {
         var rules = [Rules.edit, Rules.ask, Rules.shell,
                      mac ? Rules.macFrameworks : Rules.iPhoneFrameworks,
                      mac ? Rules.macBlocks : Rules.iPhoneBlocks]
-        if mac { rules += [Rules.menuBar, Rules.permissions] }
+        if mac { rules += [Rules.menuBar, Rules.widget, Rules.permissions] }
         rules += [Rules.script, mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules.append(Rules.computer) }
         if !mac { rules.append(Rules.iPhoneHardware) }
@@ -200,7 +200,7 @@ enum Agent {
         - Write code that compiles first time: only use Apple frameworks (SwiftUI, AppKit, Foundation, etc.), \
         no third-party packages, and APIs available on macOS 14. Package.swift and build.sh belong to Lamp and \
         are written afresh before every build, so an edit to either is lost: no dependencies, plugins, compiler \
-        flags or build steps; everything the app needs goes in Sources/.
+        flags or build steps; everything the app needs goes in Sources/ (and a widget's code in Widget/).
         """
 
         static let iPhoneFrameworks = """
@@ -252,6 +252,26 @@ enum Agent {
         lost), and its own Quit button (`NSApp.terminate(nil)`). `LampMenuBar.close()` closes the panel after an \
         action in it. Give the panel a fixed width, and hand it its model inside the braces (`{ PanelView().environmentObject(model) }`), \
         never with a modifier on the scene, which crashes the panel. Pass `dockIcon: true` only when the app also has a main window.
+        """
+
+        /// Mac only: an iPhone app's widget needs an extension Lamp doesn't build (`iPhoneHardware` says so).
+        static let widget = """
+        - The app can have a widget for the desktop and Notification Center. Make one when the user asks for a \
+        widget, or for something to keep in view without opening the app. Write it with WidgetKit and SwiftUI in \
+        a `Widget/` folder at the app's root, beside Sources/, starting with Widget/Widget.swift: one `@main`, on \
+        the `Widget` or on a `WidgetBundle` for several. Lamp builds that folder into the app as its widget. It \
+        is a separate program that shares no code with Sources/: nothing from LampSupport.swift exists there, and \
+        a type both sides need is written on both. Use `StaticConfiguration` with a `TimelineProvider`, a \
+        `configurationDisplayName` and `description` in the user's words, `supportedFamilies` from .systemSmall, \
+        .systemMedium and .systemLarge, and `.containerBackground(for: .widget) { … }` on the view, without which \
+        it shows nothing. A widget is a picture macOS redraws from the timeline, not a running view: no timers, \
+        animation, scrolling or text fields. `Text(date, style: .timer)` and `.relative` count by themselves, \
+        entries dated ahead change it on schedule, and macOS refreshes it when it chooses, minutes apart at best. \
+        It may load from the web with URLSession. \(Template.WidgetSharing.rule) \
+        Clicking it opens the app. `look_at_app` shows only the app's window, never the widget, so say it's \
+        untested by sight. An app can't put its own widget on the desktop: end your reply by telling the user \
+        to right-click the desktop, choose Edit Widgets and pick the app there. To take the widget away, delete \
+        the files in Widget/.
         """
 
         static let permissions = """

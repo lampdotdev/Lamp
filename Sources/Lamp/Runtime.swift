@@ -17,14 +17,14 @@ enum Runtime {
         try? Data(fingerprint.utf8).write(to: builtURL(project))
     }
 
-    /// What the app is built from, as one hash: the contents of Sources, Package.swift and the icon design,
+    /// What the app is built from, as one hash: the contents of Sources, its widget's folder, Package.swift and the icon design,
     /// and the attached files the app itself uses (they're copied into the bundle, so a new picture for the
     /// app needs a build; a screenshot attached for the agent to look at doesn't). Not file dates, which move
     /// when a file is rewritten unchanged. Comparing this with the one recorded at build time says whether
     /// a build is needed, including for an edit made while the last build was running.
     static func fingerprint(_ project: LampProject) -> String {
         var hasher = SHA256()
-        let roots = ["Sources", "Package.swift", "icon.json", "capabilities.json"].map { project.dir.appendingPathComponent($0) }
+        let roots = ["Sources", Template.widgetFolder, "Package.swift", "icon.json", "capabilities.json"].map { project.dir.appendingPathComponent($0) }
         for root in roots {
             let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])
                 .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }

@@ -85,8 +85,9 @@ enum Template {
     static func writeOwnedFiles(for project: LampProject) throws {
         try writeSupport(for: project)
         let iphone = project.platform == .iphone
-        try write(iphone ? iPhoneBuildSh : buildSh, to: "build.sh", for: project, executable: true)
-        try write(iphone ? iPhonePackageSwift : packageSwift, to: "Package.swift", for: project)
+        let widget = hasWidget(project)
+        try write(iphone ? iPhoneBuildSh : buildSh(widget: widget), to: "build.sh", for: project, executable: true)
+        try write(iphone ? iPhonePackageSwift : packageSwift(widget: widget), to: "Package.swift", for: project)
     }
 
     private static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
@@ -470,6 +471,126 @@ enum Template {
     )
 
     """
+
+    // MARK: - Widgets
+
+    /// Where a Mac app's widget is written: a folder beside Sources/, because the widget is a program of its
+    /// own (macOS runs it without the app, in a sandbox) and SwiftPM builds one program per folder.
+    static let widgetFolder = "Widget"
+
+    /// Whether the app has a widget to build: a Mac app with Swift in its Widget folder. Asked before every
+    /// build, so writing the first file there or deleting the last one is all it takes to gain or lose one.
+    static func hasWidget(_ project: LampProject) -> Bool {
+        guard project.platform == .mac else { return false }
+        let folder = project.dir.appendingPathComponent(widgetFolder)
+        let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        return files.contains { $0.pathExtension == "swift" }
+    }
+
+    /// The widget's bundle id. macOS only takes an extension whose id begins with its app's.
+    static func widgetBundleID(for project: LampProject) -> String { project.bundleID + ".widget" }
+
+    /// The widget inside a built or installed copy of the app.
+    static func widgetURL(in app: URL, of project: LampProject) -> URL {
+        app.appendingPathComponent("Contents/PlugIns/\(project.exe)Widget.appex")
+    }
+
+    /// How a widget gets at what its app has saved: the one part of widgets that isn't decided, kept here so
+    /// the answer is made in one place. A widget runs sandboxed and sees none of the app's files. An app
+    /// group, the usual way, is refused by macOS for a certificate with no team ID, which is what Lamp signs
+    /// with. Until a way is chosen there is none: the widget's signature opens nothing of the app's, and the
+    /// agent is told a widget can't show the app's data. Choosing one means the entitlements it needs here,
+    /// its code in LampSupport.swift for the app and in a file Lamp writes into Widget/ for the widget, and
+    /// `rule` saying how to use it.
+    enum WidgetSharing {
+        /// Entitlement lines added to the widget's signature, as plist XML.
+        static let entitlements: [String] = []
+
+        /// What the agent is told about the app's data in a widget.
+        static let rule = """
+        It can't read what the app has saved (LampStore, files, settings), so a widget that needs the app's \
+        own data isn't possible yet: say so plainly rather than build one that shows made-up or empty content.
+        """
+    }
+
+    /// What the widget is signed with. macOS shows no widget that isn't sandboxed, and the sandbox lets it
+    /// load from the web only when its signature says so. The app's own signature carries no entitlements,
+    /// so the two are signed separately (`AppSigning.command`).
+    static var widgetEntitlementsPlist: String {
+        let lines = ["  <key>com.apple.security.app-sandbox</key><true/>",
+                     "  <key>com.apple.security.network.client</key><true/>"] + WidgetSharing.entitlements
+        return """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+        \(lines.joined(separator: "\n"))
+        </dict></plist>
+
+        """
+    }
+
+    /// Package.swift for a Mac app. With a widget it has a second program, built from Widget/ the way Xcode
+    /// builds an extension: only what extensions may call, and started by the system's extension runner
+    /// rather than its own `main`.
+    static func packageSwift(widget: Bool) -> String {
+        guard widget else { return packageSwift }
+        return """
+        // swift-tools-version:5.9
+        import PackageDescription
+
+        let package = Package(
+            name: "{{EXE}}",
+            platforms: [.macOS(.v14)],
+            targets: [
+                .executableTarget(name: "{{EXE}}", path: "Sources"),
+                .executableTarget(name: "{{EXE}}Widget", path: "\(widgetFolder)",
+                                  swiftSettings: [.unsafeFlags(["-application-extension"])],
+                                  linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]),
+            ]
+        )
+
+        """
+    }
+
+    /// build.sh for a Mac app. With a widget, the second program goes into the app as its widget extension
+    /// before the app is signed: an extension is signed first, with its own entitlements, and the app around it.
+    static func buildSh(widget: Bool) -> String {
+        guard widget else { return buildSh }
+        return buildSh.replacingOccurrences(of: appSigningLine, with: widgetBuildSteps + appSigningLine)
+    }
+
+    private static let appSigningLine = "codesign --force -s - \"$APP\"\necho \"Built $APP\"\n"
+
+    /// The version changes with every build so macOS reads the widget's kinds and sizes again instead of
+    /// keeping the ones it remembers for a version it has seen.
+    private static var widgetBuildSteps: String {
+        """
+        WIDGET="$APP/Contents/PlugIns/{{EXE}}Widget.appex"
+        mkdir -p "$WIDGET/Contents/MacOS"
+        cp "$(dirname "$BIN")/{{EXE}}Widget" "$WIDGET/Contents/MacOS/{{EXE}}Widget"
+        cat > "$WIDGET/Contents/Info.plist" <<PLIST
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+          <key>CFBundleExecutable</key><string>{{EXE}}Widget</string>
+          <key>CFBundleIdentifier</key><string>{{BUNDLE}}.widget</string>
+          <key>CFBundleName</key><string>{{NAME}}</string>
+          <key>CFBundleDisplayName</key><string>{{NAME}}</string>
+          <key>CFBundlePackageType</key><string>XPC!</string>
+          <key>CFBundleShortVersionString</key><string>0.1</string>
+          <key>CFBundleVersion</key><string>$(date +%s)</string>
+          <key>LSMinimumSystemVersion</key><string>14.0</string>
+          <key>NSExtension</key><dict>
+            <key>NSExtensionPointIdentifier</key><string>com.apple.widgetkit-extension</string>
+          </dict>
+        </dict></plist>
+        PLIST
+        cat > "build/{{EXE}}Widget.entitlements" <<PLIST
+        \(widgetEntitlementsPlist)PLIST
+        codesign --force -s - --entitlements "build/{{EXE}}Widget.entitlements" "$WIDGET"
+
+        """
+    }
 
     static let appSwift = """
     import SwiftUI

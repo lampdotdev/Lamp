@@ -187,6 +187,23 @@ app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_
 string: after editing it, extract and type-check it (`swiftc -typecheck`), and bump anything that detects
 an outdated app (`Store.open` rebuilds apps built by an older Lamp).
 
+### Widgets
+
+A Mac app can have a desktop widget. The agent writes it in `Widget/` at the app's root (`Agent.Rules.widget`,
+Mac only; an iPhone app is still told widgets aren't possible). Swift in that folder (`Template.hasWidget`,
+asked before every build) gives the app's Package.swift a second program, built as an extension, and build.sh
+puts it in the app as `Contents/PlugIns/<Exe>Widget.appex` with the bundle id `<app's id>.widget`. It is
+signed by itself, sandboxed (`Template.widgetEntitlementsPlist`), before the app around it
+(`AppSigning.command`): macOS shows no widget that isn't sandboxed, and the app stays unsandboxed. The widget
+shares no code with `Sources/` and doesn't get `LampSupport.swift`. Nobody but the person can place a widget
+(Edit Widgets), and `look_at_app` can't see one. A rebuild in place keeps a placed widget; moving the app,
+which renaming it does, removes it. A shared app (`.lampapp`) doesn't carry its widget yet.
+
+How a widget reads what its app saved isn't decided, and lives in one place, `Template.WidgetSharing`: the
+entitlements a way would need and the sentence the agent is told. Today it is empty and the agent says a
+widget can't show the app's data. macOS refuses an app group to a certificate with no team ID, which is how
+Lamp signs.
+
 ## Naming: Lamp and Lamp
 
 The app is called **Lamp**: that's the name in everything the user reads (the interface, Help, the agent's
