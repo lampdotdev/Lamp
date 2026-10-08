@@ -1313,6 +1313,9 @@ struct ImportReviewView: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Open “\(pending.package.name)”?").font(.title2.bold())
+                    if pending.waited {
+                        Text("You opened this during setup.").font(.callout).foregroundStyle(.secondary)
+                    }
                     // The sender's words, so the line under them says whose they are.
                     if let description {
                         Text(verbatim: description).font(.callout).lineLimit(4)
