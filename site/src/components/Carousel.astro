@@ -49,6 +49,10 @@ const chevron = "M10.5 3.5 6 8l4.5 4.5";
       }
     </div>
 
+    <!-- Soft edges, so a picture sliding in or out fades at the column's edge instead of being cut off there. -->
+    <div aria-hidden="true" class="pointer-events-none absolute inset-y-0 left-0 w-10 bg-linear-to-r from-page via-page/60 to-transparent sm:w-24"></div>
+    <div aria-hidden="true" class="pointer-events-none absolute inset-y-0 right-0 w-10 bg-linear-to-l from-page via-page/60 to-transparent sm:w-24"></div>
+
     {
       [
         { side: "left-2 sm:left-4", label: "Previous app", step: -1, path: chevron },
