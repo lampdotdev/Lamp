@@ -29,6 +29,7 @@ OUTSIDE = [os.path.join(home, f) for f in FILES] + [os.path.join(app, "../notes/
 NAMES = ["old-projects", "made-up-home-cert.pem", "made-up-home-a.csv"]
 STRAYS = ["Downloads/export-sample.csv"]   # what a command that got through leaves behind
 FOLDERS = sorted({os.path.dirname(f) for f in OUTSIDE})
+OURS = {f.split("/")[0] for f in FILES + DATABASES + STRAYS}   # what this check put in the home folder
 
 def lay_out():
     for path in OUTSIDE:
@@ -63,7 +64,13 @@ def state():
         try: seen[path] = (open(path).read(), stat.S_IMODE(os.stat(path).st_mode))
         except OSError: seen[path] = None
     for folder in FOLDERS:
-        try: seen[folder + "/"] = (tuple(sorted(os.listdir(folder))), stat.S_IMODE(os.stat(folder).st_mode))
+        try:
+            names = sorted(os.listdir(folder))
+            # The home folder itself is other programs' too: Lamp adds ~/Applications and ~/.swiftpm when it
+            # builds, and an earlier version of this check, which compared the whole listing, took one of
+            # those appearing mid-run for a command reaching out. Only the made-up names count there.
+            if folder == home: names = [n for n in names if n in OURS]
+            seen[folder + "/"] = (tuple(names), stat.S_IMODE(os.stat(folder).st_mode))
         except OSError: seen[folder + "/"] = None
     return seen
 
