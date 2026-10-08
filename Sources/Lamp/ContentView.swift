@@ -1374,13 +1374,35 @@ struct ImportReviewView: View {
                 .padding(.vertical, 20)
             }
 
+            if let existing = pending.existing {
+                // The buttons say what each does; this is what someone would worry about before choosing Update.
+                Label {
+                    Text("You already have this app\(existing.name == pending.package.name ? "" : ", as “\(existing.name)”"). Updating keeps your data, and you can go back if you change your mind.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(.secondary)
+                }
+            }
+
             HStack {
                 Spacer()
                 // Escape always cancels. Return builds only when the review is in and not worrying; an app
                 // that does something sensitive takes a deliberate click.
                 Button("Cancel", role: .cancel) { store.cancelImport() }
                     .keyboardShortcut(.cancelAction)
-                if deliberate || review == nil {
+                if pending.existing != nil {
+                    // The app is already here: the file either becomes its next version or a second app.
+                    Button("Keep Both") { store.confirmImport() }
+                        .disabled(review == nil)
+                    if deliberate || review == nil {
+                        Button(deliberate ? "Update Anyway" : "Update", role: deliberate ? .destructive : nil) { store.confirmUpdate() }
+                            .disabled(review == nil)
+                    } else {
+                        Button("Update") { store.confirmUpdate() }
+                            .keyboardShortcut(.defaultAction)
+                    }
+                } else if deliberate || review == nil {
                     Button(deliberate ? "Open Anyway" : "Build & Open", role: deliberate ? .destructive : nil) { store.confirmImport() }
                         .disabled(review == nil)
                 } else {
