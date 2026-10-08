@@ -360,12 +360,15 @@ enum AppAI {
 
     /// `model` overrides the in-app model (an OpenRouter model ID), e.g. for Lamp's own import review.
     /// `appModel` is an app's own text model (an id from `models`), when it has one.
+    /// `schema` is a JSON Schema the reply must fit. OpenRouter holds the model to it; the other routes
+    /// can't, so a caller that depends on the shape still checks the reply.
     static func complete(prompt: String, images: [Image], system: String, json: Bool,
-                         model: String? = nil, appModel: String? = nil, engineModel: String? = nil) async throws -> (String, Double) {
+                         model: String? = nil, appModel: String? = nil, engineModel: String? = nil,
+                         schema: [String: Any]? = nil) async throws -> (String, Double) {
         let chosen = await route(for: appModel)
         var system = system
         if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
-        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel)
+        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel, schema: schema)
         guard json else { return (text, cost) }
         // A JSON reply that doesn't parse (cut off, or wrapped in prose) is useless to the app: ask once more,
         // through the same provider, saying so, before giving up. Both attempts are billed, so the cost goes
@@ -374,7 +377,7 @@ enum AppAI {
         if !isJSON(reply) {
             let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
             do {
-                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel)
+                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel, schema: schema)
                 cost += more
                 reply = stripFences(retry)
             } catch let failure as Failure {
@@ -393,14 +396,14 @@ enum AppAI {
     /// Lamp's own calls (the icon judge, suggestions) when there's a key; `engineModel` likewise names the
     /// model for Claude Code or Codex (the fast one for decisions by text).
     private static func dispatch(prompt: String, images: [Image], system: String, json: Bool, model: String?,
-                                 chosen: TextRoute, engineModel: String? = nil) async throws -> (String, Double) {
+                                 chosen: TextRoute, engineModel: String? = nil, schema: [String: Any]? = nil) async throws -> (String, Double) {
         if let model, Provider.hasKey {
-            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json)
+            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json, schema: schema)
         }
         switch chosen.kind {
         case .openRouter(let model):
             guard Provider.hasKey else { throw Failure(message: "Apps' AI features need an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,).") }
-            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json)
+            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json, schema: schema)
         case .engine(.pi, _):
             return try await viaPi(prompt: prompt, images: images, system: system)
         case .engine(let engine, let model):
@@ -1070,7 +1073,7 @@ enum AppAI {
     }
 
     private static func viaOpenRouter(prompt: String, images: [Image], system: String,
-                                      model: String, json: Bool = false) async throws -> (String, Double) {
+                                      model: String, json: Bool = false, schema: [String: Any]? = nil) async throws -> (String, Double) {
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 120
@@ -1087,7 +1090,9 @@ enum AppAI {
         if json {
             // Structured output: the model must return a JSON object, and gets room for a long one (a plan
             // with scripts in it can run to thousands of tokens; a cut-off reply is what breaks apps).
-            body["response_format"] = ["type": "json_object"]
+            // With a schema, the object must also fit it.
+            body["response_format"] = schema.map { ["type": "json_schema", "json_schema": ["name": "answer", "strict": true, "schema": $0]] }
+                ?? ["type": "json_object"]
             body["max_tokens"] = 16_000
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

@@ -1296,12 +1296,6 @@ struct ImportReviewView: View {
     @State private var icon: NSImage?
     /// What the app says it does, in its sender's words, when the file has that.
     @State private var description: String?
-    /// Opening takes a deliberate click (no Return) when the AI rates the app high, when the code was seen to
-    /// do something sensitive, or when nothing checked it and the fixed checks found real capabilities.
-    private var deliberate: Bool {
-        guard let review else { return false }
-        return review.risk == "high" || review.worst == .sensitive || (!review.checked && !review.detected.isEmpty)
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1353,6 +1347,9 @@ struct ImportReviewView: View {
                     }
                 }
                 verdict(review)
+                if let line = review.reviewerLine {
+                    Text(verbatim: line).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
                 if let note = review.note {
                     Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
@@ -1373,16 +1370,19 @@ struct ImportReviewView: View {
 
             HStack {
                 Spacer()
-                // Escape always cancels. Return builds only when the review is in and not worrying; an app
-                // that does something sensitive takes a deliberate click.
+                // Escape always cancels. Return builds only when the review is in and vouches for the app
+                // (`ImportReview.opening`); anything less takes a deliberate click.
                 Button("Cancel", role: .cancel) { store.cancelImport() }
                     .keyboardShortcut(.cancelAction)
-                if deliberate || review == nil {
-                    Button(deliberate ? "Open Anyway" : "Build & Open", role: deliberate ? .destructive : nil) { store.confirmImport() }
-                        .disabled(review == nil)
-                } else {
+                switch review?.opening {
+                case .byReturn:
                     Button("Build & Open") { store.confirmImport() }
                         .keyboardShortcut(.defaultAction)
+                case .anyway:
+                    Button("Open Anyway", role: .destructive) { store.confirmImport() }
+                case .byClick, nil:
+                    Button("Build & Open") { store.confirmImport() }
+                        .disabled(review == nil)
                 }
             }
         }
@@ -1459,12 +1459,13 @@ struct ImportReviewView: View {
 
     /// The one-line verdict: the AI's rating, lifted by what the code was seen to do.
     private func verdict(_ review: ImportReview) -> some View {
-        let (text, color, icon): (String, Color, String) = switch (review.risk, review.worst) {
-        case ("high", _): ("Looks risky. Don't open unless you trust the sender", .red, "xmark.octagon.fill")
-        case (_, .sensitive): ("Does sensitive things. Open only if you expected that", .red, "exclamationmark.octagon.fill")
-        case ("medium", _), (_, .powerful): ("Powerful, check it's what you expect", .yellow, "exclamationmark.circle.fill")
-        case ("low", _): ("Looks safe", .green, "checkmark.seal.fill")
-        default: ("Not checked by AI", .secondary, "questionmark.circle")
+        let (text, color, icon): (String, Color, String) = switch review.verdict {
+        case .risky: ("Looks risky. Don't open unless you trust the sender", .red, "xmark.octagon.fill")
+        case .sensitive: ("Does sensitive things. Open only if you expected that", .red, "exclamationmark.octagon.fill")
+        case .powerful: ("Powerful, check it's what you expect", .yellow, "exclamationmark.circle.fill")
+        case .safe: ("Looks safe", .green, "checkmark.seal.fill")
+        case .checkedOnThisMac: ("Nothing worrying found, but not by a check Lamp can vouch for", .secondary, "questionmark.circle")
+        case .unchecked: ("Not checked by AI", .secondary, "questionmark.circle")
         }
         return Label(text, systemImage: icon)
             .font(.callout.bold())
