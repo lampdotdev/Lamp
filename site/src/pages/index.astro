@@ -91,8 +91,9 @@ const shelf = [
 // get (row one), what it can do (row two, the two dark tiles), and living with it (row three). Each tile has a
 // strong colour of its own, close to the app icons', with dark or white words, whichever reads on it.
 // A tile with a `visual` shows that illustration across its top, running off its edges, with the words
-// beneath; with `below`, the words come first and the illustration sits at the bottom, for variety.
-const points: { title: string; text: string; tile: string; visual?: (props: object) => unknown; below?: boolean }[] = [
+// beneath; with `below`, the words come first and the illustration sits at the bottom, for variety. With
+// `centre`, an illustration that doesn't run off the tile's edges sits in the middle of the room above the words.
+const points: { title: string; text: string; tile: string; visual?: (props: object) => unknown; below?: boolean; centre?: boolean }[] = [
   {
     title: "Gorgeous by default.",
     text: "Native controls, proper menus and shortcuts, and an icon of its own. Feels made-in-Cupertino, never made-by-AI.",
@@ -117,6 +118,7 @@ const points: { title: string; text: string; tile: string; visual?: (props: obje
     text: "Apps read text in pictures, understand speech and translate, right on your Mac. Lamp can even run the AI on your Mac's own chip.",
     tile: "bento:col-span-5 bg-graphite-deep bg-[radial-gradient(90%_75%_at_50%_25%,#8f4c0c_0%,transparent_72%)] text-white",
     visual: AppleSilicon,
+    centre: true,
   },
   {
     title: "Made to share.",
@@ -130,6 +132,7 @@ const points: { title: string; text: string; tile: string; visual?: (props: obje
     text: "Ask for a change whenever you like. Lamp saves a version each time, so you can try anything and go back.",
     tile: "bento:col-span-4 bg-linear-to-b from-mint-from to-mint-to",
     visual: ChangeItAnyTime,
+    centre: true,
   },
 ];
 
@@ -235,7 +238,7 @@ const description = `${pitch} ${noCode}`;
         {
           points.map((point) => (
             <div class:list={["flex min-h-56 flex-col overflow-hidden rounded-[28px]", point.below ? "justify-between" : "justify-end", point.tile]}>
-              {point.visual && !point.below && <point.visual />}
+              {point.visual && !point.below && (point.centre ? <div class="flex flex-1 flex-col justify-center"><point.visual /></div> : <point.visual />)}
               <div class:list={["p-8 sm:p-10", point.below && "pb-2 sm:pb-4"]}>
                 <h3 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">
                   {sentences(point.title).map((sentence, index, all) => (

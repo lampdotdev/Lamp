@@ -2,25 +2,25 @@
 import { Image } from "astro:assets";
 import paletteStudio from "../../assets/icons/palette-studio.png";
 
-// For "Share with anyone", beside the words: you and a friend as contact-style avatars, an app arcing from one
-// to the other along a dotted path, and the friend wearing its icon as a badge: their own copy. Drawn on a
-// 552×280 canvas, the right half of the full-width tile on a laptop.
-const you = { x: 110, y: 168 };
-const friend = { x: 442, y: 168 };
-const peak = { x: 276, y: 66 };
+// For "Made to share", above the words: you and a friend as contact-style avatars, an app arcing from one to the
+// other along a dotted path, and the friend wearing its icon as a badge: their own copy. Drawn on a 656×320
+// canvas, the whole of the six-column tile on a laptop, so it fills the tile's width.
+const you = { x: 150, y: 200 };
+const friend = { x: 506, y: 200 };
+const peak = { x: 328, y: 82 };
 ---
 
-<div aria-hidden="true" class="relative h-[174px] overflow-hidden select-none sm:h-[280px]">
+<div aria-hidden="true" class="relative h-[168px] overflow-hidden select-none sm:h-[320px]">
   <!-- On a phone the scene is drawn at the desktop size and shrunk, keeping the same arrangement. -->
-  <div class="absolute top-0 left-1/2 h-[280px] w-[552px] origin-top -translate-x-1/2 scale-[0.62] sm:scale-100">
-    <svg viewBox="0 0 552 280" class="absolute inset-0 h-[280px] w-[552px]">
+  <div class="absolute top-0 left-1/2 h-[320px] w-[656px] origin-top -translate-x-1/2 scale-[0.52] sm:scale-100">
+    <svg viewBox="0 0 656 320" class="absolute inset-0 h-[320px] w-[656px]">
       <path
-        d={`M${you.x + 30} ${you.y - 48} Q${peak.x} ${peak.y - 70} ${friend.x - 30} ${friend.y - 48}`}
+        d={`M${you.x + 44} ${you.y - 66} Q${peak.x} ${peak.y - 96} ${friend.x - 44} ${friend.y - 66}`}
         fill="none"
         stroke="currentColor"
-        stroke-opacity="0.45"
-        stroke-width="2"
-        stroke-dasharray="2 7"
+        stroke-opacity="0.5"
+        stroke-width="2.5"
+        stroke-dasharray="2 9"
         stroke-linecap="round"
       />
     </svg>
@@ -31,16 +31,16 @@ const peak = { x: 276, y: 66 };
         { ...friend, name: "A friend", badge: true },
       ].map((person) => (
         <div class="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center" style={`left: ${person.x}px; top: ${person.y}px`}>
-          <div class="relative grid size-24 place-items-center rounded-full bg-linear-to-b from-[#c7c7cc] to-[#8e8e93] shadow-[0_10px_24px_rgba(0,0,0,0.12)]">
-            <svg viewBox="0 0 24 24" class="size-14 fill-white">
+          <div class="relative grid size-32 place-items-center rounded-full bg-linear-to-b from-[#d1d1d6] to-[#8e8e93] shadow-[0_14px_30px_rgba(40,0,90,0.3)] ring-4 ring-white/25">
+            <svg viewBox="0 0 24 24" class="size-20 fill-white">
               <circle cx="12" cy="8.6" r="4.2" />
               <path d="M3.8 21c.9-4.4 4.2-6.6 8.2-6.6s7.3 2.2 8.2 6.6z" />
             </svg>
             {person.badge && (
-              <Image src={paletteStudio} alt="" width={44} height={44} densities={[1, 2]} class="absolute -right-2 -bottom-2 size-11 drop-shadow-[0_4px_8px_rgba(0,0,0,0.2)]" />
+              <Image src={paletteStudio} alt="" width={56} height={56} densities={[1, 2]} class="absolute -right-3 -bottom-3 size-14 drop-shadow-[0_6px_10px_rgba(0,0,0,0.25)]" />
             )}
           </div>
-          <span class="mt-3 text-[15px] font-semibold opacity-85">{person.name}</span>
+          <span class="mt-3 text-[17px] font-semibold">{person.name}</span>
         </div>
       ))
     }
@@ -49,10 +49,10 @@ const peak = { x: 276, y: 66 };
     <Image
       src={paletteStudio}
       alt=""
-      width={80}
-      height={80}
+      width={112}
+      height={112}
       densities={[1, 2]}
-      class="absolute size-20 -translate-x-1/2 -translate-y-1/2 drop-shadow-[0_14px_22px_rgba(0,0,0,0.18)]"
+      class="absolute size-28 -translate-x-1/2 -translate-y-1/2 drop-shadow-[0_18px_28px_rgba(40,0,90,0.35)]"
       style={`left: ${peak.x}px; top: ${peak.y}px`}
     />
   </div>
