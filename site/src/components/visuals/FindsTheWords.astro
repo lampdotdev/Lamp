@@ -1,0 +1,26 @@
+---
+// For "Finds the words.": a reply an app has drafted, still being written, with the ways it can rewrite it
+// beneath and "Friendlier" chosen. A white window on a 656×280 canvas, the tile's size on a laptop (six columns
+// of ten), starting 40px in to line up with the words and running off the right edge.
+const tones = ["Friendlier", "Shorter", "More formal"];
+---
+
+<div aria-hidden="true" class="relative h-[200px] overflow-hidden select-none sm:h-[280px]">
+  <div class="absolute inset-0 h-[140%] w-[140%] origin-top-left scale-[0.714] sm:h-full sm:w-full sm:scale-100">
+    <div class="absolute top-10 left-10 w-[640px] rounded-xl bg-white p-5 text-ink shadow-[0_14px_34px_rgba(0,0,0,0.18)]">
+      <div class="flex gap-1.5">{[0, 1, 2].map(() => <span class="size-2.5 rounded-full bg-black/12" />)}</div>
+      <p class="mt-3 border-b border-black/8 pb-2 text-[13px] text-muted">To: <span class="text-ink">Sam</span></p>
+      <p class="mt-3 w-[520px] text-[16px] leading-[1.5]">
+        Hi Sam, thanks so much for sending this over so quickly! Friday works perfectly for me, and I'll bring the
+        drafts so we can go<span class="ml-0.5 inline-block h-[18px] w-[2px] translate-y-[3px] bg-ink" />
+      </p>
+      <div class="mt-4 flex gap-2">
+        {
+          tones.map((tone, index) => (
+            <span class:list={["rounded-full px-3 py-1 text-[13px] font-semibold", index === 0 ? "bg-ink text-white" : "bg-black/6"]}>{tone}</span>
+          ))
+        }
+      </div>
+    </div>
+  </div>
+</div>
