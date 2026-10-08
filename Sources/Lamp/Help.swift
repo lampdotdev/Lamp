@@ -69,13 +69,14 @@ private struct HelpSection: Identifiable {
 }
 
 private enum HelpTopic: String, CaseIterable, Identifiable {
-    case gettingStarted, changingApps, versions, sharing, ai, troubleshooting, shortcuts
+    case gettingStarted, phoneApps, changingApps, versions, sharing, ai, troubleshooting, shortcuts
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .gettingStarted: "Getting Started"
+        case .phoneApps: "iPhone and iPad Apps"
         case .changingApps: "Changing Your Apps"
         case .versions: "Versions & Undo"
         case .sharing: "Sharing Apps"
@@ -88,6 +89,7 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .gettingStarted: "hammer"
+        case .phoneApps: "iphone"
         case .changingApps: "bubble.left.and.bubble.right"
         case .versions: "clock.arrow.circlepath"
         case .sharing: "square.and.arrow.up"
@@ -101,10 +103,18 @@ private enum HelpTopic: String, CaseIterable, Identifiable {
         switch self {
         case .gettingStarted:
             [
-                HelpSection(title: "Make the app you need", text: "Describe a task and Lamp builds a real Mac app for it. Start with one small job, then keep improving the app in its chat."),
+                HelpSection(title: "Make the app you need", text: "Describe a task and Lamp builds a real app for it, for your Mac, iPhone or iPad. Start with one small job, then keep improving the app in its chat."),
                 HelpSection(title: "Finish setup", text: "The first time you open Lamp, it welcomes you and asks what your first app should do. Then it gets two things ready. If Apple's app-building tools are missing, it opens Apple's installer: click Install, then Agree. It usually takes 5–10 minutes, and you can carry on meanwhile. Then choose what makes your apps: your Claude or ChatGPT account, or Lamp's own, with an OpenRouter key, a model on this Mac or another provider. Your first app starts building as soon as everything is ready. You can change this later in Lamp → Settings (⌘,)."),
-                HelpSection(title: "Build your first app", text: "Click New App at the bottom of the app list, or press ⌘N. Describe what the app should do: what you give it and what you want back. Or pick one of the starter ideas and change its request to suit you. Press Return to send. If the request is unclear, Lamp asks up to three short questions first. Then it names the app, designs its icon, builds it and opens it."),
-                HelpSection(title: "Find your apps", text: "Your apps are listed in Lamp's sidebar and installed in Applications → \(Edition.name) Apps in your home folder. Double-click one in the sidebar to open it. In an app you built, choose Edit with Lamp… (⇧⌘E) from the app's own menu to return to its chat in Lamp.")
+                HelpSection(title: "Build your first app", text: "Click New App at the bottom of the app list, or press ⌘N. Choose Mac, iPhone or iPad, then describe what the app should do: what you give it and what you want back. Or pick one of the starter ideas and change its request to suit you. Press Return to send. If the request is unclear, Lamp asks up to three short questions first. Then it names the app, designs its icon, builds it and opens it."),
+                HelpSection(title: "Find your apps", text: "Your apps are listed in Lamp's sidebar. Double-click one to open it. Mac apps are installed in Applications → \(Edition.name) Apps in your home folder; in one, choose Edit with Lamp… (⇧⌘E) from the app's own menu to return to its chat in Lamp. iPhone and iPad apps open in a simulator on your Mac, or on your own iPhone or iPad.")
+            ]
+        case .phoneApps:
+            [
+                HelpSection(title: "Make an iPhone or iPad app", text: "When you start a new app, choose iPhone or iPad before you describe it. Lamp makes one app that works on both. It needs Xcode, Apple's app for making apps, which is free in the App Store. If Xcode or anything it needs is missing, Lamp says what to install when you send your first request. To check at any time, choose Check iPhone & iPad Setup… from the Try On menu in the toolbar."),
+                HelpSection(title: "Try it on your Mac", text: "The app opens in a simulator: an iPhone or iPad on your Mac's screen. Use the Try On menu in the toolbar, or right-click the app in the sidebar, to switch between iPhone and iPad. While building, Lamp looks at the simulator and taps, types and swipes in it to check its work. That needs Lamp to be allowed under System Settings → Privacy & Security → Accessibility; Lamp asks the first time."),
+                HelpSection(title: "Put it on your iPhone or iPad", text: "Sign in to Xcode with your Apple Account (Xcode → Settings → Accounts), then plug your phone into your Mac and unlock it. In the Try On menu, choose Pair and accept Trust This Computer on the phone, then choose the phone. Click Open App (the Play button) and Lamp builds the app, signs it with your account and puts it on the phone; every finished change goes there too. The first time, turn on Developer Mode on the phone when asked (Settings → Privacy & Security → Developer Mode). The Apple team used for signing is in Lamp → Settings → Building."),
+                HelpSection(title: "AI away from your Mac", text: "On your phone, an app's AI goes through Lamp while the phone and your Mac are on the same Wi‑Fi network. Away from it, the app needs an OpenRouter key: Lamp gives the key to the app, which keeps it on the phone. Choose the models it uses in Settings → Apps. What an app spends this way doesn't show in Lamp."),
+                HelpSection(title: "What isn't possible yet", text: "iPhone and iPad apps can't be shared yet. Away from your Mac, an app on your phone can't use your Mac's other apps. Lamp sees the app only in the simulator, not on your phone's screen.")
             ]
         case .changingApps:
             [

@@ -10,6 +10,8 @@ enum Onboarding {
     /// window while away at an installer or a sign-in in the browser, comes back to setup with the idea intact.
     static let ideaKey = "welcomeIdea"
     static let stepKey = "welcomeStep"
+    /// What the first app is made as, kept with the idea.
+    static let kindKey = "welcomeKind"
 
     /// People who used Lamp before the welcome existed have apps already: they skip it.
     static func settle(hasApps: Bool) {
@@ -52,6 +54,7 @@ struct OnboardingView: View {
     @State private var step = Step.opening
     @State private var forward = true
     @AppStorage(Onboarding.ideaKey) private var prompt = ""
+    @AppStorage(Onboarding.kindKey) private var kind = AppKind.mac
     @State private var leaving = false
     @State private var window: NSWindow?
 
@@ -60,7 +63,7 @@ struct OnboardingView: View {
             ZStack {
                 switch step {
                 case .hello: HelloStep { go(to: .idea) }
-                case .idea: IdeaStep(prompt: $prompt, back: { go(to: .hello) }) { go(to: .setup) }
+                case .idea: IdeaStep(prompt: $prompt, kind: $kind, back: { go(to: .hello) }) { go(to: .setup) }
                 case .setup: SetupStep(back: { go(to: .idea) }, start: finish)
                 }
             }
@@ -114,10 +117,12 @@ struct OnboardingView: View {
         Task {
             try? await Task.sleep(for: .seconds(0.3))
             let idea = prompt.trimmed
+            let kind = kind
             let window = window
             // The welcome is over: nothing to come back to.
             UserDefaults.standard.removeObject(forKey: Onboarding.ideaKey)
             UserDefaults.standard.removeObject(forKey: Onboarding.stepKey)
+            UserDefaults.standard.removeObject(forKey: Onboarding.kindKey)
             withAnimation(.easeOut(duration: 0.4)) {
                 onboarded = true
                 store.welcomeFinished = true
@@ -129,7 +134,13 @@ struct OnboardingView: View {
             store.openWaitingImport()
             guard !idea.isEmpty else { return }
             store.create()
-            if let project = store.selected { store.send(idea, to: project) }
+            guard let project = store.selected else { return }
+            store.setKind(project, kind)
+            // An iPhone or iPad app needs Xcode and a simulator first, checked as the chat's Send does. Set
+            // aside, the idea waits in the message box rather than being lost.
+            PhoneSetup.shared.perform(for: project, in: store, cancelled: {
+                if let current = store.current(project) { store.saveDraft(Store.Draft(text: idea), for: current) }
+            }) { store.send(idea, to: $0) }
         }
     }
 }
@@ -149,7 +160,7 @@ private struct HelloStep: View {
                     .tracking(-1.2)
                     .foregroundStyle(Palette.ink)
                     .reveal(shown, delay: 0.1)
-                Text("Lamp turns your ideas into your very own Mac apps.")
+                Text("Lamp turns your ideas into your very own apps, for your Mac, iPhone and iPad.")
                     .font(.system(size: 19))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -174,6 +185,7 @@ private struct HelloStep: View {
 /// 2. The first idea: in their own words, or from a tile.
 private struct IdeaStep: View {
     @Binding var prompt: String
+    @Binding var kind: AppKind
     let back: () -> Void
     let next: () -> Void
     @StateObject private var dictation = Dictation()
@@ -188,6 +200,20 @@ private struct IdeaStep: View {
             // below stops the content running into them when the window is small.
             Spacer(minLength: 40)
             Heading(title: "What should your first app do?")
+
+            Picker("Kind", selection: $kind) {
+                ForEach(AppKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.radioGroup)
+            .horizontalRadioGroupLayout()
+            .labelsHidden()
+            .font(.system(size: 14))
+            .padding(.top, 18)
+            .onChange(of: kind) {
+                // An idea picked for the other kind goes with it; anything typed stays.
+                if chosen != nil { prompt = ""; chosen = nil }
+                deck.show(kind)
+            }
 
             HStack(alignment: .top, spacing: 10) {
                 TextField("", text: $prompt,
@@ -217,7 +243,7 @@ private struct IdeaStep: View {
             .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(focused ? Palette.accent.opacity(0.55) : .black.opacity(0.08), lineWidth: focused ? 1.5 : 1))
             .shadow(color: .black.opacity(0.06), radius: 18, y: 8)
-            .padding(.top, 28)
+            .padding(.top, 18)
 
             HStack {
                 Text("Need an idea?").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
@@ -259,6 +285,7 @@ private struct IdeaStep: View {
             }
         }
         .onAppear {
+            deck.show(kind)   // back on this step with a phone chosen earlier
             deck.prefetch()
             // After the step has slid in: focus can't land while the old step still holds it.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { focused = true }

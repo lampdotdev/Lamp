@@ -290,7 +290,7 @@ enum AIStatus {
             if resolution.tier != .best, offered.contains(SetupOffer(capability: capability)) { line += "; Lamp has offered the person a way to set it up" }
             return line
         }
-        if project.platform == .iphone, Experiments.iosApps {
+        if project.platform == .iphone {
             let away = AppAI.resolve(.text, for: project, in: .phoneAway)
             lines.append("- On the person's phone away from this Mac: \(away.tier == .none ? "no AI" : "text, pictures and decisions through OpenRouter")")
         }

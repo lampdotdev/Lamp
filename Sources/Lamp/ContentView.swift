@@ -771,7 +771,7 @@ struct ProjectView: View {
     private func transcript(_ lines: [LogLine], busy: Bool, progressShown: Bool = false) -> some View {
         Transcript(lines: lines, dir: project.dir, busy: busy, progressShown: progressShown, goBack: { line, before in
             Task { await store.restore(project, toVersionOf: line, before: before) }
-        }, sendAgain: self.busy || submissionPending ? nil : takeBack, retryPhone: Experiments.iosApps && project.device != nil ? { udid in
+        }, sendAgain: self.busy || submissionPending ? nil : takeBack, retryPhone: project.device != nil ? { udid in
             Task { await store.retryPhone(project, udid: udid) }
         } : nil)
     }
@@ -1085,7 +1085,7 @@ struct AppInfoView: View {
                 ForEach(Capability.allCases) { capability in
                     answerRow(capability.title, AppAI.resolve(capability, for: project))
                 }
-                if project.platform == .iphone, Experiments.iosApps {
+                if project.platform == .iphone {
                     // Away from the Mac a phone answers only through the OpenRouter key: without one, one row says so.
                     if Provider.hasKey {
                         ForEach(Capability.allCases) { capability in
@@ -1259,20 +1259,10 @@ struct NewAppIntro: View {
     @State private var ideas: [Idea] = []
     @FocusState private var editingName: Bool
 
-    @AppStorage("experimentIOSApps") private var iosApps = false
-
     private var busy: Bool { store.busy.contains(project.id) }
 
-    /// What a new app is made as, chosen before its first message. iPhone and iPad are the same kind of app
-    /// to Lamp; the choice is which simulator it opens in.
-    private enum Kind: String, CaseIterable { case mac = "Mac", iphone = "iPhone", ipad = "iPad" }
-
-    private var kind: Binding<Kind> {
-        Binding {
-            project.platform == .mac ? .mac : project.family == .ipad ? .ipad : .iphone
-        } set: { kind in
-            store.setKind(project, platform: kind == .mac ? .mac : .iphone, family: kind == .ipad ? .ipad : .iphone)
-        }
+    private var kind: Binding<AppKind> {
+        Binding { AppKind(project) } set: { store.setKind(project, $0) }
     }
 
     var body: some View {
@@ -1294,9 +1284,9 @@ struct NewAppIntro: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 400)
-            if iosApps && !project.scaffolded {   // a draft, so its kind is still open (Store.setKind)
+            if !project.scaffolded {   // a draft, so its kind is still open (Store.setKind)
                 Picker("Kind", selection: kind) {
-                    ForEach(Kind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    ForEach(AppKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.radioGroup)
                 .horizontalRadioGroupLayout()
@@ -1305,10 +1295,11 @@ struct NewAppIntro: View {
                 .padding(.top, 4)
             }
             if fresh && draft.trimmed.isEmpty && !ideas.isEmpty {
-                StarterIdeas(ideas: ideas) { prompt in
+                StarterIdeas(ideas: ideas, kind: AppKind(project)) { prompt in
                     draft = prompt
                     store.chatFocusRequest += 1
                 }
+                .id(ideas.map(\.title))   // a fresh deck when the kind, and so the ideas, change
                 .padding(.top, 18)
                 .padding(.horizontal, 24)
             }
@@ -1319,12 +1310,16 @@ struct NewAppIntro: View {
         .onAppear {
             name = project.untitled ? "" : project.name
             fresh = Template.isScaffold(project)
-            if ideas.isEmpty {
-                let others = store.projects.filter { $0.id != project.id && !$0.untitled }
-                ideas = Ideas.starters(made: others.map(\.name))
-            }
+            if ideas.isEmpty { drawIdeas() }
         }
+        // Ideas for what it's now going to be: a phone's aren't a Mac's.
+        .onChange(of: AppKind(project)) { drawIdeas() }
         .onChange(of: editingName) { if !editingName { commit() } }
+    }
+
+    private func drawIdeas() {
+        let others = store.projects.filter { $0.id != project.id && !$0.untitled }
+        ideas = Ideas.starters(made: others.map(\.name), kind: AppKind(project))
     }
 
     private func commit() {
@@ -1653,9 +1648,9 @@ struct StarterIdeas: View {
     @StateObject private var deck: IdeaDeck
     @State private var hovered: String?
 
-    init(ideas: [Idea], choose: @escaping (String) -> Void) {
+    init(ideas: [Idea], kind: AppKind, choose: @escaping (String) -> Void) {
         self.choose = choose
-        _deck = StateObject(wrappedValue: IdeaDeck(first: ideas))
+        _deck = StateObject(wrappedValue: IdeaDeck(first: ideas, kind: kind))
     }
 
     var body: some View {
@@ -1707,8 +1702,7 @@ struct StarterIdeas: View {
     }
 }
 
-/// The Try On choices: the iPhone and iPad simulators and, when apps may go on the person's own devices,
-/// each paired phone. The simulator choice is the family the agent builds and looks at; a phone is where
+/// The Try On choices: the iPhone and iPad simulators and each of the person's paired phones. The simulator choice is the family the agent builds and looks at; a phone is where
 /// Play puts the app.
 private struct TryOnChoices: View {
     @EnvironmentObject private var store: Store
@@ -1753,13 +1747,13 @@ private struct TryOnChoices: View {
             }
         }
         Divider()
-        Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show(family: project.family, phone: Experiments.iosApps ? project.device : nil) }
+        Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show(family: project.family, phone: project.device) }
         Button("Look for Devices Again") { refresh() }
             .onAppear { refresh() }
     }
 
     private func refresh() {
         store.refreshDevices()
-        if Experiments.iosApps { Task { olderPhones = await PhoneTools.olderPhones() } }
+        Task { olderPhones = await PhoneTools.olderPhones() }
     }
 }
