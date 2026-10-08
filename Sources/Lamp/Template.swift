@@ -535,8 +535,9 @@ enum Template {
                 i += quotes
                 let end = String(repeating: "\"", count: quotes) + String(repeating: "#", count: marks)
                 while i < text.count, !starts(end, at: i) {
-                    // A backslash hides the next character, quote included, except in a raw string.
-                    if marks == 0, text[i] == "\\" { i += 1 }
+                    // A backslash hides the next character, quote included. In a raw string it only does
+                    // when the string's own # marks follow it.
+                    if text[i] == "\\", starts(String(repeating: "#", count: marks), at: i + 1) { i += 1 + marks }
                     if quotes == 1, i < text.count, text[i] == "\n" { break }   // an unfinished string ends with its line
                     i += 1
                 }

@@ -68,7 +68,8 @@ final class WidgetOnlyTests: XCTestCase {
         for mention in ["// Previously: LampWidgetOnly()", "/* was\n   LampWidgetOnly() */", "let note = \"LampWidgetOnly()\"",
                         "let long = \"\"\"\n    LampWidgetOnly()\n    \"\"\"",
                         "/* outer /* inner */ LampWidgetOnly() */", "let raw = #\"a \" LampWidgetOnly() \"#",
-                        "let raw = ##\"\"\"\n \"\"\" LampWidgetOnly() \n\"\"\"##", "let s = \"quote \\\" LampWidgetOnly()\""] {
+                        "let raw = ##\"\"\"\n \"\"\" LampWidgetOnly() \n\"\"\"##", "let s = \"quote \\\" LampWidgetOnly()\"",
+                        "let raw = #\"escaped \\#\" LampWidgetOnly() \"#", "let raw = #\"plain backslash \\\"# + \"LampWidgetOnly()\""] {
             try write("import SwiftUI\n\(mention)\n@main struct MainApp: App { var body: some Scene { WindowGroup { Text(\"hi\") } } }\n",
                       to: "Sources/App.swift", in: project)
             XCTAssertFalse(Template.isWidgetOnly(project), mention)
