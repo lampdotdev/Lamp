@@ -117,10 +117,12 @@ gh workflow run mac-release.yml --ref v0.2.0 -f version=0.2.0
 
 ## Trying the first run
 
-`scripts/fresh-start.sh begin` quits Lamp, puts your whole setup aside (the Lamp folder in Application
-Support, the `dev.lamp.host` defaults and any Keychain items) and opens Lamp as a first-time user would
-see it: the welcome screen, the key check, picking an engine, making the first app. `scripts/fresh-start.sh
-restore` throws away what the fresh run made and puts your setup back. Nothing is deleted until you restore.
+`scripts/fresh-start.sh begin` quits Lamp Dev, puts your whole setup aside (the Lamp Dev folder in
+Application Support, the `dev.lamp.host.dev` defaults and any Keychain items) and opens it as a first-time
+user would see it: the welcome screen, the key check, picking an engine, making the first app.
+`scripts/fresh-start.sh restore` throws away what the fresh run made and puts your setup back. Nothing is
+deleted until you restore. `EDITION=release scripts/fresh-start.sh begin` does the same to the installed
+Lamp, which is the one you least want reset by accident, so it isn't the default.
 
 It can't show a Mac without the Command Line Tools, Gatekeeper on a fresh download, or permission prompts
 you've already answered. A second macOS user account shows the prompts; a clean VM with the release DMG

@@ -1,8 +1,11 @@
 #!/bin/zsh
 # Try Lamp's first run on this Mac without losing your setup.
 #
-#   scripts/fresh-start.sh begin     quit Lamp, put its state aside, open it as a first-time user would
-#   scripts/fresh-start.sh restore   quit Lamp, put your state back
+#   scripts/fresh-start.sh begin     quit Lamp Dev, put its state aside, open it as a first-time user would
+#   scripts/fresh-start.sh restore   quit Lamp Dev, put your state back
+#
+# It works on the development build (Lamp Dev) unless EDITION=release is given, which sets aside the
+# installed Lamp's state instead: the one you use is the one you least want reset by accident.
 #
 # Lamp keeps everything in three places: ~/Library/Application Support/Lamp (apps, keys.json, pi's config,
 # the signing keychain, downloaded models), the defaults domain dev.lamp.host (engine, provider, models,
@@ -15,9 +18,8 @@
 # you've already answered: for those, use a second macOS user (permissions) or a clean VM (everything).
 set -euo pipefail
 
-# EDITION=dev sets aside the development build's state (Lamp Dev) instead of the installed Lamp's.
 support="$HOME/Library/Application Support"
-if [ "${EDITION:-release}" = dev ]; then name="Lamp Dev"; domain="dev.lamp.host.dev"; else name="Lamp"; domain="dev.lamp.host"; fi
+if [ "${EDITION:-dev}" = release ]; then name="Lamp"; domain="dev.lamp.host"; else name="Lamp Dev"; domain="dev.lamp.host.dev"; fi
 state="$support/$name"
 backup="$support/$name-fresh-start"
 
@@ -63,7 +65,7 @@ begin() {
   keychain_accounts | while read -r account; do
     security delete-generic-password -s "$domain" -a "$account" >/dev/null 2>&1 || true
   done
-  echo "Your Lamp setup is in $backup. Opening Lamp as a first-time user."
+  echo "Your $name setup is in $backup. Opening $name as a first-time user."
   echo "When you're done: scripts/fresh-start.sh restore"
   open -a "$name" 2>/dev/null || open "$(dirname "$0")/../build/$name.app"
 }
@@ -102,7 +104,7 @@ restore() {
     rm -f "$backup/no-folder"
   fi
   rm -rf "$backup"
-  echo "Your Lamp setup is back."
+  echo "Your $name setup is back."
 }
 
 case "${1:-}" in

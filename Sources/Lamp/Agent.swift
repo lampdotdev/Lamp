@@ -39,6 +39,15 @@ enum Agent {
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
     static var tryRules: String { lookRules + planRules + setupRules + (Memory.isOn ? memoryRules : "") }
 
+    /// For the engines whose shell commands run confined (Sandbox): what the shell can and can't reach.
+    static let sandboxNote = """
+
+    - Your shell commands run confined to the app's folder, plus the system, developer tools, caches and \
+    temporary folders, with network access; anything else on this Mac is "Operation not permitted" to them. \
+    To read a file elsewhere, use your file tools, which ask the user. `gh` can't see its sign-in there: clone \
+    public repositories with `git clone --depth 1 https://github.com/owner/name .lamp/reference/name`.
+    """
+
     private static let lookRules = """
 
     - `look_at_app` builds the app with your changes, opens it, and shows you its windows, what it printed \
@@ -549,7 +558,7 @@ enum Agent {
             "LAMP_MODEL": Builder.piProvider == Builder.myPiProvider ? myPiModel : Builder.piModel,
             "LAMP_SESSION": session,
             "LAMP_SESSION_DIR": sessionDir,
-            "LAMP_SYSTEM": (project.map(systemPrompt(for:)) ?? systemPrompt) + tryRules,
+            "LAMP_SYSTEM": (project.map(systemPrompt(for:)) ?? systemPrompt) + tryRules + sandboxNote,
             "LAMP_PROMPT": prompt,
             "LAMP_TOOLS": lampTools?.path ?? "",
             "LAMP_TOOLS_JSON": Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json").path ?? "",
