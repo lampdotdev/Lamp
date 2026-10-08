@@ -1198,6 +1198,7 @@ final class Store: ObservableObject {
                 }
             }
             let newArtwork: Bool
+            let hadWidget = Template.hasWidget(project)
             do {
                 newArtwork = try Sharing.install(package, into: project, replacing: true)
             } catch {
@@ -1220,6 +1221,8 @@ final class Store: ObservableObject {
             }
             // The same code with a new icon picture still gets built, which is what draws and installs the icon.
             log(project, .status, "Updated from a shared file. Building it now…")
+            // A widget already on the desktop stays there through the update; a first one has to be added.
+            if package.hasWidget, !hadWidget { log(project, .status, Sharing.widgetToAdd(project.name)) }
             if await build(project) == nil {
                 await installReportingCrash(project)
             } else {
@@ -1251,6 +1254,8 @@ final class Store: ObservableObject {
         reload()
         selection = project.id
         log(project, .status, "Imported from a shared file. Building it now…")
+        // Nobody but the person can put a widget on the desktop, and no agent's reply is coming to say so.
+        if package.hasWidget { log(project, .status, Sharing.widgetToAdd(project.name)) }
         Task {
             _ = await Shell.run("git init -q && git add -A && \(Self.commit) -qm 'Imported from a shared file'",
                                 cwd: project.dir) { _ in }

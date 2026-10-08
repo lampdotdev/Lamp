@@ -183,7 +183,7 @@ final class SharedAppReviewTests: XCTestCase {
     private let code = "0123456789abcdef0123456789abcdef"
 
     func testTheAppsTextSitsBetweenMarkersItCouldNotHaveKnown() {
-        let request = Sharing.reviewRequest(name: "Tally", about: "Counts things.", files: [("App.swift", "let a = 1")], boundary: code)
+        let request = Sharing.reviewRequest(name: "Tally", about: "Counts things.", files: [("Sources/App.swift", "let a = 1")], boundary: code)
         XCTAssertTrue(request.system.contains("[LAMP-\(code)"))
         XCTAssertTrue(request.prompt.contains("[LAMP-\(code) BEGIN description]\nCounts things.\n[LAMP-\(code) END description]"))
         XCTAssertTrue(request.prompt.contains("[LAMP-\(code) BEGIN file \"Sources/App.swift\"]\nlet a = 1\n[LAMP-\(code) END file]"))
@@ -271,7 +271,7 @@ final class SharedAppReviewTests: XCTestCase {
         let sources = ["App.swift", "Hidden.swift"].map { folder.appendingPathComponent("Sources/\($0)") }
         let package = Sharing.Package(name: "Tally", folder: folder, sources: sources, attachments: [], fileCount: 3)
         let found = Sharing.inspect(package)
-        XCTAssertEqual(found.files.map(\.name), ["App.swift"])
+        XCTAssertEqual(found.files.map(\.name), ["Sources/App.swift"])
         XCTAssertEqual(found.detected, [Sharing.unreadableCode])
         let review = ImportReview(summary: "", capabilities: [], concerns: [], risk: .low, reviewer: cloud, asked: true, detected: found.detected)
         XCTAssertEqual(review.verdict, .sensitive)

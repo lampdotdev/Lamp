@@ -197,7 +197,14 @@ signed by itself, sandboxed (`Template.widgetEntitlementsPlist`), before the app
 (`AppSigning.command`): macOS shows no widget that isn't sandboxed, and the app stays unsandboxed. The widget
 shares no code with `Sources/` and doesn't get `LampSupport.swift`, only its own small file (below). Nobody but the person can place a widget
 (Edit Widgets), and `look_at_app` can't see one. A rebuild in place keeps a placed widget; moving the app,
-which renaming it does, removes it. A shared app (`.lampapp`) doesn't carry its widget yet.
+which renaming it does, removes it.
+
+A shared app (`.lampapp`) carries its widget's code in `Widget/`, never Lamp's own file there. Such a file
+says it is format 3 (`Sharing.format(withWidget:)`; one without a widget stays 2), so a Lamp from before
+widgets asks to be updated instead of building the app without it. `Sharing.Package.sources` is all the
+code in a file, the app's and the widget's: the review reads that list and `Sharing.install` writes from it,
+so add nothing to an app's code folders from a shared file by another way. The widget is read whatever
+number the file gives itself. Import says once, in the chat, that the widget is added from Edit Widgets.
 
 The widget gets the app's data by asking the app (`Template.WidgetSharing` says why, and is the one place
 to change it): macOS refuses an app group to a certificate with no team ID, which is how Lamp signs, and Lamp
