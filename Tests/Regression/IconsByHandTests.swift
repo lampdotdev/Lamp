@@ -66,6 +66,19 @@ final class IconsByHandTests: XCTestCase {
                        .named(Icons.noChoice))
     }
 
+    func testTheMenuEndsInTheWayToAddAKey() {
+        // With Image Playground the only entry, the key and download offers under Not Ready are gone: the
+        // menu's last entry leads to where they're added.
+        XCTAssertEqual(Icons.menuPick(Icons.configureProviders, forIcons: true), .providers)
+        XCTAssertEqual(Icons.menuPick(Icons.configureProviders, forIcons: false), .providers)
+        XCTAssertEqual(Icons.menuPick(Icons.noChoice, forIcons: true), .clear)
+        XCTAssertEqual(Icons.menuPick(Icons.byHand, forIcons: true), .choose(Icons.byHand))
+        XCTAssertEqual(Icons.menuPick(models[0], forIcons: false), .choose(models[0]))
+        // It's no model's id, nor any other entry's.
+        XCTAssertFalse(Icons.artModels.map(\.id).contains(Icons.configureProviders))
+        XCTAssertFalse([Icons.byHand, Icons.noChoice, Icons.localArt].contains(Icons.configureProviders))
+    }
+
     private func setting(models: [String], selection: String = "", drawer: String? = nil, byHandAvailable: Bool,
                          byHandChosen: Bool) -> Icons.ArtSetting {
         Icons.artSetting(models: models, selection: selection, drawer: drawer, byHandAvailable: byHandAvailable,

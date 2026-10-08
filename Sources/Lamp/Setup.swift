@@ -339,6 +339,7 @@ struct ImageModelRow: View {
     var forIcons = false
     /// Read so the row follows the choice wherever it's made (the chat's card makes it too).
     @AppStorage("iconModel") private var saved = ""
+    @AppStorage("settingsTab") private var tab = "building"
 
     var body: some View {
         let _ = saved
@@ -364,13 +365,19 @@ struct ImageModelRow: View {
             LabeledContent("Image generation", value: label(id))
         case .menu(let ids, let selected):
             Picker("Image generation", selection: Binding(get: { selected }, set: { id in
-                if forIcons, id == Icons.noChoice { Icons.iconChoice = nil } else { selection = id }
+                switch Icons.menuPick(id, forIcons: forIcons) {
+                case .providers: tab = "providers"
+                case .clear: Icons.iconChoice = nil
+                case .choose(let id): selection = id
+                }
             })) {
                 ForEach(ids, id: \.self) { id in
                     // By hand is another kind of thing from the models, and None is the way out of it.
                     if id == Icons.byHand && id != ids.first || id == Icons.noChoice && id != ids.first { Divider() }
                     Text(label(id)).tag(id)
                 }
+                Divider()
+                Text("Configure providers…").tag(Icons.configureProviders)
             }
         }
     }
@@ -497,7 +504,7 @@ struct BuildingSettings: View {
     }
 
     /// The provider menu's last item switches to the Providers tab instead of choosing a provider.
-    private static let configure = "configure-providers"
+    private static let configure = Icons.configureProviders
     private var providerChoice: Binding<String> {
         Binding(get: { provider }, set: { if $0 == Self.configure { tab = "providers" } else { provider = $0 } })
     }

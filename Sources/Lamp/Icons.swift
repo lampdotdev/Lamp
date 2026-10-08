@@ -139,6 +139,16 @@ enum Icons {
                      selected: chosen ? byHand : drawing.contains(selection) ? selection : drawing[0])
     }
 
+    /// What picking an entry of the Image generation menu does. The menu ends in "Configure providers…",
+    /// as the Text generation one does: it's where a key or a download is added, whatever the menu holds.
+    enum MenuPick: Equatable { case providers, clear, choose(String) }
+    static let configureProviders = "configure-providers"
+    static func menuPick(_ id: String, forIcons: Bool) -> MenuPick {
+        if id == configureProviders { return .providers }
+        // "None" is only in the icon artwork menu; an empty id elsewhere is Codex drawing with its own.
+        return forIcons && id == noChoice ? .clear : .choose(id)
+    }
+
     /// What names a design's artwork in the chat: the line that offers to draw it is for this design only.
     static func artKey(_ project: LampProject, spec: IconSpec) -> String { artURL(project, spec: spec).lastPathComponent }
 
