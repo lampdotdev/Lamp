@@ -2113,7 +2113,9 @@ final class Store: ObservableObject {
                 "Call look_at_app to build and open them."
         }
         // The screen in words goes wherever its picture does: what's on it is the same thing either way.
-        if Privacy.sharesPictures, let words = await Simulator.Driver.screenText(on: screen) { text += "\n\n" + words }
+        // Asked again after the read: it takes a moment, and the setting can be turned off meanwhile.
+        let words = Privacy.sharesPictures ? await Simulator.Driver.screenText(on: screen) : nil
+        if Privacy.sharesPictures, let words { text += "\n\n" + words }
         text += Privacy.sharesPictures
             ? "\n\nA picture of the iPhone's screen follows. Points for the next use_app are pixels in it."
             : "\n\n" + Privacy.picturesOff
@@ -3727,7 +3729,8 @@ final class Store: ObservableObject {
             if Privacy.sharesPictures, Simulator.Driver.isAllowed, let running = simulatorApps[project.id] {
                 switch await Simulator.Driver.screen(of: running.udid, owner: "\(project.id):\(running.pid)") {
                 case .success(let screen):
-                    if let words = await Simulator.Driver.screenText(on: screen) { text += "\n\n" + words }
+                    // Asked again after the read: it takes a moment, and the setting can be turned off meanwhile.
+                    if let words = await Simulator.Driver.screenText(on: screen), Privacy.sharesPictures { text += "\n\n" + words }
                 case .failure(let trouble):
                     // The picture came from the simulator itself and is good; only the words and use_app need the window.
                     text += "\n\nThe screen as text is missing, and use_app would be refused for the same reason: " +

@@ -499,6 +499,8 @@ extension Simulator {
                 let element = isInteractive(hit) ? hit : (nearestInteractive(to: point, in: screen) ?? hit)
                 lastFields[screen.owner] = isTextInput(element) ? element : nil
                 let name = describe(element) + (element == hit ? "" : " (the nearest thing to tap; the point itself was \(describe(hit)))")
+                // Finding the target took a moment off the main thread, and Stop may have come meanwhile.
+                guard await live() else { return "stopped before the \(action.action == "right_click" ? "long press" : "tap") at \(at)" }
                 if action.action == "right_click" {
                     guard !screen.oneAtATime else {
                         return "long press at \(at): not done (it was aimed at \(name)). Device Hub doesn't pass a held finger on to the device. " +
@@ -530,6 +532,7 @@ extension Simulator {
                 }
                 // The text replaces what the field holds: a tapped field on an iPhone shows its old value
                 // formatted ("0.00"), and typing after it would make nonsense of a number.
+                guard await live() else { return "stopped before typing" }
                 let result = call { AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, text as CFTypeRef) }
                 return result == .success ? "typed \"\(text)\" into \(describe(field)); it now holds that" : "couldn't type into \(describe(field))"
             case "key":
@@ -567,7 +570,9 @@ extension Simulator {
             case "scroll":
                 let amount = action.amount ?? 300
                 if screen.oneAtATime {
-                    return page(down: amount >= 0, at: point, in: screen) ? "scrolled \(amount >= 0 ? "down" : "up") a page at \(at) (Device Hub scrolls a page at a time)"
+                    let scroller = scroller(down: amount >= 0, at: point, in: screen)
+                    guard await live() else { return "stopped before scrolling at \(at)" }
+                    return scroller.map(turnPage) == true ? "scrolled \(amount >= 0 ? "down" : "up") a page at \(at) (Device Hub scrolls a page at a time)"
                         : "scroll at \(at): nothing there scrolls \(amount >= 0 ? "down" : "up")"
                 }
                 swipe(from: point, by: CGVector(dx: 0, dy: -amount * screen.zoom), pid: screen.pid)
@@ -581,13 +586,16 @@ extension Simulator {
                         guard let hit = element(at: point, in: screen) else { return "swipe at \(at): nothing there" }
                         for element in [hit] + ancestors(of: hit) {
                             guard let named = actionNames(element).first(where: { Self.actionName($0)?.caseInsensitiveCompare(item) == .orderedSame }) else { continue }
+                            guard await live() else { return "stopped before swiping at \(at)" }
                             let done = call { AXUIElementPerformAction(element, named as CFString) } == .success
                             return done ? "swiped \(direction) at \(at) and tapped \"\(item)\" (\(describe(element))'s own action)" : "swipe at \(at): \"\(item)\" didn't take the tap"
                         }
                         return "swipe at \(at): \(describe(hit)) has no swipe action called \"\(item)\""
                     }
                     if direction == "up" || direction == "down" {
-                        return page(down: direction == "up", at: point, in: screen) ? "swiped \(direction) at \(at) (a page: Device Hub scrolls a page at a time)"
+                        let scroller = scroller(down: direction == "up", at: point, in: screen)
+                        guard await live() else { return "stopped before swiping at \(at)" }
+                        return scroller.map(turnPage) == true ? "swiped \(direction) at \(at) (a page: Device Hub scrolls a page at a time)"
                             : "swipe \(direction) at \(at): nothing there scrolls that way"
                     }
                     return "swipe \(direction) at \(at): not done. Device Hub doesn't pass a sideways swipe on to the device. " +
@@ -907,15 +915,16 @@ extension Simulator {
             return found
         }
 
-        /// Scrolls whatever is under the point, or what it sits in, by a page: the scrolling the iPhone's
-        /// own elements offer. False when nothing there scrolls that way.
-        private static func page(down: Bool, at point: CGPoint, in screen: Screen) -> Bool {
-            guard let hit = element(at: point, in: screen) else { return false }
+        /// Whatever under the point, or what it sits in, offers to scroll that way by a page: the scrolling
+        /// the iPhone's own elements offer. Nil when nothing there does.
+        private static func scroller(down: Bool, at point: CGPoint, in screen: Screen) -> (element: AXUIElement, action: String)? {
+            guard let hit = element(at: point, in: screen) else { return nil }
             let wanted = down ? "AXScrollDownByPage" : "AXScrollUpByPage"
-            for element in [hit] + ancestors(of: hit) where actionNames(element).contains(wanted) {
-                return call { AXUIElementPerformAction(element, wanted as CFString) } == .success
-            }
-            return false
+            return ([hit] + ancestors(of: hit)).first { actionNames($0).contains(wanted) }.map { ($0, wanted) }
+        }
+
+        private static func turnPage(_ scroller: (element: AXUIElement, action: String)) -> Bool {
+            call { AXUIElementPerformAction(scroller.element, scroller.action as CFString) } == .success
         }
 
         /// What the iPhone's keyboard calls its return key, by what the field is for.
