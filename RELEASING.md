@@ -149,11 +149,19 @@ button goes to `https://updates.lamp.dev/download/latest`, so a new release need
 - Run it locally with `cd site && npm install && npm run dev`, or `npm run build && npx astro preview` for
   exactly what gets deployed (the dev server can miss styles from a page added while it's running).
 - `site/vercel.json` sets the framework, caches the fingerprinted files under `/_astro/` for a year, and adds
-  a few security headers. `public/og.png` is the 1200×630 card shown where the link is shared.
+  a few security headers. `public/og.jpg` is the 1200×630 card shown where the link is shared.
 - The pictures are real windows taken from Lamp Dev with made-up data (⌘⇧4 then Space, which keeps the
   shadow): `site/src/assets/lamp.png` is Lamp under the headline, and `site/src/assets/apps/` holds the apps
   the carousel cycles through, each centred on a canvas of the same size so the slides line up. Retake them
   when Lamp's look changes.
+- iPhone and iPad apps are the simulator's own screens: set the status bar and language first
+  (`xcrun simctl status_bar booted override --time 9:41 --batteryState charged --batteryLevel 100
+  --cellularBars 4 --wifiBars 3`, and `xcrun simctl spawn booted defaults write -g AppleLocale en_GB`
+  then relaunch the app), take each screen with `xcrun simctl io booted screenshot --mask=alpha shot.png`,
+  and put them in a frame on the same 2304×1664 canvas with `scripts/phone-frame.swift`
+  (`swift scripts/phone-frame.swift out.png 1380 0.16 first.png second.png`: the device height in pixels, the
+  screen's corner radius as a fraction of its width, then one or more screens side by side). The icons under
+  "Real apps" are each app's 512px icon, from `iconutil -c iconset .lamp/AppIcon.icns`.
 
 **First deploy** (once): deploy the update server first, so the Download button's `/download/latest` exists,
 then create the site's project from `site/` and give it the domain.

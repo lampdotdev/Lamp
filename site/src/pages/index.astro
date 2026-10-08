@@ -20,12 +20,15 @@ import ollama from "../assets/logos/ollama.png";
 import lmstudio from "../assets/logos/lmstudio.png";
 
 // Lamp's window just after building an app, and windows of apps it built, all taken from Lamp Dev with
-// made-up data (see RELEASING.md).
+// made-up data (see RELEASING.md). The iPhone and iPad apps are the simulator's screens in a drawn frame.
 import lampWindow from "../assets/lamp.png";
 import readingQueue from "../assets/apps/reading-queue.png";
 import neonBricks from "../assets/apps/neon-bricks.png";
 import habitStreaks from "../assets/apps/habit-streaks.png";
 import paletteStudio from "../assets/apps/palette-studio.png";
+import trailLog from "../assets/apps/trail-log.png";
+import tripTab from "../assets/apps/trip-tab.png";
+import mealPlanner from "../assets/apps/meal-planner.png";
 
 const lampWindowLarge = await getImage({ src: lampWindow, width: lampWindow.width, format: "webp" });
 
@@ -37,16 +40,34 @@ const apps = [
     alt: "Reading Queue: articles ranked against what you're working on, with why each one matters",
   },
   {
+    image: trailLog,
+    name: "Trail Log",
+    request: "Trail Log: a hiking journal. Each hike has its route drawn on a map, the distance, the climb, how long it took and a few notes, and the list shows this year's totals at the top.",
+    alt: "Trail Log on two iPhones: this year's hikes with their totals, and Helvellyn's route on a map with its distance, climb and notes",
+  },
+  {
     image: neonBricks,
     name: "Neon Bricks",
     request: "A brick breaker arcade game with a glowing neon look: a paddle I move with the mouse or arrow keys, colourful bricks, a few levels, power-ups and a high score table.",
     alt: "Neon Bricks: a glowing brick breaker game mid-play",
   },
   {
+    image: mealPlanner,
+    name: "Meal Planner",
+    request: "Meal Planner: the week laid out side by side, each day with breakfast, lunch and dinner cards I can drag between days, and a shopping list on the side built from the week's meals, grouped by aisle, that I can tick off.",
+    alt: "Meal Planner on an iPad: a week of family meals and the shopping list for it",
+  },
+  {
     image: habitStreaks,
     name: "Habit Streaks",
     request: "A habit tracker: a handful of daily habits with streaks, a heat map of the last three months and a chart of each week.",
     alt: "Habit Streaks: daily habits with streaks, a three-month heat map and a weekly chart",
+  },
+  {
+    image: tripTab,
+    name: "Trip Tab",
+    request: "Trip Tab: splits what a group spends on a trip. I add who paid for what and who it was for, and it shows everyone's balance, who's up and who's behind, and the fewest payments to settle up.",
+    alt: "Trip Tab on two iPhones: four friends' balances after a weekend in Lisbon, and the three payments that settle up",
   },
   {
     image: paletteStudio,
@@ -62,8 +83,8 @@ const apps = [
 // purple. A name missing from src/assets/icons/ is skipped.
 const icons = import.meta.glob<ImageMetadata>("../assets/icons/*.png", { eager: true, import: "default" });
 const shelf = [
-  "mine-1", "mine-6", "mine-3", "mine-8", "habit-streaks", "mine-2", "palette-studio",
-  "mine-4", "neon-bricks", "mine-10", "mine-9", "mine-5", "mine-7", "reading-queue",
+  "mine-1", "mine-6", "trip-tab", "mine-3", "mine-8", "habit-streaks", "mine-2", "palette-studio", "trail-log",
+  "mine-4", "neon-bricks", "mine-10", "meal-planner", "mine-9", "mine-5", "reading-queue",
 ].flatMap((name) => icons[`../assets/icons/${name}.png`] ?? []);
 
 // The rest of the features as a bento box on ten columns: rows split 4/6 or 5/5, a few tiles in colour. A tile
