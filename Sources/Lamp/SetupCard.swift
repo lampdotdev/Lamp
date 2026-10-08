@@ -32,6 +32,11 @@ struct SetupCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
+                // Answered by drawing icons by hand, the card is where this app's is drawn, while it's plain.
+                if byHand, let project, let spec = Icons.load(project), Icons.cachedArt(project, spec: spec) == nil {
+                    Button("Draw Icon…") { Store.shared.iconFromPlayground(project) }
+                        .controlSize(.small)
+                }
                 if !done && !declined {
                     Button("Not Now") {
                         if let project { offer.decline(in: project) }
@@ -46,10 +51,7 @@ struct SetupCard: View {
                 VStack(alignment: .leading, spacing: 12) {
                     UpgradeList(upgrades: resolution.upgrades) { revision += 1 }
                     if offer.icon == true, resolution.tier == .none {
-                        // The app's icon is waiting, so the choice is followed by the line that draws it.
-                        PlaygroundUpgrade {
-                            if let project, let spec = Icons.load(project) { Store.shared.offerDrawing(project, spec: spec) }
-                        }
+                        PlaygroundUpgrade()
                     }
                     // Something answers already, just not as well: say what, so nothing looks broken meanwhile.
                     if resolution.tier == .works, let answer = resolution.answer {
@@ -74,6 +76,8 @@ struct SetupCard: View {
         .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in revision += 1 }
         .onReceive(NotificationCenter.default.publisher(for: AppModels.changed)) { _ in revision += 1 }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in revision += 1 }
+        // A drawn icon takes Draw Icon… off the card.
+        .onReceive(Store.shared.$icons) { _ in revision += 1 }
     }
 
     /// What's being offered, on a tile the size of the build card's app icon. Not the app's own icon: it's
@@ -380,16 +384,12 @@ private struct SignInUpgrade: View {
 /// only the person can work Apple's picture maker, so it's never offered for pictures inside apps.
 struct PlaygroundUpgrade: View {
     var compact = false
-    var onChange: () -> Void = {}
 
     var body: some View {
         if Icons.playgroundAvailable, !Icons.drawnByHand {
             OptionRow(symbol: "paintbrush.pointed", title: "Draw icons yourself",
                       detail: "Free, with Image Playground. You pick each app's picture.", compact: compact) {
-                Button("Use for Icons") {
-                    Icons.iconChoice = Icons.byHand
-                    onChange()
-                }
+                Button("Use for Icons") { Icons.iconChoice = Icons.byHand }
             }
         }
     }

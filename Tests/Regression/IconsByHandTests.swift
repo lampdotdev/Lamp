@@ -126,6 +126,20 @@ final class IconsByHandTests: XCTestCase {
         XCTAssertFalse(Icons.awaitsDrawing(newKey, in: project, byHand: true))
     }
 
+    func testTheDrawingIsOfferedOncePerDesignAndNotBesideTheIconsCard() {
+        let reply = LogLine(kind: .agent, text: "Tide Times is ready.")
+        XCTAssertTrue(LogLine.offersDrawing("a.png", after: [reply]))
+        XCTAssertFalse(LogLine.offersDrawing("a.png", after: [reply, LogLine(kind: .drawIcon, text: "a.png")]))
+        // A new design gets its own line.
+        XCTAssertTrue(LogLine.offersDrawing("b.png", after: [reply, LogLine(kind: .drawIcon, text: "a.png")]))
+        // The card about the icon has the button, whatever the design.
+        let card = LogLine(kind: .offer, text: "Nothing on this Mac can draw pictures yet.", offer: SetupOffer(capability: .pictures, icon: true))
+        XCTAssertFalse(LogLine.offersDrawing("a.png", after: [reply, card]))
+        // A card about pictures inside the app says nothing about its icon.
+        let pictures = LogLine(kind: .offer, text: "Tide Times just tried to make a picture.", offer: SetupOffer(capability: .pictures))
+        XCTAssertTrue(LogLine.offersDrawing("a.png", after: [reply, pictures]))
+    }
+
     func testTheLineInTheChatSurvivesItsFile() throws {
         let line = LogLine(kind: .drawIcon, text: "0123456789abcdef.png")
         let read = try JSONDecoder().decode(LogLine.self, from: JSONEncoder().encode(line))

@@ -85,6 +85,12 @@ struct LogLine: Identifiable, Codable, Equatable {
         }
     }
 
+    /// Whether a chat with these lines should get a line offering to draw the design `key`: not when it has
+    /// one for that design already, nor when the card about the icon is there, which offers it itself.
+    static func offersDrawing(_ key: String, after lines: [LogLine]) -> Bool {
+        !lines.contains { $0.kind == .drawIcon && $0.text == key || $0.setupOffer?.icon == true }
+    }
+
     /// Lamp knows where the app was before this request, so it can be changed and sent again from there.
     /// Not so for some requests from before that was noted.
     var canSendAgain: Bool { kind == .user && (before != nil || version != nil) }
@@ -3079,12 +3085,13 @@ final class Store: ObservableObject {
 
     /// Says in the chat that the app's icon is waiting to be drawn, with the button that opens Image
     /// Playground: once per design, and once the app has been built, so it comes when the app is ready
-    /// rather than in the middle of its first build.
-    func offerDrawing(_ project: LampProject, spec: IconSpec) {
-        let key = Icons.artKey(project, spec: spec)
+    /// rather than in the middle of its first build. An app whose chat has the card about its icon (from
+    /// before the person chose to draw icons) has the button there, for whatever design it has.
+    private func offerDrawing(_ project: LampProject, spec: IconSpec) {
+        let lines = logs[project.id] ?? []
         guard FileManager.default.fileExists(atPath: project.builtURL.path),
-              !(logs[project.id] ?? []).contains(where: { $0.kind == .drawIcon && $0.text == key }) else { return }
-        log(project, .drawIcon, key)
+              LogLine.offersDrawing(Icons.artKey(project, spec: spec), after: lines) else { return }
+        log(project, .drawIcon, Icons.artKey(project, spec: spec))
     }
 
     /// Designs a fresh icon (different from the current one) and applies it without restarting the app.
