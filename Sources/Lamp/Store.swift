@@ -2169,6 +2169,7 @@ final class Store: ObservableObject {
             case "name_version": (status, answer) = await versions("/name", arguments, of: project)
             case "restore_version": (status, answer) = await versions("/restore", arguments, of: project)
             case "read_notes", "save_notes": (status, answer) = Memory.call(name, arguments, for: project)
+            case "make_art": (status, answer) = await makeArt(arguments, for: project)
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
@@ -2260,6 +2261,48 @@ final class Store: ObservableObject {
         let why = (arguments["why"] as? String)?.trimmed ?? ""
         guard !why.isEmpty else { return (400, ["error": "Say in `why` what the person would get."]) }
         return (200, ["text": offerSetup(project, SetupOffer(capability: capability, away: away ? true : nil), because: why, fromAgent: true)])
+    }
+
+    /// `make_art`: a picture for the app to show, painted in its icon's style and saved in Assets/, the folder
+    /// that's bundled with the app. The reply shows it to the agent, which judges it as it would a look.
+    private func makeArt(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
+        let subject = (arguments["subject"] as? String)?.trimmed ?? ""
+        guard !subject.isEmpty else { return (400, ["error": "Say in `subject` what the picture shows."]) }
+        var name = (arguments["name"] as? String)?.trimmed ?? ""
+        if !name.lowercased().hasSuffix(".png") { name += ".png" }
+        guard name.count > 4, !name.contains("/"), !name.hasPrefix(".") else {
+            return (400, ["error": "`name` is a file name such as glass.png, without folders."])
+        }
+        let scene = arguments["scene"] as? Bool == true
+        let aspect = arguments["aspect"] as? String ?? "1:1"
+        guard ["1:1", "4:3", "3:4", "16:9", "9:16"].contains(aspect) else {
+            return (400, ["error": "`aspect` is one of 1:1, 4:3, 3:4, 16:9 or 9:16."])
+        }
+        let unavailable = "Nothing on this Mac can make pictures yet, so none was made. Use SF Symbols in the app's palette " +
+            "instead. Lamp has offered the user a way to set pictures up; don't mention it yourself."
+        let because = "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) its pictures and a proper icon."
+        guard await AppAI.imageRoute() != nil else {
+            offerSetup(project, SetupOffer(capability: .pictures), because: because)
+            return (200, ["text": unavailable])
+        }
+        do {
+            let (png, cost) = try await Icons.generateAppArt(subject: subject, tint: Icons.load(project)?.tint,
+                                                             scene: scene, aspect: aspect)
+            recordArt(project, cost: cost)
+            let folder = project.dir.appendingPathComponent("Assets")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let url = folder.appendingPathComponent(name)
+            try png.write(to: url)
+            let size = NSBitmapImageRep(data: png).map { " (\($0.pixelsWide)×\($0.pixelsHigh) pixels)" } ?? ""
+            let around = scene ? "" : ", transparent around the object"
+            return (200, ["text": "Saved Assets/\(name)\(size)\(around). Show it with LampAssets.image(\"\(name)\"). It follows.",
+                          "screenshots": [url.path]])
+        } catch let failure as AppAI.Failure where failure.needs == .pictures {
+            offerSetup(project, SetupOffer(capability: .pictures), because: because)
+            return (200, ["text": unavailable])
+        } catch {
+            return (502, ["error": "Couldn't make the picture: \(error.localizedDescription)"])
+        }
     }
 
     /// The tools every engine gets, from Resources/lamp-tools.json: the one place their names, descriptions and
@@ -3266,7 +3309,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/mcp", "/pi/key"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/art", "/mcp", "/pi/key"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -3362,6 +3405,9 @@ final class Store: ObservableObject {
         if route == "/agent/memory" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return Memory.call(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/art" {
+            return await makeArt((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/setup" {
             return agentOffer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
@@ -3802,6 +3848,13 @@ final class Store: ObservableObject {
         current.agentRuns = (current.agentRuns ?? 0) + 1
         current.agentCost = (current.agentCost ?? 0) + cost
         usage[project.id] = current
+        saveUsage(project)
+    }
+
+    /// A picture the builder painted (`make_art`): part of what building the app cost, not a run of its own.
+    private func recordArt(_ project: LampProject, cost: Double) {
+        guard cost > 0 else { return }
+        usage[project.id, default: AppUsage()].agentCost = (usage[project.id]?.agentCost ?? 0) + cost
         saveUsage(project)
     }
 

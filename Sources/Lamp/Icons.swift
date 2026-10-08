@@ -461,6 +461,40 @@ enum Icons {
         """
     }
 
+    /// A picture for inside an app (`make_art`), asked for in the icon's words so the two look like a set: one
+    /// object for Lamp to cut out, or a whole scene. The icon's tint keeps the colors in the same family.
+    static func appArtPrompt(subject: String, tint: String?, scene: Bool) -> String {
+        let colors = tint.map { "Calm, harmonious colors that go with \($0)." } ?? "Calm, harmonious colors."
+        if scene {
+            return """
+            \(subject), as an illustration in the style of Apple's own app icons: smooth rounded forms, subtle soft \
+            gradients, gentle light from above, simple shapes with little fine detail, clean and uncluttered. \(colors) \
+            The picture fills the whole frame. No text, no letters, no border, no frame, no rounded square tile, no \
+            app icon shape.
+            """
+        }
+        return """
+        A single \(subject), as an illustration in the style of Apple's own app icons: one tangible object with a \
+        simple, instantly recognizable silhouette, smooth rounded forms, subtle soft gradients and gentle light \
+        from above, front or slight three-quarter view. \(colors) The object alone, centered, filling about 80% of \
+        the frame, on a plain flat light gray background. No scene, no ground, no cast shadow, no background \
+        elements, no text, no letters, no border, no frame, no rounded square tile, no app icon shape.
+        """
+    }
+
+    /// Paints a picture for inside an app with the icon's model: PNG data, and what it cost. A single object
+    /// comes back cut out of its background.
+    static func generateAppArt(subject: String, tint: String?, scene: Bool, aspect: String) async throws -> (Data, Double) {
+        let (data, cost) = try await AppAI.image(prompt: appArtPrompt(subject: subject, tint: tint, scene: scene),
+                                                 references: [], aspectRatio: scene ? aspect : "1:1", model: iconModel)
+        let image = scene ? NSImage(data: data) : try cutOut(data)
+        guard let tiff = image?.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
+            throw AppAI.Failure(message: "The image model returned an unreadable picture.")
+        }
+        return (png, cost)
+    }
+
     /// The same request as Image Playground takes it. Its sheet boils a long request down to a few words
     /// and loses the "no …" list on the way, turns down anything naming macOS or Apple ("Try describing
     /// something different"), and draws a whole rounded tile when asked for an "app icon". So it gets the

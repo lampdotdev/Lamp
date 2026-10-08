@@ -22,14 +22,14 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,offer_setup"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
     /// Lamp's own tools for pi (Resources/lamp-tools.ts): `look_at_app` has Lamp build and open the app
     /// mid-turn and shows the agent the result; `plan` is the checklist on the build card; `delete_file`
     /// removes a file, which pi's own tools can't; the version tools list, name and restore the app's saved
-    /// versions; `offer_setup` shows a setup card in the chat; `read_notes` and `save_notes` are Lamp's notes (Memory). Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
+    /// versions; `make_art` paints a picture for the app; `offer_setup` shows a setup card in the chat; `read_notes` and `save_notes` are Lamp's notes (Memory). Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
     static var lampTools: URL? {
         let url = Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.ts")
         return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
@@ -37,7 +37,7 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static var tryRules: String { lookRules + planRules + setupRules + (Memory.isOn ? memoryRules : "") }
+    static var tryRules: String { lookRules + planRules + artRules + setupRules + (Memory.isOn ? memoryRules : "") }
 
     /// For the engines whose shell commands run confined (Sandbox): what the shell can and can't reach.
     static let sandboxNote = """
@@ -87,6 +87,18 @@ enum Agent {
     one (its id from `list_versions`) before a big or risky change, e.g. “Before the redesign”. \
     `restore_version` brings back an earlier version's files: use it only when the user asks to go back, \
     never to undo your own attempt, and find the version with `list_versions` first.
+    """
+
+    /// The pictures an app's kind calls for (companion, collection, game), painted while building rather than
+    /// drawn in code, in the icon's style so they match it.
+    private static let artRules = """
+
+    - `make_art` paints a picture into the app's Assets/ folder, in the same style as its icon: one object on a \
+    transparent background, or a whole scene. Show it with `LampAssets.image("name.png")`. Use it where the app's \
+    kind calls for art, never for icons on buttons or anything an SF Symbol shows. Each picture takes a while and \
+    costs the user: make only what the design needs, one picture animated rather than one per state, and look at \
+    each before using it (call it again with a better subject if it's wrong). When nothing can make pictures, use \
+    SF Symbols in the app's palette instead: Lamp offers the user a way to set that up.
     """
 
     /// Short for the same reason. What AI the app has comes at the end of a request (AIStatus.brief), since it
@@ -139,7 +151,7 @@ enum Agent {
         rules += [Rules.script, mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules.append(Rules.computer) }
         if !mac { rules.append(Rules.iPhoneHardware) }
-        rules += [Rules.store, mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
+        rules += [Rules.store, Rules.kinds(mac: mac), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
                   Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.attachments, Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
         rules += [Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
@@ -251,7 +263,12 @@ enum Agent {
         `SettingsLink` or `openSettings`: from a menu bar app those open the window behind other apps, where it gets \
         lost), and its own Quit button (`NSApp.terminate(nil)`). `LampMenuBar.close()` closes the panel after an \
         action in it. Give the panel a fixed width, and hand it its model inside the braces (`{ PanelView().environmentObject(model) }`), \
-        never with a modifier on the scene, which crashes the panel. Pass `dockIcon: true` only when the app also has a main window.
+        never with a modifier on the scene, which crashes the panel. Pass `dockIcon: true` only when the app also has a main window. \
+        For a menu instead of a panel: `LampMenuBar(menu: "Clipboard", systemImage: "list.clipboard") { Button(…); Toggle(…); \
+        Divider() }`, which adds Settings… and Quit itself (`settings: false` when there's no Settings scene). For one \
+        thing the app turns on and off: `LampMenuBar("Keep Awake", isOn: $model.awake, on: "cup.and.saucer.fill", off: \
+        "cup.and.saucer") { more menu items }`, where a click flips it and a right-click shows the menu; keep that state \
+        in the App (@StateObject or @State) so the icon follows it.
         """
 
         static let permissions = """
@@ -330,11 +347,85 @@ enum Agent {
         without losing anything.
         """
 
+        /// What kind of app it is decides how it looks: Notes, Weather and Breathe are all Apple's and look
+        /// nothing alike. The agent picks a kind once and keeps it in APP.md, so the look holds across requests.
+        /// design/app-archetypes/README.md is the reasoning behind each.
+        static func kinds(mac: Bool) -> String {
+            let haptic = mac ? "" : " and a haptic (sensoryFeedback)"
+            let companionPlace = mac
+                ? "; on a Mac it also shows its state in the menu bar (LampMenuBar with `dockIcon: true`, its label the time left or the count)"
+                : ""
+            let dashboardPlace = mac ? " When it's checked often, a menu bar icon shows the main number." : ""
+            let canvas = mac ? """
+                A larger toolbar (labels under the icons where there's room) holds the tools, never a palette drawn \
+                on the canvas; settings for the selection go in an `.inspector`, hidden when nothing is selected. Proper \
+                windows: DocumentGroup with a window per document, tabs, full screen, and a focus mode that hides the \
+                toolbar and inspector.
+                """ : """
+                The canvas goes edge to edge; tools in a bottom toolbar, settings for the selection in a sheet with \
+                detents (an inspector on iPad), and a tap on empty canvas hides the chrome. DocumentGroup for documents.
+                """
+            let utility = mac ? """
+                it lives in the menu bar (LampMenuBar) with a Settings window, and has no main window unless it has \
+                something to show. When it has one main thing to turn on and off (pause syncing, keep awake, watch the \
+                folder), a click on the icon does it, the icon shows the state with two clearly different symbols, and \
+                a right-click shows the menu (LampMenuBar's switch). Otherwise a click shows a menu (LampMenuBar(menu:)). \
+                Prefer a menu, with toggles as checkmarks, to a panel; a panel only for what a menu can't do (a search \
+                field over a long history, a preview, a slider you watch while dragging).
+                """ : """
+                it does its work through App Intents (Shortcuts and Siri) and the share sheet wherever it can, and the \
+                app itself is one screen: its settings and what it did recently.
+                """
+            return """
+            - Design: the user's own direction always wins. If they describe a look, a mood or a style, attach a mockup \
+            or ask for something unconventional (full-screen, no chrome, an art piece), build exactly that and don't \
+            add standard UI they didn't ask for. Everything they didn't say follows the app's kind, below. Before \
+            writing a new app, pick the kind closest to what it's for, even when unsure, and put it in APP.md's first \
+            line (`Kind: companion`). Keep it on later requests so the app keeps its look; change it only when the \
+            user asks for a different feel or the app becomes something else. Never ask them which kind, and never \
+            name kinds to them. A style they gave wins over the kind's look but keeps its structure: a "cozy" water \
+            tracker is a companion app, made cozy. Every kind feels like Apple made it, following the \
+            \(mac ? "macOS" : "iOS") Human Interface Guidelines.
+              • Tool (notes, inventory, lists, logs, a CRM: keeping and finding things): the base design below, exactly. \
+            Dense and calm: system colors, the accent color, SF Symbols, no illustration. It's judged on how fast \
+            things are found, added and changed.
+              • Companion (water, a timer, habits, mood, a plant, breathing: a small ritual come back to many times a \
+            day): one main screen built around one picture of where you are now (the glass, the timer, the plant), not \
+            a list or a sidebar; history is one step away. That picture is art from `make_art`, never shapes drawn in \
+            code: animate it (fill, grow, move it with a mask, offset or scale) rather than make a picture for each \
+            state. A palette of two or three colors that suit the subject, as named colors with light and dark \
+            versions; text and controls keep system colors. The one number that matters is large (.largeTitle or \
+            bigger, .rounded design). The main action is one big, obvious button or a tap on the picture, with a \
+            spring animation\(haptic); something small and pleasant happens when a goal is met, and nothing nags. \
+            Short, warm words with a little personality ("Nice. Two to go."), never at the cost of clarity. Reminders \
+            come as notifications\(companionPlace). One first screen is allowed when the app can't work without a \
+            choice (a daily goal), with a sensible default filled in; never a tour.
+              • Collection (recipes, books, wines, trips, records: things nice to look at): pictures lead, in an \
+            adaptive grid of cards (LazyVGrid) with large images and titles under them; a list as an option, not the \
+            default. The detail is a full page with a large picture at the top and the facts below, like an album in \
+            Music. Every item has a picture: the user's own photo, or else art from `make_art` for the kind of item, \
+            so the grid is never gray placeholders. Search, sort and filter as Photos does (toolbar menus, scopes), \
+            not as a form.
+              • Dashboard (spending, fitness totals, a server's status: look, understand, leave): the one or two numbers \
+            that matter come first and large, details below. Swift Charts for anything over time, kept simple: no \
+            grid clutter, the latest point marked, values labeled where they matter. Color means good, warning or bad \
+            and nothing else; a soft gradient from the state behind the main number is the only decoration. No \
+            art.\(dashboardPlace)
+              • Canvas (drawing, diagrams, layout, long writing: making a thing): a minimal interface with the content \
+            front and center. \(canvas) Undo for everything, autosave, export; every gesture (drag, resize, pinch) \
+            also has a command or button. No art: the user's work is the only thing to look at.
+              • Utility (a clipboard history, automations, a folder watcher: works while you do other things): \
+            \(utility) Quiet: a notification only when something needs the user.
+              • Game or toy (played rather than used): fully custom, with no standard chrome while playing; pause, \
+            settings and scores are standard SwiftUI. SpriteKit for physics or many moving pieces, SwiftUI animation \
+            for the simplest. Sprites, characters and backgrounds are art from `make_art`, all in one style, with \
+            sound\(mac ? "" : " and haptics"). Scores are kept on the device.
+
+            """
+        }
+
         static let macDesign = """
-        - Design: the user's own direction always wins. If they describe a look, attach a mockup or ask for something \
-        unconventional (full-screen, no chrome, a game, an art piece, a custom visual style), build exactly that and \
-        don't add standard UI they didn't ask for. Otherwise, make it feel like Apple made it, following the macOS \
-        Human Interface Guidelines: content first, little chrome. Collections go in a NavigationSplitView with a \
+        - Base design, for every kind of app where its kind doesn't say otherwise: content first, little chrome. Collections go in a NavigationSplitView with a \
         sidebar. Primary actions go in the toolbar as SF Symbols with help tooltips, and also in the menu bar with the \
         standard shortcuts (⌫ delete, ⌘F find). Leave File ▸ New Window (⌘N) as it is, even in an app meant \
         for one window: Lamp uses it to bring a window back after the user closes the last one, so give \
@@ -348,10 +439,7 @@ enum Agent {
         """
 
         static let iPhoneDesign = """
-        - Design: the user's own direction always wins. If they describe a look, attach a mockup or ask for \
-        something unconventional (a game, full-screen, a custom visual style), build exactly that and don't add \
-        standard UI they didn't ask for. Otherwise make it feel like Apple made it, following the iOS Human \
-        Interface Guidelines: content first, little chrome. Structure: a TabView for a few top-level areas, a \
+        - Base design, for every kind of app where its kind doesn't say otherwise: content first, little chrome. Structure: a TabView for a few top-level areas, a \
         NavigationStack within each (large title on the first screen, back provided by the system, never your \
         own back button); a NavigationSplitView when there's a list and a detail, which becomes a sidebar on \
         iPad. Lists and Forms with native controls, a toolbar for primary actions (SF Symbols, the main one \
