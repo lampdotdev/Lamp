@@ -1435,16 +1435,19 @@ struct ImportReviewView: View {
                     .keyboardShortcut(.cancelAction)
                 if pending.existing != nil {
                     // The app is already here: the file either becomes its next version or a second app.
-                    // Either way its code runs, so Update follows the same rule as opening does.
-                    Button("Keep Both") { store.confirmImport() }
-                        .disabled(review == nil)
+                    // Either way its code runs, so both follow the same rule as opening does. Return is
+                    // only ever Update: keeping both is the choice someone makes on purpose.
                     switch review?.opening {
                     case .byReturn:
+                        Button("Keep Both") { store.confirmImport() }
                         Button("Update") { store.confirmUpdate() }
                             .keyboardShortcut(.defaultAction)
                     case .anyway:
+                        Button("Keep Both Anyway", role: .destructive) { store.confirmImport() }
                         Button("Update Anyway", role: .destructive) { store.confirmUpdate() }
                     case .byClick, nil:
+                        Button("Keep Both") { store.confirmImport() }
+                            .disabled(review == nil)
                         Button("Update") { store.confirmUpdate() }
                             .disabled(review == nil)
                     }
