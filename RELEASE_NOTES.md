@@ -13,6 +13,15 @@ plain "Lamp x.y.z" line.
   approval card is about what a command does. For anything outside, the agent uses its file tools, which
   ask you. With Codex, the whole of Codex runs confined that way.
 
+## 0.11.0
+
+- iPhone and iPad apps are for everyone, no longer an experiment. Choose Mac, iPhone or iPad when you start
+  an app, your very first one included, and the starter ideas follow what you chose. Lamp tries the app in a
+  simulator on your Mac and, with Xcode and your Apple Account, puts it on your own iPhone or iPad.
+- The Apple team that signs apps for your phone is now in Settings → Building, and the models an app uses
+  on your phone away from your Mac are in Settings → Apps. Both appear once you have an iPhone or iPad app.
+- Help has a new iPhone and iPad Apps section.
+
 ## 0.10.8
 
 - One answer to what answers your apps. Lamp works out, in one place, what handles an app's text, decisions

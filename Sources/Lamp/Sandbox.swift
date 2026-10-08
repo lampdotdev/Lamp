@@ -16,16 +16,16 @@ enum Sandbox {
 
     static let executable = "/usr/bin/sandbox-exec"
 
-    /// The command, confined to the app. Nil when the sandbox tool isn't there (then the text check stands in).
+    /// The command, confined to the app. Nil when the sandbox tool isn't there.
     static func wrap(_ command: String, for project: LampProject) -> String? {
-        guard let file = writeProfile(for: project, name: "sandbox.sb") else { return nil }
+        guard let file = writeProfile(for: project) else { return nil }
         return "\(executable) -f \(quoted(file.path)) /bin/bash -c \(quoted(command))"
     }
 
     /// A whole engine run, confined to the app with the engine's own folder opened as well (Codex's
     /// ~/.codex: its sign-in, sessions and caches). Nil when the sandbox tool isn't there.
     static func wrapEngine(_ command: String, for project: LampProject, opening folders: [String], reading: [String] = []) -> String? {
-        guard let file = writeProfile(for: project, name: "sandbox-engine.sb", opening: folders, reading: reading) else { return nil }
+        guard let file = writeProfile(for: project, opening: folders, reading: reading) else { return nil }
         return "\(executable) -f \(quoted(file.path)) /bin/bash -c \(quoted(command))"
     }
 
@@ -46,17 +46,30 @@ enum Sandbox {
         return folders
     }
 
-    private static func writeProfile(for project: LampProject, name: String, opening folders: [String] = [], reading: [String] = []) -> URL? {
+    /// Where the profiles live: in Lamp's own folder, which every profile closes, so what sandbox-exec reads
+    /// is what Lamp wrote and not something the agent could change. One file per command, kept for an hour
+    /// (a command may wait that long for the user), then cleared.
+    static let folder = Edition.supportFolder.appendingPathComponent("Sandbox")
+
+    private static func writeProfile(for project: LampProject, opening folders: [String] = [], reading: [String] = []) -> URL? {
         guard FileManager.default.isExecutableFile(atPath: executable) else { return nil }
-        let file = project.dir.appendingPathComponent(".lamp/\(name)")
-        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        guard (try? profile(for: project, opening: folders, reading: reading).write(to: file, atomically: true, encoding: .utf8)) != nil else { return nil }
+        let fm = FileManager.default
+        try? fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let cutoff = Date().addingTimeInterval(-3600)
+        for old in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        where ((try? old.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantFuture) < cutoff {
+            try? fm.removeItem(at: old)
+        }
+        let file = folder.appendingPathComponent("\(project.id)-\(UUID().uuidString).sb")
+        guard fm.createFile(atPath: file.path, contents: Data(profile(for: project, opening: folders, reading: reading).utf8),
+                            attributes: [.posixPermissions: 0o600]) else { return nil }
         return file
     }
 
-    /// The profile: everything allowed, then the home folder closed, then the places under it a build needs
-    /// opened again, Lamp's own folders closed, and the app's folder opened last (it sits inside Lamp's).
-    /// Later rules win, so the order is the meaning. `folders` are opened too, for reading and writing.
+    /// The profile: everything allowed, then every person's files closed (all of /Users, the shared folder
+    /// included, and anything mounted), then the places under this home a build needs opened again, Lamp's
+    /// own folders closed, and the app's folder opened last (it sits inside Lamp's). Later rules win, so the
+    /// order is the meaning. `folders` are opened too, for reading and writing; `reading` for reading.
     static func profile(for project: LampProject, opening folders: [String] = [], reading: [String] = []) -> String {
         let fm = FileManager.default
         let home = real(fm.homeDirectoryForCurrentUser.path)
@@ -65,6 +78,7 @@ enum Sandbox {
         var lines = [
             "(version 1)",
             "(allow default)",
+            "(deny file-read* file-write* (subpath \"/Users\") (subpath \"/Volumes\") (subpath \"/Network\") (subpath \"/private/var/root\"))",
             "(deny file-read* file-write* (subpath \(quotedPath(home))))",
             // What a build or a script needs from the home folder: the toolchain, package caches, git's
             // settings. Read only, apart from the caches.

@@ -68,7 +68,7 @@ struct PhoneFailure: LocalizedError {
         case .account:
             "Xcode couldn't find an Apple account for signing. Open Xcode → Settings → Accounts and sign in, then Retry."
         case .team:
-            "Xcode can't use the Apple team selected in Lamp. In Lamp → Settings → Experimental, choose a team that belongs to your Apple account. Or sign in with an account for the selected team in Xcode → Settings → Accounts. Then click Retry."
+            "Xcode can't use the Apple team selected in Lamp. In Lamp → Settings → Building, choose a team that belongs to your Apple account. Or sign in with an account for the selected team in Xcode → Settings → Accounts. Then click Retry."
         case .authentication:
             "Xcode couldn't sign in with your Apple account. Open Xcode → Settings → Accounts and follow any prompts to sign in again. Then click Retry."
         case .developerTrust:
@@ -78,11 +78,11 @@ struct PhoneFailure: LocalizedError {
         case .appLimit:
             "Your free Apple account allows up to 3 development apps on the phone. Delete one you no longer need, then click Retry. Deleting it also deletes its data."
         case .idLimit:
-            "You've reached your free Apple account's limit of 10 app IDs in 7 days. Wait until Apple lets you register another, then click Retry. Or choose a team with a paid Apple Developer membership in Lamp → Settings → Experimental. Deleting apps from the phone won't reset this limit."
+            "You've reached your free Apple account's limit of 10 app IDs in 7 days. Wait until Apple lets you register another, then click Retry. Or choose a team with a paid Apple Developer membership in Lamp → Settings → Building. Deleting apps from the phone won't reset this limit."
         case .expiredProfile:
             "This app needs to be renewed before it can run on the phone. Connect and unlock the phone, then click Retry to reinstall it. Apps installed with a free Apple account need renewing every 7 days."
         case .capability:
-            "Your Apple team doesn't support \(capabilityName ?? "a feature this app uses"). Ask Lamp to remove that feature, or choose a team that supports it in Lamp → Settings → Experimental. Then click Retry. Open Agent Details to see Apple's explanation."
+            "Your Apple team doesn't support \(capabilityName ?? "a feature this app uses"). Ask Lamp to remove that feature, or choose a team that supports it in Lamp → Settings → Building. Then click Retry. Open Agent Details to see Apple's explanation."
         case .certificate:
             "Xcode couldn't sign the app. If your Mac asks to unlock the login keychain or allow access, follow the prompt, then click Retry. If it still fails, open Agent Details to see the error. You can find your Apple Development certificates in Xcode → Settings → Accounts: select your account and team, then open Manage Certificates."
         case .locked:
@@ -92,7 +92,7 @@ struct PhoneFailure: LocalizedError {
         case .developerMode:
             "On the phone, open Settings → Privacy & Security → Developer Mode and turn it on. Restart the device when asked, unlock it, and tap Turn On to confirm. Then click Retry."
         case .signing:
-            "Xcode couldn't sign the app for the phone. Make sure the team selected in Lamp → Settings → Experimental belongs to your Apple account. In Xcode → Settings → Accounts, follow any prompts to sign in again, then click Retry. If it still fails, open Agent Details to see Apple's error."
+            "Xcode couldn't sign the app for the phone. Make sure the team selected in Lamp → Settings → Building belongs to your Apple account. In Xcode → Settings → Accounts, follow any prompts to sign in again, then click Retry. If it still fails, open Agent Details to see Apple's error."
         case .build:
             "The app couldn't be built for the phone. Click Retry. If it fails again, ask Lamp to fix it and include the error from Agent Details."
         case .install:

@@ -2,7 +2,7 @@
 
 **A Mac app that builds the apps your work is missing.**
 
-Describe what you need, and Lamp builds a real Mac app (with AI inside when it helps) that you can keep using, change whenever you like, and share. Make a tool for one annoying task, then keep improving it until it works exactly your way.
+Describe what you need, and Lamp builds a real app for your Mac, iPhone or iPad (with AI inside when it helps) that you can keep using, change whenever you like, and share. Make a tool for one annoying task, then keep improving it until it works exactly your way.
 
 ![Lamp icon](Resources/AppIcon.png)
 
@@ -12,7 +12,7 @@ Some things people build with it:
 - **Screenshot Notes:** drop screenshots on it and it pulls out the text and key details (who, what, dates, amounts) into a searchable list.
 - **Reading Queue:** drop in PDFs and links, describe what you're working on, and it ranks them by what matters, with a one-line summary and a reason for each.
 
-Each one is a real `.app` in `~/Applications/Lamp Apps`, with **Edit with Lamp (⇧⌘E)** in its menu for when you want it to work differently. Its data is kept safe through every change, and you can send it to a coworker, who gets their own copy to adapt.
+Each Mac app is a real `.app` in `~/Applications/Lamp Apps`, with **Edit with Lamp (⇧⌘E)** in its menu for when you want it to work differently. Its data is kept safe through every change, and you can send it to a coworker, who gets their own copy to adapt. iPhone and iPad apps open in the simulator on your Mac, or on your own phone (see [iPhone and iPad apps](#iphone-and-ipad-apps)).
 
 [Download Lamp](https://lamp.dev) and open it. The welcome asks for your first idea, then has you sign in with Claude or ChatGPT (or add a key for Lamp's own agent), and starts building.
 
@@ -21,7 +21,8 @@ Each one is a real `.app` in `~/Applications/Lamp Apps`, with **Edit with Lamp (
 | What | Why | Notes |
 |---|---|---|
 | macOS 14 (Sonoma) or later | Lamp and the apps it generates target macOS 14 | |
-| Apple's Command Line Tools (Xcode 15 or later) | Swift compiler, the macOS SDK and `git` | Free. **The full Xcode app is not required**, but works too. With Xcode 26, icons get native Liquid Glass rendering on macOS 26. |
+| Apple's Command Line Tools (Xcode 15 or later) | Swift compiler, the macOS SDK and `git` | Free. **The full Xcode app is not required** for Mac apps, but works too. With Xcode 26, icons get native Liquid Glass rendering on macOS 26. |
+| Xcode (only for iPhone and iPad apps) | The iOS SDK and simulators, and signing for your own phone | Free in the App Store. Lamp checks for it, and for the iOS simulator, when you send the first request for an iPhone or iPad app, and says what's missing. |
 | An AI to build with | Writes the apps | An [OpenRouter](https://openrouter.ai/keys) key is easiest. You can also use ~20 other providers, Claude Code or ChatGPT Codex if installed, or a model running on your Mac. See [Choosing the AI](#choosing-the-ai). |
 | An OpenRouter key (optional) | The best image models, icon artwork, and the fast in-app AI models | Without one, apps' text AI uses whatever builds them (pi's provider, a local model, or your Claude Code or ChatGPT Codex sign-in) |
 | A TypeSafe key (optional) | Decisions in apps, directly from TypeSafe | Jev is also available through an OpenRouter key |
@@ -90,11 +91,16 @@ The recipient double-clicks the file, or uses **File → Import Shared App… (�
 
 High-risk apps default to **Cancel**. When imported, the shared code is rebuilt with Lamp's own `Package.swift`, `build.sh` and `LampSupport.swift`, so nothing in the file runs during the build. The app runs only when opened, and becomes a normal app the recipient can keep editing. The review is a guide, not a guarantee: only open apps from people you trust.
 
+## iPhone and iPad apps
+
+Choose **iPhone** or **iPad** when you start a new app (the welcome asks too): Lamp builds one SwiftUI app for both, tried in the simulator on your Mac (use **Try On** in the toolbar, or right-click the app, to switch between iPhone and iPad), which needs Xcode installed. It has the same icon and building blocks as a Mac app (saved data, AI, text from photos and documents, calendar, reminders, contacts, notifications), plus motion and the rest of what a phone has. The agent builds and opens it in the simulator, looks at the screen after each change, and taps, types, scrolls and swipes on it to try what it made (which needs Lamp allowed under System Settings → Privacy & Security → Accessibility; Lamp asks once).
+
+With your Apple account signed in to Xcode, plug your phone in: Try On offers to pair it, then lists it. Press Play and Lamp builds the app for it, signs it with your account (the team is chosen in **Settings → Building**) and puts it there. The app's AI goes through Lamp while your Mac is reachable, and uses your OpenRouter key itself when it isn't (its models are chosen in **Settings → Apps**). iPhone and iPad apps can't be shared yet.
+
 ## Choosing the AI
 
 **Lamp → Settings (⌘,) → AI** chooses what builds your apps:
 
-- **iPhone and iPad apps (experimental).** Switch on **Build iOS apps** in **Settings → Experimental**, then choose iPhone or iPad when you start a new app: Lamp builds one SwiftUI app for both, tried in the simulator on your Mac (right-click the app to choose iPhone or iPad), which needs Xcode installed. It has the same icon and building blocks as a Mac app (saved data, AI, text from photos and documents, calendar, reminders, contacts, notifications). The agent builds and opens it in the simulator, looks at the screen after each change, and taps, types, scrolls and swipes on it to try what it made (which needs Lamp allowed under System Settings → Privacy & Security → Accessibility; Lamp asks once). With your Apple account signed in to Xcode, plug your phone in: Try On offers to pair it, then lists it. Press Play and Lamp builds the app for it, signs it with your account and puts it there. The app's AI goes through Lamp while your Mac is reachable, and uses your OpenRouter key itself when it isn't.
 - **Lamp's built-in agent (pi)** with any of these:
   - **An API key** for OpenRouter, Anthropic, OpenAI, Google Gemini, DeepSeek, Mistral, xAI, Groq, Cerebras, Together, Fireworks, Hugging Face, Vercel AI Gateway, Moonshot, Z.ai, MiniMax or NVIDIA. Pick any model from that provider's list; it's searchable.
   - **On this Mac (local models).** **Native Mac AI** in **Settings → AI Providers** lists every model Lamp can run. These include models already in the shared Hugging Face cache (`~/.cache/huggingface/hub`) or in Local's folder, so models downloaded for Local show up without downloading again. Lamp's own downloads (a list sized to your Mac's memory, or any GGUF repo) go into that same cache, in the standard `huggingface_hub` layout.

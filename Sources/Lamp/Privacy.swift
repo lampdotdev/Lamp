@@ -78,30 +78,6 @@ enum Privacy {
     /// Why reading outside the app's folder is the user's call, on a file tool's card and a command's alike.
     static let outsideRead = "It's outside this app's folder, and what's read goes to the AI model."
 
-    /// The words of a shell line, with quotes and escapes worked out, so a quoted path with a space in it
-    /// (the app's own folder has one) stays whole.
-    static func words(in command: String) -> [String] {
-        var words: [String] = []
-        var current = ""
-        var quote: Character?
-        var escaped = false
-        for character in command {
-            if escaped { current.append(character); escaped = false; continue }
-            if character == "\\", quote != "'" { escaped = true; continue }
-            if let open = quote {
-                if character == open { quote = nil } else { current.append(character) }
-            } else if character == "'" || character == "\"" {
-                quote = character
-            } else if character.isWhitespace || ";|&<>()".contains(character) {
-                if !current.isEmpty { words.append(current); current = "" }
-            } else {
-                current.append(character)
-            }
-        }
-        if !current.isEmpty { words.append(current) }
-        return words
-    }
-
     /// What the approval card says for a file request.
     static func explanation(tool: String, path raw: String, project: LampProject) -> (command: String, explanation: Store.CommandExplanation) {
         let shown = (resolved(raw, in: project.dir) as NSString).abbreviatingWithTildeInPath

@@ -296,7 +296,7 @@ extension Agent {
         // conversation needs telling, the same for each engine.
         let prompt = prompt + Memory.brief(for: project, engine: Builder.engine, session: session)
             + AIStatus.brief(for: project, engine: Builder.engine, session: session, offered: offered)
-        var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt(for: project) + (Sandbox.confines(.pi) ? sandboxNote : ""), "LAMP_DIR": project.dir.path,
+        var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt(for: project), "LAMP_DIR": project.dir.path,
                                      "PATH": ToolLocator.userPath]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
         let fileArgs = (0..<files.count).map { "\"$LAMP_FILE_\($0)\"" }
@@ -369,10 +369,10 @@ extension Agent {
             // the same with Claude Code as with pi and Codex: Lamp's decision model and risk rating decide what
             // is routine, and the user sees the rest. "Only when risky" and "Anything unusual" differ in how
             // much that is; Claude's own classifier never gets to wave a command through on its own.
-            if approval != .never {
-                env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude"
-                preToolUse.append(["matcher": "Bash", "hooks": [hook("LAMP_APPROVE_URL", event: "PreToolUse")]])
-            }
+            // In every mode, Never included: the hook is also how a command comes back confined (Sandbox); with
+            // Never, Lamp answers at once without a card.
+            env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude"
+            preToolUse.append(["matcher": "Bash", "hooks": [hook("LAMP_APPROVE_URL", event: "PreToolUse")]])
             switch approval {
             case .risky, .unusual:
                 // For the tools that aren't shell commands (a fetch, a web search), Claude's automatic mode asks
