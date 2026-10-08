@@ -96,7 +96,7 @@ final class HistoryCompatibilityTests: XCTestCase {
 
     func testAHistoryPushedSomewhere() async throws {
         let (project, root) = try await started()
-        let pushed = try run("git init -q --bare ../../remote.git && git remote add origin ../../remote.git && git push -q -u origin HEAD 2>&1 && git config user.name Me && git config user.email me@example.com && git config push.default current",
+        let pushed = try run("git init -q --bare ../../remote.git && git remote add origin ../../remote.git && git push -q -u origin HEAD 2>&1 && git config user.name Me && git config user.email me@example.com && git config push.default current && git config remote.origin.push refs/heads/main:refs/heads/published && git config branch.main.pushRemote origin && git config lfs.url https://example.com/me/coinflip.git/info/lfs && git config core.excludesFile ../../ignored-everywhere && echo '*.log' > ../../ignored-everywhere",
                              in: project.dir)
         XCTAssertEqual(pushed.status, 0, pushed.output)
         let before = try run("git config --local --list | sort", in: project.dir).output
@@ -104,7 +104,13 @@ final class HistoryCompatibilityTests: XCTestCase {
         XCTAssertEqual(try run("git config --local --list | sort", in: project.dir).output, before)
         let again = try run("git push -q 2>&1 && git status -sb | head -1 && git -C ../../remote.git log --format=%s -1", in: project.dir)
         XCTAssertEqual(again.status, 0, again.output)
-        XCTAssertTrue(again.output.contains("origin/") && again.output.contains("Back to first"), again.output)
+        XCTAssertTrue(again.output.contains("origin/"), again.output)
+        // The push went where this history says pushes go, not to the branch's own name.
+        XCTAssertEqual(try run("git -C ../../remote.git log --format=%s -1 published", in: project.dir).output, "Back to first\n")
+        // And what this history ignores is still ignored.
+        try "noise".write(to: project.dir.appendingPathComponent("debug.log"), atomically: true, encoding: .utf8)
+        let unsaved = await Versions.hasUnsavedChanges(project)
+        XCTAssertFalse(unsaved)
         _ = root
     }
 
@@ -167,6 +173,9 @@ final class HistoryCompatibilityTests: XCTestCase {
             ("a partial clone", "git config core.repositoryformatversion 1 && git config extensions.partialclone origin && git config remote.origin.url https://example.com/x.git && git config remote.origin.promisor true && git config remote.origin.partialclonefilter blob:none"),
             ("settings per worktree", "git config core.repositoryformatversion 1 && git config extensions.worktreeConfig true && git config --worktree core.autocrlf true"),
             ("a checkout of only part of the files", "git config core.sparseCheckout true && echo '/Sources/' > .git/info/sparse-checkout"),
+            ("a checkout of only part of the files, set up with git's own command", "mkdir -p Extra && echo x > Extra/x && git add -A && \(Versions.commit) -qm extra && git sparse-checkout init --cone && git sparse-checkout set Sources"),
+            ("a partial clone as git writes one now", "git config remote.origin.url https://example.com/x.git && git config remote.origin.promisor true && git config remote.origin.partialclonefilter blob:none"),
+            ("a filter brought in from another file of settings", "printf '[filter \"kept\"]\\n\\tclean = cat\\n\\tsmudge = cat\\n' > ../../more-settings && git config include.path ../../../more-settings"),
             ("a filter set up in this history", "git config filter.lfs.clean 'git-lfs clean -- %f' && git config filter.lfs.smudge 'git-lfs smudge -- %f' && git config filter.lfs.process 'git-lfs filter-process' && git config filter.lfs.required true"),
         ]
         for (what, setup) in cases {

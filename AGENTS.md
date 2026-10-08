@@ -54,7 +54,7 @@ A capability given to one engine must be given to all of them that can take it, 
   but the ones it lists (an app from 0.11.0 or earlier may hold anything): how the history is stored, how git
   itself converts line endings, who the person is and where they push. It runs no git at all, and changes
   nothing, when `.git` isn't a real folder of the app or holds what can be neither kept nor removed (a storage
-  extension it doesn't list, a filter, a checkout of only some files); `Versions.refused` then has Store say so once in the app's chat. It also
+  extension it doesn't list, a partial clone, a filter, an include, a checkout of only some files); `Versions.refused` then has Store say so once in the app's chat. It also
   keeps Lamp out of any repository inside the app's folder. A setting Lamp itself needs in an app's
   `.git/config` has to be added to that list, and must not be one that names a program or another file.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every

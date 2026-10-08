@@ -89,14 +89,16 @@ enum Versions {
     /// by one (text converters, signing programs, includes, hooks named in settings, and more with each
     /// release), so every setting is removed, with git's own command for it, except the ones below: how the
     /// history is stored (its format, hashes, where names of versions are kept), how git itself converts
-    /// line endings, who the person is and where they push. None of those names
+    /// line endings and which files it ignores, who the person is, and where they push and keep large files
+    /// (addresses only: the same ones a file in the app's own folder may already give). None of those names
     /// a program. An app's history from before `.git` was closed can hold anything; one written since holds
     /// nothing else.
     ///
     /// Two kinds of setting can't be removed without changing what the history means, and can't be kept
     /// either, so git isn't run at all and nothing is changed (`Refusal.format`): a storage extension other
-    /// than the two kept (a partial clone fetches what it lacks from wherever its settings say; per-worktree
-    /// settings are a second file of them), and a filter, which is a program run on every file going in and
+    /// than the two kept, a partial clone however it is written (it fetches what it lacks from wherever its
+    /// settings say), settings kept in a second file (per-worktree ones, or an include: what they hold can't
+    /// be known without trusting them), and a filter, which is a program run on every file going in and
     /// out (without it, files kept elsewhere or encrypted would be saved as they are on disk). The same goes
     /// for a checkout of only some of the files: Lamp builds the app from its folder and saves all of it,
     /// and git won't add a file that such a checkout leaves out.
@@ -112,14 +114,16 @@ enum Versions {
     if [ -e .git/config ]; then
     git config --file .git/config --list >/dev/null 2>&1 || exit 98
     git config --file .git/config --name-only -z --list | while IFS= read -r -d '' key; do case "$key" in \
-    extensions.objectformat|extensions.refstorage) ;; extensions.*|filter.*) exit 98 ;; esac; done
+    extensions.objectformat|extensions.refstorage) ;; \
+    extensions.*|filter.*|include.path|includeif.*|remote.*.promisor|remote.*.partialclonefilter) exit 98 ;; esac; done
     [ "$(git config --file .git/config --type=bool --get core.sparsecheckout 2>/dev/null)" != true ] || exit 98
     [ "$(stat -f %l .git/config)" = 1 ] || { fresh="$(mktemp .git/config.XXXXXXXX)" && cat .git/config > "$fresh" && mv -f "$fresh" .git/config; } || exit 99
     git config --file .git/config --name-only -z --list | sort -zu | while IFS= read -r -d '' key; do case "$key" in \
     core.repositoryformatversion|core.filemode|core.bare|core.logallrefupdates|core.ignorecase|core.precomposeunicode|core.symlinks) ;; \
     extensions.objectformat|extensions.refstorage|core.eol|core.autocrlf|core.safecrlf) ;; \
-    user.name|user.email|remote.*.url|remote.*.pushurl|remote.*.fetch|remote.pushdefault|branch.*.remote|branch.*.merge|branch.*.rebase) ;; \
-    push.default|pull.rebase|init.defaultbranch) ;; \
+    core.excludesfile|core.attributesfile|user.name|user.email|push.default|pull.rebase|init.defaultbranch) ;; \
+    remote.*.url|remote.*.pushurl|remote.*.fetch|remote.*.push|remote.pushdefault|branch.*.remote|branch.*.pushremote|branch.*.merge|branch.*.rebase) ;; \
+    lfs.url|lfs.pushurl|remote.*.lfsurl|remote.*.lfspushurl) ;; \
     *) git config --file .git/config --unset-all "$key" 2>/dev/null || exit 99 ;; esac; done
     fi; fi
     """#

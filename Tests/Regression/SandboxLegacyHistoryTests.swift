@@ -66,7 +66,7 @@ final class SandboxLegacyHistoryTests: XCTestCase {
     func testSettingsAlreadyInTheHistoryRunNothing() async throws {
         // Each: what to leave in the history's settings, given the path of a program that marks its run. A
         // filter isn't removed (a real one decides what the saved files are): Lamp leaves that history alone.
-        let filters = ["a filter for files going in", "a filter for files coming out", "a long-running filter"]
+        let filters = ["a filter for files going in", "a filter for files coming out", "a long-running filter", "settings brought in from another file"]
         let plants: [(String, (String) -> String)] = [
             ("a filter for files going in", { "git config filter.planted.clean \($0)" }),
             ("a filter for files coming out", { "git config filter.planted.smudge \($0)" }),
@@ -89,7 +89,8 @@ final class SandboxLegacyHistoryTests: XCTestCase {
             let log = try loose("git log --format=%s | tr '\\n' ','", in: project)
             if filters.contains(what) {
                 XCTAssertEqual(log.output, "first,", "\(what): Lamp should have left this history alone")
-                XCTAssertTrue(try String(contentsOf: project.dir.appendingPathComponent(".git/config"), encoding: .utf8).contains("planted"), what)
+                let kept = try String(contentsOf: project.dir.appendingPathComponent(".git/config"), encoding: .utf8)
+                XCTAssertTrue(kept.contains("planted") || kept.contains("extra.cfg"), what)
             } else {
                 XCTAssertTrue(log.output.contains("second"), "\(what): Lamp's save should still work: \(log.output)")
             }
