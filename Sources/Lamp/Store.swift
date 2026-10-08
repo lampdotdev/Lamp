@@ -84,7 +84,8 @@ struct AppUsage: Codable {
 struct LogLine: Identifiable, Codable, Equatable {
     /// `needsKey` is a setup offer from before offers named their capability: it was always about pictures.
     /// `drawIcon` offers to draw the app's icon in Image Playground; its text is the design it's for (`Icons.artKey`).
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, drawIcon }
+    /// `widget` is the card of an app that has a widget (`WidgetCard`): how to add it, then that it's there.
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, drawIcon, widget }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -195,6 +196,8 @@ final class Store: ObservableObject {
     @Published var progress: [String: TurnProgress] = [:]
     /// Apps that are open right now, however they were started, so Lamp can offer to quit them.
     @Published var openApps: Set<String> = []
+    /// The apps whose widget the person has put on the desktop (`WidgetCard`), for their chats' cards.
+    @Published var placedWidgets: Set<String> = []
     /// Which Lamp built each installed app (see BuildStamp). Missing for apps that aren't built yet.
     @Published var stamps: [String: BuildStamp] = [:]
     @Published var chatFocusRequest = 0
@@ -1198,7 +1201,6 @@ final class Store: ObservableObject {
                 }
             }
             let newArtwork: Bool
-            let hadWidget = Template.hasWidget(project)
             do {
                 newArtwork = try Sharing.install(package, into: project, replacing: true)
             } catch {
@@ -1221,8 +1223,6 @@ final class Store: ObservableObject {
             }
             // The same code with a new icon picture still gets built, which is what draws and installs the icon.
             log(project, .status, "Updated from a shared file. Building it now…")
-            // A widget already on the desktop stays there through the update; a first one has to be added.
-            if package.hasWidget, !hadWidget { log(project, .status, Sharing.widgetToAdd(project.name)) }
             if await build(project) == nil {
                 await installReportingCrash(project)
             } else {
@@ -1254,8 +1254,6 @@ final class Store: ObservableObject {
         reload()
         selection = project.id
         log(project, .status, "Imported from a shared file. Building it now…")
-        // Nobody but the person can put a widget on the desktop, and no agent's reply is coming to say so.
-        if package.hasWidget { log(project, .status, Sharing.widgetToAdd(project.name)) }
         Task {
             _ = await Shell.run("git init -q && git add -A && \(Self.commit) -qm 'Imported from a shared file'",
                                 cwd: project.dir) { _ in }
@@ -2686,10 +2684,23 @@ final class Store: ObservableObject {
         await quit(project)
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
         do {
+            WidgetCard.forget(project)
             try await deploy(project)
             heldInstalls.installed(project.id)
         } catch {
             log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
+            return nil
+        }
+        // An app with a widget gets its card, once: the widget is built, and adding it is the person's to do.
+        if Template.hasWidget(project), WidgetCard.isNeeded(after: logs[project.id] ?? []) { log(project, .widget, "") }
+        // An app that is only its widget is never opened in front of anyone: there's nothing to see. It runs
+        // out of sight to tell Lamp when the widget has been placed, and quits by itself.
+        if Template.isWidgetOnly(project) {
+            await watchWidget(of: project)
+            if inFront { log(project, .status, "\(project.name) is ready") }
+            upgradeIconArt(project)
+            refreshOpenApps()
+            stamps[project.id] = BuildStamp.read(project.installedURL)
             return nil
         }
         let config = NSWorkspace.OpenConfiguration()
@@ -3330,6 +3341,35 @@ final class Store: ObservableObject {
         }
     }
 
+    /// Runs an app that is only its widget, out of sight (it has no window and no Dock icon), so it can say
+    /// whether the widget is placed. It quits by itself once it is, or after a while.
+    private func watchWidget(of project: LampProject) async {
+        guard FileManager.default.fileExists(atPath: project.installedURL.path), !isRunning(project) else { return }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = false
+        config.hides = true
+        config.addsToRecentItems = false
+        _ = try? await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
+    }
+
+    /// Which widgets are placed, read from what each app last said, for the cards on show. Asked every couple
+    /// of seconds: a small file per app with a card.
+    private func refreshWidgetCards() {
+        let placed = Set(projects.filter { project in
+            (logs[project.id] ?? []).contains { $0.kind == .widget } && WidgetCard.isPlaced(project)
+        }.map(\.id))
+        if placed != placedWidgets { placedWidgets = placed }
+    }
+
+    /// Back in Lamp, perhaps from adding a widget: an app that is only its widget, and has stopped waiting
+    /// to hear, is asked again.
+    private func askAboutWidgets() {
+        for project in projects where (logs[project.id] ?? []).contains(where: { $0.kind == .widget })
+            && !placedWidgets.contains(project.id) && !busy.contains(project.id) && Template.isWidgetOnly(project) {
+            Task { await watchWidget(of: project) }
+        }
+    }
+
     /// Keeps `openApps` current as apps launch and quit. Menu bar apps don't always announce themselves,
     /// so it's also checked whenever Lamp comes to the front and after Lamp opens or quits one.
     private func watchOpenApps() {
@@ -3341,7 +3381,13 @@ final class Store: ObservableObject {
             }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { Store.shared.refreshOpenApps() }
+            MainActor.assumeIsolated {
+                Store.shared.refreshOpenApps()
+                Store.shared.askAboutWidgets()
+            }
+        }
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+            MainActor.assumeIsolated { Store.shared.refreshWidgetCards() }
         }
     }
 

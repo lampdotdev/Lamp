@@ -86,7 +86,7 @@ enum Template {
         try writeSupport(for: project)
         let iphone = project.platform == .iphone
         let widget = hasWidget(project)
-        try write(iphone ? iPhoneBuildSh : buildSh(widget: widget), to: "build.sh", for: project, executable: true)
+        try write(iphone ? iPhoneBuildSh : buildSh(widget: widget, widgetOnly: isWidgetOnly(project)), to: "build.sh", for: project, executable: true)
         try write(iphone ? iPhonePackageSwift : packageSwift(widget: widget), to: "Package.swift", for: project)
     }
 
@@ -491,6 +491,21 @@ enum Template {
         return files.contains { $0.pathExtension == "swift" && $0.lastPathComponent != widgetSupportFile }
     }
 
+    /// The scene a widget-only app is made of (`LampWidgetOnly` in LampSupport.swift).
+    static let widgetOnlyScene = "LampWidgetOnly("
+
+    /// Whether the app is only there to carry its widget: it has one, and its own code is that one scene.
+    /// Such an app has no window and no Dock icon, and Lamp never opens it in front of anyone.
+    static func isWidgetOnly(_ project: LampProject) -> Bool {
+        guard hasWidget(project) else { return false }
+        let sources = project.dir.appendingPathComponent("Sources")
+        let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        return files.contains { file in
+            file.pathExtension == "swift" && file.lastPathComponent != "LampSupport.swift"
+                && ((try? String(contentsOf: file, encoding: .utf8))?.contains(widgetOnlyScene) ?? false)
+        }
+    }
+
     /// The widget's bundle id. macOS only takes an extension whose id begins with its app's.
     static func widgetBundleID(for project: LampProject) -> String { project.bundleID + ".widget" }
 
@@ -679,10 +694,16 @@ enum Template {
 
     /// build.sh for a Mac app. With a widget, the second program goes into the app as its widget extension
     /// before the app is signed: an extension is signed first, with its own entitlements, and the app around it.
-    static func buildSh(widget: Bool) -> String {
+    static func buildSh(widget: Bool, widgetOnly: Bool = false) -> String {
         guard widget else { return buildSh }
-        return buildSh.replacingOccurrences(of: appSigningLine, with: widgetBuildSteps + appSigningLine)
+        var script = buildSh.replacingOccurrences(of: appSigningLine, with: widgetBuildSteps + appSigningLine)
+        // An app that is only its widget says so to macOS in the way apps without a Dock icon do, so it
+        // never shows in the Dock or the app switcher, not even for the moment it takes to start.
+        if widgetOnly { script = script.replacingOccurrences(of: highResolutionLine, with: highResolutionLine + "\n  <key>LSUIElement</key><true/>") }
+        return script
     }
+
+    private static let highResolutionLine = "  <key>NSHighResolutionCapable</key><true/>"
 
     private static let appSigningLine = "codesign --force -s - \"$APP\"\necho \"Built $APP\"\n"
 
@@ -1348,6 +1369,7 @@ enum Template {
             let previous = folder.appendingPathComponent("previous-log.txt")
             try? fm.removeItem(at: previous)
             try? fm.moveItem(at: log, to: previous)
+            LampWidgetPlacement.start
             guard freopen(log.path, "a", stderr) != nil else { return }
             dup2(fileno(stderr), STDOUT_FILENO)
             setvbuf(stdout, nil, _IOLBF, 0)   // so nothing is lost if the app crashes
@@ -4183,6 +4205,56 @@ enum Template {
     }
 
     #if os(macOS)
+    /// The whole app, when a widget is all the person asked for. macOS has no widget without an app to carry
+    /// it, so this is that app and nothing more: no window, no Dock icon, no menus, and nobody ever opens it.
+    ///
+    ///     @main struct MainApp: App { var body: some Scene { LampWidgetOnly() } }
+    ///
+    /// Lamp runs it out of sight for a while after a build, only to learn whether the widget has been put on
+    /// the desktop (`LampWidgetPlacement`); then it quits by itself.
+    struct LampWidgetOnly: Scene {
+        init() {
+            LampWidgetPlacement.quitsWhenDone = true
+            LampRuntime.start
+        }
+
+        // A scene that opens nothing: an app needs one, and Settings only shows when asked for.
+        var body: some Scene { Settings { EmptyView() } }
+    }
+
+    /// Whether the person has put this app's widget on the desktop or in Notification Center, kept where Lamp
+    /// reads it, so Lamp's chat can stop saying how to add a widget that's already there. Only the app a
+    /// widget belongs to may ask macOS this.
+    enum LampWidgetPlacement {
+        nonisolated(unsafe) static var quitsWhenDone = false
+        nonisolated(unsafe) private static var written: Bool?
+        private static var file: URL { LampRuntime.folder.appendingPathComponent("widget-placed") }
+
+        /// Runs once, at launch, in an app that has a widget: asks every couple of seconds at first, when the
+        /// person is likely adding it, then now and then.
+        static let start: Void = {
+            let plugIns = (try? FileManager.default.contentsOfDirectory(atPath: Bundle.main.builtInPlugInsPath ?? "")) ?? []
+            guard plugIns.contains(where: { $0.hasSuffix(".appex") }) else { return }
+            ask(times: 0)
+        }()
+
+        private static func ask(times: Int) {
+            WidgetCenter.shared.getCurrentConfigurations { result in
+                let placed = !((try? result.get()) ?? []).isEmpty
+                if written != placed, (try? (placed ? "1" : "0").write(to: file, atomically: true, encoding: .utf8)) != nil {
+                    written = placed
+                }
+                // An app that is only its widget has nothing else to stay for: once the widget is placed, or
+                // after half an hour of waiting, it goes. Lamp runs it again when it wants to know.
+                let soon = times < 900
+                DispatchQueue.main.asyncAfter(deadline: .now() + (soon ? 2 : 60)) {
+                    if quitsWhenDone && (placed || !soon) { return NSApp.terminate(nil) }
+                    ask(times: times + 1)
+                }
+            }
+        }
+    }
+
     /// What the app hands its desktop widget. A widget is a separate, sandboxed program that sees none of the
     /// app's files, so it asks the app instead: the app answers, on a connection only this Mac can make, with
     /// what was shared last, and tells macOS to draw the widget again.

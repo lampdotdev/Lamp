@@ -264,7 +264,9 @@ final class WidgetBuildTests: XCTestCase {
     func testOnlyAMacAppIsToldItCanHaveAWidget() {
         let mac = Agent.systemPrompt
         XCTAssertTrue(mac.contains("Widget/Widget.swift"))
-        XCTAssertTrue(mac.contains("Edit Widgets"))
+        // How to add it is the card's to say (WidgetCard), so the agent is told not to.
+        XCTAssertTrue(mac.contains("Lamp shows the user a card"))
+        XCTAssertFalse(mac.contains("Edit Widgets"))
         XCTAssertTrue(mac.contains("containerBackground(for: .widget)"))
         XCTAssertTrue(mac.contains("(and a widget's code in Widget/)"))
         for family in [DeviceFamily.iphone, .ipad] {

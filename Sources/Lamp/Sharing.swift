@@ -350,12 +350,6 @@ enum Sharing {
         return newArtwork
     }
 
-    /// Said in the chat once, when an app arrives with a widget or gains one in an update: nobody but the
-    /// person can put a widget on the desktop, and no agent's reply is coming to say so.
-    static func widgetToAdd(_ name: String) -> String {
-        "\(name) has a widget. To add it, right-click the desktop and choose Edit Widgets."
-    }
-
     struct ImportError: LocalizedError {
         let message: String
         init(_ message: String) { self.message = message }

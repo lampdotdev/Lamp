@@ -64,7 +64,6 @@ final class SharingWidgetTests: XCTestCase {
         XCTAssertTrue(try String(contentsOf: receiver.dir.appendingPathComponent("Package.swift"), encoding: .utf8).contains("TallyCopyWidget"))
         XCTAssertNotEqual(Template.widgetToken(for: receiver), Template.widgetToken(for: sender))
         XCTAssertNotEqual(Template.widgetPort(for: receiver), Template.widgetPort(for: sender))
-        XCTAssertTrue(Sharing.widgetToAdd("Tally").contains("Edit Widgets"))
     }
 
     func testOnlyAFileWithAWidgetAsksForANewerLamp() throws {

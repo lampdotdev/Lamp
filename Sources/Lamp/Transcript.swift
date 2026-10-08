@@ -406,6 +406,8 @@ struct LogRow: View, Equatable {
             if let offer = line.setupOffer { SetupCard(offer: offer, reason: line.text, dir: dir) }
         case .drawIcon:
             if let project = Store.shared.projects.first(where: { $0.dir == dir }) { DrawIconLine(project: project) }
+        case .widget:
+            WidgetCardView(dir: dir)
         }
     }
 
