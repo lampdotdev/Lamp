@@ -146,13 +146,19 @@ final class SandboxLegacyHistoryTests: XCTestCase {
     /// A settings file with a second name (a hard link made while `.git` was open) can be written by that name.
     func testSettingsWithASecondNameAreMadeLampsOwn() async throws {
         let (project, root, escaped) = try project()
-        let linked = try loose("ln .git/config Sources/settings-by-another-name", in: project)
+        // And whatever name Lamp might use for the copy is taken already, by a link to a file outside the app.
+        let letter = root.appendingPathComponent("letter.txt")
+        try "keep".write(to: letter, atomically: true, encoding: .utf8)
+        let linked = try loose("ln .git/config Sources/settings-by-another-name && for name in config.lamp config.lock config.tmp config.new; do ln -s \(Sandbox.quoted(letter.path)) .git/$name; done; rm .git/config.lock", in: project)
         XCTAssertEqual(linked.status, 0, linked.output)
         _ = await Versions.hasUnsavedChanges(project)   // any call of Lamp's git
         let touch = Sandbox.quoted(try program("program", in: root, touching: escaped))
         _ = try confined("printf '[filter \"planted\"]\\n\\tclean = %s\\n' \(touch) >> Sources/settings-by-another-name; printf '* filter=planted\\n' > .gitattributes", in: project)
         let settings = try String(contentsOf: project.dir.appendingPathComponent(".git/config"), encoding: .utf8)
         XCTAssertFalse(settings.contains("planted"), settings)
+        XCTAssertEqual(try String(contentsOf: letter, encoding: .utf8), "keep")
+        let kind = try loose("stat -f '%HT %l' .git/config", in: project)
+        XCTAssertEqual(kind.output.trimmingCharacters(in: .whitespacesAndNewlines), "Regular File 1")
         try await everythingLampDoes(project)
         XCTAssertFalse(FileManager.default.fileExists(atPath: escaped.path))
     }

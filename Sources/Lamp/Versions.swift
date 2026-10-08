@@ -71,11 +71,12 @@ enum Versions {
     ///
     /// First, the history has to be a real folder in the app, with its settings a real file of its own: a
     /// `.git` that points somewhere else (a file or a link, or a shared folder named inside it) leads to a
-    /// place the agent can still write, and a settings file with a second name can be written by that name.
-    /// Then git isn't run at all, and Lamp saves nothing until the folder is put right.
+    /// place the agent can still write, and then git isn't run at all: Lamp saves nothing until the folder is
+    /// put right. A settings file with a second name (a hard link) can be written by that name, so it is
+    /// replaced by a copy in a file made new for it, never one that might already be there under a known name.
     private static let own = #"""
     { { [ ! -e .git ] && [ ! -L .git ]; } || { [ -d .git ] && [ ! -L .git ] && [ ! -e .git/commondir ] && [ ! -L .git/config ] \
-    && { [ ! -e .git/config ] || [ "$(stat -f %l .git/config)" = 1 ] || { cp .git/config .git/config.lamp && mv -f .git/config.lamp .git/config; }; } \
+    && { [ ! -e .git/config ] || [ "$(stat -f %l .git/config)" = 1 ] || { fresh="$(mktemp .git/config.XXXXXXXX)" && cat .git/config > "$fresh" && mv -f "$fresh" .git/config; }; } \
     && git config --file .git/config --name-only -z --list 2>/dev/null | sort -zu | while IFS= read -r -d '' key; do case "$key" in \
     core.repositoryformatversion|core.filemode|core.bare|core.logallrefupdates|core.ignorecase|core.precomposeunicode|core.symlinks) ;; \
     extensions.objectformat|user.name|user.email|remote.*.url|remote.*.fetch|branch.*.remote|branch.*.merge) ;; \
