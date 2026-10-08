@@ -142,10 +142,11 @@ const webFetch = defineTool({
 	},
 });
 
-/** Asks Lamp to approve a shell command; resolves to an error message when it isn't approved. */
-async function askLamp(command: string, signal?: AbortSignal): Promise<string | undefined> {
+/** Asks Lamp to approve a shell command: a reason when it isn't approved, else the command to run (Lamp hands
+ * it back confined to the app's folder, see Sandbox). */
+async function askLamp(command: string, signal?: AbortSignal): Promise<{ reason?: string; command?: string }> {
 	const url = process.env.LAMP_APPROVE_URL;
-	if (!url) return "Shell commands need approval in Lamp, and Lamp isn't available.";
+	if (!url) return { reason: "Shell commands need approval in Lamp, and Lamp isn't available." };
 	try {
 		const response = await fetch(url, {
 			method: "POST",
@@ -154,10 +155,10 @@ async function askLamp(command: string, signal?: AbortSignal): Promise<string | 
 			// The user may take a while to answer; Lamp itself never times out on their behalf.
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(3_600_000)]) : AbortSignal.timeout(3_600_000),
 		});
-		const reply = (await response.json()) as { allow?: boolean; reason?: string };
-		return reply.allow ? undefined : (reply.reason ?? "The user didn't approve this command.");
+		const reply = (await response.json()) as { allow?: boolean; reason?: string; command?: string };
+		return reply.allow ? { command: reply.command } : { reason: reply.reason ?? "The user didn't approve this command." };
 	} catch {
-		return "Couldn't ask the user to approve this command.";
+		return { reason: "Couldn't ask the user to approve this command." };
 	}
 }
 
@@ -365,8 +366,11 @@ export default function (pi: ExtensionAPI) {
 			return reason ? { block: true, reason } : undefined;
 		}
 		if (event.toolName !== "bash") return undefined;
-		const reason = await askLamp(String((event.input as { command?: unknown }).command ?? ""), ctx.signal);
-		return reason ? { block: true, reason } : undefined;
+		const input = event.input as { command?: unknown };
+		const answer = await askLamp(String(input.command ?? ""), ctx.signal);
+		if (answer.reason) return { block: true, reason: answer.reason };
+		if (answer.command) input.command = answer.command;   // the hook may change the input before it runs
+		return undefined;
 	});
 	pi.registerTool(webFetch);
 	pi.registerTool(lookAtApp);
