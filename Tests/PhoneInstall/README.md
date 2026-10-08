@@ -35,7 +35,7 @@ ad-hoc build and launch with:
 
 ```
 lampvm launch 'Lamp Dev' -onboarded YES -engine pi -piProvider ext-ui-replay \
-  -piModel.ext-ui-replay ui-replay -experimentIOSApps YES -experimentDevices YES
+  -piModel.ext-ui-replay ui-replay
 ```
 
 Those are temporary made-up provider/model preferences to let the signed-out VM show the main window;

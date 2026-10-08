@@ -97,8 +97,41 @@ enum Ideas {
              "Mood Journal: once a day I pick how I feel on a five-point scale and write a sentence. It shows a calendar colored by mood and, once a month, a short gentle summary of patterns it notices."),
     ]
 
-    /// Six at a time from the pool, in order and starting over at the end.
-    static func page(_ index: Int) -> [Idea] {
+    /// The same for an iPhone or iPad app: each shows something a phone does that a Mac doesn't (the camera,
+    /// the motion sensors, where you are, a quick tap on the go), mixed the same way, six to a page.
+    static let phonePool: [Idea] = [
+        Idea("Plant Doctor", "leaf.circle", 0.32, "Snap a plant to learn what it needs.",
+             "Plant Doctor: I take a photo of a houseplant and it tells me what it is and what it needs (light, water, how often). It keeps a list of my plants with their photos and reminds me when each one needs watering."),
+        Idea("Step Quest", "figure.walk", 0.08, "Turns your daily walks into an adventure.",
+             "Step Quest: counts my steps through the day and turns them into a journey across a map of made-up lands, unlocking a new place every few thousand steps. Show today's steps, my best week, and what the next place is."),
+        Idea("Thought Catcher", "mic", 0.62, "Speak a thought, get a tidy note.",
+             "Thought Catcher: I tap once and speak. It writes down what I said, tidies it into a short note with a title, and sorts it into ideas, to-dos and things to remember. Search everything I've said."),
+        Idea("Expense Snap", "doc.text.viewfinder", 0.38, "Photograph receipts as you go.",
+             "Expense Snap: I photograph receipts as I go and it reads the shop, date, total and category from each one into a list I can edit. Show a monthly total per category and share everything as a spreadsheet."),
+        Idea("Word Ladder", "textformat.abc", 0.76, "A new word puzzle every day.",
+             "Word Ladder: a daily puzzle where I change one letter at a time to get from one word to another. Hints when I'm stuck, a streak counter, and a gentle reminder each evening if I haven't played."),
+        Idea("Parking Spot", "car", 0.55, "Remembers where you parked.",
+             "Parking Spot: one big button saves where I parked, with a photo and a note (level, row). Later it shows how far away the car is and which way to walk, and reminds me before the meter runs out."),
+
+        Idea("Fridge Chef", "refrigerator", 0.05, "Photograph your fridge, get dinner ideas.",
+             "Fridge Chef: I take a photo of what's in my fridge and it suggests three dinners I could make with it, with simple steps and how long each takes. Save the ones I like."),
+        Idea("Gym Log", "dumbbell", 0.0, "Logs your sets and plans the next session.",
+             "Gym Log: I log exercises, sets and weights in a few taps between sets, with a rest timer. It shows my progress for each exercise and suggests what to lift next time."),
+        Idea("Trip Phrases", "character.bubble", 0.58, "The phrases you need, read aloud.",
+             "Trip Phrases: I pick the language of where I'm going and it gives me the phrases I'll need, read aloud. Point the camera at a menu or a sign and it translates it."),
+        Idea("Dinner Split", "fork.knife.circle", 0.45, "Splits the bill by who had what.",
+             "Dinner Split: I photograph the restaurant bill, tap who had what, and it works out each person's share with tip. Keep a running tab for trips with friends."),
+        Idea("Spirit Level", "level", 0.15, "Hangs pictures straight, using the phone's sensors.",
+             "Spirit Level: a level that uses the phone's motion sensors, with a bubble, the exact angle, and a click when it's perfectly level. Tap to hold the reading."),
+        Idea("Baby Log", "moon.zzz", 0.7, "Feeds, naps and changes, one tap each.",
+             "Baby Log: one tap logs a feed, a nap or a change, with the time. It shows today at a glance, how long since the last feed, and the patterns over the week, so I can tell the doctor."),
+    ]
+
+    static func pool(for kind: AppKind) -> [Idea] { kind == .mac ? pool : phonePool }
+
+    /// Six at a time from the kind's pool, in order and starting over at the end.
+    static func page(_ index: Int, kind: AppKind = .mac) -> [Idea] {
+        let pool = pool(for: kind)
         let start = (index * 6) % pool.count
         return (0..<6).map { pool[(start + $0) % pool.count] }
     }
@@ -106,7 +139,8 @@ enum Ideas {
     /// Six for a new app's empty chat. Until the person has an app, the first six, chosen to be a good first
     /// look; after that a random six, so the chat keeps turning up ones they haven't seen, leaving out any
     /// they've already made (by name).
-    static func starters(made names: [String]) -> [Idea] {
+    static func starters(made names: [String], kind: AppKind = .mac) -> [Idea] {
+        let pool = pool(for: kind)
         guard !names.isEmpty else { return Array(pool.prefix(6)) }
         let made = Set(names.map { $0.lowercased() })
         return Array(pool.filter { !made.contains($0.title.lowercased()) }.shuffled().prefix(6))
@@ -122,10 +156,10 @@ enum Ideas {
 
     /// Six new ideas from Apple's on-device model, or nil when it's unavailable or fails. Free and private,
     /// so it can run before the user has chosen what builds their apps.
-    static func invent(avoiding seen: [String]) async -> [Idea]? {
+    static func invent(avoiding seen: [String], kind: AppKind = .mac) async -> [Idea]? {
         #if canImport(FoundationModels)
         if #available(macOS 26, *), canInvent {
-            return await Inventor.invent(avoiding: seen)
+            return await Inventor.invent(avoiding: seen, device: kind.rawValue)
         }
         #endif
         return nil
@@ -139,14 +173,30 @@ final class IdeaDeck: ObservableObject {
     @Published private(set) var ideas: [Idea]
     /// The next six, already made up, so asking for more is instant.
     @Published private(set) var invented: [Idea]?
+    /// What the ideas are for: a Mac, or an iPhone or iPad.
+    private(set) var kind: AppKind
     private var page = 0
     private var inventing = false
     private var seen: Set<String>
 
     /// Opens on `first`: the welcome's first page, or the six a new app's chat drew.
-    init(first: [Idea] = Ideas.page(0)) {
+    init(first: [Idea]? = nil, kind: AppKind = .mac) {
+        self.kind = kind
+        let first = first ?? Ideas.page(0, kind: kind)
         ideas = first
         seen = Set(first.map(\.title))
+    }
+
+    /// Starts over on another kind's first page, dropping any ideas made up for the old one.
+    func show(_ kind: AppKind) {
+        guard kind != self.kind else { return }
+        self.kind = kind
+        page = 0
+        invented = nil
+        let first = Ideas.page(0, kind: kind)
+        seen.formUnion(first.map(\.title))
+        withAnimation { ideas = first }
+        prefetch()
     }
 
     /// What the button for more shows: one icon for both kinds, since either way it's a fresh idea.
@@ -159,7 +209,7 @@ final class IdeaDeck: ObservableObject {
             self.invented = nil
         } else {
             page += 1
-            next = Ideas.page(page)
+            next = Ideas.page(page, kind: kind)
         }
         seen.formUnion(next.map(\.title))
         withAnimation { ideas = next }
@@ -169,10 +219,14 @@ final class IdeaDeck: ObservableObject {
     func prefetch() {
         guard Ideas.canInvent, invented == nil, !inventing else { return }
         inventing = true
+        let kind = kind
         Task {
-            let avoiding = Array(seen) + Ideas.pool.map(\.title)
-            invented = await Ideas.invent(avoiding: avoiding)
+            let avoiding = Array(seen) + Ideas.pool(for: kind).map(\.title)
+            let made = await Ideas.invent(avoiding: avoiding, kind: kind)
             inventing = false
+            // Made up for a kind that's no longer chosen: ask again for this one.
+            guard kind == self.kind else { return prefetch() }
+            invented = made
         }
     }
 }
@@ -202,15 +256,16 @@ private enum Inventor {
                                     "a writer", "someone who loves travel", "a musician", "a teacher", "someone getting fit",
                                     "a photographer", "someone organizing their home", "a team at work", "a gardener"]
 
-    static func invent(avoiding seen: [String]) async -> [Idea]? {
+    /// `device` is what the apps are for: Mac, iPhone or iPad.
+    static func invent(avoiding seen: [String], device: String) async -> [Idea]? {
         let session = LanguageModelSession(instructions: """
-            You suggest small, useful Mac apps that a person with no programming experience could ask for. \
-            Each app does one thing well and works on the person's own Mac: no accounts, no servers, no websites. \
+            You suggest small, useful \(device) apps that a person with no programming experience could ask for. \
+            Each app does one thing well and works on the person's own \(device): no accounts, no servers, no websites. \
             Use plain, warm, everyday words, never technical terms.
             """)
         let audience = audiences.randomElement()!
         let prompt = """
-            Suggest six different Mac apps that would make life easier for \(audience). \
+            Suggest six different \(device) apps that would make life easier for \(audience). \
             Don't suggest any of these: \(seen.suffix(40).joined(separator: ", ")).
             """
         guard let schema,
