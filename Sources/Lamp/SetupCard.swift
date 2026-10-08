@@ -65,7 +65,10 @@ struct SetupCard: View {
             revision += 1
             declined = project.map(offer.declined(in:)) ?? false
         }
+        // Keys, the choices in Settings and an app's own choices all change what a capability resolves to.
         .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in revision += 1 }
+        .onReceive(NotificationCenter.default.publisher(for: AppModels.changed)) { _ in revision += 1 }
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in revision += 1 }
     }
 
     /// What's being offered, on a tile the size of the build card's app icon. Not the app's own icon: it's
@@ -407,7 +410,10 @@ struct CapabilityNote: View {
                 }
                 UpgradeList(upgrades: resolution.upgrades.filter { !omitting.contains($0) }, compact: true) { revision += 1 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in revision += 1 }
+            // Keys, the choices in Settings and an app's own choices all change what a capability resolves to.
+        .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in revision += 1 }
+        .onReceive(NotificationCenter.default.publisher(for: AppModels.changed)) { _ in revision += 1 }
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in revision += 1 }
         }
     }
 }

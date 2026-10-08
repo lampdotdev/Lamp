@@ -118,9 +118,18 @@ extension AppAI {
         let wanted = (choice ?? UserDefaults.standard.string(forKey: "appModel")).map(canonicalRoute)
         if let wanted, wanted != route.id, let missing = allTextRoutes.first(where: { $0.id == wanted }) {
             var upgrades: [Upgrade] = []
-            if case .openRouter = missing.kind { upgrades.append(.key("openrouter")) }
+            var why = "."
+            switch missing.kind {
+            case .openRouter:
+                upgrades.append(.key("openrouter"))
+                why = " without an OpenRouter key."
+            case .engine(let engine, _) where engine != .pi && ToolLocator.path(for: engine) != nil:
+                upgrades.append(.signIn(engine))
+                why = " until you sign in to \(engine.title) again."
+            default: break
+            }
             return Resolution(capability: .text, tier: .works, answer: route.label, provider: provider(of: route),
-                              note: "\(missing.name) can't answer right now\(upgrades.isEmpty ? "." : " without an OpenRouter key."))",
+                              note: "\(missing.name) can't answer right now\(why)",
                               upgrades: upgrades)
         }
         // A sign-in that answers because nothing was chosen works, but a key is quicker for small calls and
@@ -133,17 +142,22 @@ extension AppAI {
         return Resolution(capability: .text, tier: .best, answer: route.label, provider: provider(of: route), note: nil, upgrades: [])
     }
 
-    /// What would let apps' text answer when nothing can: a key, else the sign-in of whatever builds apps.
+    /// What would let apps' text answer when nothing can: a key, then signing in to Claude Code or Codex where
+    /// it's installed (what builds apps first). An installed one that's signed in would already be answering.
     @MainActor private static var textUpgrades: [Upgrade] {
+        let engines = ([Builder.engine] + [.claude, .codex]).filter { $0 != .pi }
         var upgrades: [Upgrade] = [.key("openrouter")]
-        if Builder.engine != .pi, ToolLocator.path(for: Builder.engine) != nil { upgrades.append(.signIn(Builder.engine)) }
+        for engine in engines where ToolLocator.path(for: engine) != nil && !upgrades.contains(.signIn(engine)) {
+            upgrades.append(.signIn(engine))
+        }
         return upgrades
     }
 
     @MainActor private static func resolveDecisions(choice: String?, text: String?) -> Resolution {
         let chosen = decisionModels.first { $0.id == choice } ?? decisionModel
+        // Decisions by text go along the app's own text route (`AppAI.decide(appText:)`), so they're named by it.
         let textRoute = resolveText(choice: text)
-        let byText = "\(fastModelName), answering as text"
+        let byText = "\(fastModelName(for: route(for: text))), answering as text"
         func fallback(_ why: String, _ upgrades: [Upgrade]) -> Resolution {
             guard textRoute.tier != .none else {
                 return Resolution(capability: .decisions, tier: .none, answer: nil, provider: nil,

@@ -343,6 +343,8 @@ final class Store: ObservableObject {
     /// Re-checks setup. On a fresh Mac this opens Apple's installer straight away, then keeps
     /// checking in the background so setup finishes by itself once the tools are installed.
     func recheckSetup() async {
+        // What Claude Code's and Codex's sign-ins are, for whether they can answer apps (`AppAI.resolve`).
+        Task { await EngineSignIn.refresh() }
         let wasReady = setup.checked && setup.ready
         let keysRead = KeyStore.keysRead
         setup = await SetupCheck.run(keeping: setup)
@@ -3393,8 +3395,9 @@ final class Store: ObservableObject {
                 return (400, ["error": "A decision needs `state` and at least one question."])
             }
             do {
+                let models = AppModels.load(project)
                 let (answers, cost) = try await AppAI.decide(state: state, questions: questions,
-                                                             model: AppModels.load(project).decision)
+                                                             model: models.decision, appText: models.text)
                 record(project, cost: cost)
                 return (200, ["answers": answers])
             } catch let failure as AppAI.Failure {
@@ -3761,8 +3764,12 @@ struct AppModels: Codable, Equatable {
 
     func save(_ project: LampProject) {
         let url = Self.url(project)
+        defer { NotificationCenter.default.post(name: Self.changed, object: project.id) }
         if self == AppModels() { try? FileManager.default.removeItem(at: url); return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? JSONEncoder().encode(self).write(to: url)
     }
+
+    /// Posted when an app's own choices are saved, with its id: setup cards and notes look again.
+    static let changed = Notification.Name("LampAppModelsChanged")
 }

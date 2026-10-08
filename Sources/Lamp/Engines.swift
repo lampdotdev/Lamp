@@ -604,8 +604,33 @@ extension Agent {
 /// Whether Claude Code or Codex is signed in, and signing in without Terminal: both tools' login commands
 /// open the browser and finish on their own.
 enum EngineSignIn {
+    /// What the last check found for each engine, for what has to be answered without waiting (whether its
+    /// route can answer apps, `AppAI.resolve`). Missing until a check has run; a tool that can't tell leaves
+    /// it as it was. On the main actor: checks run concurrently, and their answers land one at a time.
+    @MainActor static var known: [Engine: Bool] = [:]
+    /// When each engine was last checked, so callers that act on it can check again after a while.
+    @MainActor static var checked: [Engine: Date] = [:]
+
     /// nil when Lamp can't tell (the tool didn't answer).
     static func isSignedIn(_ engine: Engine) async -> Bool? {
+        let answer = await ask(engine)
+        await MainActor.run {
+            if let answer { known[engine] = answer }
+            checked[engine] = Date()
+        }
+        return answer
+    }
+
+    /// Checks the engines that are installed and haven't been checked lately, so what Lamp knows of them is
+    /// current without asking on every call.
+    static func refresh(olderThan age: TimeInterval = 300) async {
+        for engine in [Engine.claude, .codex] where ToolLocator.path(for: engine) != nil {
+            let last = await MainActor.run { checked[engine] }
+            if Date().timeIntervalSince(last ?? .distantPast) > age { _ = await isSignedIn(engine) }
+        }
+    }
+
+    private static func ask(_ engine: Engine) async -> Bool? {
         guard let tool = ToolLocator.path(for: engine) else { return nil }
         switch engine {
         case .claude:
@@ -625,7 +650,9 @@ enum EngineSignIn {
     static func signIn(_ engine: Engine) async -> Bool {
         guard let tool = ToolLocator.path(for: engine) else { return false }
         let arguments = engine == .claude ? ["auth", "login"] : ["login"]
-        return await run(tool, arguments, timeout: 600).status == 0
+        let done = await run(tool, arguments, timeout: 600).status == 0
+        _ = await isSignedIn(engine)
+        return done
     }
 
     private static func run(_ tool: String, _ arguments: [String], timeout: TimeInterval) async -> (status: Int32, output: String) {

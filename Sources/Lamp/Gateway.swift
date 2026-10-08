@@ -148,7 +148,9 @@ enum AppAI {
                 // pi with the person's own setup (their sign-ins), or with a key provider that has its key.
                 available = Agent.executable != nil && (Builder.piProvider == Builder.myPiProvider
                     || (Provider.apiProvider(Builder.piProvider) != nil && KeyStore.key(for: Builder.piProvider) != nil))
-            case .engine(let engine, _): available = ToolLocator.path(for: engine) != nil
+            // Installed, and not known to be signed out: a signed-out sign-in can't answer, and the setup offer
+            // should be to sign in rather than to say it's set up.
+            case .engine(let engine, _): available = ToolLocator.path(for: engine) != nil && EngineSignIn.known[engine] != false
             case .localModel(let provider, let model):
                 available = provider == Builder.localProvider ? LocalModels.shared.installed.contains { $0.id == model }
                                                               : LocalModels.shared.external[provider]?.contains(model) == true
@@ -593,18 +595,19 @@ enum AppAI {
 
     /// Sends `state` and typed `questions` (TypeSafe's System One format) to the decision model.
     /// Returns the answers keyed like the questions, and the cost in USD.
+    /// `appText` is the app's own text choice: decisions made by text go along it, as the app's text does.
     static func decide(state: Any, questions: [String: Any],
-                       model appChoice: String? = nil) async throws -> ([String: Any], Double) {
+                       model appChoice: String? = nil, appText: String? = nil) async throws -> ([String: Any], Double) {
         let choice = decisionModels.first { $0.id == appChoice } ?? decisionModel
-        if choice.provider == "text" { return try await decideByText(state: state, questions: questions) }
+        if choice.provider == "text" { return try await decideByText(state: state, questions: questions, appText: appText) }
         if choice.provider == "local" {
             if let id = await localDecisionModel() { return try await decideLocally(state: state, questions: questions, model: id) }
-            if await canAnswer { return try await decideByText(state: state, questions: questions) }
+            if await canAnswer { return try await decideByText(state: state, questions: questions, appText: appText) }
             throw Failure(message: "The decision model on this Mac isn't downloaded yet. Get it in Lamp → Settings (⌘,) → Apps.", needs: .decisions)
         }
         guard let key = KeyStore.key(for: choice.provider) else {
             // No decision model: a small text model answers the same questions in JSON instead.
-            if await canAnswer { return try await decideByText(state: state, questions: questions) }
+            if await canAnswer { return try await decideByText(state: state, questions: questions, appText: appText) }
             let name = choice.provider == "typesafe" ? "a TypeSafe" : choice.provider == "openai" ? "an OpenAI" : "an OpenRouter"
             throw Failure(message: "Decisions need \(name) key. Add one in Lamp → Settings (⌘,) → AI.", needs: .decisions)
         }
@@ -832,7 +835,10 @@ enum AppAI {
     }
 
     /// What the fallback for decisions is called in Settings: the fast model on the apps' text route.
-    @MainActor static var fastModelName: String {
+    @MainActor static var fastModelName: String { fastModelName(for: model) }
+
+    /// The same for one route: an app's own text choice.
+    @MainActor static func fastModelName(for model: TextRoute) -> String {
         switch model.kind {
         case .engine(.claude, _): "Haiku through Claude Code"
         case .engine(.codex, _): (Builder.codexModels.first { $0.id == Builder.codexFastModel }?.label).map { "\($0) through ChatGPT Codex" } ?? "ChatGPT Codex"
@@ -843,7 +849,7 @@ enum AppAI {
     /// Decisions without a decision model: the questions go to a small text model as JSON, and its answers
     /// come back in the same shape Jev's would (`noul`, `choice`/`score` with `probabilities` and
     /// `confidence`), checked against each question so an app can't be handed a made-up option.
-    static func decideByText(state: Any, questions: [String: Any]) async throws -> ([String: Any], Double) {
+    static func decideByText(state: Any, questions: [String: Any], appText: String? = nil) async throws -> ([String: Any], Double) {
         let stateJSON = (try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys, .fragmentsAllowed]))
             .map { String(decoding: $0, as: UTF8.self) } ?? "\(state)"
         let questionsJSON = (try? JSONSerialization.data(withJSONObject: questions, options: [.sortedKeys]))
@@ -868,8 +874,8 @@ enum AppAI {
         how concentrated the probabilities are.
         """
         let prompt = "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)"
-        let fast = await fastModel(for: model)
-        let (text, cost) = try await complete(prompt: prompt, images: [], system: system, json: true, engineModel: fast)
+        let fast = await fastModel(for: route(for: appText))
+        let (text, cost) = try await complete(prompt: prompt, images: [], system: system, json: true, appModel: appText, engineModel: fast)
         guard let raw = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
             throw Failure(message: "The model's decision wasn't valid JSON.", cost: cost)
         }
@@ -936,7 +942,7 @@ enum AppAI {
         if wantsLocal, ImageModels.ready, !editing { return .local }
         if Provider.hasKey { return .openRouter }
         if ImageModels.ready, !editing { return .local }
-        if codexChosen(appText: appText), ToolLocator.path(for: .codex) != nil, codexSignedIn != false { return .codex }
+        if codexChosen(appText: appText), ToolLocator.path(for: .codex) != nil, EngineSignIn.known[.codex] != false { return .codex }
         return nil
     }
 
@@ -955,16 +961,13 @@ enum AppAI {
     /// ChatGPT app is there whether or not anyone ever logged in); that's checked at most every few minutes.
     /// A model on this Mac makes pictures from words only, so a request that edits existing pictures skips it.
     static func imageRoute(editing: Bool = false, appText: String? = nil, choice: String? = nil) async -> ImageRoute? {
-        if codexChosen(appText: appText), ToolLocator.path(for: .codex) != nil,
-           codexSignedIn == nil || Date().timeIntervalSince(codexChecked) > 300 {
-            codexSignedIn = await EngineSignIn.isSignedIn(.codex) ?? true
-            codexChecked = Date()
+        if codexChosen(appText: appText), ToolLocator.path(for: .codex) != nil {
+            let last = await MainActor.run { EngineSignIn.checked[.codex] }
+            if Date().timeIntervalSince(last ?? .distantPast) > 300 { _ = await EngineSignIn.isSignedIn(.codex) }
         }
         return await pictureRoute(choice: choice, appText: appText, editing: editing)
     }
 
-    private static var codexSignedIn: Bool?
-    private static var codexChecked = Date.distantPast
 
     /// What's making images, for Settings.
     @MainActor static var imageRouteName: String? { imageRoute.map(imageRouteName) }
