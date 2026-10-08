@@ -9,9 +9,13 @@ source, 13 of 13 pieces), this branch with the judging of e51de70.
 
 | File | What it holds | Made by |
 | --- | --- | --- |
-| `picked.json`, `picked.md` | The 66 picked commands: each run on main (`[verdict, why]`) and here (verdict, the model's answers, the rating when one was asked for, the outcome) | `compare.py table 5` |
-| `generated.json`, `generated.md` | The 408 generated commands, the same way | `compare.py generated 5` |
-| `held-out.json` | The 34 held-out commands, this branch only | the Swift test alone |
+| `picked.md` | The 66 picked commands, counted | `compare.py table 5` |
+| `generated.md` | The 408 generated commands, counted | `compare.py generated 5` |
+
+The comparison also writes every run it counted beside these (`picked.json`, `generated.json`: each run on
+main as `[verdict, why]`, and here as the verdict, the model's answers, the rating when one was asked for
+and the outcome). They are large, so git ignores them; the ones behind this measurement, and the held-out
+list's, are linked from the PR.
 
 `logs/`, each from an earlier run and not repeated on the head:
 

@@ -112,7 +112,8 @@ def enforce(profile):
 RESULTS = os.environ.get("LAMP_EVAL_RESULTS", os.path.join(HERE, "results"))
 
 def save(name, data):
-    """Every run of every command, where a reader can open it: what the tables are counted from."""
+    """Every run of every command, where a reader can open it: what the tables are counted from.
+    Kept on this Mac only (git ignores them): they run to tens of thousands of lines."""
     os.makedirs(RESULTS, exist_ok=True)
     json.dump(data, open(os.path.join(RESULTS, name), "w"), indent=0, sort_keys=True)
 
