@@ -676,8 +676,66 @@ struct ProjectView: View {
     }
 
     var body: some View {
-        let lines = self.lines
-        return VStack(spacing: 0) {
+        panel(lines)
+        .navigationTitle(project.name)
+        .navigationSubtitle(usageSummary)
+        .toolbarTitleMenu {
+            Button("Rename…") { store.renaming = project }
+                .disabled(busy)
+        }
+        .toolbar { toolbar }
+        .task { await store.linkOldRequests(project) }
+        .onAppear {
+            focusRequest += 1
+            loadDraft()
+        }
+        .onChange(of: draftUpdate) { loadDraft() }
+        .onChange(of: project.platform) { PhoneSetup.shared.refreshIfVisible() }
+        .onChange(of: draft) { saveDraft() }
+        .onChange(of: attachments) { saveDraft() }
+        .onChange(of: replacing) { saveDraft() }
+        .onAppear { hasMicrophone = Dictation.hasMicrophone }
+        // A microphone plugged in (or taken away) while the chat is open shows or hides the button.
+        .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasConnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
+        .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasDisconnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
+        .onDisappear { dictation.cancel() }
+        .alert(dictation.problem?.title ?? "Dictation",
+               isPresented: dictationProblemShown,
+               presenting: dictation.problem) { problem in
+            if let url = problem.settingsURL {
+                Button(problem.settingsButton) { NSWorkspace.shared.open(url) }
+                Button("Not Now", role: .cancel) {}
+            } else {
+                Button("OK") {}
+            }
+        } message: { problem in
+            Text(problem.message)
+        }
+        .onChange(of: store.chatFocusRequest) { focusRequest += 1 }
+        .task(id: historyKey) {
+            // A read can outlast the change that started it (the git commands it runs finish even when it's
+            // cancelled), so one started before a turn ended mustn't land after the read that followed.
+            let read = await History.read(project)
+            guard !Task.isCancelled else { return }
+            history = read
+        }
+        .task(id: suggestionTurn) {
+            suggestion = nil
+            guard suggestionTurn != nil else { return }
+            suggestion = await NextStep.suggest(for: project, lines: store.logs[project.id] ?? [])
+        }
+    }
+
+    private var dictationProblemShown: Binding<Bool> {
+        Binding(get: { dictation.problem != nil }, set: { if !$0 { dictation.problem = nil } })
+    }
+
+    private var draftUpdate: UUID? { store.draftUpdates[store.current(project)?.id ?? project.id] }
+
+    // The chat and what sits around it, apart from the window's title and toolbar: one chain of modifiers this
+    // long is more than Swift 6.2 can type-check in time.
+    private func panel(_ lines: [LogLine]) -> some View {
+        VStack(spacing: 0) {
             chat(lines)
             Divider()
             if let approval = store.approvals[project.id] {
@@ -710,53 +768,6 @@ struct ProjectView: View {
                 if showVersions && saved { VersionsView(project: project) } else { AppInfoView(project: project) }
             }
             .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
-        }
-        .navigationTitle(project.name)
-        .navigationSubtitle(usageSummary)
-        .toolbarTitleMenu {
-            Button("Rename…") { store.renaming = project }
-                .disabled(busy)
-        }
-        .toolbar { toolbar }
-        .task { await store.linkOldRequests(project) }
-        .onAppear {
-            focusRequest += 1
-            loadDraft()
-        }
-        .onChange(of: store.draftUpdates[store.current(project)?.id ?? project.id]) { loadDraft() }
-        .onChange(of: project.platform) { PhoneSetup.shared.refreshIfVisible() }
-        .onChange(of: draft) { saveDraft() }
-        .onChange(of: attachments) { saveDraft() }
-        .onChange(of: replacing) { saveDraft() }
-        .onAppear { hasMicrophone = Dictation.hasMicrophone }
-        // A microphone plugged in (or taken away) while the chat is open shows or hides the button.
-        .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasConnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
-        .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasDisconnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
-        .onDisappear { dictation.cancel() }
-        .alert(dictation.problem?.title ?? "Dictation",
-               isPresented: Binding(get: { dictation.problem != nil }, set: { if !$0 { dictation.problem = nil } }),
-               presenting: dictation.problem) { problem in
-            if let url = problem.settingsURL {
-                Button(problem.settingsButton) { NSWorkspace.shared.open(url) }
-                Button("Not Now", role: .cancel) {}
-            } else {
-                Button("OK") {}
-            }
-        } message: { problem in
-            Text(problem.message)
-        }
-        .onChange(of: store.chatFocusRequest) { focusRequest += 1 }
-        .task(id: historyKey) {
-            // A read can outlast the change that started it (the git commands it runs finish even when it's
-            // cancelled), so one started before a turn ended mustn't land after the read that followed.
-            let read = await History.read(project)
-            guard !Task.isCancelled else { return }
-            history = read
-        }
-        .task(id: suggestionTurn) {
-            suggestion = nil
-            guard suggestionTurn != nil else { return }
-            suggestion = await NextStep.suggest(for: project, lines: store.logs[project.id] ?? [])
         }
     }
 
