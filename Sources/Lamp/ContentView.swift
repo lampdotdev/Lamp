@@ -1181,14 +1181,11 @@ struct AppInfoView: View {
 
     private var buildModel: String {
         let id = Builder.piModel
-        return Builder.piProvider == "openrouter" ? label(Provider.models, id) : id
+        return Builder.piProvider == "openrouter" ? Provider.models.first { $0.id == id }?.label ?? id : id
     }
 
     private func dollars(_ amount: Double) -> String { String(format: "$%.2f", amount) }
     private func runs(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
-    private func label(_ models: [(id: String, label: String)], _ id: String) -> String {
-        models.first { $0.id == id }?.label ?? id
-    }
 }
 
 /// While Apple's tools install, above everything: what's happening, and that requests wait for it.
@@ -1324,6 +1321,28 @@ struct NewAppIntro: View {
     }
 }
 
+/// Hands over the window a view is in, once it is in one.
+private struct WindowFinder: NSViewRepresentable {
+    let found: (NSWindow) -> Void
+
+    final class Probe: NSView {
+        var found: ((NSWindow) -> Void)?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            // After this pass: a sheet's window knows its parent only once it has been attached.
+            if let window { DispatchQueue.main.async { [weak self] in self?.found?(window) } }
+        }
+    }
+
+    func makeNSView(context: Context) -> Probe {
+        let view = Probe()
+        view.found = found
+        return view
+    }
+
+    func updateNSView(_ view: Probe, context: Context) { view.found = found }
+}
+
 /// Shown before building an app someone else shared: what it does, what it can access, and any red flags.
 struct ImportReviewView: View {
     @EnvironmentObject private var store: Store
@@ -1334,12 +1353,18 @@ struct ImportReviewView: View {
     @State private var icon: NSImage?
     /// What the app says it does, in its sender's words, when the file has that.
     @State private var description: String?
-    /// Opening takes a deliberate click (no Return) when the AI rates the app high, when the code was seen to
-    /// do something sensitive, or when nothing checked it and the fixed checks found real capabilities.
-    private var deliberate: Bool {
-        guard let review else { return false }
-        return review.risk == "high" || review.worst == .sensitive || (!review.checked && !review.detected.isEmpty)
-    }
+    /// How tall the sheet may be where it hangs: from its top down to the bottom of the screen's usable area
+    /// (above the Dock). Unlimited until the sheet is on screen.
+    @State private var room = CGFloat.infinity
+    @State private var sheet: NSWindow?
+    /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
+    /// verdict under the middle, the line about the copy already here when there is one, and the buttons.
+    @State private var fixed: [Part: CGFloat] = [:]
+    private enum Part { case name, verdict, existing, buttons }
+    /// How tall the scrolling middle may be: the height a long review always stopped at, or less when the
+    /// screen below the sheet's top is shorter than that. Taken off besides the fixed parts: the sheet's
+    /// padding (48) and a 16-point gap after each part but the last.
+    private var limit: CGFloat { max(60, min(400, room - fixed.values.reduce(0, +) - 48 - 16 * CGFloat(fixed.count))) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1371,9 +1396,12 @@ struct ImportReviewView: View {
                 description = Sharing.description(of: pending.package)
                 icon = await Sharing.icon(of: pending.package)
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.name] = $0 }
 
             if let review {
-              // The review scrolls when it's long (an app that does many things); the buttons stay put.
+              // What the app does scrolls when it's long (an app that does many things) or the screen is short;
+              // the app's name above, and the verdict and buttons below, stay put, so the conclusion is never
+              // off screen.
               ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                 if !review.summary.isEmpty {
@@ -1393,17 +1421,27 @@ struct ImportReviewView: View {
                         }
                     }
                 }
-                verdict(review)
-                if let note = review.note {
-                    Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-                Text("Lamp's check is a guide, not a guarantee. Only open apps from people you trust.")
-                    .font(.caption).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
               }
-              .frame(maxHeight: 520)
+              .frame(maxHeight: limit)
               .fixedSize(horizontal: false, vertical: true)   // no taller than its content, up to the limit
+              VStack(alignment: .leading, spacing: 16) {
+                verdict(review)
+                if let line = review.reviewerLine {
+                    Text(verbatim: line).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                if let note = review.note {
+                    // Why the check didn't run can be a provider's own words, of any length, and this part
+                    // doesn't scroll: a few lines here, the whole of it on hover.
+                    Text(note).font(.callout).foregroundStyle(.secondary).lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true).help(note)
+                }
+                Text("Lamp's check is a guide, not a guarantee. Only open apps from people you trust.")
+                    .font(.caption).foregroundStyle(.secondary)
+              }
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.verdict] = $0 }
             } else {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
@@ -1421,36 +1459,65 @@ struct ImportReviewView: View {
                 } icon: {
                     Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(.secondary)
                 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.existing] = $0 }
             }
 
             HStack {
                 Spacer()
-                // Escape always cancels. Return builds only when the review is in and not worrying; an app
-                // that does something sensitive takes a deliberate click.
+                // Escape always cancels. Return builds only when the review is in and vouches for the app
+                // (`ImportReview.opening`); anything less takes a deliberate click.
                 Button("Cancel", role: .cancel) { store.cancelImport() }
                     .keyboardShortcut(.cancelAction)
                 if pending.existing != nil {
                     // The app is already here: the file either becomes its next version or a second app.
-                    Button("Keep Both") { store.confirmImport() }
-                        .disabled(review == nil)
-                    if deliberate || review == nil {
-                        Button(deliberate ? "Update Anyway" : "Update", role: deliberate ? .destructive : nil) { store.confirmUpdate() }
-                            .disabled(review == nil)
-                    } else {
+                    // Either way its code runs, so both follow the same rule as opening does. Return is
+                    // only ever Update: keeping both is the choice someone makes on purpose.
+                    switch review?.opening {
+                    case .byReturn:
+                        Button("Keep Both") { store.confirmImport() }
                         Button("Update") { store.confirmUpdate() }
                             .keyboardShortcut(.defaultAction)
+                    case .anyway:
+                        Button("Keep Both Anyway", role: .destructive) { store.confirmImport() }
+                        Button("Update Anyway", role: .destructive) { store.confirmUpdate() }
+                    case .byClick, nil:
+                        Button("Keep Both") { store.confirmImport() }
+                            .disabled(review == nil)
+                        Button("Update") { store.confirmUpdate() }
+                            .disabled(review == nil)
                     }
-                } else if deliberate || review == nil {
-                    Button(deliberate ? "Open Anyway" : "Build & Open", role: deliberate ? .destructive : nil) { store.confirmImport() }
-                        .disabled(review == nil)
                 } else {
-                    Button("Build & Open") { store.confirmImport() }
-                        .keyboardShortcut(.defaultAction)
+                    switch review?.opening {
+                    case .byReturn:
+                        Button("Build & Open") { store.confirmImport() }
+                            .keyboardShortcut(.defaultAction)
+                    case .anyway:
+                        Button("Open Anyway", role: .destructive) { store.confirmImport() }
+                    case .byClick, nil:
+                        Button("Build & Open") { store.confirmImport() }
+                            .disabled(review == nil)
+                    }
                 }
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.buttons] = $0 }
         }
         .padding(24)
         .frame(width: 500)
+        .background(WindowFinder { sheet = $0; fit() })
+        // The window can be moved with the sheet down, and the Dock can come and go.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)) { _ in fit() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in fit() }
+    }
+
+    private func fit() {
+        guard let window = sheet?.sheetParent, let screen = window.screen else { return }
+        room = Self.room(below: window.frame.minY + window.contentLayoutRect.maxY, on: screen.visibleFrame)
+    }
+
+    /// The height a sheet can take when its top edge sits at `top` (screen coordinates, y up) on a screen
+    /// whose usable area is `visible`: down to the bottom of that area, less a margin.
+    nonisolated static func room(below top: CGFloat, on visible: CGRect) -> CGFloat {
+        (top - visible.minY - 12).rounded(.down)
     }
 
     /// One row per kind of access the code was seen to use, worst first, like the permissions list in System
@@ -1522,12 +1589,13 @@ struct ImportReviewView: View {
 
     /// The one-line verdict: the AI's rating, lifted by what the code was seen to do.
     private func verdict(_ review: ImportReview) -> some View {
-        let (text, color, icon): (String, Color, String) = switch (review.risk, review.worst) {
-        case ("high", _): ("Looks risky. Don't open unless you trust the sender", .red, "xmark.octagon.fill")
-        case (_, .sensitive): ("Does sensitive things. Open only if you expected that", .red, "exclamationmark.octagon.fill")
-        case ("medium", _), (_, .powerful): ("Powerful, check it's what you expect", .yellow, "exclamationmark.circle.fill")
-        case ("low", _): ("Looks safe", .green, "checkmark.seal.fill")
-        default: ("Not checked by AI", .secondary, "questionmark.circle")
+        let (text, color, icon): (String, Color, String) = switch review.verdict {
+        case .risky: ("Looks risky. Don't open unless you trust the sender", .red, "xmark.octagon.fill")
+        case .sensitive: ("Does sensitive things. Open only if you expected that", .red, "exclamationmark.octagon.fill")
+        case .powerful: ("Powerful, check it's what you expect", .yellow, "exclamationmark.circle.fill")
+        case .safe: ("Looks safe", .green, "checkmark.seal.fill")
+        case .checkedOnThisMac: ("Nothing worrying found, but not by a check Lamp can vouch for", .secondary, "questionmark.circle")
+        case .unchecked: ("Not checked by AI", .secondary, "questionmark.circle")
         }
         return Label(text, systemImage: icon)
             .font(.callout.bold())

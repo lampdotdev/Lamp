@@ -190,11 +190,11 @@ enum AppAI {
 
     /// The models OpenRouter offers for apps; Sonnet is the default among them (Haiku is cheaper but
     /// noticeably worse, so it's only used when someone picks it).
-    static let anthropicModels: [(id: String, label: String, openRouter: String)] = [
-        ("claude-fable-5-1", "Smartest, priciest (Claude Fable)", "anthropic/claude-fable-5.1"),
-        ("opus", "Best at coding (Claude Opus)", "anthropic/claude-opus-5.5"),
-        ("sonnet", "Faster & cheaper (Claude Sonnet)", "anthropic/claude-sonnet-5.5"),
-        ("haiku", "Fastest, cheapest (Claude Haiku)", "anthropic/claude-haiku-4.5"),
+    static let anthropicModels: [Provider.ListedModel] = [
+        Provider.ListedModel(id: "claude-fable-5-1", name: "Claude Fable", blurb: "Smartest, priciest", openRouter: "anthropic/claude-fable-5.1"),
+        Provider.ListedModel(id: "opus", name: "Claude Opus", blurb: "Best at coding", openRouter: "anthropic/claude-opus-5.5"),
+        Provider.ListedModel(id: "sonnet", name: "Claude Sonnet", blurb: "Faster & cheaper", openRouter: "anthropic/claude-sonnet-5.5"),
+        Provider.ListedModel(id: "haiku", name: "Claude Haiku", blurb: "Fastest, cheapest", openRouter: "anthropic/claude-haiku-4.5"),
     ]
 
     /// Every route there is, whether or not it can answer right now; the pickers show the ones that can,
@@ -287,7 +287,7 @@ enum AppAI {
 
     /// The OpenRouter model an app on the person's phone uses away from the Mac, where only OpenRouter can
     /// answer: Settings' choice, else the chosen route's own model when that's through OpenRouter, else Sonnet.
-    @MainActor static var awayModel: (id: String, label: String, openRouter: String) {
+    @MainActor static var awayModel: Provider.ListedModel {
         let saved = UserDefaults.standard.string(forKey: "awayModel") ?? ""
         if let chosen = anthropicModels.first(where: { $0.id == saved }) { return chosen }
         if case .openRouter(let name) = model.kind, let same = anthropicModels.first(where: { $0.openRouter == name }) { return same }
@@ -295,7 +295,7 @@ enum AppAI {
     }
 
     /// The same for one app: its own choice (info panel), else Settings'.
-    @MainActor static func awayModel(for choice: String?) -> (id: String, label: String, openRouter: String) {
+    @MainActor static func awayModel(for choice: String?) -> Provider.ListedModel {
         anthropicModels.first { $0.id == choice } ?? awayModel
     }
 
@@ -365,12 +365,18 @@ enum AppAI {
 
     /// `model` overrides the in-app model (an OpenRouter model ID), e.g. for Lamp's own import review.
     /// `appModel` is an app's own text model (an id from `models`), when it has one.
+    /// `schema` is a JSON Schema the reply must fit. OpenRouter holds the model to it; the other routes
+    /// can't, so a caller that depends on the shape still checks the reply.
+    /// `via` is a route the caller has already settled on, for one that must know what answered: the call
+    /// goes that way or fails, and nothing is looked up again.
     static func complete(prompt: String, images: [Image], system: String, json: Bool,
-                         model: String? = nil, appModel: String? = nil, engineModel: String? = nil) async throws -> (String, Double) {
-        let chosen = await route(for: appModel)
+                         model: String? = nil, appModel: String? = nil, engineModel: String? = nil,
+                         schema: [String: Any]? = nil, via: TextRoute? = nil) async throws -> (String, Double) {
+        let chosen: TextRoute
+        if let via { chosen = via } else { chosen = await route(for: appModel) }
         var system = system
         if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
-        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel)
+        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel, schema: schema)
         guard json else { return (text, cost) }
         // A JSON reply that doesn't parse (cut off, or wrapped in prose) is useless to the app: ask once more,
         // through the same provider, saying so, before giving up. Both attempts are billed, so the cost goes
@@ -379,7 +385,7 @@ enum AppAI {
         if !isJSON(reply) {
             let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
             do {
-                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel)
+                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel, schema: schema)
                 cost += more
                 reply = stripFences(retry)
             } catch let failure as Failure {
@@ -398,14 +404,14 @@ enum AppAI {
     /// Lamp's own calls (the icon judge, suggestions) when there's a key; `engineModel` likewise names the
     /// model for Claude Code or Codex (the fast one for decisions by text).
     private static func dispatch(prompt: String, images: [Image], system: String, json: Bool, model: String?,
-                                 chosen: TextRoute, engineModel: String? = nil) async throws -> (String, Double) {
+                                 chosen: TextRoute, engineModel: String? = nil, schema: [String: Any]? = nil) async throws -> (String, Double) {
         if let model, Provider.hasKey {
-            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json)
+            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json, schema: schema)
         }
         switch chosen.kind {
         case .openRouter(let model):
             guard Provider.hasKey else { throw Failure(message: noTextRoute, needs: .text) }
-            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json)
+            return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json, schema: schema)
         case .engine(.pi, _):
             return try await viaPi(prompt: prompt, images: images, system: system)
         case .engine(let engine, let model):
@@ -1107,7 +1113,7 @@ enum AppAI {
     }
 
     private static func viaOpenRouter(prompt: String, images: [Image], system: String,
-                                      model: String, json: Bool = false) async throws -> (String, Double) {
+                                      model: String, json: Bool = false, schema: [String: Any]? = nil) async throws -> (String, Double) {
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 120
@@ -1124,7 +1130,9 @@ enum AppAI {
         if json {
             // Structured output: the model must return a JSON object, and gets room for a long one (a plan
             // with scripts in it can run to thousands of tokens; a cut-off reply is what breaks apps).
-            body["response_format"] = ["type": "json_object"]
+            // With a schema, the object must also fit it.
+            body["response_format"] = schema.map { ["type": "json_schema", "json_schema": ["name": "answer", "strict": true, "schema": $0]] }
+                ?? ["type": "json_object"]
             body["max_tokens"] = 16_000
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
