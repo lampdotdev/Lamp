@@ -338,18 +338,18 @@ struct ImageModelRow: View {
 
     var body: some View {
         let images = Icons.usableChoices
-        if images.count == 1 {
-            LabeledContent("Image generation", value: images[0].label)
-        } else if !images.isEmpty {
+        let resolution = AppAI.resolve(.pictures)
+        if resolution.tier == .none {
+            NotReadyRow(title: "Image generation")
+            CapabilityNote(capability: .pictures)
+        } else if images.count > 1 {
             Picker("Image generation", selection: Binding(get: { images.contains { $0.id == selection } ? selection : images[0].id },
                                                           set: { selection = $0 })) {
                 ForEach(images, id: \.id) { Text($0.label).tag($0.id) }
             }
-        } else if AppAI.imageRoute == .codex {
-            LabeledContent("Image generation", value: "ChatGPT Codex")
         } else {
-            NotReadyRow(title: "Image generation")
-            KeyNote(text: "Pictures need an OpenRouter key, or a picture model on this Mac from Native Mac AI in AI Providers.")
+            // One model, or Codex drawing with its own: nothing to choose, so it's named.
+            LabeledContent("Image generation", value: images.first?.label ?? resolution.answer ?? "")
         }
     }
 }
@@ -669,7 +669,7 @@ struct AppsSettings: View {
                 let textGroups = AppAI.textRouteGroups(including: nil)
                 if textGroups.isEmpty {
                     NotReadyRow(title: "Text generation")
-                    KeyNote(text: "Add an AI provider, or sign in to Claude Code or ChatGPT Codex, for text inside apps.")
+                    CapabilityNote(capability: .text)
                 } else if textGroups.count == 1, let only = textGroups[0].routes.first, textGroups[0].routes.count == 1 {
                     LabeledContent("Text generation", value: only.label)
                 } else {
@@ -685,7 +685,7 @@ struct AppsSettings: View {
                 let decisions = decisionChoices
                 if decisions.isEmpty {
                     NotReadyRow(title: "Decision model")
-                    KeyNote(text: "Decisions need an OpenRouter key, or something to answer apps' text.")
+                    CapabilityNote(capability: .decisions)
                 } else if decisions.count == 1 {
                     // decisionRoute falls back to the one that can answer, so naming it is naming what's used.
                     LabeledContent("Decision model", value: decisions[0].label)
@@ -710,7 +710,7 @@ struct AppsSettings: View {
     private var decisionChoices: [(id: String, label: String, provider: String, model: String)] {
         _ = revision
         _ = local.installed
-        return AppAI.decisionModels.filter(AppAI.canDecide)
+        return AppAI.decisionModels.filter { AppAI.canDecide(with: $0) }
     }
 }
 
@@ -760,7 +760,7 @@ struct ExperimentalSettings: View {
                                 ForEach(AppAI.awayDecisionModels, id: \.id) { Text($0.label).tag($0.id) }
                             }
                         } else {
-                            KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")
+                            CapabilityNote(capability: .text, context: .phoneAway)
                         }
                         Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() }
                     }
@@ -987,6 +987,7 @@ struct ProvidersSettings: View {
             revision += 1   // looks for Claude Code and Codex again: one may have been installed meanwhile
             refreshSignIns()
         }
+        .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in revision += 1 }
         .onChange(of: pendingSheet) { openPending() }
         .task { local.refresh(); await local.detectExternal() }
     }
@@ -1272,10 +1273,12 @@ final class KeyCheck: ObservableObject {
         checking = false
     }
 
-    func save(_ typed: String, for provider: PiProvider, saved: @escaping () -> Void) {
+    /// `strict`, where the person can wait for OpenRouter's answer (the chat's setup card): a key it couldn't
+    /// be asked about isn't saved, and there's no saving it anyway.
+    func save(_ typed: String, for provider: PiProvider, strict: Bool = false, saved: @escaping () -> Void) {
         let key = typed.trimmed
         guard !key.isEmpty, !checking else { return }
-        guard provider.id == "openrouter", key != unchecked else {
+        guard provider.id == "openrouter", key != unchecked || strict else {
             KeyStore.setKey(key, for: provider.id)
             edited()
             return saved()
@@ -1291,6 +1294,8 @@ final class KeyCheck: ObservableObject {
                 KeyStore.setKey(key, for: provider.id)
                 saved()
             case .refused(let why):
+                problem = why
+            case .unchecked(let why) where strict:
                 problem = why
             case .unchecked(let why):
                 problem = why + " You can save the key without checking it."
@@ -1342,22 +1347,6 @@ struct ProviderLogo: View {
 }
 
 /// API key for one provider: shows "saved" with a Remove button, or a field to add one.
-/// A note that something needs an OpenRouter key, with the way to add one at its right: the same wherever
-/// Settings asks for a key, so the person always has the button to hand.
-struct KeyNote: View {
-    let text: String
-    @AppStorage("settingsTab") private var settingsTab = "building"
-    @AppStorage("settingsSheet") private var settingsSheet = ""
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text(text).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            Button("Add a Key…") { settingsSheet = "openrouter"; settingsTab = "providers" }.controlSize(.small)
-        }
-    }
-}
-
 struct KeyRow: View {
     let provider: PiProvider
     var label: String?

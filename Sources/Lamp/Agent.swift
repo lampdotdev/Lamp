@@ -22,14 +22,14 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,offer_setup"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
     /// Lamp's own tools for pi (Resources/lamp-tools.ts): `look_at_app` has Lamp build and open the app
     /// mid-turn and shows the agent the result; `plan` is the checklist on the build card; `delete_file`
     /// removes a file, which pi's own tools can't; the version tools list, name and restore the app's saved
-    /// versions; `read_notes` and `save_notes` are Lamp's notes (Memory). Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
+    /// versions; `offer_setup` shows a setup card in the chat; `read_notes` and `save_notes` are Lamp's notes (Memory). Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
     static var lampTools: URL? {
         let url = Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.ts")
         return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
@@ -37,7 +37,7 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static var tryRules: String { lookRules + planRules + (Memory.isOn ? memoryRules : "") }
+    static var tryRules: String { lookRules + planRules + setupRules + (Memory.isOn ? memoryRules : "") }
 
     private static let lookRules = """
 
@@ -78,6 +78,17 @@ enum Agent {
     one (its id from `list_versions`) before a big or risky change, e.g. “Before the redesign”. \
     `restore_version` brings back an earlier version's files: use it only when the user asks to go back, \
     never to undo your own attempt, and find the version with `list_versions` first.
+    """
+
+    /// Short for the same reason. What AI the app has comes at the end of a request (AIStatus.brief), since it
+    /// changes between turns.
+    private static let setupRules = """
+
+    - The end of a request says what AI this app can use right now: text, decisions and pictures, each with \
+    what answers it, or "nothing can answer yet". Build for what's there. When a feature needs one that \
+    isn't set up, or would be clearly better with one that only works a slower way, build it anyway, have \
+    the app check `LampAI.isAvailable` and say so where the feature is, and call `offer_setup` once: Lamp \
+    shows the person how to set it up. Never ask for keys or send them to Settings yourself.
     """
 
     /// Kept short, like the tools' descriptions: every word here is sent with every call to the model. What the
