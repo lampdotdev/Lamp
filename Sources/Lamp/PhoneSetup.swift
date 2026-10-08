@@ -129,9 +129,11 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
                 report = result
             }
         }
+        // A check that drags on (a first look at Xcode, a phone to wake) shows its window with the progress;
+        // the usual one, under a second before every run of an iPhone app, must not flash one open and shut.
         if request != nil {
             Task {
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: .seconds(3))
                 if generation == ticket, active?.id == request?.id, checking { present() }
             }
         }
