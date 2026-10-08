@@ -30,18 +30,21 @@ enum Sharing {
     enum Assets {
         static let folder = "Assets"
 
-        /// A file the chat attached that the app's code names is the app's: it's copied in here, once, so an
-        /// app made when attachments were bundled as they were keeps working. Nothing is moved: the chat
-        /// keeps its copy.
+        /// An app made when attachments were bundled as they were gets its Assets/ folder once: the attached
+        /// files its code names (all of them, if it lists them) are copied in, and the chat keeps its copies.
+        /// An app that has the folder is past that: what's attached later stays in the chat unless the agent
+        /// copies it in, however the code reads the folder.
         static func adopt(in project: LampProject) {
             let fm = FileManager.default
+            let assets = project.dir.appendingPathComponent(folder)
+            guard !fm.fileExists(atPath: assets.path) else { return }
+            defer { try? fm.createDirectory(at: assets, withIntermediateDirectories: true) }
             let attachments = regularFiles(in: project.dir.appendingPathComponent(Attachments.folder))
             guard !attachments.isEmpty else { return }
             let code = swiftSources(in: project.dir.appendingPathComponent("Sources"))
                 .filter { $0.lastPathComponent != "LampSupport.swift" }
                 .compactMap { try? String(contentsOf: $0, encoding: .utf8) }
                 .joined(separator: "\n")
-            let assets = project.dir.appendingPathComponent(folder)
             // An app that lists its files (LampAssets.names) rather than naming them had them all: it keeps them all.
             let everything = code.contains("LampAssets.names")
             for file in attachments where everything || code.contains("\"\(file.lastPathComponent)\"") {

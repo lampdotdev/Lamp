@@ -62,4 +62,17 @@ final class SharingAssetsTests: XCTestCase {
         // The chat keeps its copies.
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: project.dir.appendingPathComponent(Attachments.folder).path).count, 2)
     }
+
+    /// The adoption happens once: an app with an Assets folder keeps later attachments in the chat, even one
+    /// that lists its files rather than naming them.
+    func testAdoptionIsOnceOnly() throws {
+        let project = try project()
+        try "let all = LampAssets.names".write(to: project.dir.appendingPathComponent("Sources/ContentView.swift"), atomically: true, encoding: .utf8)
+        Sharing.Assets.adopt(in: project)
+        let assets = project.dir.appendingPathComponent(Sharing.Assets.folder)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: assets.path).count, 2)
+        try Data([9]).write(to: project.dir.appendingPathComponent("\(Attachments.folder)/later-screenshot.png"))
+        Sharing.Assets.adopt(in: project)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: assets.path).count, 2)
+    }
 }
