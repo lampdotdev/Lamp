@@ -1032,8 +1032,10 @@ final class Store: ObservableObject {
                 try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try fm.copyItem(at: file, to: target)
             }
+            // Its Assets folder from the start, files or none: nothing attached to its chat later is adopted.
+            let folder = project.dir.appendingPathComponent(Sharing.Assets.folder)
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
             if !package.attachments.isEmpty {
-                let folder = project.dir.appendingPathComponent(Sharing.Assets.folder)
                 for file in package.attachments {
                     let relative = package.assetPath(of: file)
                     guard !relative.contains("..") else { continue }

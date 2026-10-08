@@ -51,6 +51,9 @@ enum Template {
         try write(iphone ? iPhoneContentViewSwift : contentViewSwift, to: "Sources/ContentView.swift", for: project)
         try write(iphone ? iPhoneAppMd : appMd, to: "APP.md", for: project)
         try write(".build/\nbuild/\n.lamp/\n", to: ".gitignore", for: project)
+        // Born with its Assets folder: the app's own files go there from the start, and the one-time adoption of
+        // attached files (Sharing.Assets.adopt) is for apps from before the folder existed, never a new one.
+        try FileManager.default.createDirectory(at: project.dir.appendingPathComponent(Sharing.Assets.folder), withIntermediateDirectories: true)
         try writeOwnedFiles(for: project)   // Package.swift last: it's what marks the app as no longer a draft
     }
 

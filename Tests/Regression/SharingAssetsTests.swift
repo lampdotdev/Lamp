@@ -63,6 +63,19 @@ final class SharingAssetsTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: project.dir.appendingPathComponent(Attachments.folder).path).count, 2)
     }
 
+    /// A new app is born with its Assets folder, so a reference file in its chat is never adopted, even by
+    /// code that lists its files.
+    func testNewAppNeverAdoptsChatFiles() throws {
+        let project = try project()
+        try FileManager.default.removeItem(at: project.dir.appendingPathComponent("Sources"))
+        try Template.fill(project)
+        let assets = project.dir.appendingPathComponent(Sharing.Assets.folder)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: assets.path))
+        try "let all = LampAssets.names".write(to: project.dir.appendingPathComponent("Sources/ContentView.swift"), atomically: true, encoding: .utf8)
+        Sharing.Assets.adopt(in: project)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: assets.path).count, 0)
+    }
+
     /// The adoption happens once: an app with an Assets folder keeps later attachments in the chat, even one
     /// that lists its files rather than naming them.
     func testAdoptionIsOnceOnly() throws {
