@@ -1810,7 +1810,7 @@ final class Store: ObservableObject {
             log(project, .status, "Ran: \(command)")
             return true
         case .risky where !escalated, .unusual where !escalated:
-            let judgment = await commandJudgment(command, for: project, sandboxed: sandboxed)
+            let judgment = await commandJudgment(command, for: project)
             if judgment.verdict == .run {
                 log(project, .status, "Ran: \(command)")
                 return true
@@ -1825,9 +1825,8 @@ final class Store: ObservableObject {
 
     /// Whether a command is plainly fine, for every engine: the decision model's answers (CommandRisk),
     /// against the user's request. No decision model available → not plainly fine.
-    private func commandJudgment(_ command: String, for project: LampProject, sandboxed: Bool) async -> CommandRisk.Judgment {
-        await CommandRisk.judge(command: command, request: turns[project.id]?.request ?? "", folder: project.dir.path,
-                                confined: sandboxed) { state, questions in
+    private func commandJudgment(_ command: String, for project: LampProject) async -> CommandRisk.Judgment {
+        await CommandRisk.judge(command: command, request: turns[project.id]?.request ?? "", folder: project.dir.path) { state, questions in
             try await AppAI.decide(state: state, questions: questions).0
         }
     }

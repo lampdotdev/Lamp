@@ -5,8 +5,7 @@ import XCTest
 /// times, and writes what it decided, for Tests/CommandApprovals/compare.py. Skipped unless LAMP_EVAL_CORPUS
 /// names the corpus; needs OPENROUTER_API_KEY.
 ///
-/// Each command goes the way the app sends it under "Only when risky": `CommandRisk.judge` as about to run
-/// confined, then, only when that's unsure, `CommandRisk.rating`, whose "low" runs it. Those two are the
+/// Each command goes the way the app sends it under "Only when risky": `CommandRisk.judge`, then, only when that's unsure, `CommandRisk.rating`, whose "low" runs it. Those two are the
 /// app's own code; what stands in for the app here is only who carries the questions to the models (straight
 /// to OpenRouter: Jev for the judgment, Sonnet for the rating, as Lamp does with an OpenRouter key).
 /// LAMP_EVAL_REQUEST_EVERYWHERE=1 puts the request in front of every question, as this judgment did before
@@ -54,7 +53,7 @@ final class CommandApprovalEvalTests: XCTestCase {
                     let request = item["request"] ?? ""
                     var why = "the model didn't answer"
                     var given: [String: Any] = [:]
-                    let judgment = await CommandRisk.judge(command: command, request: request, folder: item["folder"] ?? folder, confined: true) { state, questions in
+                    let judgment = await CommandRisk.judge(command: command, request: request, folder: item["folder"] ?? folder) { state, questions in
                         var state = state
                         if requestEverywhere { state["user_request"] = request }
                         guard let answers = try await post("systemone", ["state": state, "model": "jev-latest", "questions": questions])["answers"] as? [String: Any] else {
@@ -64,8 +63,8 @@ final class CommandApprovalEvalTests: XCTestCase {
                         return answers
                     }
                     if let read = CommandRisk.Answers(given, asked: given) {
-                        why = String(format: "level %.1f (sure %.2f), reads %.2f, inside %.2f, sends %.2f, secrets %.2f, hides %.2f, asked %.2f",
-                                     read.risk, read.riskConfidence, read.onlyReads, read.staysInside, read.sendsOut, read.readsSecrets,
+                        why = String(format: "level %.1f (sure %.2f), reads %.2f, sends %.2f, secrets %.2f, hides %.2f, asked %.2f",
+                                     read.risk, read.riskConfidence, read.onlyReads, read.sendsOut, read.readsSecrets,
                                      read.hidesWhatItDoes, read.matchesRequest ?? -1)
                     }
                     var result = ["verdict": "\(judgment.verdict)", "why": why, "reason": judgment.reason.map { "\($0)" } ?? ""]

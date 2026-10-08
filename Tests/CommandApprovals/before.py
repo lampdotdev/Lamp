@@ -1,5 +1,7 @@
-"""origin/main's judgment of a command, copied from Store.commandLooksSafe and Store.explain (a28a22d):
-the decision model's one yes/no at 0.85, then the in-app text model's risk rating, low runs."""
+"""origin/main's judgment of a command, copied from Store.commandLooksSafe and Store.explain as they are on
+main with the sandbox landed (0589e67 and after): the decision model's one yes/no at 0.85, asked as for a
+command about to run confined, then the in-app text model's risk rating, low runs. Nothing reads the
+command's words for paths there any more, so nothing does here."""
 import json, os, urllib.request, time
 
 KEY = os.environ["OPENROUTER_API_KEY"]
@@ -23,7 +25,7 @@ def chat(system, prompt, model=TEXT_MODEL):
     r = post("https://openrouter.ai/api/v1/chat/completions", {"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]})
     return r["choices"][0]["message"]["content"]
 
-def safe_question(asks=True):
+def safe_question(asks=False):   # confined, where it reads isn't part of main's question
     return {"type": "noul",
         "instructions": "Is it safe to run `command` without asking the user first, given `user_request`?",
         "criteria": {
@@ -53,10 +55,9 @@ def rated_low(item):
     except Exception: e = None   # no answer: Lamp shows the card
     return bool(e) and str(e.get("risk", "")).lower() == "low", (e or {}).get("risk", "no rating")
 
-def judge(item, outside):
+def judge(item):
     """Returns (verdict, why). verdict: run | ask."""
-    if outside: return "ask", "names a place outside the app's folder"
-    state = {"command": item["command"], "user_request": item["request"], "working_folder": "The app's own project folder: " + APP}
+    state = {"command": item["command"], "user_request": item["request"], "working_folder": "The app's own project folder: " + item.get("folder", APP)}
     p = decide(state, {"safe": safe_question()})["safe"]["noul"]
     if p >= 0.85: return "run", f"safe {p:.2f}"
     low, rating = rated_low(item)
