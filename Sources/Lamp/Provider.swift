@@ -134,6 +134,8 @@ enum KeyStore {
     /// Posted on the main thread once the keys have been read at launch: what was drawn without them draws again.
     static let loaded = Notification.Name("LampKeysLoaded")
     nonisolated(unsafe) private static var preloaded = false
+    /// Whether the launch-time read is in. Until it is, the main thread is told there are no keys.
+    static var keysRead: Bool { preloaded }
 
     /// Reads every provider's key, off the main thread, so the Keychain's questions (a password, when an
     /// item isn't Lamp's own) come at launch and not in the middle of drawing a view: a Keychain prompt
