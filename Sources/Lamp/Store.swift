@@ -819,9 +819,10 @@ final class Store: ObservableObject {
     }
 
     /// Nothing has happened in the app but its scaffold, so it can still change its folder and executable name.
+    /// A repository put in its folder counts, though it is never unsaved work: the rename replaces the folder.
     private func isPristine(_ project: LampProject) async -> Bool {
         var output: [String] = []
-        let status = await Versions.git("test $(git rev-list --count HEAD) -eq 1 && \(Versions.status(". ':!\(Attachments.folder)'"))",
+        let status = await Versions.git("test $(git rev-list --count HEAD) -eq 1 && \(Versions.status(". ':!\(Attachments.folder)'", everything: true))",
                                      cwd: project.dir) { output.append($0) }
         return status == 0 && output.allSatisfy { $0.trimmed.isEmpty }
     }

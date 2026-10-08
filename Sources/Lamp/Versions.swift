@@ -131,11 +131,12 @@ enum Versions {
     /// `git status` for "is there unsaved work in `paths`": one line per change, none when there is none.
     /// A repository inside the app's folder is never part of a version, so it isn't unsaved work either: git
     /// isn't sent into one, and with every new file listed on its own the only new entries that are folders
-    /// are those repositories, which are left out. Names end at a zero byte, as above.
-    static func status(_ paths: String) -> String {
-        "git status --porcelain -z --untracked-files=all --ignore-submodules=all -- \(paths) | " + #"""
-        while IFS= read -r -d '' entry; do case "$entry" in '?? '*/) ;; *) printf '%s\n' "$entry" ;; esac; done
-        """#
+    /// are those repositories, which are left out. Names end at a zero byte, as above. `everything` leaves
+    /// them in, for the one question that is about the folder and not the history: whether anything is in
+    /// it that replacing the folder would lose.
+    static func status(_ paths: String, everything: Bool = false) -> String {
+        "git status --porcelain -z --untracked-files=all --ignore-submodules=all -- \(paths) | "
+            + "while IFS= read -r -d '' entry; do case \"$entry\" in \(everything ? "" : "'?? '*/) ;; ")*) printf '%s\\n' \"$entry\" ;; esac; done"
     }
 
     /// Newest first.

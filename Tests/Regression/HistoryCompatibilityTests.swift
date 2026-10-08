@@ -203,6 +203,10 @@ final class HistoryCompatibilityTests: XCTestCase {
             XCTAssertTrue(saved, name.debugDescription)
             unsaved = await Versions.hasUnsavedChanges(project)
             XCTAssertFalse(unsaved, "\(name.debugDescription): reads as unsaved after a save")
+            // It is still something in the folder: renaming a new app replaces its folder, and asks first.
+            var lines: [String] = []
+            _ = await Versions.git(Versions.status(".", everything: true), cwd: project.dir) { lines.append($0) }
+            XCTAssertFalse(lines.isEmpty, "\(name.debugDescription): the folder would read as holding nothing of the person's")
             try await saveUndoAndGoBackKeeping(nested, in: project, name.debugDescription)
         }
     }
