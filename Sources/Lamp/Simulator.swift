@@ -150,6 +150,8 @@ extension Simulator {
             let scale: Double           // the device's pixels per point
             let zoom: Double            // how big the Simulator draws a point on the Mac's display (its window scale)
             let pid: pid_t
+            var title = ""              // the window's title when found: "<device> – <runtime>"
+            var oneAtATime = false      // Device Hub: one window for whichever device is chosen in its list
             var origin: CGPoint { rect.origin }
             /// Pictures are made at point size (`screenshot`), so a pixel in them is a point on the device, which
             /// the Simulator shows `zoom` times as large.
@@ -157,7 +159,7 @@ extension Simulator {
         }
 
         static func screen(of udid: String, owner: String) async -> Screen? {
-            guard let pid = viewer() else { return nil }
+            guard let (pid, oneAtATime) = viewer() else { return nil }
             let width = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_WIDTH"], timeout: 20)).output.trimmed) ?? 0
             let height = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_HEIGHT"], timeout: 20)).output.trimmed) ?? 0
             let scale = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_SCALE"], timeout: 20)).output.trimmed) ?? 0
@@ -170,8 +172,12 @@ extension Simulator {
                 (attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? []).filter { attribute($0, kAXTitleAttribute) as? String == title }
             }
             var windows = titled()
-            // Device Hub has one window for whichever device is chosen in its list: choose this one.
-            if windows.isEmpty, choose(udid, in: app) {
+            // Device Hub has one window for whichever device is chosen in its list: choose this one. Always
+            // by its identifier, since a title alone could be another device of the same name and runtime.
+            if oneAtATime {
+                let already = isChosen(udid, in: app)
+                guard already || choose(udid, in: app) else { return nil }
+                if !already { windows = [] }   // what was there showed the device chosen before
                 for _ in 0..<10 where windows.isEmpty {
                     try? await Task.sleep(for: .milliseconds(200))
                     windows = titled()
@@ -187,7 +193,15 @@ extension Simulator {
             }
             guard let frame = found else { return nil }
             return Screen(app: app, window: window, rect: frame, udid: udid, owner: owner, scale: scale,
-                          zoom: frame.width / points.width, pid: pid)
+                          zoom: frame.width / points.width, pid: pid, title: title, oneAtATime: oneAtATime)
+        }
+
+        /// Whether the window still shows this device. Device Hub's one window goes to whichever device is
+        /// chosen next (by the person, or by Lamp for another app), and what was this iPhone's screen is
+        /// then another's: nothing more may be tapped or read there.
+        static func shows(_ screen: Screen) -> Bool {
+            guard attribute(screen.window, kAXTitleAttribute) as? String == screen.title else { return false }
+            return !screen.oneAtATime || isChosen(screen.udid, in: screen.app)
         }
 
         /// The screen is the group shaped like the device's screen (it may be drawn smaller or larger than
@@ -213,15 +227,16 @@ extension Simulator {
         }
 
         /// The process showing simulators on screen (Simulator.viewers), if it's running.
-        private static func viewer() -> pid_t? {
+        private static func viewer() -> (pid: pid_t, oneAtATime: Bool)? {
             for id in Simulator.viewers {
                 guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: id).first else { continue }
-                if app.processIdentifier > 0 { return app.processIdentifier }
+                let oneAtATime = id != Simulator.viewers[0]
+                if app.processIdentifier > 0 { return (app.processIdentifier, oneAtATime) }
                 // Device Hub can be listed without its process id; its windows still say whose they are.
                 let windows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
                 let pids = Set(windows.filter { $0[kCGWindowOwnerName as String] as? String == app.localizedName }
                     .compactMap { $0[kCGWindowOwnerPID as String] as? pid_t })
-                if let pid = pids.first(where: { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier == id }) { return pid }
+                if let pid = pids.first(where: { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier == id }) { return (pid, oneAtATime) }
             }
             return nil
         }
@@ -233,7 +248,7 @@ extension Simulator {
             guard isAllowed else { return }
             // Just opened: its window takes a moment to arrive.
             for _ in 0..<15 {
-                if let pid = viewer(), choose(udid, in: AXUIElementCreateApplication(pid)) { return }
+                if let pid = viewer()?.pid, choose(udid, in: AXUIElementCreateApplication(pid)) { return }
                 if NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.iphonesimulator").first != nil { return }
                 try? await Task.sleep(for: .milliseconds(200))
             }
@@ -241,6 +256,17 @@ extension Simulator {
 
         @discardableResult
         private static func choose(_ udid: String, in app: AXUIElement) -> Bool {
+            guard let row = row(for: udid, in: app) else { return false }
+            if (attribute(row, kAXSelectedAttribute) as? Bool) == true { return true }
+            return AXUIElementSetAttributeValue(row, kAXSelectedAttribute as CFString, kCFBooleanTrue) == .success
+        }
+
+        private static func isChosen(_ udid: String, in app: AXUIElement) -> Bool {
+            row(for: udid, in: app).map { (attribute($0, kAXSelectedAttribute) as? Bool) == true } ?? false
+        }
+
+        /// The device's row in Device Hub's list: the one something in it names with the device's identifier.
+        private static func row(for udid: String, in app: AXUIElement) -> AXUIElement? {
             func names(_ element: AXUIElement, depth: Int) -> Bool {
                 if (attribute(element, kAXIdentifierAttribute) as? String)?.hasSuffix(udid) == true { return true }
                 return depth < 4 && children(element).contains { names($0, depth: depth + 1) }
@@ -252,11 +278,9 @@ extension Simulator {
                 return nil
             }
             for window in attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? [] {
-                guard let row = row(in: window, depth: 0) else { continue }
-                if (attribute(row, kAXSelectedAttribute) as? Bool) == true { return true }
-                return AXUIElementSetAttributeValue(row, kAXSelectedAttribute as CFString, kCFBooleanTrue) == .success
+                if let found = row(in: window, depth: 0) { return found }
             }
-            return false
+            return nil
         }
 
         /// Carries out the actions in order and says what each one did, like the Mac apps' driver. `live` is
@@ -265,9 +289,15 @@ extension Simulator {
         static func perform(_ actions: [Action], on screen: Screen, picture: URL, live: () -> Bool) async -> String {
             var lines: [String] = []
             var before = try? Data(contentsOf: picture)
+            // Asked again after every wait inside an action too: the screen has to be this iPhone's each time.
+            func here() -> Bool { live() && shows(screen) }
             for action in actions {
-                guard live() else { lines.append("stopped before the rest: the app was stopped, deleted or closed"); break }
-                lines.append(await carryOut(action, on: screen, live: live))
+                guard here() else {
+                    lines.append(shows(screen) ? "stopped before the rest: the app was stopped, deleted or closed"
+                        : "stopped before the rest: the simulator is showing another device now. Call look_at_app to bring this one back.")
+                    break
+                }
+                lines.append(await carryOut(action, on: screen, live: here))
                 try? await Task.sleep(for: .milliseconds(350))
                 _ = await Simulator.screenshot(on: screen.udid, to: picture)
                 let after = try? Data(contentsOf: picture)
@@ -382,7 +412,7 @@ extension Simulator {
 
         /// The whole screen in words, for the agent to read beside the picture: what's there, what each thing
         /// holds and where to tap it. Nil when the screen shows nothing with a name.
-        static func screenText(on screen: Screen) -> String? { text(for: items(on: screen)) }
+        static func screenText(on screen: Screen) -> String? { shows(screen) ? text(for: items(on: screen)) : nil }
 
         /// Everything on this device's screen that says something or can be tapped, in the order the screen
         /// reads. Containers with no name of their own are left out, and so is a control's own caption (a
