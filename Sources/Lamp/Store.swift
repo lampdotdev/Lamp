@@ -1503,8 +1503,14 @@ final class Store: ObservableObject {
     /// for the app to close (HeldInstalls says why a running app is never replaced). False when it waits.
     @discardableResult
     private func installIcon(_ project: LampProject) async -> Bool {
+        // An app that is only its widget is never something the person has open: when it's running, it's
+        // out of sight, waiting to say the widget was placed. It's quit like a build quits an app, gets
+        // its icon, and goes back to waiting, so nobody is told to close an app they can't see.
+        let watching = Template.isWidgetOnly(project) && isRunning(project)
+        if watching { await quit(project) }
         guard heldInstalls.mayInstall(project.id, running: isRunning(project)) else { return false }
         try? await deploy(project)
+        if watching { await watchWidget(of: project) }
         return true
     }
 
