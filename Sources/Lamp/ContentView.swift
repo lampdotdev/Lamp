@@ -771,7 +771,7 @@ struct ProjectView: View {
     private func transcript(_ lines: [LogLine], busy: Bool, progressShown: Bool = false) -> some View {
         Transcript(lines: lines, dir: project.dir, busy: busy, progressShown: progressShown, goBack: { line, before in
             Task { await store.restore(project, toVersionOf: line, before: before) }
-        }, sendAgain: self.busy || submissionPending ? nil : takeBack, retryPhone: Experiments.iosApps && project.device != nil ? { udid in
+        }, sendAgain: self.busy || submissionPending ? nil : takeBack, retryPhone: project.device != nil ? { udid in
             Task { await store.retryPhone(project, udid: udid) }
         } : nil)
     }
@@ -1085,7 +1085,7 @@ struct AppInfoView: View {
                 ForEach(Capability.allCases) { capability in
                     answerRow(capability.title, AppAI.resolve(capability, for: project))
                 }
-                if project.platform == .iphone, Experiments.iosApps {
+                if project.platform == .iphone {
                     // Away from the Mac a phone answers only through the OpenRouter key: without one, one row says so.
                     if Provider.hasKey {
                         ForEach(Capability.allCases) { capability in
@@ -1256,20 +1256,10 @@ struct NewAppIntro: View {
     @State private var ideas: [Idea] = []
     @FocusState private var editingName: Bool
 
-    @AppStorage("experimentIOSApps") private var iosApps = false
-
     private var busy: Bool { store.busy.contains(project.id) }
 
-    /// What a new app is made as, chosen before its first message. iPhone and iPad are the same kind of app
-    /// to Lamp; the choice is which simulator it opens in.
-    private enum Kind: String, CaseIterable { case mac = "Mac", iphone = "iPhone", ipad = "iPad" }
-
-    private var kind: Binding<Kind> {
-        Binding {
-            project.platform == .mac ? .mac : project.family == .ipad ? .ipad : .iphone
-        } set: { kind in
-            store.setKind(project, platform: kind == .mac ? .mac : .iphone, family: kind == .ipad ? .ipad : .iphone)
-        }
+    private var kind: Binding<AppKind> {
+        Binding { AppKind(project) } set: { store.setKind(project, $0) }
     }
 
     var body: some View {
@@ -1286,26 +1276,22 @@ struct NewAppIntro: View {
                 .frame(maxWidth: 360)
                 .help("Rename this app")
             Text(project.untitled
-                 ? "Describe the app you wish you had, and Lamp will build it."
+                 ? "Describe the \(AppKind(project).rawValue) app you wish you had, and Lamp will build it."
                  : "Describe what \(project.name) should do. Lamp builds it and opens it for you.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 400)
-            if iosApps && !project.scaffolded {   // a draft, so its kind is still open (Store.setKind)
-                Picker("Kind", selection: kind) {
-                    ForEach(Kind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.radioGroup)
-                .horizontalRadioGroupLayout()
-                .labelsHidden()
-                .disabled(busy)
-                .padding(.top, 4)
+            if !project.scaffolded {   // a draft, so its kind is still open (Store.setKind)
+                KindPicker(selection: kind)
+                    .disabled(busy)
+                    .padding(.top, 4)
             }
             if fresh && draft.trimmed.isEmpty && !ideas.isEmpty {
-                StarterIdeas(ideas: ideas) { prompt in
+                StarterIdeas(ideas: ideas, kind: AppKind(project)) { prompt in
                     draft = prompt
                     store.chatFocusRequest += 1
                 }
+                .id(ideas.map(\.title))   // a fresh deck when the kind, and so the ideas, change
                 .padding(.top, 18)
                 .padding(.horizontal, 24)
             }
@@ -1316,12 +1302,16 @@ struct NewAppIntro: View {
         .onAppear {
             name = project.untitled ? "" : project.name
             fresh = Template.isScaffold(project)
-            if ideas.isEmpty {
-                let others = store.projects.filter { $0.id != project.id && !$0.untitled }
-                ideas = Ideas.starters(made: others.map(\.name))
-            }
+            if ideas.isEmpty { drawIdeas() }
         }
+        // Ideas for what it's now going to be: a phone's aren't a Mac's.
+        .onChange(of: AppKind(project)) { drawIdeas() }
         .onChange(of: editingName) { if !editingName { commit() } }
+    }
+
+    private func drawIdeas() {
+        let others = store.projects.filter { $0.id != project.id && !$0.untitled }
+        ideas = Ideas.starters(made: others.map(\.name), kind: AppKind(project))
     }
 
     private func commit() {
@@ -1714,6 +1704,41 @@ struct ApprovalCard: View {
     }
 }
 
+/// What a new app is made as, as a small picture of each device rather than its name: the welcome and a new
+/// app's intro both choose with it. The name is still there for the pointer and VoiceOver.
+struct KindPicker: View {
+    @Binding var selection: AppKind
+    @Environment(\.isEnabled) private var enabled
+    @State private var hovered: AppKind?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(AppKind.allCases, id: \.self) { kind in
+                let chosen = kind == selection
+                Button { selection = kind } label: {
+                    Image(systemName: kind.symbol)
+                        .font(.system(size: 20, weight: .regular))
+                        .foregroundStyle(chosen ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                        .frame(width: 46, height: 36)
+                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(chosen ? AnyShapeStyle(.tint.opacity(0.12))
+                                         : AnyShapeStyle(Color.primary.opacity(hovered == kind && enabled ? 0.05 : 0))))
+                        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .strokeBorder(chosen ? AnyShapeStyle(.tint.opacity(0.5)) : AnyShapeStyle(.clear), lineWidth: 1))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
+                .onHover { hovered = $0 ? kind : (hovered == kind ? nil : hovered) }
+                .help(kind.rawValue)
+                .accessibilityLabel(kind.rawValue)
+                .accessibilityAddTraits(chosen ? .isSelected : [])
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: selection)
+    }
+}
+
 /// Apps to start from, under a new app's empty chat. Choosing one fills in the request (it isn't sent) so the
 /// user can make it theirs first. It opens on the six it's given; Show Me Others pages on from there.
 struct StarterIdeas: View {
@@ -1721,9 +1746,9 @@ struct StarterIdeas: View {
     @StateObject private var deck: IdeaDeck
     @State private var hovered: String?
 
-    init(ideas: [Idea], choose: @escaping (String) -> Void) {
+    init(ideas: [Idea], kind: AppKind, choose: @escaping (String) -> Void) {
         self.choose = choose
-        _deck = StateObject(wrappedValue: IdeaDeck(first: ideas))
+        _deck = StateObject(wrappedValue: IdeaDeck(first: ideas, kind: kind))
     }
 
     var body: some View {
@@ -1748,9 +1773,11 @@ struct StarterIdeas: View {
                         HStack(alignment: .top, spacing: 8) {
                             IdeaIcon(symbol: example.symbol, hue: example.hue, size: 22, lit: hovered == example.title)
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(example.title).font(.subheadline.weight(.semibold))
+                                // Every tile keeps room for a one-line name and a two-line blurb, so the grid
+                                // doesn't change height when the ideas change (another page, another kind).
+                                Text(example.title).font(.subheadline.weight(.semibold)).lineLimit(1)
                                 Text(example.blurb).font(.caption).foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                    .lineLimit(2, reservesSpace: true)
                             }
                             Spacer(minLength: 0)
                         }
@@ -1775,8 +1802,7 @@ struct StarterIdeas: View {
     }
 }
 
-/// The Try On choices: the iPhone and iPad simulators and, when apps may go on the person's own devices,
-/// each paired phone. The simulator choice is the family the agent builds and looks at; a phone is where
+/// The Try On choices: the iPhone and iPad simulators and each of the person's paired phones. The simulator choice is the family the agent builds and looks at; a phone is where
 /// Play puts the app.
 private struct TryOnChoices: View {
     @EnvironmentObject private var store: Store
@@ -1821,13 +1847,13 @@ private struct TryOnChoices: View {
             }
         }
         Divider()
-        Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show(family: project.family, phone: Experiments.iosApps ? project.device : nil) }
+        Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show(family: project.family, phone: project.device) }
         Button("Look for Devices Again") { refresh() }
             .onAppear { refresh() }
     }
 
     private func refresh() {
         store.refreshDevices()
-        if Experiments.iosApps { Task { olderPhones = await PhoneTools.olderPhones() } }
+        Task { olderPhones = await PhoneTools.olderPhones() }
     }
 }

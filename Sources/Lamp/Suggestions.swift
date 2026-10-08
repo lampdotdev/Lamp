@@ -5,7 +5,7 @@ import Foundation
 @MainActor
 enum NextStep {
     private static let prompt = """
-    You suggest the next message a user might send to Lamp, an AI that builds and changes a Mac app for \
+    You suggest the next message a user might send to Lamp, an AI that builds and changes an app for \
     them while they describe what they want in plain words.
 
     Propose ONE short follow-up message the user is most likely to want to send next.
@@ -48,7 +48,7 @@ enum NextStep {
         if let cached = cache[turn] { return cached }
 
         let conversation = conversationText(lines.filter { $0.kind == .user || $0.kind == .agent }.suffix(historyLimit))
-        let request = "\(prompt)\nThe app is called \(project.name).\n\nHere is the conversation:\n\(conversation)"
+        let request = "\(prompt)\nThe app is \(AppKind(project).phrase) called \(project.name).\n\nHere is the conversation:\n\(conversation)"
         guard let (text, _) = try? await AppAI.complete(prompt: request, images: [], system: "", json: true,
                                                          model: await AppAI.helperModel()),
               let data = text.data(using: .utf8),
@@ -100,7 +100,7 @@ enum AppName {
     static let exampleParts = ["Your habits, ticked off daily", "A reminder in the evening"]
 
     private static let prompt = """
-    Name a small Mac app from what its user asked for.
+    Name a small app from what its user asked for.
 
     First, check whether the user already named it. A name is usually a capitalized phrase used as a title, \
     often at the very start ("\(exampleNames[0]), an app that…", "\(exampleNames[1]): a counter…", "make me an app called \
