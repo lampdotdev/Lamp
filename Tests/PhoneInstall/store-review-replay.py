@@ -42,7 +42,6 @@ struct LogLine {
 }
 struct Look {}
 struct TurnProgress { var finished: Date?; var failed = false }
-__PRODUCTION_EXPERIMENTS__
 enum Subprocess {
     @discardableResult static func terminateTree(_ process: Process) -> [pid_t] { [] }
 }
@@ -114,7 +113,6 @@ enum Runtime {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, retryPhone: retryPhone))
     }
 '''
-text = text.replace('__PRODUCTION_EXPERIMENTS__', block('enum Experiments', Path('Sources/Lamp/Edition.swift').read_text()))
 text += '\n'.join(methods)
 text += '''
     func completed(_ owner: Turn, crash: String? = nil, edited: Bool = true) -> TurnResult {
