@@ -1,4 +1,5 @@
 import Foundation
+import os
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -36,17 +37,137 @@ struct VersionNaming: Equatable {
 enum Versions {
     static let commit = "git -c user.name=Lamp -c user.email=lamp@localhost commit"
 
+    /// Lamp's own git. The app's folder is the agent's to write, its history included, and git runs the
+    /// programs a repository names (hooks, filters, a signing program, and more with every release), so
+    /// what the agent leaves there would run with whatever Lamp's git is allowed. So Lamp's git is allowed
+    /// what the agent's own commands are: it runs under the same sandbox (`Sandbox`), confined to the app's
+    /// folder. Nothing in the history has to be trusted, checked or cleaned, and nothing the agent does with
+    /// git has to be refused.
+    static func git(_ command: String, cwd: URL, env: [String: String] = [:],
+                    onLine: @escaping @MainActor (String) -> Void = { _ in }) async -> Int32 {
+        guard let confined = confined(command, in: cwd) else { return unconfined }
+        return await Shell.run(confined, cwd: cwd, env: env.merging(environment) { $1 }, onLine: onLine)
+    }
+
+    /// The same, for the one caller that can't await (the migration, at launch).
+    static func gitBlocking(_ command: String, cwd: URL) -> Subprocess.Result {
+        guard let confined = confined(command, in: cwd) else {
+            return Subprocess.Result(status: unconfined, output: "", errors: "", timedOut: false)
+        }
+        return Subprocess.runBlocking("/bin/zsh", ["-c", confined], cwd: cwd, env: environment, mergeErrors: false, timeout: 120)
+    }
+
+    /// What a git command returns when the sandbox couldn't be set up: it isn't run loose instead.
+    static let unconfined: Int32 = 126
+
+    /// The command as it is run: under the profile the agent's commands get for this folder, with the
+    /// person's own git files that live elsewhere in the home folder opened for reading.
+    static func confined(_ command: String, in folder: URL) -> String? {
+        let app = LampProject(id: folder.lastPathComponent, name: "", exe: "", dir: folder)
+        let wrapped = Sandbox.wrapEngine(command, for: app, opening: [], reading: personalFiles())
+        if wrapped == nil { NSLog("Lamp: git was not run in %@: the sandbox could not be set up", folder.path) }
+        return wrapped
+    }
+
+    /// Lamp's own runs don't need what the sandbox takes away, and say so rather than fail: signing (the
+    /// person's keys are closed to the sandbox; these versions are Lamp's, not theirs) and hooks and the
+    /// file-watcher command (which would only stall or stop a save). Settings given this way win over the
+    /// repository's and the person's.
+    static let environment: [String: String] = {
+        let settings = [("core.hooksPath", "/dev/null"), ("core.fsmonitor", "false"), ("commit.gpgSign", "false"),
+                        ("tag.gpgSign", "false"), ("tag.forceSignAnnotated", "false")]
+        var environment = ["GIT_CONFIG_COUNT": "\(settings.count)"]
+        for (index, setting) in settings.enumerated() {
+            environment["GIT_CONFIG_KEY_\(index)"] = setting.0
+            environment["GIT_CONFIG_VALUE_\(index)"] = setting.1
+        }
+        return environment
+    }()
+
+    /// The person's own git files that the sandbox doesn't already open: Mac-wide settings kept in more than
+    /// one file (git stops, saving nothing, at a settings file it is told to read and isn't allowed to; one
+    /// that isn't there it passes over), a settings file
+    /// moved with GIT_CONFIG_GLOBAL, and the ignore and attributes files those settings name (a
+    /// `~/.gitignore_global`, say: without it Lamp would save what the person ignores everywhere). They are
+    /// worked out away from any app's folder, and again only when one of the settings files has changed:
+    /// asking git costs more than the git command it is asked for. That asking is git reading the person's
+    /// own settings files, which the sandbox closes, so it is the one git call of Lamp's that isn't confined:
+    /// it reads files the agent can't write and runs no program.
+    ///
+    /// What the settings name is opened only when it is a file, and never when it is in Lamp's own folders
+    /// (keys, sign-ins, every other app): a setting that names a folder, the home folder say, would
+    /// otherwise open all of it, Lamp's included.
+    private static func personalFiles() -> [String] {
+        let lamps = ["Lamp", "Lamp Dev"].map {
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/\($0)")
+                .resolvingSymlinksInPath().standardizedFileURL.path
+        }
+        return namedFiles().filter { named in
+            let path = URL(fileURLWithPath: named).resolvingSymlinksInPath().standardizedFileURL.path
+            var folder: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &folder), !folder.boolValue else { return false }
+            return !lamps.contains { path == $0 || path.hasPrefix($0 + "/") }
+        }
+    }
+
+    private static func namedFiles() -> [String] {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        let moved = ProcessInfo.processInfo.environment["GIT_CONFIG_GLOBAL"]?.nilIfEmpty
+        let starts = moved.map { [$0] } ?? [home + "/.gitconfig", home + "/.config/git/config"]
+        func stamp(_ files: [String]) -> String {
+            files.map { "\($0)@\(((try? fm.attributesOfItem(atPath: $0))?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)" }
+                .joined(separator: "\n")
+        }
+        func ask(_ arguments: [String]) -> String? {
+            let answer = Subprocess.runBlocking("/usr/bin/git", ["config"] + arguments, cwd: URL(fileURLWithPath: "/"),
+                                                mergeErrors: false, timeout: 10)
+            return answer.ok ? answer.output : nil
+        }
+        return asked.withLock { known in
+            guard known.starts != starts || known.stamp != stamp(known.settings) else { return known.files }
+            // Every settings file the person's own may bring in, whatever the condition on it: which apply
+            // depends on the folder git runs in. Each is read on its own, so one names the next.
+            var settings: [String] = []
+            var next = starts
+            while let file = next.popLast(), settings.count < 50 {
+                guard !settings.contains(file) else { continue }
+                settings.append(file)
+                let included = ask(["--file", file, "--type=path", "-z", "--get-regexp", #"^include(if\..*)?\.path$"#]) ?? ""
+                for entry in included.split(separator: "\0") {
+                    guard let path = entry.split(separator: "\n", maxSplits: 1).last.map(String.init), !path.isEmpty else { continue }
+                    next.append(path.hasPrefix("/") ? path : URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: file).deletingLastPathComponent()).standardizedFileURL.path)
+                }
+            }
+            // The ignore and attributes files, from each settings file on its own for the same reason.
+            var files = settings
+            for file in settings {
+                let named = ask(["--file", file, "--type=path", "-z", "--get-regexp", #"^core\.(excludesfile|attributesfile)$"#]) ?? ""
+                for entry in named.split(separator: "\0") {
+                    if let path = entry.split(separator: "\n", maxSplits: 1).last.map(String.init), path.hasPrefix("/"), !files.contains(path) {
+                        files.append(path)
+                    }
+                }
+            }
+            known = (starts, settings, stamp(settings), files)
+            return files
+        }
+    }
+
+    private static let asked = OSAllocatedUnfairLock<(starts: [String], settings: [String], stamp: String, files: [String])>(
+        initialState: ([], [], "", []))
+
     /// Newest first.
     static func list(_ project: LampProject) async -> [AppVersion] {
         var names: [String: String] = [:]
-        _ = await Shell.run("git for-each-ref refs/tags/forge/ --sort=creatordate --format='%(*objectname)%1f%(contents:subject)'",
+        _ = await git("git for-each-ref refs/tags/forge/ --sort=creatordate --format='%(*objectname)%1f%(contents:subject)'",
                             cwd: project.dir) { line in
             let parts = line.split(separator: "\u{1f}", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
             if parts.count == 2, !parts[1].isEmpty { names[parts[0]] = parts[1] }
         }
         let titles = VersionTitles.saved(in: project)
         var versions: [AppVersion] = []
-        _ = await Shell.run("git log --first-parent --format='%H%x1f%P%x1f%ct%x1f%(trailers:key=Lamp-Undid,valueonly,separator=%x2C)%(trailers:key=Forge-Undid,valueonly,separator=%x2C)%x1f%s'",   // Undos from before the rename keep the old trailer
+        _ = await git("git log --first-parent --format='%H%x1f%P%x1f%ct%x1f%(trailers:key=Lamp-Undid,valueonly,separator=%x2C)%(trailers:key=Forge-Undid,valueonly,separator=%x2C)%x1f%s'",   // Undos from before the rename keep the old trailer
                             cwd: project.dir) { line in
             let parts = line.split(separator: "\u{1f}", maxSplits: 4, omittingEmptySubsequences: false).map(String.init)
             guard parts.count == 5, let seconds = TimeInterval(parts[2]) else { return }
@@ -90,7 +211,7 @@ enum Versions {
         let command = name.isEmpty
             ? "git tag -d \"forge/$LAMP_VERSION\""
             : "git -c user.name=Lamp -c user.email=lamp@localhost tag -f -a \"forge/$LAMP_VERSION\" -m \"$LAMP_NAME\" \"$LAMP_VERSION\""
-        _ = await Shell.run(command, cwd: project.dir, env: ["LAMP_VERSION": version, "LAMP_NAME": name]) { _ in }
+        _ = await git(command, cwd: project.dir, env: ["LAMP_VERSION": version, "LAMP_NAME": name])
     }
 
     /// Puts the app's files back as they were in a version, without committing. Attachments stay:
@@ -99,7 +220,7 @@ enum Versions {
         // Attachments and Lamp's own folder are left alone: a version from before the rename ignores .forge/,
         // not .lamp/, and clean would otherwise take the chat, token and sessions with it.
         let keep = "':!\(Attachments.folder)' ':!.lamp'"
-        let ok = await Shell.run("git restore --source=\"$LAMP_VERSION\" --staged --worktree -- . \(keep) && git clean -fdq -e .lamp -- . \(keep)",
+        let ok = await git("git restore --source=\"$LAMP_VERSION\" --staged --worktree -- . \(keep) && git clean -fdq -e .lamp -- . \(keep)",
                                  cwd: project.dir, env: ["LAMP_VERSION": version.id]) { _ in } == 0
         // A version from before the rename calls the support library by its old names.
         if ok {
@@ -114,7 +235,7 @@ enum Versions {
     /// Files changed since the last version, by a turn that was stopped or didn't finish.
     static func hasUnsavedChanges(_ project: LampProject) async -> Bool {
         var output = ""
-        _ = await Shell.run("git status --porcelain -- . ':!\(Attachments.folder)'", cwd: project.dir) { output += $0 }
+        _ = await git("git status --porcelain -- . ':!\(Attachments.folder)'", cwd: project.dir) { output += $0 }
         return !output.trimmed.isEmpty
     }
 
@@ -127,13 +248,13 @@ enum Versions {
     /// Saves the app's files as they are now as a new version. False when nothing changed.
     static func save(_ project: LampProject, message: String, trailer: String? = nil) async -> Bool {
         let trailerArgument = trailer.map { " -m \"\($0)\"" } ?? ""
-        return await Shell.run("git add -A && ! git diff --cached --quiet && \(commit) -q -m \"$LAMP_MESSAGE\"\(trailerArgument)",
+        return await git("git add -A && ! git diff --cached --quiet && \(commit) -q -m \"$LAMP_MESSAGE\"\(trailerArgument)",
                                cwd: project.dir, env: ["LAMP_MESSAGE": message]) { _ in } == 0
     }
 
     static func head(_ project: LampProject) async -> String? {
         var output = ""
-        guard await Shell.run("git rev-parse HEAD", cwd: project.dir, onLine: { output += $0 }) == 0 else { return nil }
+        guard await git("git rev-parse HEAD", cwd: project.dir, onLine: { output += $0 }) == 0 else { return nil }
         return output.trimmed.nilIfEmpty
     }
 
@@ -283,12 +404,12 @@ enum VersionTitles {
     /// Nil when the model couldn't be reached or gave something unusable.
     static func make(for version: AppVersion, in project: LampProject) async -> String? {
         var files: [String] = []
-        _ = await Shell.run("git show --format= --name-only \"$LAMP_VERSION\"", cwd: project.dir,
+        _ = await Versions.git("git show --format= --name-only \"$LAMP_VERSION\"", cwd: project.dir,
                             env: ["LAMP_VERSION": version.id]) { if !$0.trimmed.isEmpty { files.append($0.trimmed) } }
         // Lamp refreshing the support code it puts in every app isn't a change the user made.
         if !files.isEmpty, files.allSatisfy({ $0 == "Sources/LampSupport.swift" || $0 == Template.widgetFolder + "/" + Template.widgetSupportFile }) { return "Lamp update" }
         var diff = ""
-        _ = await Shell.run("git show --format= --unified=1 \"$LAMP_VERSION\" -- . ':!Sources/LampSupport.swift' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!\(Attachments.folder)'",
+        _ = await Versions.git("git show --format= --unified=1 \"$LAMP_VERSION\" -- . ':!Sources/LampSupport.swift' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!\(Attachments.folder)'",
                             cwd: project.dir, env: ["LAMP_VERSION": version.id]) { line in
             if diff.count < 8000 { diff += line + "\n" }
         }
