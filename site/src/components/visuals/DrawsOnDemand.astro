@@ -1,0 +1,43 @@
+---
+// For "Draws on demand.": a child's idea typed into a story app and the pictures it made for it. The pictures
+// are drawn in SVG for now, as stand-ins until there are real ones made by an app. A 432×280 canvas, the tile's
+// size on a laptop (four columns of ten), 40px in to line up with the words and running off the right edge.
+const scenes = [
+  { sky: ["#2a2f7a", "#5a3f9e"], moon: true },
+  { sky: ["#ff9a76", "#ffd36e"], moon: false },
+  { sky: ["#1f6f8b", "#64c4c0"], moon: false },
+];
+---
+
+<div aria-hidden="true" class="relative h-[200px] overflow-hidden select-none sm:h-[280px]">
+  <div class="absolute inset-0 h-[140%] w-[140%] origin-top-left scale-[0.714] sm:h-full sm:w-full sm:scale-100">
+    <div class="absolute top-10 left-10 rounded-full bg-white px-4 py-2 text-[14px] font-semibold text-ink shadow-[0_8px_20px_rgba(0,0,0,0.15)]">
+      A dragon who's scared of the dark
+    </div>
+    <div class="absolute top-[100px] left-10 flex gap-3">
+      {
+        scenes.map((scene, index) => (
+          <svg viewBox="0 0 140 140" class="size-[140px] rounded-2xl shadow-[0_10px_24px_rgba(0,0,0,0.2)]">
+            <defs>
+              <linearGradient id={`draws-sky-${index}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color={scene.sky[0]} />
+                <stop offset="1" stop-color={scene.sky[1]} />
+              </linearGradient>
+            </defs>
+            <rect width="140" height="140" fill={`url(#draws-sky-${index})`} />
+            {scene.moon ? <circle cx="104" cy="32" r="14" fill="#fff3c4" /> : <circle cx="34" cy="36" r="16" fill="#fff6d6" opacity="0.9" />}
+            {scene.moon && [[24, 22], [52, 40], [80, 18], [120, 64]].map(([x, y]) => <circle cx={x} cy={y} r="1.6" fill="#fff" />)}
+            <path d="M0 112 Q 40 92 72 108 T 140 100 V140 H0Z" fill="#2f6b3c" opacity="0.9" />
+            <g transform={`translate(${46 + index * 6} 72)`}>
+              <ellipse cx="22" cy="30" rx="22" ry="16" fill="#5fc56a" />
+              <circle cx="40" cy="14" r="11" fill="#5fc56a" />
+              <path d="M10 22 L2 4 L22 18Z" fill="#4aa856" />
+              <circle cx="43" cy="12" r="2.4" fill="#1d1d1f" />
+              <circle cx="44" cy="11" r="0.8" fill="#fff" />
+            </g>
+          </svg>
+        ))
+      }
+    </div>
+  </div>
+</div>

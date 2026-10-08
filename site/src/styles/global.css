@@ -26,6 +26,16 @@
   --color-lilac-to: #6a32cf;
   --color-mint-from: #5fd97f;
   --color-mint-to: #34c759;
+  /* The AI tiles' colours, unlike the feature tiles' so the two sections read apart. Indigo, coral and teal take
+     white words, darkest where the words sit; butter takes dark ones. */
+  --color-indigo-from: #7b78ff;
+  --color-indigo-to: #3d38c9;
+  --color-coral-from: #ff9a76;
+  --color-coral-to: #f2385a;
+  --color-teal-from: #3fd0c4;
+  --color-teal-to: #0c8a85;
+  --color-butter-from: #fff3b8;
+  --color-butter-to: #ffd84d;
 
   /* Where the feature tiles go side by side: the page's full width (max-w-6xl), the width their illustrations
      are drawn for. Narrower than that, the tiles stack, each as wide as the page. */
