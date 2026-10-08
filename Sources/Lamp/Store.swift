@@ -157,6 +157,9 @@ final class Store: ObservableObject {
     @Published var usage: [String: AppUsage] = [:]
     @Published var icons: [String: NSImage] = [:]
     @Published var pendingImport: PendingImport?
+    /// A shared app being built while the welcome is up. The welcome has no chat to show the build in,
+    /// so it shows this instead, until the app opens.
+    @Published var importBuild: ImportBuild?
 
     /// A shell command an agent wants to run, or a file outside the app's folder it wants, waiting for the user
     /// (see ApprovalCard).
@@ -958,6 +961,12 @@ final class Store: ObservableObject {
         }
     }
 
+    struct ImportBuild: Equatable {
+        let id: String
+        let name: String
+        var failed = false
+    }
+
     struct PendingImport: Identifiable {
         let id = UUID()
         let package: Sharing.Package
@@ -1068,10 +1077,14 @@ final class Store: ObservableObject {
         reload()
         selection = project.id
         log(project, .status, "Imported from a shared file. Building it now…")
+        if !Onboarding.isDone && !welcomeFinished { importBuild = ImportBuild(id: project.id, name: project.name) }
         Task {
             _ = await Shell.run("git init -q && git add -A && \(Self.commit) -qm 'Imported from a shared file'",
                                 cwd: project.dir) { _ in }
-            await run(project)
+            let opened = await run(project)
+            // A newer import may have taken the welcome's place meanwhile: this one's result isn't its.
+            guard importBuild?.id == project.id else { return }
+            if opened { importBuild = nil } else { importBuild?.failed = true }
         }
     }
 
@@ -2142,14 +2155,17 @@ final class Store: ObservableObject {
         return true
     }
 
-    func run(_ project: LampProject) async {
-        guard begin(project) != nil else { return }
+    /// False when the app didn't build or didn't stay open.
+    @discardableResult
+    func run(_ project: LampProject) async -> Bool {
+        guard begin(project) != nil else { return false }
         defer { finish(project) }
-        guard let project = await materialize(project) else { return }
+        guard let project = await materialize(project) else { return false }
         if await build(project) == nil {
-            await installReportingCrash(project)
+            return await installReportingCrash(project)
         } else {
             log(project, .error, ErrorMessages.appDoesNotBuild)
+            return false
         }
     }
 
@@ -2675,10 +2691,13 @@ final class Store: ObservableObject {
     private var simulatorLeases: [String: String] = [:]
 
     /// For Open App and Undo, where no agent is running to fix a crash.
-    private func installReportingCrash(_ project: LampProject) async {
+    @discardableResult
+    private func installReportingCrash(_ project: LampProject) async -> Bool {
         if await install(project) != nil {
             log(project, .error, ErrorMessages.crashAfterLaunch(project.name))
+            return false
         }
+        return true
     }
 
     /// Puts the icon into the freshly built bundle, re-signs it, and swaps it into the apps folder.
