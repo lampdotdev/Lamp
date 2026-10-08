@@ -56,7 +56,7 @@ const apps = [
   },
 ];
 
-// Icons Lamp made for apps it built, in one row under "Real Mac apps", all the same size. The row is centred
+// Icons Lamp made for apps it built, in one row under "Real apps", all the same size. The row is centred
 // on the tile and wider than it, so it runs off both edges; at the tile's full width (1104px) the 136px icons
 // and 24px gaps put each edge through the middle of an icon. The order mixes the colours, as several are
 // purple. A name missing from src/assets/icons/ is skipped.
@@ -103,7 +103,7 @@ const points: { title: string; text: string; tile: string; visual?: (props: obje
   },
   {
     title: "Share with anyone",
-    text: "Send an app to a friend by AirDrop, Messages or Mail. They get their own copy to make their own, and Lamp shows them what it does before it opens.",
+    text: "Send a Mac app to a friend by AirDrop, Messages or Mail. They get their own copy to make their own, and Lamp shows them what it does before it opens.",
     tile: "bento:col-span-6 bg-panel",
     visual: ShareWithAnyone,
   },
@@ -122,12 +122,12 @@ const providers = [
 ];
 
 // On the page the last sentence gets a line of its own; elsewhere (search results, link previews) it's one run.
-const pitch = "Describe what you want, and Lamp builds a real Mac app, with AI inside when it helps. Keep using it, change it whenever you like, and share it.";
+const pitch = "Describe what you want, and Lamp builds a real app for your Mac, iPhone or iPad, with AI inside when it helps. Keep using it, and change it whenever you like.";
 const noCode = "No need to know how to code or deploy anything.";
 const description = `${pitch} ${noCode}`;
 ---
 
-<Base title="Lamp: wish Mac apps into existence" description={description} image="/og.jpg">
+<Base title="Lamp: wish Mac, iPhone and iPad apps into existence" description={description} image="/og.jpg">
   <!--
     Full-width bands that alternate white and light grey, in the manner of Apple's product pages, each with the
     content in the same centred column. Tiles take the other shade from the band they sit on.
@@ -146,7 +146,7 @@ const description = `${pitch} ${noCode}`;
       />
       <h1 class="mt-6 font-display text-5xl font-bold tracking-tight sm:text-6xl">Lamp</h1>
       <p class="mt-4 font-display text-3xl leading-tight font-bold tracking-tight sm:text-4xl sm:whitespace-nowrap">
-        Wish Mac apps into existence.
+        Wish apps into existence.
       </p>
       <p class="mt-5 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">{together(pitch)}<br />{together(noCode)}</p>
       <div class="mt-9"><DownloadButton /></div>
@@ -179,9 +179,9 @@ const description = `${pitch} ${noCode}`;
     <section class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
       <div class="grid gap-4 bento:grid-cols-10">
         <div class="overflow-hidden rounded-[28px] bg-panel pt-12 text-center bento:col-span-10 sm:pt-16">
-          <h3 class="px-8 font-display text-3xl font-bold tracking-tight sm:text-5xl">Real Mac apps</h3>
+          <h3 class="px-8 font-display text-3xl font-bold tracking-tight sm:text-5xl">Real apps</h3>
           <p class="mx-auto mt-4 max-w-[50rem] px-8 text-xl leading-[1.4] text-muted">
-            {together("Each one is an app of its own, in your Applications folder and in Spotlight. No browser tab, no subscription to someone else's tool. No server or security to worry about.")}
+            {together("Each one is an app of its own: on your Mac, in your Applications folder and in Spotlight, or on your own iPhone and iPad. No browser tab, no subscription to someone else's tool. No server or security to worry about.")}
           </p>
           <div aria-hidden="true" class="mt-8 pb-10 sm:mt-10 sm:pb-12">
             <div class="relative left-1/2 flex w-max -translate-x-1/2 gap-4 sm:gap-6">
