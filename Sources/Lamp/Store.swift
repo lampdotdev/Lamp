@@ -3367,11 +3367,11 @@ final class Store: ObservableObject {
         if placed != placedWidgets { placedWidgets = placed }
     }
 
-    /// Back in Lamp, perhaps from adding a widget: an app that is only its widget, and has stopped waiting
-    /// to hear, is asked again.
+    /// Back in Lamp, perhaps from adding a widget or taking one away: an app that is only its widget, and
+    /// has stopped waiting to hear, is asked again.
     private func askAboutWidgets() {
-        for project in projects where (logs[project.id] ?? []).contains(where: { $0.kind == .widget })
-            && !placedWidgets.contains(project.id) && !busy.contains(project.id) && Template.isWidgetOnly(project) {
+        for project in projects where WidgetCard.asksAgain(hasCard: (logs[project.id] ?? []).contains { $0.kind == .widget },
+                                                             widgetOnly: Template.isWidgetOnly(project), busy: busy.contains(project.id)) {
             Task { await watchWidget(of: project) }
         }
     }

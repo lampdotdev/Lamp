@@ -502,8 +502,19 @@ enum Template {
         let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
         return files.contains { file in
             file.pathExtension == "swift" && file.lastPathComponent != "LampSupport.swift"
-                && ((try? String(contentsOf: file, encoding: .utf8))?.contains(widgetOnlyScene) ?? false)
+                && ((try? String(contentsOf: file, encoding: .utf8)).map { code(in: $0).contains(widgetOnlyScene) } ?? false)
         }
+    }
+
+    /// Swift source with its comments and the insides of its strings taken out: what's left is what runs.
+    /// A scene named in a comment ("was LampWidgetOnly() before") or in a string is not the app's scene, and
+    /// must not hide the window of an app that has one.
+    static func code(in source: String) -> String {
+        var text = source
+        for pattern in [#"\"\"\"[\s\S]*?\"\"\""#, #"\"(\\.|[^\"\\\n])*\""#, #"/\*[\s\S]*?\*/"#, #"//[^\n]*"#] {
+            text = text.replacingOccurrences(of: pattern, with: "\"\"", options: .regularExpression)
+        }
+        return text
     }
 
     /// The widget's bundle id. macOS only takes an extension whose id begins with its app's.

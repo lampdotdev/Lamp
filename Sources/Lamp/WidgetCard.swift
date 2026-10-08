@@ -22,6 +22,15 @@ enum WidgetCard {
     /// One card per chat, however many builds the app has: it's added when the app first has a widget.
     static func isNeeded(after lines: [LogLine]) -> Bool { !lines.contains { $0.kind == .widget } }
 
+    /// A card stays in the chat's record, but is only shown while the app has a widget: once the widget is
+    /// taken away there's nothing to add, and saying how would send the person looking for it.
+    static func isShown(for project: LampProject) -> Bool { Template.hasWidget(project) }
+
+    /// Whether to run a widget-only app out of sight to ask if its widget is placed, on coming back to Lamp.
+    /// Asked whatever the last answer was: a widget that was placed can be taken off the desktop again, and
+    /// the app that would notice has quit.
+    static func asksAgain(hasCard: Bool, widgetOnly: Bool, busy: Bool) -> Bool { hasCard && widgetOnly && !busy }
+
     static func title(_ name: String) -> String { "\(name)’s widget" }
 
     static func status(_ name: String, placed: Bool) -> String {

@@ -61,6 +61,40 @@ final class WidgetOnlyTests: XCTestCase {
         XCTAssertTrue(try text("Sources/LampSupport.swift", in: project).contains("struct LampWidgetOnly: Scene"))
     }
 
+    /// The scene only counts where it runs: named in a comment or a string, the app still has its window.
+    func testASceneNamedInACommentOrAStringIsNotTheAppsScene() throws {
+        let project = try app()
+        try write(WidgetBuildTests.widgetSwift, to: "Widget/Widget.swift", in: project)
+        for mention in ["// Previously: LampWidgetOnly()", "/* was\n   LampWidgetOnly() */", "let note = \"LampWidgetOnly()\"",
+                        "let long = \"\"\"\n    LampWidgetOnly()\n    \"\"\""] {
+            try write("import SwiftUI\n\(mention)\n@main struct MainApp: App { var body: some Scene { WindowGroup { Text(\"hi\") } } }\n",
+                      to: "Sources/App.swift", in: project)
+            XCTAssertFalse(Template.isWidgetOnly(project), mention)
+        }
+        // With a comment beside it, the real scene still counts.
+        try write("import SwiftUI\n// only a widget\n@main struct MainApp: App { var body: some Scene { LampWidgetOnly() } }\n", to: "Sources/App.swift", in: project)
+        XCTAssertTrue(Template.isWidgetOnly(project))
+    }
+
+    func testTheCardGoesWhenTheWidgetDoes() throws {
+        let project = try app()
+        XCTAssertFalse(WidgetCard.isShown(for: project))
+        try write(WidgetBuildTests.widgetSwift, to: "Widget/Widget.swift", in: project)
+        try Template.writeOwnedFiles(for: project)
+        XCTAssertTrue(WidgetCard.isShown(for: project))
+        // The widget is taken away: Lamp's own file may linger in the folder, and the card still goes.
+        try FileManager.default.removeItem(at: project.dir.appendingPathComponent("Widget/Widget.swift"))
+        XCTAssertFalse(WidgetCard.isShown(for: project))
+    }
+
+    /// A widget recorded as placed can be taken off the desktop: the app is asked again all the same.
+    func testAWidgetOnlyAppIsAskedAgainWhateverItSaidLast() {
+        XCTAssertTrue(WidgetCard.asksAgain(hasCard: true, widgetOnly: true, busy: false))
+        XCTAssertFalse(WidgetCard.asksAgain(hasCard: false, widgetOnly: true, busy: false))
+        XCTAssertFalse(WidgetCard.asksAgain(hasCard: true, widgetOnly: false, busy: false))   // a real app says for itself while it runs
+        XCTAssertFalse(WidgetCard.asksAgain(hasCard: true, widgetOnly: true, busy: true))     // a turn has it
+    }
+
     func testOnlyAWidgetOnlyAppIsKeptOutOfTheDock() throws {
         let project = try app()
         try write(WidgetBuildTests.widgetSwift, to: "Widget/Widget.swift", in: project)
