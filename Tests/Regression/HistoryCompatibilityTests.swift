@@ -95,7 +95,8 @@ final class HistoryCompatibilityTests: XCTestCase {
     }
 
     func testAHistoryPushedSomewhere() async throws {
-        let (project, root) = try await started()
+        // The branch is named here: the settings below are about it, and git's default name varies.
+        let (project, root) = try await started(with: "git init -q -b main")
         let pushed = try run("git init -q --bare ../../remote.git && git remote add origin ../../remote.git && git push -q -u origin HEAD 2>&1 && git config user.name Me && git config user.email me@example.com && git config push.default current && git config remote.origin.push refs/heads/main:refs/heads/published && git config branch.main.pushRemote origin && git config lfs.url https://example.com/me/coinflip.git/info/lfs && git config core.excludesFile ../../ignored-everywhere && echo '*.log' > ../../ignored-everywhere",
                              in: project.dir)
         XCTAssertEqual(pushed.status, 0, pushed.output)
