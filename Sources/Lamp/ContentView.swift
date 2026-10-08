@@ -1321,7 +1321,7 @@ struct ImportReviewView: View {
                     }
                     Text(description == nil
                          ? "Someone shared this app with you. Lamp builds it and opens it here, where it can do anything an app you run can do."
-                         : "Someone shared this app with you, described above in their words. Lamp builds it and opens it here, where it can do anything an app you run can do.")
+                         : "Someone shared this app with you, and the description above is theirs. Lamp builds it and opens it here, where it can do anything an app you run can do.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
