@@ -62,7 +62,8 @@ struct AppUsage: Codable {
 }
 
 struct LogLine: Identifiable, Codable, Equatable {
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey }
+    /// `needsKey` is a setup offer from before offers named their capability: it was always about pictures.
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -72,6 +73,16 @@ struct LogLine: Identifiable, Codable, Equatable {
     var replaced: String? = nil        // for a request sent again in other words: the request it took the place of
     var tookBack: [String]? = nil      // …and every request that left the chat for it, oldest first
     var retryPhone: String? = nil     // a phone install failure: retry this destination without the agent
+    var offer: SetupOffer? = nil      // a setup offer: what it's about (its text is the reason)
+
+    /// The offer a setup card is about, for this line and for the older key card.
+    var setupOffer: SetupOffer? {
+        switch kind {
+        case .offer: offer
+        case .needsKey: SetupOffer(capability: .pictures)
+        default: nil
+        }
+    }
 
     /// Lamp knows where the app was before this request, so it can be changed and sent again from there.
     /// Not so for some requests from before that was noted.
@@ -151,12 +162,18 @@ final class Store: ObservableObject {
 
     func endSubmission(_ token: UUID) { pendingSubmissions.end(token) }
     @Published var setup = SetupCheck()
+    /// Whether Lamp has really looked at setup yet, with the saved keys in. Before that `setup` can't be gone
+    /// by: it starts out assuming everything is in place, and a look made before the keys are read finds no key.
+    private let setupLook = FirstLook()
     /// The welcome finished this run. Normally the saved setting says so too, but `-onboarded NO` on the
     /// command line (for checking the welcome) keeps that setting from changing until Lamp quits.
     @Published var welcomeFinished = false
     @Published var usage: [String: AppUsage] = [:]
     @Published var icons: [String: NSImage] = [:]
-    @Published var pendingImport: PendingImport?
+    /// The shared app whose review is up. When it goes, the next one kept from before setup gets its turn.
+    @Published var pendingImport: PendingImport? {
+        didSet { if pendingImport == nil, oldValue != nil { openWaitingImport() } }
+    }
 
     /// A shell command an agent wants to run, or a file outside the app's folder it wants, waiting for the user
     /// (see ApprovalCard).
@@ -326,8 +343,16 @@ final class Store: ObservableObject {
     /// Re-checks setup. On a fresh Mac this opens Apple's installer straight away, then keeps
     /// checking in the background so setup finishes by itself once the tools are installed.
     func recheckSetup() async {
+        // What Claude Code's and Codex's sign-ins are, for whether they can answer apps (`AppAI.resolve`).
+        Task { await EngineSignIn.refresh() }
         let wasReady = setup.checked && setup.ready
+        let keysRead = KeyStore.keysRead
         setup = await SetupCheck.run(keeping: setup)
+        // The look that counts. A shared app kept by an earlier one gets its turn now, if setup was in place all along.
+        if keysRead, !setupLook.isDone {
+            setupLook.done()
+            openWaitingImport()
+        }
         // During the welcome, Apple's installer waits for the step that explains it.
         if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone { requestBuildTools() }
         if !setup.hasBuildTools { pollSetup() }
@@ -344,6 +369,7 @@ final class Store: ObservableObject {
     private func becameReady() async {
         for project in projects where !(queued[project.id] ?? []).isEmpty { startQueued(project) }
         saveWaiting()
+        openWaitingImport()
         await backfillIcons()
     }
 
@@ -404,8 +430,9 @@ final class Store: ObservableObject {
         }
     }
 
-    func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil) {
-        logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone))
+    func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil,
+             offer: SetupOffer? = nil) {
+        logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone, offer: offer))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
         saveChat(project)
     }
@@ -820,7 +847,7 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return old
         }
-        for path in [".lamp/chat.json", ".lamp/usage.json", ".lamp/notes.md", Attachments.folder, Sharing.Assets.folder] {
+        for path in [".lamp/chat.json", ".lamp/usage.json", ".lamp/notes.md", ".lamp/share-id", Attachments.folder, Sharing.Assets.folder] {
             let from = old.dir.appendingPathComponent(path)
             if fm.fileExists(atPath: from.path) {
                 try? fm.copyItem(at: from, to: project.dir.appendingPathComponent(path))
@@ -962,18 +989,52 @@ final class Store: ObservableObject {
         let id = UUID()
         let package: Sharing.Package
         var review: ImportReview?
+        /// Opened during setup and kept until now: the review says so, since it arrives unasked.
+        var waited = false
+        /// The app already here that this file is another version of, if any: the choice is then Update or Keep Both.
+        var existing: LampProject?
     }
 
-    /// Opens a shared `.lampapp`: unpacks it, then shows a review (fixed checklist + AI check) before building.
+    /// The app on this Mac that a shared file is a version of: the one it was shared from, or the copy made
+    /// by opening an earlier file from it.
+    func existingCopy(of package: Sharing.Package) -> LampProject? {
+        guard let identity = package.identity else { return nil }
+        return projects.first { $0.platform == .mac && $0.scaffolded && Sharing.identity(of: $0, create: false) == identity }
+    }
+
+    /// Opens a shared `.lampapp`. Its review (fixed checklist + AI check) opens only when setup is really done
+    /// and the welcome is over, so that an AI agent is there to check the app before it runs. Until then the
+    /// file is kept, and its review opens by itself once the person is through setup.
     func importApp(from file: URL) {
         NSApp.activate()
-        guard setup.ready else {
-            let alert = NSAlert()
-            alert.messageText = "Finish setting up Lamp first"
-            alert.informativeText = "Then open the shared app again."
-            alert.runModal()
-            return
+        Task {
+            // A file that launched Lamp arrives before Lamp has looked at setup: the look is waited for, so
+            // the same file on the same Mac always goes the same way.
+            await setupLook.wait()
+            guard reviewsCanOpen else {
+                let alert = NSAlert()
+                alert.messageText = "Finish setting up Lamp first"
+                if waitingImport.keep(file) {
+                    alert.informativeText = waitingImport.count > 1
+                        ? "Lamp will open your shared apps as soon as setup is done."
+                        : "Lamp will open the shared app as soon as setup is done."
+                } else {
+                    alert.informativeText = "Then open the shared app again."
+                }
+                alert.runModal()
+                return
+            }
+            review(file)
         }
+    }
+
+    /// Setup is in place (Apple's tools and an AI agent) and the person is through the welcome.
+    private var reviewsCanOpen: Bool {
+        WaitingImport.reviewsCanOpen(setupReady: setupLook.isDone && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
+    }
+
+    /// Unpacks a shared app and shows its review. `waited`: it was kept from before setup was done.
+    private func review(_ file: URL, waited: Bool = false) {
         // The newest request wins: a file opened while an earlier one is still unpacking, or a Cancel
         // meanwhile, makes the earlier result unwanted when it arrives.
         let request = UUID()
@@ -986,11 +1047,14 @@ final class Store: ObservableObject {
             do {
                 package = try await Task.detached { try Sharing.open(file) }.value
             } catch {
-                if importRequest == request { NSAlert(error: error).runModal() }
+                guard importRequest == request else { return }
+                importRequest = nil
+                NSAlert(error: error).runModal()
+                openWaitingImport()   // one that can't be opened doesn't hold up the ones kept after it
                 return
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
-            let pending = PendingImport(package: package)
+            let pending = PendingImport(package: package, waited: waited, existing: existingCopy(of: package))
             pendingImport = pending
             let review = await Sharing.review(package)
             if pendingImport?.id == pending.id { pendingImport?.review = review }
@@ -998,6 +1062,17 @@ final class Store: ObservableObject {
     }
 
     private var importRequest: UUID?
+
+    private var waitingImport: WaitingImport { WaitingImport(folder: waitingFiles) }
+
+    /// Shared apps opened before setup was done get their reviews once the person is through setup, one at a
+    /// time in the order they were opened: called when setup becomes ready, when the welcome ends, and when a
+    /// review closes.
+    func openWaitingImport() {
+        guard pendingImport == nil, importRequest == nil else { return }
+        let file = waitingImport.take(setupReady: setupLook.isDone && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
+        if let file { review(file, waited: true) }
+    }
 
     func cancelImport() {
         importRequest = nil
@@ -1012,53 +1087,111 @@ final class Store: ObservableObject {
         finishImport(pending.package)
     }
 
+    /// Update: the app already here takes the file's code, files, description and icon, in place, so it keeps
+    /// its name, its data, its permissions and its chat. What it was until now is saved as a version first
+    /// (changes not yet saved included), so Versions can bring it back; without that, nothing is replaced.
+    func confirmUpdate() {
+        guard let pending = pendingImport else { return }
+        guard let project = pending.existing.flatMap({ existing in projects.first { $0.id == existing.id } }),
+              begin(project) != nil else {
+            let alert = NSAlert()
+            alert.messageText = "“\(pending.existing?.name ?? pending.package.name)” is busy right now"
+            alert.informativeText = "Try again when it's done, or keep both."
+            alert.runModal()
+            return
+        }
+        importRequest = nil
+        pendingImport = nil
+        selection = project.id
+        Task {
+            defer { finish(project) }
+            let package = pending.package
+            defer { try? FileManager.default.removeItem(at: package.folder) }
+            let before = "Before updating from a shared file"
+            var kept = await Versions.head(project) == nil ? await initRepo(project, message: before) : true
+            if kept, await Versions.hasUnsavedChanges(project) { kept = await Versions.save(project, message: before) }
+            guard kept else {
+                log(project, .error, Self.updateFailed)
+                return
+            }
+            // Replaced files that can't be kept as a version go back to the one just saved, so the app's
+            // files, its versions and the installed app never disagree.
+            // The icon's pictures are outside the versions, so they're set aside here and put back by hand.
+            // Pictures that can't be set aside aren't risked: nothing is replaced.
+            let fm = FileManager.default
+            let art = project.dir.appendingPathComponent(".lamp/art")
+            let artBefore = package.folder.appendingPathComponent("art-before-update")
+            let hadArt = fm.fileExists(atPath: art.path)
+            if hadArt {
+                do { try fm.copyItem(at: art, to: artBefore) } catch {
+                    log(project, .error, Self.updateFailed)
+                    return
+                }
+            }
+            /// False when the icon's pictures couldn't be returned; the ones there are then left alone.
+            func putBack() async -> Bool {
+                _ = await Shell.run("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
+                guard hadArt else {
+                    try? fm.removeItem(at: art)
+                    return true
+                }
+                // The copy is made beside the folder first, so the old pictures are never the only ones removed.
+                let returning = art.deletingLastPathComponent().appendingPathComponent("art-returning")
+                try? fm.removeItem(at: returning)
+                do {
+                    try fm.copyItem(at: artBefore, to: returning)
+                    _ = try fm.replaceItemAt(art, withItemAt: returning)
+                    return true
+                } catch {
+                    try? fm.removeItem(at: returning)
+                    return false
+                }
+            }
+            let newArtwork: Bool
+            do {
+                newArtwork = try Sharing.install(package, into: project, replacing: true)
+            } catch {
+                let iconBack = await putBack()
+                print("Update \(project.name) from a shared file failed: \(error)")
+                log(project, .error, Self.updateFailed + (iconBack ? "" : Self.updateChangedIcon))
+                return
+            }
+            if await Versions.hasUnsavedChanges(project) {
+                guard await Versions.save(project, message: "Updated from a shared file") else {
+                    let iconBack = await putBack()
+                    log(project, .error, Self.updateFailed + (iconBack ? "" : Self.updateChangedIcon))
+                    return
+                }
+                Versions.rememberUpdate(project)
+                versionsRevision += 1
+            } else if !newArtwork {
+                log(project, .status, "You already have this version.")
+                return
+            }
+            // The same code with a new icon picture still gets built, which is what draws and installs the icon.
+            log(project, .status, "Updated from a shared file. Building it now…")
+            if await build(project) == nil {
+                await installReportingCrash(project)
+            } else {
+                log(project, .error, ErrorMessages.appDoesNotBuild)
+            }
+        }
+    }
+
+    /// An update that didn't happen, in the chat: the app is untouched or was put back, whatever the cause.
+    private static let updateFailed = "Lamp couldn't update this app. It's just as it was."
+    private static let updateChangedIcon = " Only its icon may have changed."
+
     private func finishImport(_ package: Sharing.Package) {
         defer { try? FileManager.default.removeItem(at: package.folder) }
-        let fm = FileManager.default
         let project: LampProject
         do {
             project = try Template.scaffold(name: uniqueName(package.name), in: root)
-            // Swap the scaffold's code for the shared code; keep Lamp's own LampSupport.swift.
-            let sources = project.dir.appendingPathComponent("Sources")
-            for item in try fm.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)
-            where item.lastPathComponent != "LampSupport.swift" {
-                try fm.removeItem(at: item)
-            }
-            let sharedSources = package.folder.appendingPathComponent("Sources").standardizedFileURL.path + "/"
-            for file in package.sources where file.lastPathComponent != "LampSupport.swift" {
-                let relative = file.standardizedFileURL.path.replacingOccurrences(of: sharedSources, with: "")
-                guard !relative.contains("..") else { continue }
-                let target = sources.appendingPathComponent(relative)
-                try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try fm.copyItem(at: file, to: target)
-            }
-            // Its Assets folder from the start, files or none: nothing attached to its chat later is adopted.
-            let folder = project.dir.appendingPathComponent(Sharing.Assets.folder)
-            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            if !package.attachments.isEmpty {
-                for file in package.attachments {
-                    let relative = package.assetPath(of: file)
-                    guard !relative.contains("..") else { continue }
-                    let target = folder.appendingPathComponent(relative)
-                    try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try fm.copyItem(at: file, to: target)
-                }
-            }
-            let appMd = package.folder.appendingPathComponent("APP.md")
-            if fm.fileExists(atPath: appMd.path) {
-                try? fm.removeItem(at: project.dir.appendingPathComponent("APP.md"))
-                try fm.copyItem(at: appMd, to: project.dir.appendingPathComponent("APP.md"))
-            }
-            if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
-               let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
-                Icons.save(spec, for: project)
-                // Files from older Lamp versions carry full-square artwork; only cut-out objects fit the new icons.
-                if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
-                   Icons.isCutOut(art) {
-                    let url = Icons.artURL(project, spec: spec)
-                    try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try? art.write(to: url)
-                }
+            try Sharing.install(package, into: project)
+            // The copy is the same app as the sender's: the next file shared from theirs can update it. A
+            // second copy made beside one that's already here (Keep Both) is an app of its own.
+            if let identity = package.identity, existingCopy(of: package) == nil {
+                Sharing.setIdentity(identity, of: project)
             }
         } catch {
             NSAlert(error: error).runModal()
@@ -1127,6 +1260,7 @@ final class Store: ObservableObject {
                 }
             }
         }
+        kept.formUnion(waitingImport.keptFolders)
         let folders = (try? FileManager.default.contentsOfDirectory(at: waitingFiles, includingPropertiesForKeys: nil)) ?? []
         for folder in folders where !kept.contains(folder.path) { try? FileManager.default.removeItem(at: folder) }
     }
@@ -1486,7 +1620,18 @@ final class Store: ObservableObject {
         guard let turn = turns[project.id] else { return false }   // only inside a turn (startQueued)
         turn.stopped = false
         let sessionFile = Self.sessionFile(for: project, engine: engine)
-        let run = Agent.run(prompt: prompt, files: files, project: project,
+        // What the agent is told about the app's AI follows the sign-ins as they are. Checking them can take a
+        // while, and Stop pressed meanwhile has no agent to end yet: if the turn was stopped or replaced, or the
+        // app deleted, during the wait, the agent isn't started.
+        await EngineSignIn.refresh()
+        guard turns[project.id] === turn, !turn.stopped, exists(project) else {
+            if turn.stopped, exists(project) {
+                turn.stopped = false
+                log(project, .status, "Stopped. Any changes made so far are kept; press Undo to discard them.")
+            }
+            return false
+        }
+        let run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
                             session: engine == .pi ? Self.piSession(for: project) : Self.savedSession(sessionFile),
                             token: turn.agentToken)
         let status = await Shell.run(run.command, cwd: project.dir, env: run.env,
@@ -1522,6 +1667,7 @@ final class Store: ObservableObject {
                     progress[project.id]?.tickWrittenParts()
                 case .compacted:
                     Memory.compacted(project)
+                    AIStatus.compacted(project)
                 case .tool(let text, let fullCall):
                     log(project, .tool, text)
                     let call = ToolCall(text)
@@ -1544,12 +1690,13 @@ final class Store: ObservableObject {
                     if engine != .pi {
                         try? id.write(to: sessionFile, atomically: true, encoding: .utf8)
                         Memory.delivered(to: project, session: id)
+                        AIStatus.delivered(to: project, session: id)
                     }
                 }
             }
         }
         turn.agent = nil
-        if answered { Memory.delivered(to: project) }
+        if answered { Memory.delivered(to: project); AIStatus.delivered(to: project) }
         endApprovals(for: project)
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
         showWritten(for: project)
@@ -1999,6 +2146,7 @@ final class Store: ObservableObject {
             case "name_version": (status, answer) = await versions("/name", arguments, of: project)
             case "restore_version": (status, answer) = await versions("/restore", arguments, of: project)
             case "read_notes", "save_notes": (status, answer) = Memory.call(name, arguments, for: project)
+            case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -2075,6 +2223,20 @@ final class Store: ObservableObject {
         }
         do { try fm.removeItem(at: target) } catch { return (500, ["error": "Couldn't delete \(relative): \(error.localizedDescription)"]) }
         return (200, ["text": "Deleted \(relative)."])
+    }
+
+    /// `offer_setup`: the agent asks Lamp to offer the person a way to set up a capability, with its reason.
+    private func agentOffer(_ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
+        guard let capability = (arguments["capability"] as? String).flatMap(Capability.init(rawValue:)) else {
+            return (400, ["error": "`capability` must be text, decisions or pictures."])
+        }
+        let away = arguments["away"] as? Bool == true
+        guard !away || project.platform == .iphone else {
+            return (400, ["error": "`away` is only for iPhone apps."])
+        }
+        let why = (arguments["why"] as? String)?.trimmed ?? ""
+        guard !why.isEmpty else { return (400, ["error": "Say in `why` what the person would get."]) }
+        return (200, ["text": offerSetup(project, SetupOffer(capability: capability, away: away ? true : nil), because: why, fromAgent: true)])
     }
 
     /// The tools every engine gets, from Resources/lamp-tools.json: the one place their names, descriptions and
@@ -2601,6 +2763,7 @@ final class Store: ObservableObject {
             if progress[project.id]?.finished != nil { progress[project.id]?.failed = false }
             attached.terminationHandler = { _ in Task { @MainActor in Store.shared.refreshOpenApps() } }
             log(project, .status, "\(project.name) is ready on \(name)")
+            offerAwaySetup(project)
         } catch {
             owner.build = nil
             if let failure = error as? PhoneFailure { failed(failure.message, output: failure.output) }
@@ -2815,11 +2978,52 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Asks for an OpenRouter key in the app's chat, once per app: the moment an app first wants a picture is
-    /// when a key is worth explaining, not the welcome screen.
-    private func askForKey(_ project: LampProject, because reason: String) {
-        guard !(logs[project.id] ?? []).contains(where: { $0.kind == .needsKey }) else { return }
-        log(project, .needsKey, reason)
+    /// The setup offers already in an app's chat.
+    func offers(in project: LampProject) -> Set<SetupOffer> {
+        Set((logs[project.id] ?? []).compactMap(\.setupOffer))
+    }
+
+    /// Offers a way to set up `offer` in the app's chat, once per app: the moment an app first wants
+    /// something nothing here can do is when a key or a download is worth explaining, not the welcome screen.
+    /// Lamp's own offers (`fromAgent` false) also keep away from anything the person said "Not Now" to in
+    /// any app; the agent's, which come with a reason of their own, only from what was turned down in this
+    /// one. Returns what happened, in words for the agent.
+    @discardableResult
+    func offerSetup(_ project: LampProject, _ offer: SetupOffer, because reason: String, fromAgent: Bool = false) -> String {
+        let resolution = AppAI.resolve(offer.capability, for: project, in: offer.context)
+        guard resolution.tier != .best else {
+            return "\(offer.capability.title) is already set up: \(resolution.answer ?? ""). Nothing to offer."
+        }
+        guard !offer.declined(in: fromAgent ? project : nil) else {
+            return "The person said Not Now to setting this up. Don't offer it again; build so the app copes without it."
+        }
+        guard !offers(in: project).contains(offer) else {
+            return "Lamp already offered this in the chat. Don't offer it again."
+        }
+        log(project, .offer, reason, offer: offer)
+        return "Lamp showed the person a card in the chat to set up \(offer.capability.title.lowercased()). Carry on; don't mention keys or settings in your reply."
+    }
+
+    /// Lamp's own words for an offer it makes when an app hit something nothing here can do.
+    private static func offerReason(_ capability: Capability, for project: LampProject) -> String {
+        switch capability {
+        case .text: "\(project.name) just tried to use AI, but nothing on this Mac can answer yet. Set up one of the ways below and it will work the next time."
+        case .decisions: "\(project.name) uses AI to make quick judgments, like yes or no, or which of a few options fits, but nothing on this Mac can make them yet. Set up one of the ways below and they will work the next time."
+        case .pictures: "\(project.name) just tried to make a picture, but nothing on this Mac can draw yet. Set up one of the ways below and it will work the next time."
+        }
+    }
+
+    /// An iPhone app that uses AI, just put on the phone: if nothing goes with it, say so once.
+    private func offerAwaySetup(_ project: LampProject) {
+        let sources = project.dir.appendingPathComponent("Sources")
+        let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        let usesAI = files.contains { url in
+            url.pathExtension == "swift" && url.lastPathComponent != "LampSupport.swift"
+                && ((try? String(contentsOf: url, encoding: .utf8))?.contains("LampAI.") ?? false)
+        }
+        guard usesAI else { return }
+        offerSetup(project, SetupOffer(capability: .text, away: true),
+                   because: "\(project.name)'s AI runs through this Mac, so on your phone it only works nearby. Add an OpenRouter key and the app takes it along, so its AI works anywhere.")
     }
 
     /// Generates artwork for the icon's object in the background (best of a few candidates) and swaps it in
@@ -2831,7 +3035,8 @@ final class Store: ObservableObject {
         Task {
             defer { artInProgress.remove(project.id) }
             guard await AppAI.imageRoute() != nil else {
-                askForKey(project, because: "Lamp can draw a proper icon for \(project.name), and pictures inside your apps, with an OpenRouter key.")
+                offerSetup(project, SetupOffer(capability: .pictures),
+                           because: "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) a proper icon, and your apps will be able to make pictures too.")
                 return
             }
             do {
@@ -2861,9 +3066,10 @@ final class Store: ObservableObject {
                 }
                 await applyIconArt(project, spec: spec)
                 finish(project)
-            } catch let failure as AppAI.Failure where failure.message == AppAI.noImageRoute {
+            } catch let failure as AppAI.Failure where failure.needs == .pictures {
                 // Codex signed out between the check and the pictures: the key card is still the right answer.
-                askForKey(project, because: "Lamp can draw a proper icon for \(project.name), and pictures inside your apps, with an OpenRouter key.")
+                offerSetup(project, SetupOffer(capability: .pictures),
+                           because: "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) a proper icon, and your apps will be able to make pictures too.")
             } catch {
                 log(project, .detail, "Icon artwork failed: \(error.localizedDescription)")
             }
@@ -3037,8 +3243,8 @@ final class Store: ObservableObject {
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
-        let paths = ["/ai", "/ai/keys", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/mcp", "/pi/key"]
+        let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/mcp", "/pi/key"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -3091,6 +3297,7 @@ final class Store: ObservableObject {
         // A phone asking what it may keep is answered whatever the state of setup: a key just removed makes
         // setup incomplete, and that's exactly when the phone has to hear that its copy should go.
         if route == "/ai/keys" { return keysForPhone(project) }
+        if route == "/ai/status" { return await aiStatus(for: project) }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
     }
@@ -3133,6 +3340,9 @@ final class Store: ObservableObject {
         if route == "/agent/memory" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return Memory.call(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/setup" {
+            return agentOffer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/approve" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
@@ -3191,6 +3401,9 @@ final class Store: ObservableObject {
 
     /// The routes a running app uses: text, pictures, decisions, and using the other apps on the Mac.
     private func appRequest(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
+        // A sign-in Lamp last found signed out may have been signed in since (from Terminal, say): what's
+        // older than a few minutes is checked again before choosing a route, so it can answer again.
+        await EngineSignIn.refresh()
         if request.path == "/ai/computer" { return await useComputer(for: project, request: request.body) }
         if request.path == "/ai/decide" {
             guard let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any],
@@ -3198,12 +3411,13 @@ final class Store: ObservableObject {
                 return (400, ["error": "A decision needs `state` and at least one question."])
             }
             do {
+                let models = AppModels.load(project)
                 let (answers, cost) = try await AppAI.decide(state: state, questions: questions,
-                                                             model: AppModels.load(project).decision)
+                                                             model: models.decision, appText: models.text)
                 record(project, cost: cost)
                 return (200, ["answers": answers])
             } catch let failure as AppAI.Failure {
-                return (502, ["error": failure.message])
+                return failed(failure, for: project)
             } catch {
                 return (502, ["error": "Couldn't reach the decision model: \(error.localizedDescription)"])
             }
@@ -3225,9 +3439,6 @@ final class Store: ObservableObject {
                                                             model: models.image, appText: models.text)
                     record(project, cost: cost)
                     return (200, ["image": png.base64EncodedString(), "media_type": "image/png"])
-                } catch let failure as AppAI.Failure where failure.message == AppAI.noImageRoute {
-                    askForKey(project, because: "\(project.name) wants to make a picture, and nothing here can yet.")
-                    throw failure
                 }
             }
             let (text, cost) = try await AppAI.complete(prompt: prompt, images: images,
@@ -3238,26 +3449,55 @@ final class Store: ObservableObject {
             return (200, ["text": text])
         } catch let failure as AppAI.Failure {
             if failure.cost > 0 { record(project, cost: failure.cost) }   // billed even though it failed
-            return (502, ["error": failure.message])
+            return failed(failure, for: project)
         } catch {
             return (502, ["error": "Couldn't reach the AI: \(error.localizedDescription)"])
         }
     }
 
+    /// An app's AI call that failed. When it failed because nothing is set up to answer, the app is told
+    /// which capability (`needs`, so LampAI can say so) and the person is offered a way in the app's chat.
+    private func failed(_ failure: AppAI.Failure, for project: LampProject) -> (Int, [String: Any]) {
+        var reply: [String: Any] = ["error": failure.message]
+        if let needs = failure.needs {
+            reply["needs"] = needs.rawValue
+            offerSetup(project, SetupOffer(capability: needs), because: Self.offerReason(needs, for: project))
+        }
+        return (502, reply)
+    }
+
+    /// `LampAI.isAvailable`: which capabilities can answer this app now, so it can leave out or explain a
+    /// feature instead of failing at it.
+    private func aiStatus(for project: LampProject) async -> (Int, [String: Any]) {
+        await EngineSignIn.refresh()
+        var reply: [String: Any] = [:]
+        for capability in Capability.allCases {
+            reply[capability.rawValue] = setup.ready && AppAI.resolve(capability, for: project).tier != .none
+        }
+        return (200, reply)
+    }
+
     /// What an app on the person's own phone keeps so its AI works away from the Mac (Settings → Experimental):
-    /// the OpenRouter key, the TypeSafe key when decisions go there, and the models the app is set to. Only for
-    /// iPhone apps, only while the switch is on; a Mac app or the simulator never needs it, and the key stays
-    /// in the phone's Keychain, put there by the app itself.
+    /// the OpenRouter key, the TypeSafe key when decisions go there, and the models the app is set to, as
+    /// `AppAI.resolve` has them for `.phoneAway`. Only for iPhone apps, only while the switch is on; a Mac app
+    /// or the simulator never needs it, and the key stays in the phone's Keychain, put there by the app itself.
     private func keysForPhone(_ project: LampProject) -> (Int, [String: Any]) {
         guard project.platform == .iphone, Experiments.iosApps else { return (403, ["error": "Not for this app."]) }
-        guard let key = KeyStore.openRouterKey else { return (404, ["error": "There's no OpenRouter key to keep."]) }
+        guard AppAI.resolve(.text, for: project, in: .phoneAway).tier != .none, let key = KeyStore.openRouterKey else {
+            return (404, ["error": "There's no OpenRouter key to keep."])
+        }
         let models = AppModels.load(project)
-        let decision = AppAI.awayDecisionModel(for: models.awayDecision)
+        var decision = AppAI.awayDecisionModel(for: models.awayDecision)
         var keys: [String: Any] = [
             "openrouter": key,
             "text_model": AppAI.awayModel(for: models.away).openRouter,
-            "decision_model": decision.model, "decision_provider": decision.provider,
         ]
+        if decision.provider == "typesafe" {
+            if let typesafe = KeyStore.key(for: "typesafe") { keys["typesafe"] = typesafe }
+            else { decision = AppAI.awayDecisionModels.first { $0.provider == "text" }! }   // what `resolve` says stands in
+        }
+        keys["decision_model"] = decision.model
+        keys["decision_provider"] = decision.provider
         // The cloud image model chosen for away from the Mac (the Mac's own model can't travel).
         keys["image_model"] = AppAI.awayImageModel(for: models.awayImage)
         // Sealed with the secret that went to the phone inside its build, never over the network: the token
@@ -3548,8 +3788,12 @@ struct AppModels: Codable, Equatable {
 
     func save(_ project: LampProject) {
         let url = Self.url(project)
+        defer { NotificationCenter.default.post(name: Self.changed, object: project.id) }
         if self == AppModels() { try? FileManager.default.removeItem(at: url); return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? JSONEncoder().encode(self).write(to: url)
     }
+
+    /// Posted when an app's own choices are saved, with its id: setup cards and notes look again.
+    static let changed = Notification.Name("LampAppModelsChanged")
 }

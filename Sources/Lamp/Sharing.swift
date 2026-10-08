@@ -22,6 +22,32 @@ enum Sharing {
         var format: Int
         var name: String
         var exportedAt: Date
+        /// Which app this is, the same in every file shared from it (`identity`). Files from before it
+        /// existed have none and open as a new app, as they always did.
+        var app: String?
+    }
+
+    /// Which app a shared file is, so a Mac that already has it can take the new one as an update rather
+    /// than a second copy. Made the first time the app is shared, kept in Lamp's own folder (never in the
+    /// file's code), and handed on to the copy another Mac makes by opening the file. Random, and nothing
+    /// else: it says nothing of the Mac or the person.
+    static func identity(of project: LampProject, create: Bool = true) -> String? {
+        let url = project.dir.appendingPathComponent(".lamp/share-id")
+        if let known = (try? String(contentsOf: url, encoding: .utf8)).flatMap(identity(from:)) { return known }
+        guard create else { return nil }
+        let new = UUID().uuidString
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? new.write(to: url, atomically: true, encoding: .utf8)
+        return new
+    }
+
+    static func setIdentity(_ identity: String, of project: LampProject) {
+        try? identity.write(to: project.dir.appendingPathComponent(".lamp/share-id"), atomically: true, encoding: .utf8)
+    }
+
+    /// A file says who it is in its own words: only the shape Lamp writes counts.
+    private static func identity(from text: String?) -> String? {
+        text.flatMap { UUID(uuidString: $0.trimmed) }?.uuidString
     }
 
     /// The one folder in an app that leaves the Mac: files the app itself uses (a logo, a data file, a
@@ -95,7 +121,7 @@ enum Sharing {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(Manifest(format: formatVersion, name: project.name, exportedAt: Date()))
+        try encoder.encode(Manifest(format: formatVersion, name: project.name, exportedAt: Date(), app: identity(of: project)))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
         // Everything staged, counted and measured the way the importer's listing does (files and folders,
@@ -139,6 +165,7 @@ enum Sharing {
     /// The contents of a `.lampapp`, unpacked and checked, ready to become a project.
     struct Package {
         let name: String
+        var identity: String? = nil   // Manifest.app; nil in files from before apps said who they are
         let folder: URL          // unpacked, temporary
         let sources: [URL]       // .swift files only
         let attachments: [URL]   // the app's own files (Assets/, or Attachments/ from an older Lamp); bundled as data, never run by Lamp
@@ -188,7 +215,62 @@ enum Sharing {
         // Assets/, or Attachments/ from a Lamp that bundled the chat's files: either way the app's own now.
         let attachments = filesUnder(folder.appendingPathComponent(Assets.folder))
             + filesUnder(folder.appendingPathComponent(Attachments.folder))
-        return Package(name: manifest.name, folder: folder, sources: sources, attachments: attachments, fileCount: all)
+        return Package(name: manifest.name, identity: identity(from: manifest.app), folder: folder, sources: sources,
+                       attachments: attachments, fileCount: all)
+    }
+
+    /// Puts a shared app's code, files, description and icon into an app's folder. A new app starts from a
+    /// scaffold; an app being updated (`replacing`) loses the code and files it had, which is why the caller
+    /// saves them as a version first. Lamp's own files, the chat and everything else in the folder stay.
+    /// True when the icon's artwork is different now: it lives in Lamp's own folder, outside the app's
+    /// versions, so a file that changes nothing else still has something to show.
+    @discardableResult
+    static func install(_ package: Package, into project: LampProject, replacing: Bool = false) throws -> Bool {
+        let fm = FileManager.default
+        var newArtwork = false
+        // Swap the code there for the shared code; keep Lamp's own LampSupport.swift.
+        let sources = project.dir.appendingPathComponent("Sources")
+        for item in try fm.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)
+        where item.lastPathComponent != "LampSupport.swift" {
+            try fm.removeItem(at: item)
+        }
+        let sharedSources = package.folder.appendingPathComponent("Sources").standardizedFileURL.path + "/"
+        for file in package.sources where file.lastPathComponent != "LampSupport.swift" {
+            let relative = file.standardizedFileURL.path.replacingOccurrences(of: sharedSources, with: "")
+            guard !relative.contains("..") else { continue }
+            let target = sources.appendingPathComponent(relative)
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: file, to: target)
+        }
+        // Its Assets folder from the start, files or none: nothing attached to its chat later is adopted.
+        let folder = project.dir.appendingPathComponent(Assets.folder)
+        if replacing { try? fm.removeItem(at: folder) }
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        for file in package.attachments {
+            let relative = package.assetPath(of: file)
+            guard !relative.contains("..") else { continue }
+            let target = folder.appendingPathComponent(relative)
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: file, to: target)
+        }
+        let appMd = package.folder.appendingPathComponent("APP.md")
+        if fm.fileExists(atPath: appMd.path) {
+            try? fm.removeItem(at: project.dir.appendingPathComponent("APP.md"))
+            try fm.copyItem(at: appMd, to: project.dir.appendingPathComponent("APP.md"))
+        }
+        if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
+           let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
+            Icons.save(spec, for: project)
+            // Files from older Lamp versions carry full-square artwork; only cut-out objects fit the new icons.
+            if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
+               Icons.isCutOut(art) {
+                let url = Icons.artURL(project, spec: spec)
+                newArtwork = (try? Data(contentsOf: url)) != art
+                try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? art.write(to: url)
+            }
+        }
+        return newArtwork
     }
 
     struct ImportError: LocalizedError {
@@ -299,6 +381,67 @@ extension Sharing {
         Capability(label: "Contains encoded data (can hide what it does)", icon: "eye.slash", level: .sensitive, patterns: ["Data(base64Encoded"]),
     ]
 
+    /// Said under the checklist when Lamp has no AI to read the code with. It tells the reader what they're
+    /// not getting and that opening doesn't depend on it; it isn't a problem to fix first.
+    static let aiNotSetUp = "Lamp can also have AI read a shared app's code before you open it. That's available once AI is set up in Lamp → Settings; you don't need it to open this app."
+
+    /// The app in its sender's words, for the top of the review: what APP.md says it does, as plain text.
+    /// Nil when the file has none, or only what Lamp wrote into a new app.
+    static func description(of package: Package) -> String? {
+        guard let about = try? String(contentsOf: package.folder.appendingPathComponent("APP.md"), encoding: .utf8) else { return nil }
+        return description(fromAbout: about)
+    }
+
+    static func description(fromAbout about: String) -> String? {
+        // Paragraphs by section: "" is what comes before the first "## " heading.
+        var sections: [String: [String]] = [:]
+        var heading = ""
+        var paragraph: [String] = []
+        func close() {
+            if !paragraph.isEmpty { sections[heading, default: []].append(paragraph.joined(separator: " ")) }
+            paragraph = []
+        }
+        for line in about.components(separatedBy: .newlines).map(\.trimmed) {
+            if line.hasPrefix("##") {
+                close()
+                heading = line.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces).lowercased()
+            } else if line.isEmpty || line.hasPrefix("#") {
+                close()
+            } else {
+                paragraph.append(line)
+            }
+        }
+        close()
+        // What a new app's APP.md says before anyone has described it (Template.appMd).
+        let scaffold = ["Nothing yet: fresh scaffold.", "A macOS SwiftUI app built and live-edited with Lamp."]
+        let candidates = (sections["what it does"] ?? []).prefix(1) + (sections[""] ?? []).prefix(1)
+        guard let found = candidates.first(where: { !scaffold.contains($0) }) else { return nil }
+        // Shown as written, never as formatting or links: the commonest marks are dropped, the rest is text.
+        let plain = found.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+        return plain.count > 280 ? String(plain.prefix(279)).trimmed + "…" : plain
+    }
+
+    /// The app's own icon, drawn from the icon.json and artwork in the file the way Lamp will draw it once
+    /// built. Nil when the file has no icon. Nothing of the sender's runs: the artwork is read as a picture,
+    /// and only when it's the size and kind Lamp itself makes.
+    static func icon(of package: Package) async -> NSImage? {
+        guard let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
+              let spec = try? JSONDecoder().decode(IconSpec.self, from: data) else { return nil }
+        return await Icons.preview(spec, art: artwork(at: package.folder.appendingPathComponent("icon-art.png")))
+    }
+
+    /// The artwork, when it's a cut-out object (what `finishImport` keeps) no larger than Lamp paints them.
+    /// The size comes from the file's header, so a picture made to exhaust memory is never unpacked.
+    private static func artwork(at url: URL) -> NSImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              max(width, height) <= 4096,
+              let art = try? Data(contentsOf: url), Icons.isCutOut(art) else { return nil }
+        return NSImage(data: art)
+    }
+
     static func review(_ package: Package) async -> ImportReview {
         // The fixed checks read every file; only what goes to the model is capped, since a sender picks
         // the file order and could put the interesting part last.
@@ -319,8 +462,10 @@ extension Sharing {
 
         var review = ImportReview(summary: "", capabilities: [], concerns: [], risk: "unknown", detected: detected)
         if truncated { review.concerns.append("This app is too large for Lamp to check all of its code.") }
-        guard AppAI.canAnswer else {
-            review.note = "Set up AI in Lamp → Settings to have it check what this app does."
+        // No AI to ask is an ordinary state for someone who was only sent an app, not a failure: the same
+        // words whether nothing can answer at all or the route apps use is OpenRouter without a key.
+        guard await AppAI.resolve(.text).tier != .none else {
+            review.note = aiNotSetUp
             return review
         }
 

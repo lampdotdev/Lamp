@@ -5,7 +5,7 @@ enum ErrorMessages {
     static let appDoesNotBuild = "This app doesn't build right now. Describe a change and I'll fix it, or press Undo."
     static let restoreFailed = "Lamp couldn't go back to how the app was before that message, so nothing was sent."
     static let providerBusy = "The AI is busy right now. Wait a minute and try again."
-    static let localServerUnreachable = "Couldn't reach the local model server. Check Settings → Providers → Native Mac AI."
+    static let localServerUnreachable = "Couldn't reach the local model server. Check Settings → AI Providers → Native Mac AI."
 
     static let openFailedPrefix = "Couldn't open the app: "
     static let installFailedPrefix = "Couldn't install the app: "
