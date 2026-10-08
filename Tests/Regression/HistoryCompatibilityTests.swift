@@ -97,7 +97,7 @@ final class HistoryCompatibilityTests: XCTestCase {
     func testAHistoryPushedSomewhere() async throws {
         // The branch is named here: the settings below are about it, and git's default name varies.
         let (project, root) = try await started(with: "git init -q -b main")
-        let pushed = try run("git init -q --bare -b main ../../remote.git && git remote add origin ../../remote.git && git push -q -u origin HEAD 2>&1 && git config user.name Me && git config user.email me@example.com && git config push.default current && git config remote.origin.push refs/heads/main:refs/heads/published && git config branch.main.pushRemote origin && git config lfs.url https://example.com/me/coinflip.git/info/lfs && git config core.excludesFile ../../ignored-everywhere && echo '*.log' > ../../ignored-everywhere",
+        let pushed = try run("git init -q --bare -b main ../../remote.git && git remote add origin ../../remote.git && git push -q -u origin HEAD 2>&1 && git config user.name Me && git config user.email me@example.com && git config push.default current && git config remote.origin.push refs/heads/main:refs/heads/published && git config branch.main.pushRemote origin && git config lfs.url https://example.com/me/coinflip.git/info/lfs && git config pull.ff only && git config merge.ff false && git config fetch.prune true && git config rebase.autoStash true && git config push.followTags true && git config remote.origin.prune true && git config branch.autoSetupRebase always && git config core.excludesFile ../../ignored-everywhere && echo '*.log' > ../../ignored-everywhere",
                              in: project.dir)
         XCTAssertEqual(pushed.status, 0, pushed.output)
         let before = try run("git config --local --list | sort", in: project.dir).output
@@ -177,6 +177,7 @@ final class HistoryCompatibilityTests: XCTestCase {
             ("a checkout of only part of the files, set up with git's own command", "mkdir -p Extra && echo x > Extra/x && git add -A && \(Versions.commit) -qm extra && git sparse-checkout init --cone && git sparse-checkout set Sources"),
             ("a partial clone as git writes one now", "git config remote.origin.url https://example.com/x.git && git config remote.origin.promisor true && git config remote.origin.partialclonefilter blob:none"),
             ("a filter brought in from another file of settings", "printf '[filter \"kept\"]\\n\\tclean = cat\\n\\tsmudge = cat\\n' > ../../more-settings && git config include.path ../../../more-settings"),
+            ("large files kept in a place of its own", "git config lfs.storage ../../large-files"),
             ("a filter set up in this history", "git config filter.lfs.clean 'git-lfs clean -- %f' && git config filter.lfs.smudge 'git-lfs smudge -- %f' && git config filter.lfs.process 'git-lfs filter-process' && git config filter.lfs.required true"),
         ]
         for (what, setup) in cases {

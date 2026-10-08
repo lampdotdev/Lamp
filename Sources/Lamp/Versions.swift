@@ -90,14 +90,16 @@ enum Versions {
     /// release), so every setting is removed, with git's own command for it, except the ones below: how the
     /// history is stored (its format, hashes, where names of versions are kept), how git itself converts
     /// line endings and which files it ignores, who the person is, and where they push and keep large files
-    /// (addresses only: the same ones a file in the app's own folder may already give). None of those names
-    /// a program. An app's history from before `.git` was closed can hold anything; one written since holds
+    /// (addresses only: the same ones a file in the app's own folder may already give), and the person's
+    /// plain choices about pulling, pushing, fetching, merging and rebasing (yes or no, a number, one of a
+    /// few words). None of those names a program, and none but the two ignore files names a path. An app's history from before `.git` was closed can hold anything; one written since holds
     /// nothing else.
     ///
     /// Two kinds of setting can't be removed without changing what the history means, and can't be kept
     /// either, so git isn't run at all and nothing is changed (`Refusal.format`): a storage extension other
     /// than the two kept, a partial clone however it is written (it fetches what it lacks from wherever its
-    /// settings say), settings kept in a second file (per-worktree ones, or an include: what they hold can't
+    /// settings say), large files kept in a folder the history names (a path git's helper would read and
+    /// write outside the sandbox, where the default is inside `.git`), settings kept in a second file (per-worktree ones, or an include: what they hold can't
     /// be known without trusting them), and a filter, which is a program run on every file going in and
     /// out (without it, files kept elsewhere or encrypted would be saved as they are on disk). The same goes
     /// for a checkout of only some of the files: Lamp builds the app from its folder and saves all of it,
@@ -115,7 +117,8 @@ enum Versions {
     git config --file .git/config --list >/dev/null 2>&1 || exit 98
     git config --file .git/config --name-only -z --list | while IFS= read -r -d '' key; do case "$key" in \
     extensions.objectformat|extensions.refstorage) ;; \
-    extensions.*|filter.*|include.path|includeif.*|remote.*.promisor|remote.*.partialclonefilter) exit 98 ;; esac; done
+    extensions.*|filter.*|include.path|includeif.*|lfs.storage) exit 98 ;; esac; done
+    ! git config --file .git/config --type=bool --get-regexp '^remote\..*\.promisor$' 2>/dev/null | grep -q ' true$' || exit 98
     [ "$(git config --file .git/config --type=bool --get core.sparsecheckout 2>/dev/null)" != true ] || exit 98
     [ "$(stat -f %l .git/config)" = 1 ] || { fresh="$(mktemp .git/config.XXXXXXXX)" && cat .git/config > "$fresh" && mv -f "$fresh" .git/config; } || exit 99
     git config --file .git/config --name-only -z --list | sort -zu | while IFS= read -r -d '' key; do case "$key" in \
@@ -124,6 +127,11 @@ enum Versions {
     core.excludesfile|core.attributesfile|user.name|user.email|push.default|pull.rebase|init.defaultbranch) ;; \
     remote.*.url|remote.*.pushurl|remote.*.fetch|remote.*.push|remote.pushdefault|branch.*.remote|branch.*.pushremote|branch.*.merge|branch.*.rebase) ;; \
     lfs.url|lfs.pushurl|remote.*.lfsurl|remote.*.lfspushurl) ;; \
+    pull.ff|merge.ff|merge.conflictstyle|merge.log|merge.renames|merge.autostash|merge.stat|merge.defaulttoupstream) ;; \
+    push.autosetupremote|push.followtags|push.useforceifincludes|push.recursesubmodules|push.negotiate) ;; \
+    fetch.prune|fetch.prunetags|fetch.fsckobjects|fetch.parallel|fetch.output|fetch.recursesubmodules|fetch.showforcedupdates|fetch.writecommitgraph) ;; \
+    rebase.autosquash|rebase.autostash|rebase.updaterefs|rebase.stat|rebase.missingcommitscheck|rebase.rebasemerges|rebase.forkpoint|rebase.abbreviatecommands) ;; \
+    remote.*.prune|remote.*.prunetags|remote.*.tagopt|remote.*.skipdefaultupdate|branch.autosetupmerge|branch.autosetuprebase|branch.sort|tag.sort) ;; \
     *) git config --file .git/config --unset-all "$key" 2>/dev/null || exit 99 ;; esac; done
     fi; fi
     """#

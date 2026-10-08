@@ -56,7 +56,8 @@ final class HistoryRefusalTests: XCTestCase {
     }
 
     func testAnOrdinaryHistoryIsNeverReported() async throws {
-        let project = try project("git remote add origin https://example.com/me/coinflip.git && git config alias.st status")
+        // A remote marked as not one a partial clone fetches from is an ordinary remote.
+        let project = try project("git remote add origin https://example.com/me/coinflip.git && git config alias.st status && git config remote.origin.promisor false && git config pull.ff only")
         let saved = try await saveAfterAChange(project)
         XCTAssertTrue(saved)
         _ = await Versions.hasUnsavedChanges(project)
