@@ -150,22 +150,10 @@ final class Store: ObservableObject {
     }
 
     func endSubmission(_ token: UUID) { pendingSubmissions.end(token) }
-    @Published var setup = SetupCheck() {
-        didSet {
-            guard setup.checked, !awaitingSetupCheck.isEmpty else { return }
-            let waiting = awaitingSetupCheck
-            awaitingSetupCheck = []
-            waiting.forEach { $0.resume() }
-        }
-    }
-    private var awaitingSetupCheck: [CheckedContinuation<Void, Never>] = []
-
-    /// Returns once Lamp has really looked at setup. Until then `setup` only assumes everything is in place,
-    /// which is how a file that launched Lamp could be let through on a Mac with nothing set up.
-    private func setupChecked() async {
-        guard !setup.checked else { return }
-        await withCheckedContinuation { awaitingSetupCheck.append($0) }
-    }
+    @Published var setup = SetupCheck()
+    /// Whether Lamp has really looked at setup yet, with the saved keys in. Before that `setup` can't be gone
+    /// by: it starts out assuming everything is in place, and a look made before the keys are read finds no key.
+    private let setupLook = FirstLook()
     /// The welcome finished this run. Normally the saved setting says so too, but `-onboarded NO` on the
     /// command line (for checking the welcome) keeps that setting from changing until Lamp quits.
     @Published var welcomeFinished = false
@@ -345,7 +333,13 @@ final class Store: ObservableObject {
     /// checking in the background so setup finishes by itself once the tools are installed.
     func recheckSetup() async {
         let wasReady = setup.checked && setup.ready
+        let keysRead = KeyStore.keysRead
         setup = await SetupCheck.run(keeping: setup)
+        // The look that counts. A shared app kept by an earlier one gets its turn now, if setup was in place all along.
+        if keysRead, !setupLook.isDone {
+            setupLook.done()
+            openWaitingImport()
+        }
         // During the welcome, Apple's installer waits for the step that explains it.
         if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone { requestBuildTools() }
         if !setup.hasBuildTools { pollSetup() }
@@ -1002,7 +996,7 @@ final class Store: ObservableObject {
         Task {
             // A file that launched Lamp arrives before Lamp has looked at setup: the look is waited for, so
             // the same file on the same Mac always goes the same way.
-            await setupChecked()
+            await setupLook.wait()
             guard reviewsCanOpen else {
                 let alert = NSAlert()
                 alert.messageText = "Finish setting up Lamp first"
@@ -1022,7 +1016,7 @@ final class Store: ObservableObject {
 
     /// Setup is in place (Apple's tools and an AI agent) and the person is through the welcome.
     private var reviewsCanOpen: Bool {
-        WaitingImport.reviewsCanOpen(setupReady: setup.checked && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
+        WaitingImport.reviewsCanOpen(setupReady: setupLook.isDone && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
     }
 
     /// Unpacks a shared app and shows its review. `waited`: it was kept from before setup was done.
@@ -1062,7 +1056,7 @@ final class Store: ObservableObject {
     /// review closes.
     func openWaitingImport() {
         guard pendingImport == nil, importRequest == nil else { return }
-        let file = waitingImport.take(setupReady: setup.checked && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
+        let file = waitingImport.take(setupReady: setupLook.isDone && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
         if let file { review(file, waited: true) }
     }
 

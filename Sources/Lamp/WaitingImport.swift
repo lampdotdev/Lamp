@@ -75,3 +75,26 @@ struct WaitingImport {
         }
     }
 }
+
+/// Something Lamp finds out once, a moment after launch, that others may have to wait for: here, its first
+/// real look at setup. A shared app that launched Lamp arrives before that look, and waits for it rather than
+/// being decided on a guess, so the same file on the same Mac always goes the same way.
+@MainActor
+final class FirstLook {
+    private(set) var isDone = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    /// Returns at once when the look has been made, otherwise when it is.
+    func wait() async {
+        guard !isDone else { return }
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    func done() {
+        guard !isDone else { return }
+        isDone = true
+        let resumed = waiting
+        waiting = []
+        resumed.forEach { $0.resume() }
+    }
+}
