@@ -1050,8 +1050,15 @@ final class Store: ObservableObject {
             }
             // Replaced files that can't be kept as a version go back to the one just saved, so the app's
             // files, its versions and the installed app never disagree.
+            // The icon's pictures are outside the versions, so they're set aside here and put back by hand.
+            let fm = FileManager.default
+            let art = project.dir.appendingPathComponent(".lamp/art")
+            let artBefore = package.folder.appendingPathComponent("art-before-update")
+            let hadArt = (try? fm.copyItem(at: art, to: artBefore)) != nil
             func putBack() async {
                 _ = await Shell.run("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
+                try? fm.removeItem(at: art)
+                if hadArt { try? fm.copyItem(at: artBefore, to: art) }
             }
             let newArtwork: Bool
             do {
