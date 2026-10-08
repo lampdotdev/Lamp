@@ -3,7 +3,7 @@ import SwiftUI
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, remember, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, remember, offer, other }
 
     let name: String
     let argument: String
@@ -35,7 +35,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
-        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "save_notes": .remember,
+        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "save_notes": .remember, "offer_setup": .offer,
     ]
 
     var icon: String {
@@ -54,6 +54,7 @@ struct ToolCall {
         case .use: "cursorarrow.click.2"
         case .recall: "note.text"
         case .remember: "square.and.pencil"
+        case .offer: "sparkles"
         case .other: "wrench.adjustable"
         }
     }
@@ -74,6 +75,7 @@ struct ToolCall {
         case .use: "Tried the app"
         case .recall: "Read its notes"
         case .remember: "Updated its notes"
+        case .offer: "Suggested a setup"
         case .other: name
         }
     }
@@ -96,6 +98,7 @@ struct ToolCall {
         case .use: "tried the app" + (count == 1 ? "" : " \(count) times")
         case .recall: "read its notes"
         case .remember: "updated its notes"
+        case .offer: "suggested a setup"
         case .other: n("step", "steps")
         }
     }
@@ -387,8 +390,8 @@ struct LogRow: View, Equatable {
                         .font(.caption)
                 }
             }
-        case .needsKey:
-            KeyCard(reason: line.text, dir: dir)
+        case .needsKey, .offer:
+            if let offer = line.setupOffer { SetupCard(offer: offer, reason: line.text, dir: dir) }
         }
     }
 
@@ -405,93 +408,6 @@ struct LogRow: View, Equatable {
         for range in code { string[range].backgroundColor = Color.primary.opacity(0.07) }
         if keep { proseCache[text] = string }
         return string
-    }
-}
-
-/// Asks for an OpenRouter key where it's first needed: in the chat of the app that wanted a picture. Once a
-/// key is saved (here or in Settings) the card just says so.
-struct KeyCard: View {
-    let reason: String
-    /// The folder of the app whose chat this is, for the one offer that's about that app alone.
-    let dir: URL
-    /// Nothing on this Mac can make pictures right now (no key, no model here, no ChatGPT sign-in).
-    @State private var noPictureMaker = false
-    @State private var key = ""
-    @State private var checking = false
-    @State private var problem: String?
-    @State private var saved = Provider.hasKey
-    @Environment(\.openSettings) private var openSettings
-    @AppStorage("settingsTab") private var settingsTab = "building"
-    @AppStorage("settingsSheet") private var settingsSheet = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label {
-                Text(saved ? "Pictures are on: your OpenRouter key is saved." : reason).lineSpacing(2)
-            } icon: {
-                Image(systemName: saved ? "checkmark.circle.fill" : "photo.on.rectangle.angled")
-                    .foregroundStyle(saved ? .green : .secondary)
-            }
-            if !saved {
-                Text("One key covers pictures, icon artwork and the fast in-app models; you pay OpenRouter only for what you use.")
-                    .font(.caption).foregroundStyle(.secondary)
-                HStack {
-                    SecureField("OpenRouter key (sk-or-…)", text: $key)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit(save)
-                        .onChange(of: key) { problem = nil }
-                    if checking {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Button("Save", action: save).disabled(key.trimmed.isEmpty)
-                    }
-                    Link("Get a key", destination: URL(string: "https://openrouter.ai/keys")!)
-                }
-                if let problem {
-                    Label(problem, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
-                }
-                if let first = ImageModels.catalog.first {
-                    HStack(spacing: 4) {
-                        Text("Or make pictures on this Mac, free and private:").font(.caption).foregroundStyle(.secondary)
-                        Button(String(format: "Download %@ (%.1f GB)…", first.name, first.sizeGB)) {
-                            settingsTab = "providers"
-                            settingsSheet = Builder.localProvider
-                            openSettings()
-                        }
-                        .buttonStyle(.link).font(.caption)
-                    }
-                }
-                // The backup for when nothing else can draw: Apple's own picture maker, which only the person
-                // can work, so it's for this app's icon and not for pictures inside apps.
-                if noPictureMaker, Icons.playgroundAvailable,
-                   let app = Store.shared.projects.first(where: { $0.dir == dir }), !app.untitled, Icons.load(app) != nil {
-                    HStack(spacing: 4) {
-                        Text("Or, for this app's icon alone, make one yourself, free:").font(.caption).foregroundStyle(.secondary)
-                        Button("Open Image Playground…") { Store.shared.iconFromPlayground(app) }
-                            .buttonStyle(.link).font(.caption)
-                    }
-                }
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
-        .onAppear { saved = Provider.hasKey }
-        .task { noPictureMaker = await AppAI.imageRoute() == nil }
-    }
-
-    private func save() {
-        let candidate = key.trimmed
-        guard !candidate.isEmpty, !checking else { return }
-        checking = true
-        Task {
-            defer { checking = false }
-            if let found = await SetupView.checkOpenRouterKey(candidate) { problem = found; return }
-            KeyStore.setOpenRouterKey(candidate)
-            key = ""
-            saved = true
-            await Store.shared.recheckSetup()
-        }
     }
 }
 

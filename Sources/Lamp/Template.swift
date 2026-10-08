@@ -654,8 +654,11 @@ enum Template {
         /// Answers what the gateway would, with the provider directly.
         static func handle(_ path: String, _ body: [String: Any]) async throws -> [String: Any] {
             guard let keys, let key = keys["openrouter"] as? String else {
-                throw LampAI.Failure(message: "Couldn't reach Lamp, and this phone has no key of its own yet. Open the app once while Lamp is reachable.")
+                throw LampAI.Failure(message: "Couldn't reach Lamp, and this phone has no key of its own yet. Open the app once while Lamp is reachable.",
+                                     needsSetup: .text)
             }
+            // What the phone carries answers all three.
+            if path == "/ai/status" { return ["text": true, "decisions": true, "pictures": true] }
             fputs("LampAI \(path): Lamp isn't reachable, using the key kept on this phone\n", stderr)
             switch path {
             case "/ai":
@@ -805,8 +808,11 @@ enum Template {
         }
 
         private static func decide(_ body: [String: Any], keys: [String: Any]) async throws -> [String: Any] {
-            let key = keys["openrouter"] as? String ?? ""
-            var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/systemone")!)
+            // Jev answers the same request through OpenRouter or TypeSafe; Lamp sends the TypeSafe key only
+            // when decisions away from the Mac go there.
+            let typesafe = keys["decision_provider"] as? String == "typesafe" ? keys["typesafe"] as? String : nil
+            let key = typesafe ?? keys["openrouter"] as? String ?? ""
+            var request = URLRequest(url: URL(string: typesafe == nil ? "https://openrouter.ai/api/v1/systemone" : "https://api.typesafe.ai/v1/systemone")!)
             request.httpMethod = "POST"
             request.timeoutInterval = 60
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
@@ -2527,10 +2533,25 @@ enum Template {
     ///
     /// Text calls take a few seconds; decisions well under a second; image calls 10–60 seconds. Show a ProgressView, and show
     /// `error.localizedDescription` on failure. Aspect ratios look like "1:1", "16:9", "3:4".
+    ///
+    /// Not every Mac has every kind of AI set up. `await LampAI.isAvailable(.pictures)` (or `.text`, `.decisions`) says
+    /// whether it can answer now: check it where a feature depends on it, and show the feature with a short note
+    /// ("Pictures need AI set up in Lamp") rather than hiding it or failing at it. A call that fails for that reason has
+    /// `needsSetup` set on its `LampAI.Failure`, and Lamp offers the person a way to set it up.
     enum LampAI {
         struct Failure: LocalizedError {
             let message: String
+            /// What isn't set up, when that's why the call failed.
+            var needsSetup: Capability? = nil
             var errorDescription: String? { message }
+        }
+
+        enum Capability: String { case text, decisions, pictures }
+
+        /// Whether this kind of AI can answer now. False when Lamp can't be reached and the phone has no key.
+        static func isAvailable(_ capability: Capability) async -> Bool {
+            guard let reply = try? await post("/ai/status", [:], timeout: 10) else { return false }
+            return reply[capability.rawValue] as? Bool ?? false
         }
 
         /// `data` is text from outside the app (an email, a web page, a file) for the AI to work on, not obey.
@@ -2953,7 +2974,7 @@ enum Template {
                     if (response as? HTTPURLResponse)?.statusCode == 200 { return reply }
                     let message = reply["error"] as? String ?? "The AI request failed."
                     fputs("LampAI \(path) failed: \(message)\n", stderr)
-                    throw Failure(message: message)
+                    throw Failure(message: message, needsSetup: (reply["needs"] as? String).flatMap(Capability.init(rawValue:)))
                 } catch let error as URLError where error.code == .cannotConnectToHost && attempt == 0 {
                     // Lamp isn't running: start it in the background, then retry once. (A phone can't start
                     // it; the simulator app just waits a moment in case Lamp is coming up.)

@@ -464,9 +464,7 @@ extension Sharing {
         if truncated { review.concerns.append("This app is too large for Lamp to check all of its code.") }
         // No AI to ask is an ordinary state for someone who was only sent an app, not a failure: the same
         // words whether nothing can answer at all or the route apps use is OpenRouter without a key.
-        var ready = AppAI.canAnswer
-        if ready, !Provider.hasKey, case .openRouter = await AppAI.model.kind { ready = false }
-        guard ready else {
+        guard await AppAI.resolve(.text).tier != .none else {
             review.note = aiNotSetUp
             return review
         }

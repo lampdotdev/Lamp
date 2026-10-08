@@ -12,17 +12,18 @@ the output of each is read by its own parser there (`parseClaude`, `parseCodex`,
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
-  entry there, an `execute` in the extension, and a `case` in `Store.mcp`.
+  entry there, an `execute` in the extension, its name in pi's `--tools` list (`Agent.tools`) and Claude Code's
+  allowed tools (`Agent.run`), and a `case` in `Store.mcp`.
   Codex has no file tools of its own, so the endpoint also gives it `read`, `ls`, `find` and `grep`
   (`FileTools`, listed when the URL carries `files=1`): they mirror pi's built-in ones, and each call is
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **What Lamp remembers** (`Memory`): two short sets of notes, about the person (`about-you.md` in the
   support folder) and about each app (`.lamp/notes.md`), each with a one-line summary. They must cost the
@@ -52,6 +53,20 @@ A capability given to one engine must be given to all of them that can take it, 
   bundled llama-server; `decideLocally` does what the model's serving shim does: one forward pass per
   question, probabilities read off the label tokens at the "Answer:" slot), or by text through what answers
   apps (`decideByText`). A decision model is never offered for text or building (`LocalModels.isDecisionModel`).
+- **What answers apps, and offering better** (`Sources/Lamp/Capabilities.swift`): `AppAI.resolve(capability,
+  for: app, in: .mac | .phoneAway)` is the one answer to "what answers text / decisions / pictures for this
+  app, how well (`Resolution.Tier`: none, works, best), and what would make it better (`Upgrade`: a key, a
+  download, a sign-in)". Settings → Providers' overview and badges, the notes under Settings → Apps' and an
+  app's pickers, the sharing review, the keys a phone takes away (`keysForPhone`) and the agent's status line
+  all read it; don't work any of that out again elsewhere. A failure for want of setup carries
+  `AppAI.Failure.needs`; the gateway passes it to the app (`LampAI.Failure.needsSetup`, and
+  `LampAI.isAvailable` asks `/ai/status`) and offers a setup card in the app's chat (`Store.offerSetup`,
+  `SetupCard`, once per app and capability; "Not Now" keeps Lamp's own offers away from every app). The
+  agent is told what the app has at the end of a request (`AIStatus.brief`, beside `Memory.brief` and sent
+  the same way: once per conversation and when it changes) and raises the same card with `offer_setup`.
+  Before adding a capability, a way to make one better, or a new offer, read `design/setup-card/README.md`:
+  when an offer is worth making, how the card and Settings rows are built, and how to write their copy (for
+  someone who has never heard of a key or a model, never naming providers, routes or APIs).
 - **Using other apps** (`ComputerUse`): two drivers behind one `ComputerUse.Job`. When the ChatGPT app has
   its Computer Use plugin installed, Lamp drives that (`CodexComputerUse`: the `cua_repl` MCP server from
   `~/.codex/plugins/cache/openai-bundled/unified-computer-use/<newest>/.mcp.json`, one `js` tool in which the
