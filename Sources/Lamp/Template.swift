@@ -17,7 +17,8 @@ enum Template {
         let exe = identifier(from: name)
         let slug = freeSlug(for: exe, in: root)
         let project = LampProject(id: slug, name: name.isEmpty ? exe : name, exe: exe,
-                                   dir: root.appendingPathComponent(slug), untitled: untitled, platform: platform, family: family)
+                                   dir: root.appendingPathComponent(slug), instance: UUID().uuidString,
+                                   untitled: untitled, platform: platform, family: family)
         try FileManager.default.createDirectory(at: project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
         try saveMeta(project)
         return project
@@ -37,7 +38,7 @@ enum Template {
     static func saveMeta(_ project: LampProject) throws {
         try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
                                              platform: project.platform, family: project.platform == .iphone ? project.family : nil,
-                                             device: project.device))
+                                             device: project.device, instance: project.instance.isEmpty ? nil : project.instance))
             .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
     }
 
