@@ -61,9 +61,25 @@ final class SimulatorDriverTests: XCTestCase {
     func testStillConnectingIsNotMistakenForAnAppThatIsNotOpen() {
         let connecting = Trouble.connecting.message(viewer: "Device Hub", device: "iPhone")
         XCTAssertTrue(connecting.contains("still connecting"))
-        XCTAssertTrue(connecting.contains("Try again"))
+        XCTAssertTrue(connecting.contains("Try again once"))
+        XCTAssertTrue(connecting.contains("click another device in Device Hub's list"))
         XCTAssertTrue(Trouble.notOpen.message(viewer: "Device Hub", device: "iPhone").contains("isn't open"))
         XCTAssertTrue(Trouble.notListed.message(viewer: "Device Hub", device: "iPhone").contains("list of devices"))
+    }
+
+    func testTheSameScreenListedTwiceIsOnePlaceAndTwoPlacesAreRefused() {
+        // Device Hub (Xcode 27.0) holds the screen twice, with one frame.
+        let screen = CGRect(x: 750, y: 226, width: 187, height: 407)
+        XCTAssertEqual(Simulator.Driver.places([screen, screen]), 1)
+        XCTAssertEqual(Simulator.Driver.places([screen, screen.offsetBy(dx: 300, dy: 0)]), 2)
+        XCTAssertEqual(Simulator.Driver.places([screen, screen.insetBy(dx: 20, dy: 43.5)]), 2)
+    }
+
+    func testARowsOwnActionsAreReadByTheNameAPersonSees() {
+        // As Device Hub (Xcode 27.0) lists a row's swipe action beside the standard ones.
+        XCTAssertEqual(Simulator.Driver.actionName("Name:Delete\nTarget:0x0\nSelector:(null)"), "Delete")
+        XCTAssertNil(Simulator.Driver.actionName("AXPress"))
+        XCTAssertNil(Simulator.Driver.actionName("AXScrollDownByPage"))
     }
 
     func testTheScreenIsTakenByItsShapeAtAnyZoom() {

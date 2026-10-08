@@ -18,6 +18,7 @@ final class SimulatorLiveTests: XCTestCase {
         print(String(format: "LIVE found in %.2f s", Date().timeIntervalSince(began)))
         guard case .success(let screen) = found else {
             if case .failure(let trouble) = found { print("LIVE trouble \(trouble): " + trouble.message(viewer: Simulator.viewerName(), device: "iPhone")) }
+            print(String(format: "LIVE done in %.2f s", Date().timeIntervalSince(began)))
             return
         }
         print("LIVE screen \(screen.rect) zoom \(screen.zoom) in \(screen.viewer)")

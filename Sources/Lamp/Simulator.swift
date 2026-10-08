@@ -138,7 +138,8 @@ extension Simulator {
     /// the Mac shows the iPhone's whole accessibility tree through the Mac's accessibility system, so Lamp
     /// finds what's under a point, taps it, fills in fields and reads what things are, the same way the Mac
     /// apps' own driver does inside them. Gestures (swipes, scrolls) are real mouse events sent to the
-    /// Simulator. The same tree, read whole, is the screen as text that follows every look and use
+    /// Simulator; Device Hub passes none of those on, so there they are the actions the iPhone's own
+    /// elements offer, and what has no such action is refused with the reason. The same tree, read whole, is the screen as text that follows every look and use
     /// (`screenText`). This needs Lamp to be allowed to control the computer (System Settings → Privacy &
     /// Security → Accessibility); the first use asks.
     ///
@@ -216,14 +217,16 @@ extension Simulator {
                 case .noDevice:
                     "Lamp couldn't ask the \(device) simulator about its screen, so nothing was tapped. Call look_at_app, which opens the app again, then try again."
                 case .notListed:
-                    "\(viewer) is open but this \(device) isn't in its list of devices, so Lamp can't bring up its screen. Nothing was tapped. " +
-                        "Call look_at_app and try again; if it's the same, tell the user in plain words that \(viewer) isn't showing their \(device)."
+                    "\(viewer) is open but this \(device) simulator isn't in its list of devices (it lists the ones added to it, not every one running), " +
+                        "so Lamp can't bring up its screen. Nothing was tapped. Tell the user in plain words that the \(device) simulator " +
+                        "needs adding to \(viewer) with the + button above its list, and try again once they say it's there."
                 case .noWindow:
                     "\(viewer) is open but has no window showing this \(device). Nothing was tapped. " +
                         "Call look_at_app and try again; if it's the same, tell the user in plain words that \(viewer) isn't showing their \(device)."
                 case .connecting:
                     "\(viewer) has this \(device) up but is still connecting to its screen, so there's nothing to tap yet. Nothing was tapped. " +
-                        "Try again; if it's still connecting after two more tries, tell the user in plain words that \(viewer) is stuck connecting to the \(device)."
+                        "Try again once; if it's the same, \(viewer) has lost the \(device)'s screen (it does after the simulator restarts): tell the user " +
+                        "in plain words to click another device in \(viewer)'s list and then the \(device) again, and try again once they have."
                 case .unclear:
                     "Lamp found more than one thing in \(viewer)'s window that could be the \(device)'s screen, and won't guess which. Nothing was tapped. " +
                         "Go by the picture from look_at_app, and tell the user in plain words that you could look at the app but not use it this time."
@@ -285,9 +288,15 @@ extension Simulator {
             let app = AXUIElementCreateApplication(pid)
             // Each window is titled "<device> – <runtime>", which is the whole identity it shows: the one
             // window with exactly this device's title, and none when two devices share it.
-            guard let title = deviceTitle(udid) else { return .failure(.noDevice) }
+            guard let expected = deviceTitle(udid) else { return .failure(.noDevice) }
+            // Device Hub writes an iPad's system as iPadOS where simctl says iOS, and there the device is
+            // chosen by its identifier anyway: its window has only to carry the device's name.
+            let name = expected.components(separatedBy: " – ")[0] + " – "
             func titled() -> [AXUIElement] {
-                (attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? []).filter { attribute($0, kAXTitleAttribute) as? String == title }
+                (attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? []).filter {
+                    guard let title = attribute($0, kAXTitleAttribute) as? String else { return false }
+                    return oneAtATime ? title.hasPrefix(name) : title == expected
+                }
             }
             var windows = titled()
             // Device Hub has one window for whichever device is chosen in its list: choose this one. Always
@@ -311,17 +320,18 @@ extension Simulator {
             guard !notAnswering else { return .failure(.notAnswering) }
             guard let window = windows.first else { return .failure(.noWindow) }
             guard windows.count == 1 else { return .failure(.unclear) }
+            let title = attribute(window, kAXTitleAttribute) as? String ?? expected
             let points = CGSize(width: width / scale, height: height / scale)
             // The screen arrives after the window does: Device Hub says it's connecting the display first.
-            var boxes = screenBoxes(in: window, shaped: points)
+            var boxes = screenBoxes(in: window, shaped: points, marked: oneAtATime)
             for _ in 0..<40 where boxes.isEmpty && !notAnswering {
                 try? await Task.sleep(for: .milliseconds(200))
-                boxes = screenBoxes(in: window, shaped: points)
+                boxes = screenBoxes(in: window, shaped: points, marked: oneAtATime)
             }
             guard !notAnswering else { return .failure(.notAnswering) }
             guard let box = boxes.first else { return .failure(.connecting) }
-            // Shape is all that marks the screen, so two things with it are one too many to tap on.
-            guard boxes.count == 1 else { return .failure(.unclear) }
+            // The same screen can be in the tree twice, in one place; two places is one too many to tap on.
+            guard Self.places(boxes.map(\.rect)) == 1 else { return .failure(.unclear) }
             return .success(Screen(app: app, window: window, box: box.element, rect: box.rect, udid: udid, owner: owner, scale: scale,
                                    zoom: box.rect.width / points.width, pid: pid, title: title, oneAtATime: oneAtATime))
         }
@@ -353,19 +363,34 @@ extension Simulator {
             rect.width > 50 && rect.height > 50 && abs(rect.width / rect.height - points.width / points.height) < 0.02
         }
 
-        /// Everything in the window that could be the device's screen: a group shaped like it. Nothing in
-        /// either app names the screen, so shape is what there is, and the caller takes it only when it is
-        /// the one such thing. Simulator has it at the top of its window and Device Hub a few layers down, so
-        /// the window is searched; not inside a match, where the app's own full-screen views have the same
-        /// shape.
-        private static func screenBoxes(in window: AXUIElement, shaped points: CGSize) -> [(element: AXUIElement, rect: CGRect)] {
+        /// How many different places a list of candidates for the screen are in. The tree can hold the one
+        /// screen more than once, each time with the same frame.
+        nonisolated static func places(_ rects: [CGRect]) -> Int {
+            rects.reduce(into: [CGRect]()) { seen, rect in
+                if !seen.contains(where: { abs($0.minX - rect.minX) < 1 && abs($0.minY - rect.minY) < 1 && abs($0.width - rect.width) < 1 && abs($0.height - rect.height) < 1 }) { seen.append(rect) }
+            }.count
+        }
+
+        /// What Device Hub calls the group holding a device's screen (its accessibility subrole). Apple
+        /// doesn't document it; it is what there is beyond shape, and when it goes the screen isn't found
+        /// and `use_app` says so, rather than something else of the right shape being tapped.
+        nonisolated static var screenMark: String { "iOSContentGroup" }
+
+        /// Everything in the window that could be the device's screen: a group shaped like it, and in
+        /// Device Hub (`marked`) also marked as a device's content. Simulator has it at the top of its window
+        /// and Device Hub a few layers down, so the window is searched; not inside a match, where the app's
+        /// own full-screen views have the same shape.
+        private static func screenBoxes(in window: AXUIElement, shaped points: CGSize, marked: Bool) -> [(element: AXUIElement, rect: CGRect)] {
             var matches: [(element: AXUIElement, rect: CGRect)] = []
+            let limit = Date().addingTimeInterval(readLimit)
             func visit(_ element: AXUIElement, depth: Int) {
-                for child in children(element) {
+                for child in children(element) where Date() < limit {
                     let rect = frame(of: child)
-                    if attribute(child, kAXRoleAttribute) as? String == kAXGroupRole, isShaped(rect, like: points) {
+                    let shaped = attribute(child, kAXRoleAttribute) as? String == kAXGroupRole && isShaped(rect, like: points)
+                    if shaped, !marked || attribute(child, kAXSubroleAttribute) as? String == screenMark {
                         matches.append((child, rect))
                     } else if depth < 8, rect.width > 50, rect.height > 50 {
+                        // Device Hub wraps the marked group in an unmarked one of the same shape: looked into.
                         visit(child, depth: depth + 1)
                     }
                 }
@@ -475,15 +500,21 @@ extension Simulator {
                 lastFields[screen.owner] = isTextInput(element) ? element : nil
                 let name = describe(element) + (element == hit ? "" : " (the nearest thing to tap; the point itself was \(describe(hit)))")
                 if action.action == "right_click" {
+                    guard !screen.oneAtATime else {
+                        return "long press at \(at): not done (it was aimed at \(name)). Device Hub doesn't pass a held finger on to the device. " +
+                            "Check what a long press should do some other way, or say to the user that you couldn't try it."
+                    }
                     // A long press: the finger held down, which opens context menus and the like.
                     mouse(.leftMouseDown, at: point, pid: screen.pid)
                     try? await Task.sleep(for: .milliseconds(800))
                     mouse(.leftMouseUp, at: point, pid: screen.pid)   // the finger comes up whatever happened meanwhile
                     return "long press at \(at): \(name)"
                 }
-                var pressed = press(element)
-                if !pressed, !notAnswering {   // not everything takes a press through accessibility: a real tap then
-                    mouse(.leftMouseDown, at: point, pid: screen.pid); mouse(.leftMouseUp, at: point, pid: screen.pid); pressed = true
+                let pressed = press(element)
+                if !pressed {
+                    // Not everything takes a press through accessibility: a real tap then, where one arrives.
+                    guard !screen.oneAtATime, !notAnswering else { return "\(action.action) at \(at): \(name) didn't take the tap" }
+                    mouse(.leftMouseDown, at: point, pid: screen.pid); mouse(.leftMouseUp, at: point, pid: screen.pid)
                 }
                 if action.action == "double_click" {
                     try? await Task.sleep(for: .milliseconds(80))
@@ -506,6 +537,25 @@ extension Simulator {
                 guard key == "return" || key == "enter" || key == "escape" || key == "esc" else {
                     return "key \(action.key ?? ""): an iPhone has no such key; tap, type, scroll or swipe instead"
                 }
+                if screen.oneAtATime {
+                    // Device Hub passes keys on only once a person has clicked in the device, so return is
+                    // the keyboard's own key on the iPhone's screen, and escape has no such key.
+                    guard key.hasPrefix("ret") || key == "enter" else {
+                        return "key escape: not done. An iPhone has no escape key and Device Hub doesn't pass one on; tap the button that cancels or closes instead."
+                    }
+                    // The keyboard slides up a moment after the field is tapped.
+                    var returnKey = returnKey(in: screen)
+                    for _ in 0..<6 where returnKey == nil && !notAnswering {
+                        try? await Task.sleep(for: .milliseconds(250))
+                        returnKey = self.returnKey(in: screen)
+                    }
+                    guard await live() else { return "stopped before pressing return" }
+                    guard let returnKey else {
+                        return "key return: not done. The on-screen keyboard isn't showing, or has no return key Lamp knows. Tap a text field first; " +
+                            "if it still doesn't show (it hides once a real keyboard has been used in Device Hub), tap the app's own button for this instead."
+                    }
+                    return press(returnKey) ? "pressed return (the keyboard's \(describe(returnKey)))" : "key return: the keyboard's key didn't take the press"
+                }
                 // Keys reach the simulated iPhone only while the Simulator is the active app.
                 NSRunningApplication(processIdentifier: screen.pid)?.activate()
                 try? await Task.sleep(for: .milliseconds(300))
@@ -516,10 +566,33 @@ extension Simulator {
                 return "pressed \(key.hasPrefix("ret") || key == "enter" ? "return" : "escape")"
             case "scroll":
                 let amount = action.amount ?? 300
+                if screen.oneAtATime {
+                    return page(down: amount >= 0, at: point, in: screen) ? "scrolled \(amount >= 0 ? "down" : "up") a page at \(at) (Device Hub scrolls a page at a time)"
+                        : "scroll at \(at): nothing there scrolls \(amount >= 0 ? "down" : "up")"
+                }
                 swipe(from: point, by: CGVector(dx: 0, dy: -amount * screen.zoom), pid: screen.pid)
                 return "scrolled \(amount >= 0 ? "down" : "up") at \(at)"
             case "swipe":
                 let direction = action.direction ?? "left"
+                if screen.oneAtATime {
+                    // Device Hub doesn't pass a dragged finger on. What a swipe is for is still there: a row's
+                    // swipe actions are the row's own actions by name, and a swipe up or down is a scroll.
+                    if let item = action.item {
+                        guard let hit = element(at: point, in: screen) else { return "swipe at \(at): nothing there" }
+                        for element in [hit] + ancestors(of: hit) {
+                            guard let named = actionNames(element).first(where: { Self.actionName($0)?.caseInsensitiveCompare(item) == .orderedSame }) else { continue }
+                            let done = call { AXUIElementPerformAction(element, named as CFString) } == .success
+                            return done ? "swiped \(direction) at \(at) and tapped \"\(item)\" (\(describe(element))'s own action)" : "swipe at \(at): \"\(item)\" didn't take the tap"
+                        }
+                        return "swipe at \(at): \(describe(hit)) has no swipe action called \"\(item)\""
+                    }
+                    if direction == "up" || direction == "down" {
+                        return page(down: direction == "up", at: point, in: screen) ? "swiped \(direction) at \(at) (a page: Device Hub scrolls a page at a time)"
+                            : "swipe \(direction) at \(at): nothing there scrolls that way"
+                    }
+                    return "swipe \(direction) at \(at): not done. Device Hub doesn't pass a sideways swipe on to the device. " +
+                        "For a row's swipe action, give its name in item; otherwise tap a control that does the same, or say to the user that you couldn't try it."
+                }
                 let distance = 220.0 * screen.zoom
                 let delta: CGVector = switch direction {
                 case "left": CGVector(dx: -distance, dy: 0)
@@ -527,12 +600,14 @@ extension Simulator {
                 case "up": CGVector(dx: 0, dy: -distance)
                 default: CGVector(dx: 0, dy: distance)
                 }
+                // A button of that name already there (the keyboard has a "delete") isn't what the swipe uncovers.
+                let already = action.item.map { buttons(named: $0, in: screen).map(frame) } ?? []
                 swipe(from: point, by: delta, pid: screen.pid)
                 if let item = action.item {
                     try? await Task.sleep(for: .milliseconds(500))
                     guard await live() else { return "swiped \(direction) at \(at), then stopped before tapping \"\(item)\"" }
                     // What the swipe uncovered (a row's actions, say): tap the one named.
-                    if let button = button(named: item, in: screen) {
+                    if let button = buttons(named: item, in: screen).first(where: { !already.contains(frame(of: $0)) }) {
                         _ = press(button)
                         return "swiped \(direction) at \(at) and tapped \"\(item)\""
                     }
@@ -619,7 +694,7 @@ extension Simulator {
         }
 
         /// The longest a whole screen may take to read or search. Usually a fifth of a second.
-        nonisolated static var readLimit: TimeInterval { 4 }
+        nonisolated static var readLimit: TimeInterval { 6 }
 
         /// What a thing is called and what it holds. Plain text keeps its words in its value, so they are
         /// its name; a control's value is its state (a switch on, a field's contents), and stays that even
@@ -765,8 +840,8 @@ extension Simulator {
             return isTextInput(element) ? element : nil
         }
 
-        private static func button(named name: String, in screen: Screen) -> AXUIElement? {
-            interactiveElements(in: screen).first { element in
+        private static func buttons(named name: String, in screen: Screen) -> [AXUIElement] {
+            interactiveElements(in: screen).filter { element in
                 let role = attribute(element, kAXRoleAttribute) as? String ?? ""
                 guard role == kAXButtonRole || role == kAXMenuItemRole else { return false }
                 let label = attribute(element, kAXDescriptionAttribute) as? String ?? attribute(element, kAXTitleAttribute) as? String ?? ""
@@ -803,6 +878,60 @@ extension Simulator {
             var value: CFTypeRef?
             _ = call { AXUIElementCopyAttributeValue(element, name as CFString, &value) }
             return value
+        }
+
+        /// What an element offers to do, as it names them: the standard actions, and an iPhone row's own
+        /// (its swipe actions), which come as "Name:Delete" with two more lines after.
+        private static func actionNames(_ element: AXUIElement) -> [String] {
+            var names: CFArray?
+            _ = call { AXUIElementCopyActionNames(element, &names) }
+            return names as? [String] ?? []
+        }
+
+        /// The name a person sees for one of an element's own actions, nil for a standard one.
+        nonisolated static func actionName(_ action: String) -> String? {
+            guard action.hasPrefix("Name:") else { return nil }
+            return action.dropFirst(5).split(separator: "\n").first.map { String($0).trimmed }
+        }
+
+        /// What an element sits in, nearest first, as far as the window.
+        private static func ancestors(of element: AXUIElement) -> [AXUIElement] {
+            var found: [AXUIElement] = []
+            var current = element
+            while found.count < 12, let parent = attribute(current, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() {
+                let parent = parent as! AXUIElement
+                if attribute(parent, kAXRoleAttribute) as? String == kAXWindowRole { break }
+                found.append(parent)
+                current = parent
+            }
+            return found
+        }
+
+        /// Scrolls whatever is under the point, or what it sits in, by a page: the scrolling the iPhone's
+        /// own elements offer. False when nothing there scrolls that way.
+        private static func page(down: Bool, at point: CGPoint, in screen: Screen) -> Bool {
+            guard let hit = element(at: point, in: screen) else { return false }
+            let wanted = down ? "AXScrollDownByPage" : "AXScrollUpByPage"
+            for element in [hit] + ancestors(of: hit) where actionNames(element).contains(wanted) {
+                return call { AXUIElementPerformAction(element, wanted as CFString) } == .success
+            }
+            return false
+        }
+
+        /// What the iPhone's keyboard calls its return key, by what the field is for.
+        nonisolated static var returnKeyNames: Set<String> {
+            ["return", "go", "search", "send", "done", "next", "join", "route", "continue", "google", "yahoo", "emergency call"]
+        }
+
+        /// The return key of the iPhone's keyboard when it's up. The keyboard is there when its space bar
+        /// is, and the key is found by its name: it sits beside the space bar on an iPhone and a row up on
+        /// an iPad.
+        private static func returnKey(in screen: Screen) -> AXUIElement? {
+            func name(_ key: AXUIElement) -> String { (attribute(key, kAXDescriptionAttribute) as? String ?? "").lowercased() }
+            let keys = interactiveElements(in: screen).filter { attribute($0, kAXRoleAttribute) as? String == kAXButtonRole }
+            guard let space = keys.first(where: { name($0) == "space" }) else { return nil }
+            let bar = frame(of: space)
+            return keys.filter { returnKeyNames.contains(name($0)) && frame(of: $0).midX > bar.maxX }.max(by: { frame(of: $0).midY < frame(of: $1).midY })
         }
 
         private static func press(_ element: AXUIElement) -> Bool {
