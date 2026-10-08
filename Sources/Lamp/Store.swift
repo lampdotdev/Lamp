@@ -235,8 +235,10 @@ final class Store: ObservableObject {
     /// What a command does and how risky it is, in plain words for people who don't read shell commands.
     struct CommandExplanation {
         let summary: String
-        let risk: String     // "low", "medium" or "high"
+        let risk: String     // "low", "medium" or "high"; empty when nothing rated it
         let why: String
+        /// Nothing could describe the command: the card says so and shows the command itself.
+        var unexplained = false
     }
     @Published var approvals: [String: PendingApproval] = [:]   // project id → the command waiting
     private var approving: Set<String> = []                       // project ids between the queue check and the card
@@ -1913,9 +1915,10 @@ final class Store: ObservableObject {
         // check already flagged it: that model reads the command as text, and a command can be written to
         // talk it round.
         var given = given
+        var asked = false   // the in-app model was asked to describe it, and that's its answer or none
         if shell, title == nil, flagged == nil, CommandApproval.current == .risky {
             note("Checking a command", for: project)
-            if given == nil { given = await explain(command, for: project, sandboxed: sandboxed) }
+            if given == nil { given = await explain(command, for: project, sandboxed: sandboxed); asked = true }
             guard turn.agent != nil else { return false }
             if let explanation = given, explanation.risk == "low" {
                 log(project, .status, "Ran: \(command)")
@@ -1926,14 +1929,15 @@ final class Store: ObservableObject {
         NSApp.requestUserAttention(.informationalRequest)
         note(title == nil ? "Waiting for your OK to run a command" : "Waiting for your OK", for: project)
         return await withCheckedContinuation { continuation in
-            var pending = PendingApproval(command: command, answer: continuation, explanation: given?.raised(for: flagged))
+            // Asked already and nothing came back: the card says so rather than wait for an answer that isn't coming.
+            var pending = PendingApproval(command: command, answer: continuation,
+                                          explanation: given?.raised(for: flagged) ?? (asked ? .unexplained(flagged: flagged) : nil))
             if let title { pending.title = title }
             approvals[project.id] = pending
-            // Explain it while the card is up; the card shows the raw command until (and if) this arrives.
-            if given == nil { Task {
-                if let explanation = await explain(command, for: project, sandboxed: sandboxed), approvals[project.id]?.id == pending.id {
-                    approvals[project.id]?.explanation = explanation.raised(for: flagged)
-                }
+            // Explain it while the card is up; until this arrives the card says it's working it out.
+            if given == nil, !asked { Task {
+                let explanation = await explain(command, for: project, sandboxed: sandboxed)?.raised(for: flagged) ?? .unexplained(flagged: flagged)
+                if approvals[project.id]?.id == pending.id { approvals[project.id]?.explanation = explanation }
             } }
         }
     }

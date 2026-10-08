@@ -238,6 +238,14 @@ enum CommandRisk {
 }
 
 extension Store.CommandExplanation {
+    /// The card when nothing could describe the command (no model set up, or it didn't answer): it says so
+    /// and the command is shown, since that's all there is to decide on. When a check flagged the command,
+    /// that reason and level still stand; otherwise there's no level to give.
+    static func unexplained(flagged reason: CommandRisk.Reason?) -> Store.CommandExplanation {
+        Store.CommandExplanation(summary: "Lamp couldn't work out what this does.", risk: reason?.risk ?? "",
+                                 why: reason?.why ?? "Read the command before you allow it.", unexplained: true)
+    }
+
     /// The card for a command a check flagged never calls it low risk: when the text model does, the card
     /// gives the check's own reason instead, which is why Lamp is asking.
     func raised(for reason: CommandRisk.Reason?) -> Store.CommandExplanation {
