@@ -13,13 +13,16 @@ final class ChatFollow {
     /// too small to count, so that a slow scroll in steps of half a point adds up to one.
     private var place: CGFloat?
 
+    /// Which way the scroll view went. `.neither` is a move up still too small to count, or none at all.
+    enum Move { case up, down, neither }
+
     /// The scroll view moved: `y` is how far down the chat it is, `fromEnd` how far the end is below what's
     /// in view.
     func moved(to y: CGFloat, fromEnd: CGFloat) {
         guard let from = place else { return place = y }
-        let movedUp = y < from - 0.5
-        if movedUp || y > from { place = y }
-        atEnd = Self.following(was: atEnd, movedUp: movedUp, fromEnd: fromEnd)
+        let move: Move = y < from - 0.5 ? .up : y > from ? .down : .neither
+        if move != .neither { place = y }
+        atEnd = Self.following(was: atEnd, move: move, fromEnd: fromEnd)
     }
 
     /// The scroll view is another one, or the same one somewhere new: where it was says nothing now.
@@ -27,10 +30,14 @@ final class ChatFollow {
 
     /// What a move of the scroll view makes of it. Any move up that leaves the end stops the following,
     /// however small: a reply written quickly would otherwise pull back each small step of a scroll before
-    /// the next. New words or lines arriving don't move the scroll view, so they never stop it.
-    static func following(was: Bool, movedUp: Bool, fromEnd: CGFloat) -> Bool {
-        if movedUp { return fromEnd <= 1 }
-        return was || fromEnd <= slack
+    /// the next. Only a move down that ends near the end starts it again, so the small steps of a slow
+    /// scroll up can't. New words or lines arriving don't move the scroll view, so they never stop it.
+    static func following(was: Bool, move: Move, fromEnd: CGFloat) -> Bool {
+        switch move {
+        case .up: return fromEnd <= 1
+        case .down: return was || fromEnd <= slack
+        case .neither: return was || fromEnd <= 1
+        }
     }
 }
 
