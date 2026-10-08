@@ -272,6 +272,8 @@ struct LogRow: View, Equatable {
     var isLatestRequest = false
     @State private var hovered = false
     @State private var expandedDetail = false
+    @State private var shownDetailHeight: CGFloat = 0
+    @State private var fullDetailHeight: CGFloat = 0
 
     static func == (a: LogRow, b: LogRow) -> Bool {
         a.line == b.line && a.busy == b.busy && a.dir == b.dir
@@ -369,9 +371,21 @@ struct LogRow: View, Equatable {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .lineLimit(expandedDetail ? nil : 12)
-                Button(expandedDetail ? "Show Less" : "Show Full Output") { expandedDetail.toggle() }
-                    .buttonStyle(.link)
-                    .font(.caption)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { shownDetailHeight = $0 }
+                    // The same text with no limit, unseen, says how tall it would be in full: the button to
+                    // show the rest appears only when there is a rest.
+                    .background {
+                        Text(line.text)
+                            .font(.caption.monospaced())
+                            .fixedSize(horizontal: false, vertical: true)
+                            .hidden()
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullDetailHeight = $0 }
+                    }
+                if expandedDetail || fullDetailHeight > shownDetailHeight + 1 {
+                    Button(expandedDetail ? "Show Less" : "Show Full Output") { expandedDetail.toggle() }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                }
             }
         case .needsKey:
             KeyCard(reason: line.text, dir: dir)
