@@ -5,7 +5,12 @@ import Base from "../layouts/Base.astro";
 import Carousel from "../components/Carousel.astro";
 import DownloadButton from "../components/DownloadButton.astro";
 import QuickLook from "../components/QuickLook.astro";
-import { sentences, together } from "../lib/text";
+import Bento, { type Point } from "../components/Bento.astro";
+import { together } from "../lib/text";
+import MakesTheCall from "../components/visuals/MakesTheCall.astro";
+import DrawsOnDemand from "../components/visuals/DrawsOnDemand.astro";
+import MakesSense from "../components/visuals/MakesSense.astro";
+import FindsTheWords from "../components/visuals/FindsTheWords.astro";
 import UsesYourMac from "../components/visuals/UsesYourMac.astro";
 import BeautifulByDefault from "../components/visuals/BeautifulByDefault.astro";
 import WorksWithYourMac from "../components/visuals/WorksWithYourMac.astro";
@@ -89,13 +94,40 @@ const shelf = [
   "mine-4", "neon-bricks", "mine-10", "meal-planner", "mine-9", "mine-5", "reading-queue",
 ].flatMap((name) => icons[`../assets/icons/${name}.png`] ?? []);
 
-// The rest of the features as a bento box on ten columns, rows split 6/4, 5/5, 4/6, telling a story: what you
-// get (row one), what it can do (row two, the two dark tiles), and living with it (row three). Each tile has a
-// strong colour of its own, close to the app icons', with dark or white words, whichever reads on it.
-// A tile with a `visual` shows that illustration across its top, running off its edges, with the words
-// beneath; with `below`, the words come first and the illustration sits at the bottom, for variety. With
-// `centre`, an illustration that doesn't run off the tile's edges sits in the middle of the room above the words.
-const points: { title: string; text: string; tile: string; visual?: (props: object) => unknown; below?: boolean; centre?: boolean }[] = [
+// AI as part of what an app does, not only how Lamp builds it: four things it can do inside an app, in two rows
+// split 6/4 and 4/6. Judgment leads, as it's the one people don't expect; drawing beside it for the games and
+// the stories. No providers, models or technical words here: which AI answers is the section further down.
+const smarts: Point[] = [
+  {
+    title: "Makes the call.",
+    text: "Quick judgments, all day long. Which app is slowing your Mac down, and the setting that fixes it.",
+    tile: "bento:col-span-6 bg-linear-to-b from-indigo-from to-indigo-to text-white",
+    visual: MakesTheCall,
+  },
+  {
+    title: "Draws on demand.",
+    text: "Pictures for a bedtime story, characters for a game, art for anything.",
+    tile: "bento:col-span-4 bg-linear-to-b from-coral-from to-coral-to text-white",
+    visual: DrawsOnDemand,
+  },
+  {
+    title: "Makes sense of anything.",
+    text: "Sums up the long thread, explains the small print, finds what matters in a pile of PDFs.",
+    tile: "bento:col-span-4 bg-linear-to-b from-teal-from to-teal-to text-white",
+    visual: MakesSense,
+  },
+  {
+    title: "Finds the words.",
+    text: "Drafts the reply, names the thing, makes it friendlier.",
+    tile: "bento:col-span-6 bg-linear-to-br from-butter-from to-butter-to",
+    visual: FindsTheWords,
+  },
+];
+
+// The rest of the features as a bento box, rows split 6/4, 5/5, 4/6, telling a story: what you get (row one),
+// what it can do (row two, the two dark tiles), and living with it (row three). Each tile has a strong colour of
+// its own, close to the app icons'.
+const points: Point[] = [
   {
     title: "Gorgeous by default.",
     text: "Native controls, proper menus and shortcuts, and an icon of its own. Feels made-in-Cupertino, never made-by-AI.",
@@ -237,49 +269,43 @@ const description = `${pitch} ${noCode}`;
     </section>
 
     <section class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-      <div class="grid gap-4 bento:grid-cols-10">
-        <div class="overflow-hidden rounded-[28px] bg-panel pt-12 text-center bento:col-span-10 sm:pt-16">
-          <h3 class="px-8 font-display text-3xl font-bold tracking-tight sm:text-5xl">Real apps. Really&nbsp;yours.</h3>
-          <p class="mx-auto mt-4 max-w-[50rem] px-8 text-xl leading-[1.4] text-muted">
-            {together("In your Applications folder, in your Dock and on your Home Screen.")}<br />{together("No browser tab, no subscription, no server to worry about.")}
-          </p>
-          <div aria-hidden="true" class="mt-8 pb-10 sm:mt-10 sm:pb-12">
-            <div class="relative left-1/2 flex w-max -translate-x-1/2 gap-4 sm:gap-6">
-              {
-                shelf.map((icon) => (
-                  <Image
-                    src={icon}
-                    alt=""
-                    width={136}
-                    height={136}
-                    densities={[1, 2]}
-                    class="size-24 drop-shadow-[0_12px_18px_rgba(0,0,0,0.14)] sm:size-34"
-                  />
-                ))
-              }
-            </div>
-          </div>
-        </div>
-        {
-          points.map((point) => (
-            <div class:list={["flex min-h-56 flex-col overflow-hidden rounded-[28px]", point.below ? "justify-between" : "justify-end", point.tile]}>
-              {point.visual && !point.below && (point.centre ? <div class="flex flex-1 flex-col justify-center"><point.visual /></div> : <point.visual />)}
-              <div class:list={["p-8 sm:p-10", point.below && "pb-2 sm:pb-4"]}>
-                <h3 class="font-display text-2xl font-bold tracking-tight sm:text-3xl">
-                  {sentences(point.title).map((sentence, index, all) => (
-                    <>{index > 0 && " "}<span class:list={[all.length > 1 && "whitespace-nowrap"]}>{sentence}</span></>
-                  ))}
-                </h3>
-                <p class="mt-3 text-xl leading-[1.4] opacity-85">{point.text.split("\n").map((line, index) => <>{index > 0 && <br />}{together(line)}</>)}</p>
-              </div>
-              {point.visual && point.below && <point.visual />}
-            </div>
-          ))
-        }
-      </div>
+      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Apps with AI&nbsp;inside.</h2>
+      <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
+        {together("AI doesn't just build your apps.")}<br />{together("It can be part of what they do.")}
+      </p>
+      <div class="mt-10"><Bento points={smarts} /></div>
     </section>
 
     <section class="bg-panel">
+      <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
+      <Bento points={points}>
+          <div class="overflow-hidden rounded-[28px] bg-page pt-12 text-center bento:col-span-10 sm:pt-16">
+            <h3 class="px-8 font-display text-3xl font-bold tracking-tight sm:text-5xl">Real apps. Really&nbsp;yours.</h3>
+            <p class="mx-auto mt-4 max-w-[50rem] px-8 text-xl leading-[1.4] text-muted">
+              {together("In your Applications folder, in your Dock and on your Home Screen.")}<br />{together("No browser tab, no subscription, no server to worry about.")}
+            </p>
+            <div aria-hidden="true" class="mt-8 pb-10 sm:mt-10 sm:pb-12">
+              <div class="relative left-1/2 flex w-max -translate-x-1/2 gap-4 sm:gap-6">
+                {
+                  shelf.map((icon) => (
+                    <Image
+                      src={icon}
+                      alt=""
+                      width={136}
+                      height={136}
+                      densities={[1, 2]}
+                      class="size-24 drop-shadow-[0_12px_18px_rgba(0,0,0,0.14)] sm:size-34"
+                    />
+                  ))
+                }
+              </div>
+            </div>
+          </div>
+      </Bento>
+      </div>
+    </section>
+
+    <section>
       <div class="mx-auto max-w-6xl px-4 py-20 text-center sm:px-6 sm:py-24">
       <h2 class="font-display text-4xl font-bold tracking-tight sm:text-5xl">Use the AI you already&nbsp;have.</h2>
       <p class="mx-auto mt-4 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">
@@ -308,10 +334,12 @@ const description = `${pitch} ${noCode}`;
       </div>
     </section>
 
-    <section class="mx-auto max-w-6xl px-4 py-24 text-center sm:px-6 sm:py-28">
+    <section class="bg-panel">
+      <div class="mx-auto max-w-6xl px-4 py-24 text-center sm:px-6 sm:py-28">
       <Image src={icon} alt="" width={96} height={96} densities={[1, 2]} class="mx-auto size-24 drop-shadow-[0_12px_24px_rgba(217,122,6,0.25)]" />
       <h2 class="mt-6 font-display text-4xl font-bold tracking-tight sm:text-5xl">Let your genie out.</h2>
       <div class="mt-9"><DownloadButton /></div>
+      </div>
     </section>
   </main>
 
