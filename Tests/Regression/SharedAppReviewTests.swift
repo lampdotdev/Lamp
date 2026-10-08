@@ -89,13 +89,17 @@ final class SharedAppReviewTests: XCTestCase {
                        .init(name: "Sonnet via Claude Code", onThisMac: false))
     }
 
-    func testEveryModelLampListsHasAPlainName() {
+    func testListedModelsAreNamedPlainlyAndLabelledAsThePickersShowThem() {
         XCTAssertEqual(Provider.modelName(Provider.defaultModel), "Claude Opus")
         XCTAssertEqual(Provider.modelName("anthropic/claude-haiku-4.5"), "Claude Haiku")
-        for id in Provider.models.map(\.id) + AppAI.anthropicModels.map(\.openRouter) {
-            let name = Provider.modelName(id)
-            XCTAssertFalse(name.isEmpty || name.contains("(") || name.contains("/"), "\(id): \(name)")
-        }
+        XCTAssertEqual(Provider.modelName("example/some-model"), "example/some-model")
+        // What the pickers show, word for word.
+        XCTAssertEqual(Provider.models.map(\.label),
+                       ["Smartest, priciest (Claude Fable)", "Best at coding (Claude Opus)", "Faster & cheaper (Claude Sonnet)"])
+        XCTAssertEqual(AppAI.anthropicModels.map(\.label),
+                       ["Smartest, priciest (Claude Fable)", "Best at coding (Claude Opus)", "Faster & cheaper (Claude Sonnet)",
+                        "Fastest, cheapest (Claude Haiku)"])
+        XCTAssertEqual(Provider.models.map(\.id), Provider.models.map(\.openRouter))
     }
 
     // MARK: The answer's shape

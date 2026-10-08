@@ -1133,14 +1133,11 @@ struct AppInfoView: View {
 
     private var buildModel: String {
         let id = Builder.piModel
-        return Builder.piProvider == "openrouter" ? label(Provider.models, id) : id
+        return Builder.piProvider == "openrouter" ? Provider.models.first { $0.id == id }?.label ?? id : id
     }
 
     private func dollars(_ amount: Double) -> String { String(format: "$%.2f", amount) }
     private func runs(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
-    private func label(_ models: [(id: String, label: String)], _ id: String) -> String {
-        models.first { $0.id == id }?.label ?? id
-    }
 }
 
 /// While Apple's tools install, above everything: what's happening, and that requests wait for it.

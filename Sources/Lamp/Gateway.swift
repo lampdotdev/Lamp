@@ -188,11 +188,11 @@ enum AppAI {
 
     /// The models OpenRouter offers for apps; Sonnet is the default among them (Haiku is cheaper but
     /// noticeably worse, so it's only used when someone picks it).
-    static let anthropicModels: [(id: String, label: String, openRouter: String)] = [
-        ("claude-fable-5-1", "Smartest, priciest (Claude Fable)", "anthropic/claude-fable-5.1"),
-        ("opus", "Best at coding (Claude Opus)", "anthropic/claude-opus-5.5"),
-        ("sonnet", "Faster & cheaper (Claude Sonnet)", "anthropic/claude-sonnet-5.5"),
-        ("haiku", "Fastest, cheapest (Claude Haiku)", "anthropic/claude-haiku-4.5"),
+    static let anthropicModels: [Provider.ListedModel] = [
+        Provider.ListedModel(id: "claude-fable-5-1", name: "Claude Fable", blurb: "Smartest, priciest", openRouter: "anthropic/claude-fable-5.1"),
+        Provider.ListedModel(id: "opus", name: "Claude Opus", blurb: "Best at coding", openRouter: "anthropic/claude-opus-5.5"),
+        Provider.ListedModel(id: "sonnet", name: "Claude Sonnet", blurb: "Faster & cheaper", openRouter: "anthropic/claude-sonnet-5.5"),
+        Provider.ListedModel(id: "haiku", name: "Claude Haiku", blurb: "Fastest, cheapest", openRouter: "anthropic/claude-haiku-4.5"),
     ]
 
     /// Every route there is, whether or not it can answer right now; the pickers show the ones that can,
@@ -285,7 +285,7 @@ enum AppAI {
 
     /// The OpenRouter model an app on the person's phone uses away from the Mac, where only OpenRouter can
     /// answer: Settings' choice, else the chosen route's own model when that's through OpenRouter, else Sonnet.
-    @MainActor static var awayModel: (id: String, label: String, openRouter: String) {
+    @MainActor static var awayModel: Provider.ListedModel {
         let saved = UserDefaults.standard.string(forKey: "awayModel") ?? ""
         if let chosen = anthropicModels.first(where: { $0.id == saved }) { return chosen }
         if case .openRouter(let name) = model.kind, let same = anthropicModels.first(where: { $0.openRouter == name }) { return same }
@@ -293,7 +293,7 @@ enum AppAI {
     }
 
     /// The same for one app: its own choice (info panel), else Settings'.
-    @MainActor static func awayModel(for choice: String?) -> (id: String, label: String, openRouter: String) {
+    @MainActor static func awayModel(for choice: String?) -> Provider.ListedModel {
         anthropicModels.first { $0.id == choice } ?? awayModel
     }
 
