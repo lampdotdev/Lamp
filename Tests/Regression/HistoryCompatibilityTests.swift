@@ -97,13 +97,13 @@ final class HistoryCompatibilityTests: XCTestCase {
     func testAHistoryPushedSomewhere() async throws {
         // The branch is named here: the settings below are about it, and git's default name varies.
         let (project, root) = try await started(with: "git init -q -b main")
-        let pushed = try run("git init -q --bare ../../remote.git && git remote add origin ../../remote.git && git push -q -u origin HEAD 2>&1 && git config user.name Me && git config user.email me@example.com && git config push.default current && git config remote.origin.push refs/heads/main:refs/heads/published && git config branch.main.pushRemote origin && git config lfs.url https://example.com/me/coinflip.git/info/lfs && git config core.excludesFile ../../ignored-everywhere && echo '*.log' > ../../ignored-everywhere",
+        let pushed = try run("git init -q --bare -b main ../../remote.git && git remote add origin ../../remote.git && git push -q -u origin HEAD 2>&1 && git config user.name Me && git config user.email me@example.com && git config push.default current && git config remote.origin.push refs/heads/main:refs/heads/published && git config branch.main.pushRemote origin && git config lfs.url https://example.com/me/coinflip.git/info/lfs && git config core.excludesFile ../../ignored-everywhere && echo '*.log' > ../../ignored-everywhere",
                              in: project.dir)
         XCTAssertEqual(pushed.status, 0, pushed.output)
         let before = try run("git config --local --list | sort", in: project.dir).output
         try await saveUndoAndGoBack(project, "pushed")
         XCTAssertEqual(try run("git config --local --list | sort", in: project.dir).output, before)
-        let again = try run("git push -q 2>&1 && git status -sb | head -1 && git -C ../../remote.git log --format=%s -1", in: project.dir)
+        let again = try run("git push -q 2>&1 && git status -sb | head -1 && git -C ../../remote.git log --format=%s -1 main", in: project.dir)
         XCTAssertEqual(again.status, 0, again.output)
         XCTAssertTrue(again.output.contains("origin/"), again.output)
         // The push went where this history says pushes go, not to the branch's own name.
