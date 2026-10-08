@@ -118,7 +118,8 @@ enum Versions {
     git config --file .git/config --name-only -z --list | while IFS= read -r -d '' key; do case "$key" in \
     extensions.objectformat|extensions.refstorage) ;; \
     extensions.*|filter.*|include.path|includeif.*|lfs.storage) exit 98 ;; esac; done
-    ! git config --file .git/config --type=bool --get-regexp '^remote\..*\.promisor$' 2>/dev/null | grep -q ' true$' || exit 98
+    git config --file .git/config -z --get-regexp '^remote\..*\.promisor$' | while IFS= read -r -d '' entry; do \
+    case "${${entry#*$'\n'}:l}" in false|no|off|0) ;; *) exit 98 ;; esac; done
     [ "$(git config --file .git/config --type=bool --get core.sparsecheckout 2>/dev/null)" != true ] || exit 98
     [ "$(stat -f %l .git/config)" = 1 ] || { fresh="$(mktemp .git/config.XXXXXXXX)" && cat .git/config > "$fresh" && mv -f "$fresh" .git/config; } || exit 99
     git config --file .git/config --name-only -z --list | sort -zu | while IFS= read -r -d '' key; do case "$key" in \

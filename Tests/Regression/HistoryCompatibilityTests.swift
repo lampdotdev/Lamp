@@ -177,6 +177,8 @@ final class HistoryCompatibilityTests: XCTestCase {
             ("a checkout of only part of the files, set up with git's own command", "mkdir -p Extra && echo x > Extra/x && git add -A && \(Versions.commit) -qm extra && git sparse-checkout init --cone && git sparse-checkout set Sources"),
             ("a partial clone as git writes one now", "git config remote.origin.url https://example.com/x.git && git config remote.origin.promisor true && git config remote.origin.partialclonefilter blob:none"),
             ("a filter brought in from another file of settings", "printf '[filter \"kept\"]\\n\\tclean = cat\\n\\tsmudge = cat\\n' > ../../more-settings && git config include.path ../../../more-settings"),
+            ("a partial clone beside a remote whose mark can't be read", "git config remote.first.promisor maybe && git config remote.origin.url https://example.com/x.git && git config remote.origin.promisor true"),
+            ("a partial clone marked without a value", "printf '[remote \"origin\"]\\n\\tpromisor\\n' >> .git/config"),
             ("large files kept in a place of its own", "git config lfs.storage ../../large-files"),
             ("a filter set up in this history", "git config filter.lfs.clean 'git-lfs clean -- %f' && git config filter.lfs.smudge 'git-lfs smudge -- %f' && git config filter.lfs.process 'git-lfs filter-process' && git config filter.lfs.required true"),
         ]
