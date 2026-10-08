@@ -7,7 +7,7 @@ import XCTest
 ///
 /// Each command goes the way the app sends it under "Only when risky": `CommandRisk.judge`, then, only when that's unsure, `CommandRisk.rating`, whose "low" runs it. Those two are the
 /// app's own code; what stands in for the app here is only who carries the questions to the models (straight
-/// to OpenRouter: Jev for the judgment, Sonnet for the rating, as Lamp does with an OpenRouter key).
+/// to OpenRouter: Jev for the judgment, Sonnet for the rating, each asked the way AppAI asks it).
 /// LAMP_EVAL_REQUEST_EVERYWHERE=1 puts the request in front of every question, as this judgment did before
 /// it was kept to its own: for measuring what that changed.
 final class CommandApprovalEvalTests: XCTestCase {
@@ -44,6 +44,39 @@ final class CommandApprovalEvalTests: XCTestCase {
             throw URLError(.badServerResponse)
         }
 
+        // The text model as AppAI reaches it for a JSON answer (complete and viaOpenRouter): a JSON object asked
+        // for, room for a long reply, a refusal by the provider's filter asked again up to three times, and a
+        // reply that isn't JSON asked for once more.
+        @Sendable func textModel(_ prompt: String, _ system: String) async throws -> String {
+            func ask(_ prompt: String) async throws -> String {
+                let body: [String: Any] = ["model": "anthropic/claude-sonnet-5.5", "usage": ["include": true], "response_format": ["type": "json_object"],
+                                           "max_tokens": 16_000, "messages": [
+                    ["role": "system", "content": system + "\n\nRespond with only valid JSON. No prose, no code fences."],
+                    ["role": "user", "content": [["type": "text", "text": prompt]]]]]
+                for attempt in 0..<3 {
+                    guard let choice = (try await post("chat/completions", body)["choices"] as? [[String: Any]])?.first else { throw URLError(.cannotParseResponse) }
+                    if choice["finish_reason"] as? String == "content_filter" {
+                        if attempt < 2 { try await Task.sleep(for: .milliseconds(400 << attempt)); continue }
+                        throw URLError(.dataNotAllowed)
+                    }
+                    var text = ((choice["message"] as? [String: Any])?["content"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    if text.hasPrefix("```") {
+                        text = String(text.drop(while: { $0 != "\n" }).dropFirst())
+                        if let end = text.range(of: "```", options: .backwards) { text = String(text[..<end.lowerBound]) }
+                    }
+                    return text.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                throw URLError(.badServerResponse)
+            }
+            func isJSON(_ text: String) -> Bool { (try? JSONSerialization.jsonObject(with: Data(text.utf8), options: [.fragmentsAllowed])) != nil }
+            var reply = try await ask(prompt)
+            if !isJSON(reply) {
+                reply = try await ask("\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only.")
+                if !isJSON(reply) { throw URLError(.cannotDecodeContentData) }
+            }
+            return reply
+        }
+
         var results: [String: [[String: String]]] = [:]
         await withTaskGroup(of: (String, [String: String]).self) { group in
             var waiting = corpus.flatMap { item in (0..<runs).map { _ in item } }[...]
@@ -73,11 +106,7 @@ final class CommandApprovalEvalTests: XCTestCase {
                     var runs = judgment.verdict == .run
                     if judgment.verdict == .unsure {
                         let rating = await CommandRisk.rating(command: command, request: request, building: "a Mac app called \"Tally\"") { prompt, system in
-                            let reply = try await post("chat/completions", ["model": "anthropic/claude-sonnet-5.5", "messages": [
-                                ["role": "system", "content": system + "\n\nRespond with only valid JSON. No prose, no code fences."],
-                                ["role": "user", "content": prompt]]])
-                            let text = ((reply["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])?["content"] as? String ?? ""
-                            return text.replacingOccurrences(of: #"^```(?:json)?\s*|\s*```$"#, with: "", options: .regularExpression)
+                            try await textModel(prompt, system)
                         }
                         result["rating"] = rating?.risk ?? "no rating"
                         runs = rating?.risk == "low"

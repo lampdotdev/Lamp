@@ -9,19 +9,22 @@ runs each. A safety gate that's a model has to be measured: run this when a ques
     # And for the commands whose only fault is where they reach (corpus.LINKS and the ones marked confined):
     LAMP_EVAL_CORPUS=/tmp/lamp-eval-corpus-links.json LAMP_EVAL_PROFILE=/tmp/lamp-eval.sb … swift test --filter CommandApprovalEvalTests
     python3 compare.py enforce /tmp/lamp-eval.sb   # runs each under the app's sandbox profile, in bash and zsh
-    # And the generated commands (corpus.generated: every place an app lives, every kind of request), judged
-    # twice by the Swift test, once with LAMP_EVAL_REQUEST_EVERYWHERE=1 and LAMP_EVAL_OUT naming where to write:
-    python3 compare.py generated before.json after.json
+    # The generated commands (corpus.generated: every place an app lives, every kind of request), main against
+    # this branch. The Swift test judges them for this branch, then:
+    LAMP_EVAL_CORPUS=/tmp/lamp-eval-corpus-generated.json … swift test --filter CommandApprovalEvalTests
+    python3 compare.py generated 5 > generated.md   # runs main's side, prints the table
+    python3 compare.py baseline                     # main's side here is main's: checked against its source
 
-The held-out commands (corpus.HELD_OUT) were never used to set a question or threshold: run the Swift test
-on their file too and read its `.after.json`; every must-ask there should be "risky" in every run.
+Each of these writes every run of every command to results/ (LAMP_EVAL_RESULTS), which is what the PR's
+tables are counted from.
 
 Where on disk a command reaches isn't judged on either side: every shell command runs confined to the app.
 `enforce` and refusals.py are the checks for that.
 
-Main's side is before.py: its one question and threshold, copied, and its rating. This branch's side is the
-app's own code all the way, run by the Swift test above: the judgment, and the in-app model's rating when
-the judgment is unsure.
+Main's side is before.py: its one question and bar, and its rating, ported (they're private to Store, so a
+test can't call them) and checked by `baseline`. This branch's side is the app's own code all the way, run
+by the Swift test above: the judgment, and the in-app model's rating when the judgment is unsure. Both
+sides reach the text model the way AppAI does.
 """
 import json, os, sys, collections, concurrent.futures as cf
 
@@ -106,9 +109,57 @@ def enforce(profile):
     print(f"\nConfined, {through} of {2 * len(links)} runs reached a file outside the app.")
     sys.exit(1 if through else 0)
 
-def generated_table(before_path, after_path):
-    """The generated commands, by group: with the request in front of every question (as it was) and kept to
-    its own question (as it is)."""
+RESULTS = os.environ.get("LAMP_EVAL_RESULTS", os.path.join(HERE, "results"))
+
+def save(name, data):
+    """Every run of every command, where a reader can open it: what the tables are counted from."""
+    os.makedirs(RESULTS, exist_ok=True)
+    json.dump(data, open(os.path.join(RESULTS, name), "w"), indent=0, sort_keys=True)
+
+def baseline():
+    import before
+    commit, pieces, missing = before.check_against_main()
+    print(f"main is {commit}: {pieces - len(missing)} of {pieces} pieces of before.py's question, bar and rating instructions are in its Store.swift word for word")
+    for piece in missing: print("  not found:", piece[:120])
+    sys.exit(1 if missing else 0)
+
+def generated_table(runs):
+    """The generated commands, by group: main's judgment (before.py, run here) against this branch's (the
+    Swift test's results). Who decided is counted too: the second model, or the decision model alone."""
+    import before
+    from corpus import generated
+    path = PATH.replace(".json", "-generated.json")
+    corpus = json.load(open(path)); head = json.load(open(path + ".after.json"))
+    def old(item):
+        try: return list(before.judge(item))
+        except Exception as e: return ["error", str(e)[:60]]
+    with cf.ThreadPoolExecutor(12) as pool:
+        flat = list(pool.map(old, [item for item in corpus for _ in range(runs)]))
+    main = {item["id"]: flat[n * runs:(n + 1) * runs] for n, item in enumerate(corpus)}
+    save("generated.json", {"main": main, "head": head})
+    groups = collections.OrderedDict()
+    for item in corpus:
+        row = groups.setdefault((item["expect"], item["group"]), collections.Counter())
+        for verdict, why in main[item["id"]]:
+            row["n"] += 1; row["main second"] += "rated" in why; row["main error"] += verdict == "error"
+            row["main wrong"] += (verdict != "run") if item["expect"] == "run" else (verdict == "run")
+        for one in head[item["id"]]:
+            row["head n"] += 1; row["head second"] += one["verdict"] == "unsure"
+            row["head wrong"] += (one["outcome"] != "run") if item["expect"] == "run" else (one["outcome"] == "run")
+    for expect, title, wrong, second in (("run", "Should run", "asked anyway", "waited on the second model"), ("ask", "Must ask", "ran without asking", "left to the second model")):
+        print(f"\n| {title} | {wrong}: main | this branch | {second}: main | this branch |\n| --- | --- | --- | --- | --- |")
+        total = collections.Counter()
+        for (kind, group), row in groups.items():
+            if kind != expect: continue
+            total.update(row)
+            print(f"| {group} | {row['main wrong']} of {row['n']} | {row['head wrong']} of {row['head n']} | {row['main second']} | {row['head second']} |")
+        print(f"| **all** | **{total['main wrong']} of {total['n']}** | **{total['head wrong']} of {total['head n']}** | **{total['main second']}** | **{total['head second']}** |")
+        if total["main error"]: print(f"\n{total['main error']} of main's runs failed to get an answer and are counted as asked.")
+
+def request_in_view_table(before_path, after_path):
+    """This branch's judgment twice over the generated commands: with the request in front of every question
+    (LAMP_EVAL_REQUEST_EVERYWHERE=1, as an earlier version of it had it) and kept to its own question. Not a
+    comparison with main."""
     from corpus import generated
     sides = [json.load(open(before_path)), json.load(open(after_path))]
     groups = collections.OrderedDict()
@@ -142,7 +193,7 @@ def table(runs):
         for n in counts: out.append(results[at:at + n]); at += n
         return out
     olds = cut(olds, [runs] * len(corpus)); news = cut(news, [len(after[item["id"]]) for item in corpus])
-    json.dump({item["id"]: {"before": o, "after": n} for item, o, n in zip(corpus, olds, news)}, open(PATH + ".results.json", "w"), indent=1)
+    save("picked.json", {"main": {item["id"]: o for item, o in zip(corpus, olds)}, "head": after})
 
     def ran(results): return sum(1 for verdict, _ in results if verdict == "run")
     def refused(item, side): return item["confined"]   # confined on both sides: main has the sandbox too
@@ -184,4 +235,5 @@ def table(runs):
 
 if __name__ == "__main__":
     {"prepare": prepare, "enforce": lambda: enforce(sys.argv[2]), "table": lambda: table(int(sys.argv[2])),
-     "generated": lambda: generated_table(sys.argv[2], sys.argv[3])}[sys.argv[1]]()
+     "generated": lambda: generated_table(int(sys.argv[2])), "baseline": baseline,
+     "request-in-view": lambda: request_in_view_table(sys.argv[2], sys.argv[3])}[sys.argv[1]]()

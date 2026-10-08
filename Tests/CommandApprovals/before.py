@@ -1,7 +1,12 @@
-"""origin/main's judgment of a command, copied from Store.commandLooksSafe and Store.explain as they are on
-main with the sandbox landed (0589e67 and after): the decision model's one yes/no at 0.85, asked as for a
-command about to run confined, then the in-app text model's risk rating, low runs. Nothing reads the
-command's words for paths there any more, so nothing does here."""
+"""origin/main's judgment of a command, ported from main because it can't be called from a test (it's two
+private methods of Store): Store.commandLooksSafe, the decision model's one yes/no at 0.85, asked as for a
+command about to run confined; then Store.explain, the in-app text model's rating, where "low" runs the
+command. The text model is reached the way AppAI.complete and viaOpenRouter reach it on main: a JSON
+object asked for, room for a long reply, a refusal by the provider's filter asked again up to three
+times, a reply that isn't JSON asked for once more, and a rating with no summary counted as no rating.
+
+`python3 compare.py baseline` checks the questions, the bar and the rating's instructions here against
+origin/main's source, word for word, and says which commit it read."""
 import json, os, urllib.request, time
 
 KEY = os.environ["OPENROUTER_API_KEY"]
@@ -21,9 +26,36 @@ def post(url, body, timeout=90):
 def decide(state, questions, model="jev-latest"):
     return post("https://openrouter.ai/api/v1/systemone", {"state": state, "model": model, "questions": questions})["answers"]
 
-def chat(system, prompt, model=TEXT_MODEL):
-    r = post("https://openrouter.ai/api/v1/chat/completions", {"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]})
-    return r["choices"][0]["message"]["content"]
+def text_model(system, prompt, model=TEXT_MODEL):
+    """AppAI.viaOpenRouter with json: true."""
+    body = {"model": model, "usage": {"include": True}, "response_format": {"type": "json_object"}, "max_tokens": 16000,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": [{"type": "text", "text": prompt}]}]}
+    for attempt in range(3):
+        choice = post("https://openrouter.ai/api/v1/chat/completions", body, timeout=120)["choices"][0]
+        if choice.get("finish_reason") == "content_filter":
+            if attempt < 2: time.sleep(0.4 * (1 << attempt)); continue
+            raise RuntimeError("content filter")
+        return choice["message"].get("content") or ""
+    raise RuntimeError("no answer")
+
+def strip_fences(text):
+    t = text.strip()
+    if t.startswith("```"):
+        t = t.split("\n", 1)[1] if "\n" in t else ""
+        if "```" in t: t = t[:t.rindex("```")]
+    return t.strip()
+
+def is_json(text):
+    try: json.loads(text); return True
+    except Exception: return False
+
+def complete(system, prompt):
+    """AppAI.complete with json: true: one more try when the reply isn't JSON, then it's a failure."""
+    reply = strip_fences(text_model(system, prompt))
+    if not is_json(reply):
+        reply = strip_fences(text_model(system, prompt + "\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."))
+        if not is_json(reply): raise RuntimeError("not JSON twice")
+    return reply
 
 def safe_question(asks=False):   # confined, where it reads isn't part of main's question
     return {"type": "noul",
@@ -44,16 +76,33 @@ low: only reads, or creates, edits or deletes files inside the app's own folder 
 Respond with only valid JSON. No prose, no code fences."""
 
 def explain(command, request):
-    text = (chat(EXPLAIN, f"The user's request: {request}\n\nThe command:\n{command}") or "").strip()
-    if text.startswith("```"): text = text.strip("`").split("\n", 1)[-1].rsplit("```", 1)[0]
-    try: return json.loads(text)
+    """Store.explain: None unless the reply is a JSON object with a summary; a risk that isn't low, medium or
+    high counts as medium."""
+    try: e = json.loads(complete(EXPLAIN, f"The user's request: {request}\n\nThe command:\n{command}"))
     except Exception: return None
+    if not isinstance(e, dict) or not isinstance(e.get("summary"), str) or not e["summary"].strip(): return None
+    risk = e["risk"].lower() if isinstance(e.get("risk"), str) else "medium"
+    return dict(e, risk=risk if risk in ("low", "medium", "high") else "medium")
 
 def rated_low(item):
-    """The second step of "Only when risky", the same on both sides: the in-app model's rating, low runs."""
-    try: e = explain(item["command"], item["request"])
-    except Exception: e = None   # no answer: Lamp shows the card
-    return bool(e) and str(e.get("risk", "")).lower() == "low", (e or {}).get("risk", "no rating")
+    e = explain(item["command"], item["request"])
+    return bool(e) and e["risk"] == "low", (e or {}).get("risk", "no rating")
+
+def check_against_main(ref="origin/main"):
+    """Every piece of the question, the bar and the rating's instructions above, found word for word in
+    main's Store.swift (Swift's line-continuation backslashes joined up)."""
+    import subprocess, re
+    commit = subprocess.run(["git", "rev-parse", "--short", ref], capture_output=True, text=True, check=True).stdout.strip()
+    swift = subprocess.run(["git", "show", f"{ref}:Sources/Lamp/Store.swift"], capture_output=True, text=True, check=True).stdout
+    swift = re.sub(r" \\\n\s*", " ", swift)
+    q = safe_question()
+    pieces = [q["instructions"], "probability >= 0.85", "let asks = Privacy.asksOutsideFolder && !sandboxed"]
+    pieces += [p for p in re.split(r"(?<=files)(?=; git status)|(?<=surprise: )|(?<=asked for it; )", q["criteria"]["true"] + "\u0000" + q["criteria"]["false"]) for p in p.split("\u0000") if p]
+    rating = EXPLAIN.replace('a Mac app called "Tally"', '\\(AppKind(project).phrase) called "\\(project.name)"').split("\n\nRespond with only valid JSON")[0]
+    pieces += [line.strip() for line in rating.split("\n") if line.strip()]
+    pieces += ['guard let (text, _) = try? await AppAI.complete(prompt: prompt, images: [], system: system, json: true)', 'let summary = (json["summary"] as? String)?.trimmed, !summary.isEmpty else { return nil }']
+    missing = [p for p in pieces if p not in swift]
+    return commit, len(pieces), missing
 
 def judge(item):
     """Returns (verdict, why). verdict: run | ask."""

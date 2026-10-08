@@ -1,0 +1,53 @@
+# Case 1: nothing can answer (no key; the stand-in agent's text model fails)
+(log printed in the session; summary: card for all three, allowed 1 and 3, denied 2; ls refused by macOS)
+
+# Case 2: decisions by text through OpenRouter (no Jev)
+{"requested":false,"running":false}
+case 2: decision model setting = text; keys present: ['openrouter']
+sent 1
+no card for command 1
+Lamp's answer after 6s: allow=True reason='Approved in Lamp.' handed back confined: True
+what it printed: 
+sent 2
+card for command 2: denied
+Lamp's answer after 14s: allow=False reason='The user denied this command in Lamp.' handed back confined: False
+sent 3
+no card for command 3
+Lamp's answer after 7s: allow=True reason='Approved in Lamp.' handed back confined: True
+what it printed: ls: /Users/admin/Documents: Operation not permitted 
+   user | Stand-in run: three commands sent to Lamp by hand (an edit, an install, a look outside the app).
+   status | Ran: sed -i '' 's/Text("Tally")/Text("Tally!")/' Sources/App.swift
+   detail | Denied: brew install ffmpeg
+   status | Ran: ls ~/Documents
+   summary | Worked for 41s · $0.00
+   status | Building…
+   status | Tally 2 is ready
+   user | Stand-in run: three commands sent to Lamp by hand (an edit, an install, a look outside the app).
+   status | Ran: sed -i '' 's/Text("Tally")/Text("Tally!")/' Sources/App.swift
+   detail | Denied: brew install ffmpeg
+   status | Ran: ls ~/Documents
+   edits applied to App.swift: 1
+CASE DONE
+
+# Case 3: Jev via TypeSafe chosen, made-up key, call fails
+{"requested":false,"running":false}
+case 3: decision model setting = typesafe:jev-latest; keys present: ['openrouter', 'typesafe']
+sent 1
+no card for command 1
+Lamp's answer after 2s: allow=True reason='Approved in Lamp.' handed back confined: True
+what it printed: 
+sent 2
+card for command 2: denied
+Lamp's answer after 13s: allow=False reason='The user denied this command in Lamp.' handed back confined: False
+sent 3
+card for command 3: allowed
+Lamp's answer after 15s: allow=True reason='Approved in Lamp.' handed back confined: True
+what it printed: ls: /Users/admin/Documents: Operation not permitted 
+   status | Designing an icon…
+   user | Stand-in run: three commands sent to Lamp by hand (an edit, an install, a look outside the app).
+   status | Ran: sed -i '' 's/Text("Tally")/Text("Tally!")/' Sources/App.swift
+   detail | Ran without asking (low risk): Changes the title text in the app's main source file from "Tally" to "Tally!".
+   detail | Denied: brew install ffmpeg
+   detail | Allowed: ls ~/Documents
+   edits applied to App.swift: 1
+CASE DONE
