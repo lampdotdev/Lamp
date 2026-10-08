@@ -965,6 +965,15 @@ final class Store: ObservableObject {
         let id: String
         let name: String
         var failed = false
+
+        /// What the welcome shows once app `id`'s build has ended: nothing if it opened, that it didn't
+        /// otherwise. A newer import may have taken the welcome's place meanwhile: then this result isn't its.
+        static func after(_ shown: ImportBuild?, finished id: String, opened: Bool) -> ImportBuild? {
+            guard var build = shown, build.id == id else { return shown }
+            guard !opened else { return nil }
+            build.failed = true
+            return build
+        }
     }
 
     struct PendingImport: Identifiable {
@@ -1082,9 +1091,7 @@ final class Store: ObservableObject {
             _ = await Shell.run("git init -q && git add -A && \(Self.commit) -qm 'Imported from a shared file'",
                                 cwd: project.dir) { _ in }
             let opened = await run(project)
-            // A newer import may have taken the welcome's place meanwhile: this one's result isn't its.
-            guard importBuild?.id == project.id else { return }
-            if opened { importBuild = nil } else { importBuild?.failed = true }
+            importBuild = ImportBuild.after(importBuild, finished: project.id, opened: opened)
         }
     }
 
@@ -2155,14 +2162,18 @@ final class Store: ObservableObject {
         return true
     }
 
-    /// False when the app didn't build or didn't stay open.
+    /// Whether the app is open afterwards.
     @discardableResult
     func run(_ project: LampProject) async -> Bool {
         guard begin(project) != nil else { return false }
         defer { finish(project) }
         guard let project = await materialize(project) else { return false }
         if await build(project) == nil {
-            return await installReportingCrash(project)
+            await installReportingCrash(project)
+            // A crash isn't the only way not to open (it may not install, or macOS may refuse to launch
+            // it), so what counts is that it's running.
+            refreshOpenApps()
+            return openApps.contains(project.id)
         } else {
             log(project, .error, ErrorMessages.appDoesNotBuild)
             return false
@@ -2691,13 +2702,10 @@ final class Store: ObservableObject {
     private var simulatorLeases: [String: String] = [:]
 
     /// For Open App and Undo, where no agent is running to fix a crash.
-    @discardableResult
-    private func installReportingCrash(_ project: LampProject) async -> Bool {
+    private func installReportingCrash(_ project: LampProject) async {
         if await install(project) != nil {
             log(project, .error, ErrorMessages.crashAfterLaunch(project.name))
-            return false
         }
-        return true
     }
 
     /// Puts the icon into the freshly built bundle, re-signs it, and swaps it into the apps folder.
