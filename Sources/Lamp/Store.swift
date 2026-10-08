@@ -659,9 +659,7 @@ final class Store: ObservableObject {
         clearPhoneRetry(project)
         var changed = project
         changed.device = udid
-        try? JSONEncoder().encode(ProjectMeta(name: changed.name, exe: changed.exe, untitled: changed.untitled ? true : nil,
-                                              platform: changed.platform, family: changed.family, device: udid))
-            .write(to: changed.dir.appendingPathComponent(".lamp/meta.json"))
+        try? Template.saveMeta(changed)
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
         updateLocalNetwork()
         let name = devices.first(where: { $0.udid == udid })?.name
@@ -733,9 +731,7 @@ final class Store: ObservableObject {
         guard project.platform == .iphone, project.family != family, begin(project) != nil else { return }
         var changed = project
         changed.family = family
-        try? JSONEncoder().encode(ProjectMeta(name: changed.name, exe: changed.exe, untitled: changed.untitled ? true : nil,
-                                              platform: changed.platform, family: family, device: changed.device))
-            .write(to: changed.dir.appendingPathComponent(".lamp/meta.json"))
+        try? Template.saveMeta(changed)
         // In the list straight away, so nothing that starts meanwhile sees the old choice; the app itself is
         // quit so its next open is a fresh launch on the other device.
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
@@ -818,7 +814,8 @@ final class Store: ObservableObject {
         let fm = FileManager.default
         let project: LampProject
         do {
-            project = try Template.scaffold(name: name, platform: old.platform, family: old.family, in: root)
+            // The same app under its new name: it keeps its identity, so a snapshot from before still finds it.
+            project = try Template.scaffold(name: name, platform: old.platform, family: old.family, instance: old.instance, in: root)
         } catch {
             NSAlert(error: error).runModal()
             return old
