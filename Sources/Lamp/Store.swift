@@ -344,6 +344,7 @@ final class Store: ObservableObject {
     private func becameReady() async {
         for project in projects where !(queued[project.id] ?? []).isEmpty { startQueued(project) }
         saveWaiting()
+        openWaitingImport()
         await backfillIcons()
     }
 
@@ -968,9 +969,12 @@ final class Store: ObservableObject {
     func importApp(from file: URL) {
         NSApp.activate()
         guard setup.ready else {
+            // Kept as a copy, since the file may be a temporary one (opened straight from Mail or Messages).
+            // The newest one wins, as below; an earlier copy is cleared out on the next launch.
+            UserDefaults.standard.set(keepForLater([file])[0].path, forKey: Self.waitingImportKey)
             let alert = NSAlert()
             alert.messageText = "Finish setting up Lamp first"
-            alert.informativeText = "Then open the shared app again."
+            alert.informativeText = "Lamp will open the shared app as soon as setup is done."
             alert.runModal()
             return
         }
@@ -998,6 +1002,16 @@ final class Store: ObservableObject {
     }
 
     private var importRequest: UUID?
+
+    /// A shared app opened before setup finished, kept on disk like the requests waiting for setup: its
+    /// review opens by itself once setup is done, in this run or the next.
+    private static let waitingImportKey = "waitingSharedApp"
+
+    private func openWaitingImport() {
+        guard let path = UserDefaults.standard.string(forKey: Self.waitingImportKey) else { return }
+        UserDefaults.standard.removeObject(forKey: Self.waitingImportKey)
+        if FileManager.default.fileExists(atPath: path) { importApp(from: URL(fileURLWithPath: path)) }
+    }
 
     func cancelImport() {
         importRequest = nil
@@ -1126,6 +1140,9 @@ final class Store: ObservableObject {
                     return QueuedMessage(text: message["text"] as? String ?? "", attachments: files.map(URL.init(fileURLWithPath:)))
                 }
             }
+        }
+        if let shared = UserDefaults.standard.string(forKey: Self.waitingImportKey) {
+            kept.insert(URL(fileURLWithPath: shared).deletingLastPathComponent().path)
         }
         let folders = (try? FileManager.default.contentsOfDirectory(at: waitingFiles, includingPropertiesForKeys: nil)) ?? []
         for folder in folders where !kept.contains(folder.path) { try? FileManager.default.removeItem(at: folder) }
