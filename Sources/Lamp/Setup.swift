@@ -256,8 +256,9 @@ struct SettingsView: View {
         TabView(selection: $tab) {
             BuildingSettings().tabItem { Label("Building", systemImage: "hammer") }.tag("building")
             AppsSettings().tabItem { Label("Apps", systemImage: "square.grid.2x2") }.tag("apps")
-            ProvidersSettings().tabItem { Label("Providers", systemImage: "cpu") }.tag("providers")
-            // Only while the experiment is on (Building → Experimental): off, there are no notes to show.
+            ProvidersSettings().tabItem { Label("AI Providers", systemImage: "cpu") }.tag("providers")
+            ExperimentalSettings().tabItem { Label("Experimental", systemImage: "flask") }.tag("experimental")
+            // Only while the experiment is on (Experimental): off, there are no notes to show.
             if memory {
                 MemorySettings().tabItem { Label("Memory", systemImage: "note.text") }.tag("memory")
             }
@@ -265,7 +266,7 @@ struct SettingsView: View {
         .frame(width: 560)
         .onAppear {
             if tab == "local" { tab = "providers" }   // Local Models is now Native Mac AI, under Providers
-            if !(["building", "apps", "providers"] + (memory ? ["memory"] : [])).contains(tab) { tab = "building" }
+            if !(["building", "apps", "providers", "experimental"] + (memory ? ["memory"] : [])).contains(tab) { tab = "building" }
         }
     }
 }
@@ -294,6 +295,78 @@ private struct SettingsPane: ViewModifier {
         }
         .scrollDisabled(height <= maxHeight)
         .frame(height: height == 0 ? nil : min(height, maxHeight))
+    }
+}
+
+/// A section's on/off options, as checkboxes with the box first, as Finder's settings have them: in a stack,
+/// so the form doesn't lay each out as a label with its switch at the far end.
+struct SettingsCheckboxes<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) { content }
+            .toggleStyle(.checkbox)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Where a choice can't be made or used as things are. The badge is the only orange: why, and the fix, go in
+/// gray in the row under it.
+struct NotReadyBadge: View {
+    var body: some View {
+        // Icon and word close together: a Label in a form row spaces them like a list item.
+        HStack(spacing: 4) { Image(systemName: "exclamationmark.circle.fill"); Text("Not Ready") }
+            .foregroundStyle(.orange)
+    }
+}
+
+/// A setting with nothing to choose from yet, in place of its menu: Not Ready where the menu would be.
+/// The row under it says why and offers the fix.
+struct NotReadyRow: View {
+    let title: String
+
+    var body: some View {
+        LabeledContent(title) { NotReadyBadge() }
+    }
+}
+
+/// Image generation, in Building (icon artwork) and Apps (apps' pictures): the models that can make pictures
+/// now, showing what's used when the saved one can't be; Codex's name when it draws with its own model; Not
+/// Ready, and how to get pictures, when nothing can.
+struct ImageModelRow: View {
+    @Binding var selection: String
+
+    var body: some View {
+        let images = Icons.usableChoices
+        let resolution = AppAI.resolve(.pictures)
+        if resolution.tier == .none {
+            NotReadyRow(title: "Image generation")
+            CapabilityNote(capability: .pictures)
+        } else if images.count > 1 {
+            Picker("Image generation", selection: Binding(get: { images.contains { $0.id == selection } ? selection : images[0].id },
+                                                          set: { selection = $0 })) {
+                ForEach(images, id: \.id) { Text($0.label).tag($0.id) }
+            }
+        } else {
+            // One model, or Codex drawing with its own: nothing to choose, so it's named.
+            LabeledContent("Image generation", value: images.first?.label ?? resolution.answer ?? "")
+        }
+    }
+}
+
+extension View {
+    /// Lined up with a checkbox's words: its note, or an option that's a part of it (shown only while it's on).
+    func underCheckbox() -> some View { padding(.leading, 20) }
+
+    /// A checkbox's note, under its words. Most options need none; one that does gets a sentence or two.
+    func checkboxNote(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            self
+            Text(text)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .underCheckbox()
+        }
     }
 }
 
@@ -347,8 +420,7 @@ struct BuildingSettings: View {
             switch readiness {
             case .ready: EmptyView()
             case .checking: ProgressView().controlSize(.small)
-            // Icon and word close together: a Label in a form row spaces them like a list item.
-            default: HStack(spacing: 4) { Image(systemName: "exclamationmark.circle.fill"); Text("Not Ready") }.foregroundStyle(.orange)
+            default: NotReadyBadge()
             }
         }
         .help(ToolLocator.path(for: selectedEngine).map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "")
@@ -372,7 +444,7 @@ struct BuildingSettings: View {
                 }
             }
         case .problem(let problem):
-            Text(problem).foregroundStyle(.orange).font(.callout)
+            Text(problem).foregroundStyle(.secondary).font(.callout)
         case .ready, .checking:
             EmptyView()
         }
@@ -396,7 +468,7 @@ struct BuildingSettings: View {
         signIns[engine] = await EngineSignIn.isSignedIn(engine) ?? true
     }
 
-    /// Providers added in Settings → Providers, plus the current one even if its key was removed.
+    /// Providers added in Settings → AI Providers, plus the current one even if its key was removed.
     private var addedProviders: [PiProvider] {
         _ = revision
         return Provider.apiProviders.filter { KeyStore.key(for: $0.id) != nil || $0.id == provider }
@@ -419,18 +491,19 @@ struct BuildingSettings: View {
     private var textChoices: [TextGroup] {
         _ = revision
         var groups: [TextGroup] = []
-        // The sign-ins, each model they offer; an uninstalled one is a single entry so it can still be picked
-        // and its fix shown.
+        // The sign-ins, each model they offer, once installed: AI Providers lists them either way, with the
+        // download, and Configure providers… goes there.
         if ToolLocator.path(for: .claude) != nil {
             // The tool's own default stays on offer, so the account's choice can be returned to.
-            groups.append(TextGroup(title: "Claude Code", items: Builder.claudeModels.map { TextChoice(id: "claude:\($0.id)", label: $0.label) }))
-        } else {
-            groups.append(TextGroup(title: "Claude Code", items: [TextChoice(id: "claude:", label: "Not installed")]))
+            groups.append(TextGroup(title: Engine.claude.title, items: Builder.claudeModels.map { TextChoice(id: "claude:\($0.id)", label: $0.label) }))
         }
         if ToolLocator.path(for: .codex) != nil {
-            groups.append(TextGroup(title: "Codex", items: Builder.codexModels.map { TextChoice(id: "codex:\($0.id)", label: $0.label) }))
-        } else {
-            groups.append(TextGroup(title: "Codex", items: [TextChoice(id: "codex:", label: "Not installed")]))
+            groups.append(TextGroup(title: Engine.codex.title, items: Builder.codexModels.map { TextChoice(id: "codex:\($0.id)", label: $0.label) }))
+        }
+        // Chosen and since uninstalled: kept, so the menu isn't blank beside Not Ready and its download.
+        if selectedEngine != .pi, ToolLocator.path(for: selectedEngine) == nil {
+            let id = "\(selectedEngine.rawValue):\(Builder.engineModel(selectedEngine))"
+            groups.append(TextGroup(title: selectedEngine.title, items: [TextChoice(id: id, label: "Not installed")]))
         }
         for api in addedProviders {
             var items: [TextChoice] = []
@@ -526,34 +599,27 @@ struct BuildingSettings: View {
                     }
                     if otherModel { ModelPicker(provider: provider, model: $model, revision: revision) }
                 }
-                Picker("Image generation", selection: Binding(get: { _ = revision; return Icons.iconModel }, set: { Icons.iconModel = $0; revision += 1 })) {
-                    ForEach(Icons.imageChoices, id: \.id) { Text($0.label).tag($0.id) }
-                }
-            }
-            Section {
+                let _ = revision
+                ImageModelRow(selection: Binding(get: { Icons.iconModel }, set: { Icons.iconModel = $0; revision += 1 }))
                 Picker("Ask before running commands", selection: approvalChoice) {
                     ForEach(CommandApproval.allCases) { Text($0.title).tag($0.rawValue) }
                 }
                 if (CommandApproval(rawValue: approval) ?? .risky).isAutomatic && CommandApproval.claudeAutoUnavailable && selectedEngine == .claude {
                     Text("Claude Code's auto mode isn't available for your account, so Lamp asks before every command.")
-                        .font(.caption).foregroundStyle(.orange)
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             Section("Permissions and Privacy") {
-                // One row of checkboxes, box first, as Finder's settings have them: in a stack, so the form
-                // doesn't lay each out as a label with its control at the far end.
-                VStack(alignment: .leading, spacing: 10) {
+                SettingsCheckboxes {
                     Toggle("Ask before the agent opens files outside an app's folder", isOn: $askOutsideFolder)
                     Toggle("Show the agent what an app prints while it runs", isOn: $shareLog)
                     Toggle("Let the agent see the content of app windows", isOn: $sharePictures)
                     Toggle("Notify me when an app is ready or needs me", isOn: $notify)
                 }
-                .toggleStyle(.checkbox)
-                .frame(maxWidth: .infinity, alignment: .leading)
                 if notify && notificationsDenied {
                     HStack {
                         Text("Notifications are turned off for Lamp in System Settings.")
-                            .font(.caption).foregroundStyle(.orange)
+                            .font(.caption).foregroundStyle(.secondary)
                         Spacer()
                         Button("Open System Settings") {
                             let id = Bundle.main.bundleIdentifier ?? ""
@@ -564,7 +630,6 @@ struct BuildingSettings: View {
                     }
                 }
             }
-            ExperimentalSettings()
         }
         .settingsPane()
         .onChange(of: notify) { Notifier.shared.setBadge(store.unread.count) }
@@ -587,11 +652,7 @@ struct BuildingSettings: View {
 /// The AI, images and decisions that apps use while they run.
 struct AppsSettings: View {
     @AppStorage("appModel") private var appModel = AppAI.defaultRoute.id
-    @AppStorage("awayModel") private var awayModel = ""
-    @AppStorage("awayImageModel") private var awayImageModel = ""
-    @AppStorage("awayDecisionModel") private var awayDecisionModel = ""
     @ObservedObject private var local = LocalModels.shared
-    @AppStorage("experimentIOSApps") private var iosApps = false
     @AppStorage("settingsTab") private var settingsTab = "building"
     @AppStorage("settingsSheet") private var settingsSheet = ""
     @AppStorage("imageModel") private var imageModel = Icons.artModels[0].id
@@ -600,81 +661,41 @@ struct AppsSettings: View {
 
     var body: some View {
         Form {
+            // Each menu lists only what can be used now, showing what apps actually get when the saved choice
+            // can't be (its key was removed, say). With one thing it's named, not a menu; with nothing, Not
+            // Ready stands in its place.
             Section("Models used in apps") {
-                Picker("Text generation", selection: Binding(get: { AppAI.canonicalRoute(appModel) }, set: { appModel = $0 })) {
-                    ForEach(AppAI.textRouteGroups(including: appModel), id: \.title) { group in
-                        Section(group.title) { ForEach(group.routes) { Text($0.name).tag($0.id) } }
-                    }
-                }
-                Picker("Image generation", selection: $imageModel) {
-                    ForEach(Icons.imageChoices, id: \.id) { Text($0.label).tag($0.id) }
-                }
                 let _ = revision   // re-read KeyStore after keys change
-                if AppAI.allTextRoutes.first(where: { $0.id == appModel })?.available == false {
-                    KeyNote(text: "That model needs an OpenRouter key. Until there is one, text inside apps goes through \(AppAI.defaultRoute.label.replacingOccurrences(of: "Your ", with: "your ")).")
-                }
-                if let maker = AppAI.imageRouteName {
-                    // A cloud model chosen with no key behind it isn't what makes the pictures: say what does, and why.
-                    if !Provider.hasKey, imageModel != Icons.localArt {
-                        KeyNote(text: "\(Icons.artModels.first { $0.id == imageModel }?.label ?? "That model") needs an OpenRouter key. Until there is one, pictures come from \(maker).")
-                    }
+                let textGroups = AppAI.textRouteGroups(including: nil)
+                if textGroups.isEmpty {
+                    NotReadyRow(title: "Text generation")
+                    CapabilityNote(capability: .text)
+                } else if textGroups.count == 1, let only = textGroups[0].routes.first, textGroups[0].routes.count == 1 {
+                    LabeledContent("Text generation", value: only.label)
                 } else {
-                    KeyNote(text: "Pictures need an OpenRouter key or a picture model on this Mac: a \(Builder.engine == .pi ? "builder's" : Builder.engine.title) sign-in can't make them.")
-                }
-
-                Picker("Decision model", selection: $decisionModel) {
-                    ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }
-                }
-                let decisionChoice = AppAI.decisionModels.first { $0.id == decisionModel } ?? AppAI.decisionModel
-                switch decisionChoice.provider {
-                case "typesafe", "openai":
-                    if let provider = Provider.keyProvider(decisionChoice.provider), KeyStore.key(for: provider.id) == nil {
-                        KeyRow(provider: provider, label: "\(provider.name) key") { revision += 1 }
-                    }
-                case "local":
-                    if let spec = LocalModels.decisionCatalog.first, !local.isInstalled(spec) {
-                        if let progress = local.progress[spec.id] {
-                            ProgressView(value: progress) { Text("Downloading \(spec.name)…") }.font(.caption)
-                        } else {
-                            HStack(alignment: .top, spacing: 8) {
-                                Text("\(spec.name) isn't on this Mac yet (\(spec.sizeGB, specifier: "%.1f") GB). Until it is, decisions are made by \(AppAI.fastModelName).")
-                                    .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
-                                Spacer(minLength: 0)
-                                Button("Download") { local.download(spec) }.controlSize(.small)
-                            }
+                    Picker("Text generation", selection: Binding(get: { AppAI.route(for: appModel).id }, set: { appModel = $0 })) {
+                        ForEach(textGroups, id: \.title) { group in
+                            Section(group.title) { ForEach(group.routes) { Text($0.name).tag($0.id) } }
                         }
                     }
-                case "text":
-                    Text("A small text model (\(AppAI.fastModelName)) answers the questions as JSON: slower and less exact than a decision model, but needs nothing more.")
-                        .font(.caption).foregroundStyle(.secondary)
-                default:
-                    if KeyStore.openRouterKey == nil {
-                        KeyNote(text: AppAI.canAnswer
-                                ? "Needs an OpenRouter key. Until there is one, decisions are made by \(AppAI.fastModelName) instead: slower and less exact than Jev."
-                                : "Needs an OpenRouter key, or pick another.")
-                    }
                 }
-                Text("Fast, cheap typed judgments for apps: yes/no probabilities, picking from options, and rating on a scale, each with a calibrated confidence.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if iosApps {
-                // An app on the person's phone can only reach OpenRouter when it can't reach this Mac, so the
-                // choice here is among OpenRouter's models, and it's the one thing a phone needs a key for.
-                Section("iOS apps away from this Mac (through OpenRouter)") {
-                    Picker("Text generation", selection: Binding(get: { AppAI.awayModel.id }, set: { awayModel = $0 })) {
-                        ForEach(AppAI.anthropicModels, id: \.id) { Text($0.label).tag($0.id) }
-                    }
-                    Picker("Image generation", selection: Binding(get: { AppAI.awayImageModel }, set: { awayImageModel = $0 })) {
-                        ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
-                    }
-                    Picker("Decision model", selection: Binding(get: { AppAI.awayDecisionModel.id }, set: { awayDecisionModel = $0 })) {
-                        ForEach(AppAI.awayDecisionModels, id: \.id) { Text($0.label).tag($0.id) }
-                    }
-                    if Provider.hasKey {
-                        Text("When an app can't reach this Mac it goes to OpenRouter with your key. What it spends then isn't shown in Lamp.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")
+
+                ImageModelRow(selection: $imageModel)
+
+                let decisions = decisionChoices
+                if decisions.isEmpty {
+                    NotReadyRow(title: "Decision model")
+                    CapabilityNote(capability: .decisions)
+                } else if decisions.count == 1 {
+                    // decisionRoute falls back to the one that can answer, so naming it is naming what's used.
+                    LabeledContent("Decision model", value: decisions[0].label)
+                } else {
+                    // What AppAI.decide actually uses, which is the saved choice only when that can answer.
+                    Picker("Decision model", selection: Binding(get: {
+                        _ = decisionModel
+                        return AppAI.decisionRoute(for: nil)?.id ?? decisions[0].id
+                    }, set: { decisionModel = $0 })) {
+                        ForEach(decisions, id: \.id) { Text($0.label).tag($0.id) }
                     }
                 }
             }
@@ -682,6 +703,14 @@ struct AppsSettings: View {
         }
         .settingsPane()
         .onAppear { revision += 1 }   // keys may have changed in the Providers tab
+    }
+
+    /// The decision models that can answer now: those with their key, the one on this Mac once it's
+    /// downloaded, and the text model when something answers apps.
+    private var decisionChoices: [(id: String, label: String, provider: String, model: String)] {
+        _ = revision
+        _ = local.installed
+        return AppAI.decisionModels.filter { AppAI.canDecide(with: $0) }
     }
 }
 
@@ -691,53 +720,66 @@ struct ExperimentalSettings: View {
     @AppStorage("experimentIOSApps") private var iosApps = false
     @AppStorage(Memory.switchKey) private var memory = false
     @AppStorage("appleTeam") private var team = ""
-    @AppStorage("settingsTab") private var settingsTab = "building"
-    @AppStorage("settingsSheet") private var settingsSheet = ""
+    @AppStorage("awayModel") private var awayModel = ""
+    @AppStorage("awayImageModel") private var awayImageModel = ""
+    @AppStorage("awayDecisionModel") private var awayDecisionModel = ""
     @State private var teams: [(id: String, name: String)] = []
 
     var body: some View {
-        Section {
-            // A checkbox, as in Permissions and Privacy. Where an app opens (a simulator or the person's own
-            // phone) is chosen per app under Try On, so there's nothing more to switch here: just the team the
-            // phone builds are signed for.
-            VStack(alignment: .leading, spacing: 2) {
-                Toggle("Build iOS apps", isOn: $iosApps)
-                    .onChange(of: iosApps) { store.updateLocalNetwork() }
-                Text("Choose iPhone or iPad when you start a new app, then where it opens under Try On: a simulator on this Mac, or your own iPhone or iPad. Needs Xcode.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .padding(.leading, 20)
-            }
-            .toggleStyle(.checkbox)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            if iosApps {
-                Group {
-                    if teams.isEmpty {
-                        TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
-                    } else {
-                        Picker("Apple Team", selection: $team) {
-                            ForEach(teams, id: \.id) { Text("\($0.name) (\($0.id))").tag($0.id) }
-                            if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
-                        }
-                    }
-                    Text("For putting an app on your own iPhone or iPad: sign in to your Apple account in Xcode, plug the phone in, and Try On offers to pair it. What the app uses away from this Mac is chosen under Apps.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    if !Provider.hasKey {
-                        KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")
-                    }
-                    Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() }
+        Form {
+            Section {
+                // Build iOS apps comes last so its parts, which are form rows rather than checkboxes, sit right
+                // under it.
+                SettingsCheckboxes {
+                    Toggle("Remember how I like things", isOn: $memory)
+                    Toggle("Build iOS apps", isOn: $iosApps)
+                        .onChange(of: iosApps) { store.updateLocalNetwork() }
                 }
-                .padding(.leading, 20)
+                if iosApps {
+                    // Where an app opens (a simulator or the person's own phone) is chosen per app under Try On, so
+                    // what's here is for the phone: the team its builds are signed for, and what an app on it uses
+                    // when it can't reach this Mac. Then it can only reach OpenRouter, so these are OpenRouter's
+                    // models, and that's the one thing a phone needs a key for.
+                    Group {
+                        if teams.isEmpty {
+                            TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
+                        } else {
+                            Picker("Apple Team", selection: $team) {
+                                ForEach(teams, id: \.id) { Text("\($0.name) (\($0.id))").tag($0.id) }
+                                if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
+                            }
+                        }
+                        if Provider.hasKey {
+                            Picker("Text away from this Mac", selection: Binding(get: { AppAI.awayModel.id }, set: { awayModel = $0 })) {
+                                ForEach(AppAI.anthropicModels, id: \.id) { Text($0.label).tag($0.id) }
+                            }
+                            Picker("Images away from this Mac", selection: Binding(get: { AppAI.awayImageModel }, set: { awayImageModel = $0 })) {
+                                ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
+                            }
+                            // Only what a phone can carry the key for; a choice whose key is gone shows the text
+                            // route that stands in for it, as Store.keysForPhone does.
+                            let awayDecisions = AppAI.awayDecisionModels.filter { $0.provider == "text" || $0.provider == "openrouter" || KeyStore.key(for: $0.provider) != nil }
+                            Picker("Decisions away from this Mac", selection: Binding(get: {
+                                _ = awayDecisionModel
+                                let chosen = AppAI.awayDecisionModel.id
+                                return awayDecisions.contains { $0.id == chosen } ? chosen : awayDecisions.first { $0.provider == "text" }!.id
+                            }, set: { awayDecisionModel = $0 })) {
+                                ForEach(awayDecisions, id: \.id) { Text($0.label).tag($0.id) }
+                            }
+                        } else {
+                            CapabilityNote(capability: .text, context: .phoneAway)
+                        }
+                        Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() }
+                    }
+                    .underCheckbox()
+                }
+            } header: {
+                // Above the box, in a checkbox note's size and color rather than as a heading.
+                Text("Features the Lamp team is still working on. They may not be ready for prime time.")
+                    .font(.caption).fontWeight(.regular).foregroundStyle(.secondary)
             }
-            VStack(alignment: .leading, spacing: 2) {
-                Toggle("Remember how I like things", isOn: $memory)
-                Text(memory ? "Lamp keeps short notes on your taste and on what you decided about each app, whichever AI is building. See and change them under Memory, above."
-                     : "Lamp keeps short notes on your taste and on what you decided about each app, so a new app starts out in your style, whichever AI is building.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .padding(.leading, 20)
-            }
-            .toggleStyle(.checkbox)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } header: { Text("Experimental") }
+        }
+        .settingsPane()
         .task {
             teams = await Devices.knownTeams()
             // The account signed in to Xcode is the one that can sign, so its team is the first choice
@@ -760,36 +802,29 @@ struct ComputerUseSettings: View {
 
     var body: some View {
         Section("Permissions and Privacy") {
-            // Checkboxes with their descriptions under their words, as in Building's Permissions and Privacy;
-            // the choice of what does the clicking is a part of the first, so it's indented under it.
-            VStack(alignment: .leading, spacing: 4) {
+            // The choice of what does the clicking is a part of the first checkbox, so it's indented under it.
+            SettingsCheckboxes {
                 Toggle("Let apps use your other apps", isOn: Binding(get: { enabled }, set: { on in
                     if on { Task { await turnOn() } } else { enabled = false; problem = nil }
                 }))
                 .disabled(working != nil)
-                note("Lets your apps read and use your other apps, such as Slack, Mail, or Gmail and LinkedIn in your browser, with the accounts you're already signed in to. Apps ask before every click or keystroke.")
-                if CodexComputerUse.server != nil {
+                .checkboxNote("Lets your apps read and use your other apps, such as Slack, Mail, or Gmail and LinkedIn in your browser, with the accounts you're already signed in to. Apps ask before every click or keystroke."
+                              + (CodexComputerUse.server == nil ? " Turning it on adds CuaDriver (from Cua, open source) to Applications, and macOS asks you to allow it Accessibility and Screen Recording." : ""))
+                if enabled, CodexComputerUse.server != nil {
                     // The ChatGPT app's Computer Use is on this Mac: it does the looking and clicking, unless the
-                    // person would rather keep CuaDriver.
-                    VStack(alignment: .leading, spacing: 4) {
-                        Toggle("Use the ChatGPT app's Computer Use", isOn: Binding(get: { !codexOff }, set: { useCodex in
-                            codexOff = !useCodex
-                            // Back to CuaDriver while the feature is on: it has to be installed and allowed, like a first turn-on.
-                            Task { if enabled, !useCodex { await turnOn() } else { status = await ComputerUse.status() } }
-                        }))
-                        .disabled(working != nil)
-                        note(codexOff
-                             ? "CuaDriver (from Cua, open source) does the looking and clicking: turning the setting above on adds it to Applications, and macOS asks you to allow it Accessibility and Screen Recording."
-                             : "The ChatGPT app has Computer Use installed, so it does the looking and clicking, with the permissions you gave it there. It sends real clicks to the app in the background and reads its contents without moving your pointer. Turn it off to use CuaDriver instead.")
-                    }
-                    .padding(.top, 6)
-                    .padding(.leading, 20)
-                } else {
-                    note("Turning it on adds CuaDriver (from Cua, open source) to Applications, and macOS asks you to allow it Accessibility and Screen Recording. With the ChatGPT app and its Computer Use plugin installed, Lamp uses that instead.")
+                    // person would rather keep CuaDriver. A part of the first, so shown only while it's on.
+                    Toggle("Use the ChatGPT app's Computer Use", isOn: Binding(get: { !codexOff }, set: { useCodex in
+                        codexOff = !useCodex
+                        // Back to CuaDriver while the feature is on: it has to be installed and allowed, like a first turn-on.
+                        Task { if enabled, !useCodex { await turnOn() } else { status = await ComputerUse.status() } }
+                    }))
+                    .disabled(working != nil)
+                    .checkboxNote(codexOff
+                                  ? "CuaDriver (from Cua, open source) does the looking and clicking instead: macOS asks you to allow it Accessibility and Screen Recording."
+                                  : "It does the looking and clicking in the background, with the permissions you gave it there. Turn it off to use CuaDriver instead.")
+                    .underCheckbox()
                 }
             }
-            .toggleStyle(.checkbox)
-            .frame(maxWidth: .infinity, alignment: .leading)
             if let working {
                 HStack(spacing: 6) { ProgressView().controlSize(.small); Text(working).foregroundStyle(.secondary) }
                     .font(.callout)
@@ -799,18 +834,10 @@ struct ComputerUseSettings: View {
                 }
             }
             if let problem {
-                Text(problem).font(.caption).foregroundStyle(.orange)
+                Text(problem).font(.caption).foregroundStyle(.secondary)
             }
         }
         .task { status = await ComputerUse.status() }
-    }
-
-    /// A checkbox's description, lined up with its words.
-    private func note(_ text: String) -> some View {
-        Text(text)
-            .font(.caption).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.leading, 20)
     }
 
     private func turnOn() async {
@@ -845,13 +872,12 @@ struct ComputerUseSettings: View {
 }
 
 /// What's on this Mac (Native Mac AI, Ollama, LM Studio, and the Claude Code and Codex sign-ins), then the
-/// providers you've added a key for. Each row says what it's doing for Lamp right now. Double-click one to
-/// see its models, sign in, or change its key.
+/// providers you've added a key for, each with its state. Double-click one to see its models, sign in, or
+/// change its key.
 struct ProvidersSettings: View {
     @EnvironmentObject private var store: Store
     @ObservedObject private var local = LocalModels.shared
     @AppStorage("settingsSheet") private var pendingSheet = ""   // set by the setup screen
-    @AppStorage("appModel") private var appModel = ""            // read so the badges follow the picker
     @State private var selection: String?
     @State private var showing: ProviderDetail?
     @State private var removing: PiProvider?
@@ -868,53 +894,17 @@ struct ProvidersSettings: View {
         return Provider.keyProviders.filter { KeyStore.key(for: $0.id) == nil }
     }
 
-    /// On this Mac: Native Mac AI, Ollama and LM Studio (always there), and the coding agents when installed.
+    /// On this Mac: Native Mac AI, Ollama and LM Studio, and the coding agents, installed or not: this is
+    /// where Building's Configure providers… leads, so a missing one is listed with its download.
     private var onThisMac: [String] {
-        [Builder.localProvider] + LocalModels.externalIDs
-            + [Engine.claude, .codex].filter { ToolLocator.path(for: $0) != nil }.map { "engine:\($0.rawValue)" }
+        [Builder.localProvider] + LocalModels.externalIDs + [Engine.claude, .codex].map { "engine:\($0.rawValue)" }
     }
 
-    /// What each row is doing for Lamp right now, so the tab shows what's used for what.
-    private func jobs(_ id: String) -> [String] {
-        _ = revision
-        _ = appModel
-        var jobs: [String] = []
-        let builder = Builder.engine == .pi ? Builder.piProvider : "engine:\(Builder.engine.rawValue)"
-        if builder == id { jobs.append("Builds apps") }
-        let answers: String
-        switch AppAI.model.kind {
-        case .openRouter: answers = "openrouter"
-        case .engine(.pi, _): answers = Builder.piProvider
-        case .engine(let engine, _): answers = "engine:\(engine.rawValue)"
-        case .localModel(let provider, _): answers = provider
-        }
-        if answers == id { jobs.append("Answers apps") }
-        switch AppAI.imageRoute {
-        case .openRouter: if id == "openrouter" { jobs.append("Pictures") }
-        case .local: if id == Builder.localProvider { jobs.append("Pictures") }
-        case .codex: if id == "engine:codex" { jobs.append("Pictures") }
-        case nil: break
-        }
-        let decision = AppAI.decisionModel
-        let decides: String
-        switch decision.provider {
-        case "local": decides = AppAI.localDecisionModel() != nil ? Builder.localProvider : answers
-        case "text": decides = answers
-        default: decides = KeyStore.key(for: decision.provider) != nil ? decision.provider : answers
-        }
-        if decides == id { jobs.append("Decisions") }
-        return jobs
-    }
-
-    /// One row: logo, name, what it's doing, and its state.
+    /// One row: logo, name and state. What each is used for is chosen, and shown, in Building and Apps.
     private func row(_ id: String) -> some View {
         HStack(spacing: 10) {
             ProviderLogo(id: id, size: 24)
             Text(ProviderDetail.name(id))
-            ForEach(jobs(id), id: \.self) { job in
-                Text(job).font(.caption2).padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.18)))
-            }
             Spacer()
             Text(detail(id)).font(.callout).foregroundStyle(.secondary)
         }
@@ -927,7 +917,7 @@ struct ProvidersSettings: View {
             .contextMenu(forSelectionType: String.self) { ids in
                 if let id = ids.first {
                     if id.hasPrefix("engine:") {
-                        Button("Sign In…") { showing = ProviderDetail(id) }
+                        Button(detail(id) == "Not installed" ? "Download…" : "Sign In…") { showing = ProviderDetail(id) }
                     } else {
                         Button(Provider.keyProvider(id) == nil ? "Show Models…" : "Edit…") { showing = ProviderDetail(id) }
                     }
@@ -947,14 +937,10 @@ struct ProvidersSettings: View {
         Form {
             Section {
                 list(onThisMac)
-                if Experiments.iosApps {
-                    Text("These stay on this Mac: iOS apps can use them only on the same Wi‑Fi network as it.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
             } header: { Text("On this Mac") }
             Section {
                 if added.isEmpty {
-                    Text("No keys yet. OpenRouter gives apps the most to choose from and makes pictures\(Experiments.iosApps ? ", and goes with an app to your iPhone or iPad" : "").")
+                    Text("None configured yet. We recommend OpenRouter for the most options.")
                         .font(.callout).foregroundStyle(.secondary)
                 } else {
                     list(added.map(\.id))
@@ -981,11 +967,8 @@ struct ProvidersSettings: View {
                     .disabled(selection.flatMap(Provider.keyProvider) == nil)
                     .help("Only keys can be removed")
                     Spacer()
-                    if Experiments.iosApps {
-                        Text("A key can go with an app to your iPhone or iPad.").font(.caption).foregroundStyle(.secondary)
-                    }
                 }
-            } header: { Text("With your key") }
+            } header: { Text("Cloud AI providers") }
         }
         .settingsPane()
         .sheet(item: $showing) { detail in
@@ -1007,6 +990,11 @@ struct ProvidersSettings: View {
             Text("Lamp forgets its API key. Apps and builds that use it stop working until you add it again.")
         }
         .onAppear { openPending(); refreshSignIns(); KeyStore.preload() }   // a key declined at launch is asked for again
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            revision += 1   // looks for Claude Code and Codex again: one may have been installed meanwhile
+            refreshSignIns()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in revision += 1 }
         .onChange(of: pendingSheet) { openPending() }
         .task { local.refresh(); await local.detectExternal() }
     }
@@ -1021,6 +1009,8 @@ struct ProvidersSettings: View {
 
     private func detail(_ id: String) -> String {
         if id.hasPrefix("engine:"), let engine = Engine(rawValue: String(id.dropFirst(7))) {
+            _ = revision
+            guard ToolLocator.path(for: engine) != nil else { return "Not installed" }
             switch signedIn[engine] {
             case .some(.some(true)): return "Signed in"
             case .some(.some(false)): return "Not signed in"
@@ -1093,6 +1083,29 @@ private struct EngineSheet: View {
     @State private var working = false
 
     var body: some View {
+        if ToolLocator.path(for: engine) == nil, let app = engine.desktopApp {
+            notInstalled(app)
+        } else {
+            installed
+        }
+    }
+
+    /// Claude Code and Codex come with their desktop apps: the one thing to do is get the app.
+    private func notInstalled(_ app: (name: String, download: URL)) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ProviderHeader(id: "engine:\(engine.rawValue)", detail: "\(engine.title) comes with the \(app.name) app. Once it's installed and you've signed in, it can build apps and answer inside them.")
+            HStack {
+                Spacer()
+                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Download the \(app.name) App") { NSWorkspace.shared.open(app.download); dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+    }
+
+    private var installed: some View {
         VStack(alignment: .leading, spacing: 16) {
             ProviderHeader(id: "engine:\(engine.rawValue)",
                            detail: signedIn == true ? "Signed in. Builds apps and answers inside them with your \(engine == .claude ? "Claude" : "ChatGPT") subscription."
@@ -1267,10 +1280,12 @@ final class KeyCheck: ObservableObject {
         checking = false
     }
 
-    func save(_ typed: String, for provider: PiProvider, saved: @escaping () -> Void) {
+    /// `strict`, where the person can wait for OpenRouter's answer (the chat's setup card): a key it couldn't
+    /// be asked about isn't saved, and there's no saving it anyway.
+    func save(_ typed: String, for provider: PiProvider, strict: Bool = false, saved: @escaping () -> Void) {
         let key = typed.trimmed
         guard !key.isEmpty, !checking else { return }
-        guard provider.id == "openrouter", key != unchecked else {
+        guard provider.id == "openrouter", key != unchecked || strict else {
             KeyStore.setKey(key, for: provider.id)
             edited()
             return saved()
@@ -1286,6 +1301,8 @@ final class KeyCheck: ObservableObject {
                 KeyStore.setKey(key, for: provider.id)
                 saved()
             case .refused(let why):
+                problem = why
+            case .unchecked(let why) where strict:
                 problem = why
             case .unchecked(let why):
                 problem = why + " You can save the key without checking it."
@@ -1337,22 +1354,6 @@ struct ProviderLogo: View {
 }
 
 /// API key for one provider: shows "saved" with a Remove button, or a field to add one.
-/// A note that something needs an OpenRouter key, with the way to add one at its right: the same wherever
-/// Settings asks for a key, so the person always has the button to hand.
-struct KeyNote: View {
-    let text: String
-    @AppStorage("settingsTab") private var settingsTab = "building"
-    @AppStorage("settingsSheet") private var settingsSheet = ""
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text(text).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            Button("Add a Key…") { settingsSheet = "openrouter"; settingsTab = "providers" }.controlSize(.small)
-        }
-    }
-}
-
 struct KeyRow: View {
     let provider: PiProvider
     var label: String?
@@ -1430,7 +1431,7 @@ struct ModelPicker: View {
                     .lineLimit(1).truncationMode(.middle)
             }
             if provider == Builder.localProvider && local.installed.isEmpty {
-                Text("No models downloaded yet. Double-click Native Mac AI in Providers to get one.").font(.caption).foregroundStyle(.secondary)
+                Text("No models downloaded yet. Double-click Native Mac AI in AI Providers to get one.").font(.caption).foregroundStyle(.secondary)
             } else {
                 TextField("Search models", text: $search)
                     .textFieldStyle(.roundedBorder)
@@ -1470,6 +1471,7 @@ struct ModelPicker: View {
 /// Native Mac AI: models on this Mac (shared with Local and the Hugging Face cache), plus downloads.
 private struct LocalAISheet: View {
     @EnvironmentObject private var store: Store
+    @AppStorage("decisionModel") private var decisionModel = AppAI.decisionModel.id
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var local = LocalModels.shared
     @ObservedObject private var images = ImageModels.shared
@@ -1480,7 +1482,7 @@ private struct LocalAISheet: View {
     @State private var addError: String?
 
     private var downloadable: [LocalModelSpec] {
-        (LocalModels.catalog + custom).filter { !local.isInstalled($0) }
+        (LocalModels.catalog + LocalModels.decisionCatalog + custom).filter { !local.isInstalled($0) }
     }
 
     /// Tall enough for a good look at the list, short enough to leave the screen around it.
@@ -1566,7 +1568,11 @@ private struct LocalAISheet: View {
     }
 
     private func installedRow(_ model: InstalledModel) -> some View {
-        let inUse = Builder.engine == .pi && Builder.piProvider == Builder.localProvider && Builder.piModel == model.id
+        // A decision model answers apps' decisions and can't build: its Use chooses it for decisions.
+        let decides = LocalModels.isDecisionModel(model.id)
+        _ = decisionModel   // read so In use follows Use for Decisions
+        let inUse = decides ? AppAI.decisionRoute(for: nil)?.provider == "local"
+                            : Builder.engine == .pi && Builder.piProvider == Builder.localProvider && Builder.piModel == model.id
         let needsMLX = model.format == .mlx && LocalModels.mlxServerPath == nil
         return HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
@@ -1586,7 +1592,13 @@ private struct LocalAISheet: View {
                 if tools.installing.contains(.mlx) { ProgressView().controlSize(.small) }
                 else { Button("Install") { installMLX() } }
             } else if !inUse {
-                Button("Use") { use(model.id) }
+                if decides {
+                    Button("Use for Decisions") {
+                        if let local = AppAI.decisionModels.first(where: { $0.provider == "local" }) { decisionModel = local.id }
+                    }
+                } else {
+                    Button("Use") { use(model.id) }
+                }
             }
             if model.deletable { Button("Delete", role: .destructive) { local.delete(model.id) } }
         }

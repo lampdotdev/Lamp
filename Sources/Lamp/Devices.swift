@@ -227,10 +227,10 @@ enum Devices {
         guard let device else { return "Lamp can't see that phone. Plug it in with a data cable and unlock it, then Retry. If it still doesn't appear, choose it again under Try On." }
         guard device.paired else { return "\(device.name) hasn't trusted this Mac yet. Choose Pair under Try On, and tap Trust on the phone." }
         guard device.developerMode else { return "On \(device.name), open Settings → Privacy & Security → Developer Mode and turn it on. Restart the device when asked, unlock it, and tap Turn On to confirm. Then click Retry." }
-        guard team.count == 10 else { return "Choose your Apple team in Lamp's Settings → Building → Experimental first." }
+        guard team.count == 10 else { return "Choose your Apple team in Lamp's Settings → Experimental first." }
         let signedIn = xcodeTeams()
         guard signedIn.isEmpty || signedIn.contains(where: { $0.id == team }) else {
-            return "The team selected in Lamp isn't available in Xcode. Choose one of your signed-in teams in Lamp → Settings → Building → Experimental, or sign in with an account that belongs to the selected team in Xcode → Settings → Accounts. Then click Retry."
+            return "The team selected in Lamp isn't available in Xcode. Choose one of your signed-in teams in Lamp → Settings → Experimental, or sign in with an account that belongs to the selected team in Xcode → Settings → Accounts. Then click Retry."
         }
         return nil
     }
