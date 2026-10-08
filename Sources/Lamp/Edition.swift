@@ -5,7 +5,7 @@ import Foundation
 /// entries, so running the one you're working on never touches the one you use. Everything that names
 /// Lamp on disk or on the network goes through here. Built-in choice: build.sh (FLAVOR=dev, the default)
 /// and release.sh (FLAVOR=release) set the bundle id, which this reads.
-/// Features that are in but not yet for everyone, switched on in Settings → Building → Experimental.
+/// Features that are in but not yet for everyone, switched on in Settings → Experimental.
 enum Experiments {
     /// iPhone and iPad apps: built and tried in the iOS Simulator. Needs Xcode and an Accessibility grant.
     /// With it, an app can go on the person's own iPhone or iPad too (chosen under Try On), signed with their

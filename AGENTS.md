@@ -33,7 +33,7 @@ A capability given to one engine must be given to all of them that can take it, 
   with the request. `Memory.brief` adds them once per conversation and again only when the notes were
   changed by someone else, going by what `.lamp/notes-shown.json` says that engine's conversation last knew;
   most requests carry nothing. A conversation its engine has compacted is told again (pi's and Claude Code's parsers report
-  `.compacted`; Codex doesn't say, so its conversations are told again every few requests), and it is an experiment (`Experiments.memory`, off by default, in Settings → Building → Experimental): off, there are no notes tools, rule or summaries, and no Memory tab in Settings.
+  `.compacted`; Codex doesn't say, so its conversations are told again every few requests), and it is an experiment (`Experiments.memory`, off by default, in Settings → Experimental): off, there are no notes tools, rule or summaries, and no Memory tab in Settings.
   What is worth saving is said in `save_notes`'s description: every word there is paid for on every call.
 - **Approvals and privacy**: shell commands go through `/agent/approve` for every engine (pi's extension,
   Claude Code's hooks, Codex's hooks); file access outside the app's folder is checked the same way.
@@ -45,7 +45,7 @@ A capability given to one engine must be given to all of them that can take it, 
   pi with its key provider, or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in
   Settings → Apps and an app's info panel, and dispatched by kind in `AppAI.dispatch`. The default
   (`AppAI.defaultRoute`) is the local model that builds apps when there is one, else Sonnet through
-  OpenRouter with a key, else the builder's own sign-in. Settings → Providers shows what each provider and
+  OpenRouter with a key, else the builder's own sign-in. Settings → AI Providers shows what each provider and
   sign-in is doing (`ProvidersSettings.jobs`). Decisions (`AppAI.decisionModels`, `AppAI.decide`) go to Jev
   through OpenRouter or TypeSafe, to OpenAI's Decisions API (`decideViaOpenAI`, the same questions in its
   predicate/choice/score shape), to a Jev-class model on this Mac (`LocalModels.decisionCatalog`, run on the
@@ -83,7 +83,7 @@ installed Lamp into Lamp Dev, so the development build has something to work on.
 
 ## iPhone apps
 
-**Build iOS apps** (Settings → Building → Experimental, `Experiments.iosApps`) puts Mac / iPhone / iPad radio buttons in a new app's intro (`NewAppIntro`, `Store.setKind`). New App makes a draft, a folder with only `.lamp/meta.json`
+**Build iOS apps** (Settings → Experimental, `Experiments.iosApps`) puts Mac / iPhone / iPad radio buttons in a new app's intro (`NewAppIntro`, `Store.setKind`). New App makes a draft, a folder with only `.lamp/meta.json`
 (`Template.draft`), so its kind and name are just that file; the scaffold is written and committed when it first
 builds (`Store.materialize`, in the first turn after naming and in `run`), and `LampProject.scaffolded` tells the two apart. An iOS app is one app for both devices, as Apple has it; the radio buttons and the app's right-click menu's **Try On** pick which simulator it opens in (`LampProject.family`). It runs in the iPhone or iPad simulator on this Mac (`LampProject.platform == .iphone`,
 kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools: `Simulator`
@@ -165,12 +165,14 @@ Settings (`SettingsView` and its tabs, in `Sources/Lamp/Setup.swift`) has been t
 new features keep undoing it. A change that adds to Settings follows these, and says in its PR which tab it
 touched and why the option needs to be there at all:
 
-- **Each tab has one job.** Building: how Lamp builds apps (the model, approvals, the agent's permissions,
-  and Experimental). Apps: what apps use while they run. Providers: what's on this Mac, then keys. Each tab's
-  form ends in `.settingsPane()`, which sizes the window to it.
-- **An experiment's settings live under its checkbox in Experimental**, indented and shown only while it's
-  on, not in a section of their own in another tab. That includes its models (an iOS app's "away from this
-  Mac" models are under Build iOS apps).
+- **Each tab has one job.** Building: how Lamp builds apps (the models and what the agent may do without
+  asking, in one group, then its permissions). Apps: what apps use while they run. AI Providers: what's on
+  this Mac, then cloud AI providers. Experimental: what the Lamp team is still working on. Each tab's form ends in
+  `.settingsPane()`, which sizes the window to it.
+- **An experiment's settings live under its checkbox in the Experimental tab**, indented and shown only
+  while it's on, not in a section of their own in another tab. That includes its models (an iOS app's
+  "away from this Mac" models are under Build iOS apps). A feature leaving Experimental moves its settings
+  to the tab whose job they are.
 - **On/off options are checkboxes, box first, in `SettingsCheckboxes`**, never switches. An option that's
   a part of another sits under it with `.underCheckbox()`, shown only while the other is on. Put the parent
   checkbox last in its stack when its parts are pickers or fields, so they follow it.
@@ -178,13 +180,15 @@ touched and why the option needs to be there at all:
   the label can't say and the person needs to decide (something gets installed, a permission is asked
   for); it's one or two sentences, under its checkbox, with `.checkboxNote(…)`. No section footers, and no
   captions under pickers or lists.
-- **Show problems, not the absence of them.** When something is ready, say nothing. When it isn't, one
-  row says why and offers the one thing that fixes it (`KeyNote`'s Add a Key…, Sign In…, Download): see
-  `BuildingSettings.agentStatus` and `agentFix`. Paths and other details go in `.help`, on hover.
-- **Menus list what's set up, then a way to set up more** ("Configure providers…" switches to Providers),
+- **Show problems, not the absence of them.** When something is ready, say nothing. When a choice can't be
+  used as things are, `NotReadyBadge` goes beside it (`SettingsPicker(notReady:)` for a menu), and one row
+  under it says why, in gray, and offers the one thing that fixes it (`KeyNote`'s Add a Key…, Sign In…,
+  Download): see `BuildingSettings.agentStatus` and `agentFix`. The badge is the only orange in Settings, so
+  the words never contradict what's selected. Paths and other details go in `.help`, on hover.
+- **Menus list what's set up, then a way to set up more** ("Configure providers…" switches to AI Providers),
   rather than everything with "(not installed)".
 - **Section headings name the group** ("AI settings for Lamp", "Models used in apps", "Permissions and
-  Privacy", "Experimental"), with the same words for the same idea in every tab. Codex is "ChatGPT Codex"
+  Privacy", "Cloud AI providers"), with the same words for the same idea in every tab. Codex is "ChatGPT Codex"
   in anything people read: use `Engine.title`, never a literal.
 - **Async checks belong to what they checked.** A sign-in or install check that finishes after the
   choice changed must not update the new choice: key results by engine or provider and drop cancelled

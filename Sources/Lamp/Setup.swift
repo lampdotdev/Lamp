@@ -256,8 +256,9 @@ struct SettingsView: View {
         TabView(selection: $tab) {
             BuildingSettings().tabItem { Label("Building", systemImage: "hammer") }.tag("building")
             AppsSettings().tabItem { Label("Apps", systemImage: "square.grid.2x2") }.tag("apps")
-            ProvidersSettings().tabItem { Label("Providers", systemImage: "cpu") }.tag("providers")
-            // Only while the experiment is on (Building → Experimental): off, there are no notes to show.
+            ProvidersSettings().tabItem { Label("AI Providers", systemImage: "cpu") }.tag("providers")
+            ExperimentalSettings().tabItem { Label("Experimental", systemImage: "flask") }.tag("experimental")
+            // Only while the experiment is on (Experimental): off, there are no notes to show.
             if memory {
                 MemorySettings().tabItem { Label("Memory", systemImage: "note.text") }.tag("memory")
             }
@@ -265,7 +266,7 @@ struct SettingsView: View {
         .frame(width: 560)
         .onAppear {
             if tab == "local" { tab = "providers" }   // Local Models is now Native Mac AI, under Providers
-            if !(["building", "apps", "providers"] + (memory ? ["memory"] : [])).contains(tab) { tab = "building" }
+            if !(["building", "apps", "providers", "experimental"] + (memory ? ["memory"] : [])).contains(tab) { tab = "building" }
         }
     }
 }
@@ -306,6 +307,35 @@ struct SettingsCheckboxes<Content: View>: View {
         VStack(alignment: .leading, spacing: 10) { content }
             .toggleStyle(.checkbox)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Beside a choice that can't be used as things are. The badge is the only orange: why, and the fix, go in
+/// gray in the row under it, so the words don't argue with what's selected.
+struct NotReadyBadge: View {
+    var body: some View {
+        // Icon and word close together: a Label in a form row spaces them like a list item.
+        HStack(spacing: 4) { Image(systemName: "exclamationmark.circle.fill"); Text("Not Ready") }
+            .foregroundStyle(.orange)
+    }
+}
+
+/// A form row's menu, with Not Ready beside it when its choice can't be used yet.
+struct SettingsPicker<Selection: Hashable, Content: View>: View {
+    let title: String
+    @Binding var selection: Selection
+    var notReady = false
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        LabeledContent(title) {
+            HStack(spacing: 10) {
+                if notReady { NotReadyBadge() }
+                Picker(title, selection: $selection) { content }
+                    .labelsHidden()
+                    .fixedSize()
+            }
+        }
     }
 }
 
@@ -375,8 +405,7 @@ struct BuildingSettings: View {
             switch readiness {
             case .ready: EmptyView()
             case .checking: ProgressView().controlSize(.small)
-            // Icon and word close together: a Label in a form row spaces them like a list item.
-            default: HStack(spacing: 4) { Image(systemName: "exclamationmark.circle.fill"); Text("Not Ready") }.foregroundStyle(.orange)
+            default: NotReadyBadge()
             }
         }
         .help(ToolLocator.path(for: selectedEngine).map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "")
@@ -400,7 +429,7 @@ struct BuildingSettings: View {
                 }
             }
         case .problem(let problem):
-            Text(problem).foregroundStyle(.orange).font(.callout)
+            Text(problem).foregroundStyle(.secondary).font(.callout)
         case .ready, .checking:
             EmptyView()
         }
@@ -424,7 +453,7 @@ struct BuildingSettings: View {
         signIns[engine] = await EngineSignIn.isSignedIn(engine) ?? true
     }
 
-    /// Providers added in Settings → Providers, plus the current one even if its key was removed.
+    /// Providers added in Settings → AI Providers, plus the current one even if its key was removed.
     private var addedProviders: [PiProvider] {
         _ = revision
         return Provider.apiProviders.filter { KeyStore.key(for: $0.id) != nil || $0.id == provider }
@@ -557,14 +586,12 @@ struct BuildingSettings: View {
                 Picker("Image generation", selection: Binding(get: { _ = revision; return Icons.iconModel }, set: { Icons.iconModel = $0; revision += 1 })) {
                     ForEach(Icons.imageChoices, id: \.id) { Text($0.label).tag($0.id) }
                 }
-            }
-            Section {
                 Picker("Ask before running commands", selection: approvalChoice) {
                     ForEach(CommandApproval.allCases) { Text($0.title).tag($0.rawValue) }
                 }
                 if (CommandApproval(rawValue: approval) ?? .risky).isAutomatic && CommandApproval.claudeAutoUnavailable && selectedEngine == .claude {
                     Text("Claude Code's auto mode isn't available for your account, so Lamp asks before every command.")
-                        .font(.caption).foregroundStyle(.orange)
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             Section("Permissions and Privacy") {
@@ -577,7 +604,7 @@ struct BuildingSettings: View {
                 if notify && notificationsDenied {
                     HStack {
                         Text("Notifications are turned off for Lamp in System Settings.")
-                            .font(.caption).foregroundStyle(.orange)
+                            .font(.caption).foregroundStyle(.secondary)
                         Spacer()
                         Button("Open System Settings") {
                             let id = Bundle.main.bundleIdentifier ?? ""
@@ -588,7 +615,6 @@ struct BuildingSettings: View {
                     }
                 }
             }
-            ExperimentalSettings()
         }
         .settingsPane()
         .onChange(of: notify) { Notifier.shared.setBadge(store.unread.count) }
@@ -621,53 +647,62 @@ struct AppsSettings: View {
     var body: some View {
         Form {
             Section("Models used in apps") {
-                Picker("Text generation", selection: Binding(get: { AppAI.canonicalRoute(appModel) }, set: { appModel = $0 })) {
+                let _ = revision   // re-read KeyStore after keys change
+                let textReady = AppAI.allTextRoutes.first(where: { $0.id == appModel })?.available != false
+                SettingsPicker(title: "Text generation", selection: Binding(get: { AppAI.canonicalRoute(appModel) }, set: { appModel = $0 }),
+                               notReady: !textReady) {
                     ForEach(AppAI.textRouteGroups(including: appModel), id: \.title) { group in
                         Section(group.title) { ForEach(group.routes) { Text($0.name).tag($0.id) } }
                     }
                 }
-                Picker("Image generation", selection: $imageModel) {
-                    ForEach(Icons.imageChoices, id: \.id) { Text($0.label).tag($0.id) }
-                }
-                let _ = revision   // re-read KeyStore after keys change
-                if AppAI.allTextRoutes.first(where: { $0.id == appModel })?.available == false {
+                if !textReady {
                     KeyNote(text: "That model needs an OpenRouter key. Until there is one, text inside apps goes through \(AppAI.defaultRoute.label.replacingOccurrences(of: "Your ", with: "your ")).")
                 }
-                if let maker = AppAI.imageRouteName {
-                    // A cloud model chosen with no key behind it isn't what makes the pictures: say what does, and why.
-                    if !Provider.hasKey, imageModel != Icons.localArt {
-                        KeyNote(text: "\(Icons.artModels.first { $0.id == imageModel }?.label ?? "That model") needs an OpenRouter key. Until there is one, pictures come from \(maker).")
-                    }
-                } else {
+
+                // A cloud model chosen with no key behind it isn't what makes the pictures: say what does, and why.
+                let maker = AppAI.imageRouteName
+                let imageReady = maker != nil && (Provider.hasKey || imageModel == Icons.localArt)
+                SettingsPicker(title: "Image generation", selection: $imageModel, notReady: !imageReady) {
+                    ForEach(Icons.imageChoices, id: \.id) { Text($0.label).tag($0.id) }
+                }
+                if let maker, !imageReady {
+                    KeyNote(text: "\(Icons.artModels.first { $0.id == imageModel }?.label ?? "That model") needs an OpenRouter key. Until there is one, pictures come from \(maker).")
+                } else if maker == nil {
                     KeyNote(text: "Pictures need an OpenRouter key or a picture model on this Mac: a \(Builder.engine == .pi ? "builder's" : Builder.engine.title) sign-in can't make them.")
                 }
 
-                Picker("Decision model", selection: $decisionModel) {
+                let decisionChoice = AppAI.decisionModels.first { $0.id == decisionModel } ?? AppAI.decisionModel
+                let decisionKey = Provider.keyProvider(decisionChoice.provider)
+                let decisionSpec = LocalModels.decisionCatalog.first
+                let decisionReady: Bool = switch decisionChoice.provider {
+                case "typesafe", "openai": decisionKey.map { KeyStore.key(for: $0.id) != nil } ?? true
+                case "local": decisionSpec.map { local.isInstalled($0) } ?? true
+                case "text": true
+                default: KeyStore.openRouterKey != nil
+                }
+                SettingsPicker(title: "Decision model", selection: $decisionModel, notReady: !decisionReady) {
                     ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }
                 }
-                let decisionChoice = AppAI.decisionModels.first { $0.id == decisionModel } ?? AppAI.decisionModel
-                switch decisionChoice.provider {
-                case "typesafe", "openai":
-                    if let provider = Provider.keyProvider(decisionChoice.provider), KeyStore.key(for: provider.id) == nil {
-                        KeyRow(provider: provider, label: "\(provider.name) key") { revision += 1 }
-                    }
-                case "local":
-                    if let spec = LocalModels.decisionCatalog.first, !local.isInstalled(spec) {
-                        if let progress = local.progress[spec.id] {
-                            ProgressView(value: progress) { Text("Downloading \(spec.name)…") }.font(.caption)
-                        } else {
-                            HStack(alignment: .top, spacing: 8) {
-                                Text("\(spec.name) isn't on this Mac yet (\(spec.sizeGB, specifier: "%.1f") GB). Until it is, decisions are made by \(AppAI.fastModelName).")
-                                    .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
-                                Spacer(minLength: 0)
-                                Button("Download") { local.download(spec) }.controlSize(.small)
+                if !decisionReady {
+                    switch decisionChoice.provider {
+                    case "typesafe", "openai":
+                        if let decisionKey {
+                            KeyRow(provider: decisionKey, label: "\(decisionKey.name) key") { revision += 1 }
+                        }
+                    case "local":
+                        if let spec = decisionSpec {
+                            if let progress = local.progress[spec.id] {
+                                ProgressView(value: progress) { Text("Downloading \(spec.name)…") }.font(.caption)
+                            } else {
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text("\(spec.name) isn't on this Mac yet (\(spec.sizeGB, specifier: "%.1f") GB). Until it is, decisions are made by \(AppAI.fastModelName).")
+                                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                    Spacer(minLength: 0)
+                                    Button("Download") { local.download(spec) }.controlSize(.small)
+                                }
                             }
                         }
-                    }
-                case "text":
-                    EmptyView()
-                default:
-                    if KeyStore.openRouterKey == nil {
+                    default:
                         KeyNote(text: AppAI.canAnswer
                                 ? "Needs an OpenRouter key. Until there is one, decisions are made by \(AppAI.fastModelName) instead: slower and less exact than Jev."
                                 : "Needs an OpenRouter key, or pick another.")
@@ -693,45 +728,52 @@ struct ExperimentalSettings: View {
     @State private var teams: [(id: String, name: String)] = []
 
     var body: some View {
-        Section {
-            // Build iOS apps comes last so its parts, which are form rows rather than checkboxes, sit right
-            // under it.
-            SettingsCheckboxes {
-                Toggle("Remember how I like things", isOn: $memory)
-                Toggle("Build iOS apps", isOn: $iosApps)
-                    .onChange(of: iosApps) { store.updateLocalNetwork() }
-            }
-            if iosApps {
-                // Where an app opens (a simulator or the person's own phone) is chosen per app under Try On, so
-                // what's here is for the phone: the team its builds are signed for, and what an app on it uses
-                // when it can't reach this Mac. Then it can only reach OpenRouter, so these are OpenRouter's
-                // models, and that's the one thing a phone needs a key for.
-                Group {
-                    if teams.isEmpty {
-                        TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
-                    } else {
-                        Picker("Apple Team", selection: $team) {
-                            ForEach(teams, id: \.id) { Text("\($0.name) (\($0.id))").tag($0.id) }
-                            if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
-                        }
-                    }
-                    Picker("Text away from this Mac", selection: Binding(get: { AppAI.awayModel.id }, set: { awayModel = $0 })) {
-                        ForEach(AppAI.anthropicModels, id: \.id) { Text($0.label).tag($0.id) }
-                    }
-                    Picker("Images away from this Mac", selection: Binding(get: { AppAI.awayImageModel }, set: { awayImageModel = $0 })) {
-                        ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
-                    }
-                    Picker("Decisions away from this Mac", selection: Binding(get: { AppAI.awayDecisionModel.id }, set: { awayDecisionModel = $0 })) {
-                        ForEach(AppAI.awayDecisionModels, id: \.id) { Text($0.label).tag($0.id) }
-                    }
-                    if !Provider.hasKey {
-                        KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")
-                    }
-                    Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() }
+        Form {
+            Section {
+                // Build iOS apps comes last so its parts, which are form rows rather than checkboxes, sit right
+                // under it.
+                SettingsCheckboxes {
+                    Toggle("Remember how I like things", isOn: $memory)
+                    Toggle("Build iOS apps", isOn: $iosApps)
+                        .onChange(of: iosApps) { store.updateLocalNetwork() }
                 }
-                .underCheckbox()
+                if iosApps {
+                    // Where an app opens (a simulator or the person's own phone) is chosen per app under Try On, so
+                    // what's here is for the phone: the team its builds are signed for, and what an app on it uses
+                    // when it can't reach this Mac. Then it can only reach OpenRouter, so these are OpenRouter's
+                    // models, and that's the one thing a phone needs a key for.
+                    Group {
+                        if teams.isEmpty {
+                            TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
+                        } else {
+                            Picker("Apple Team", selection: $team) {
+                                ForEach(teams, id: \.id) { Text("\($0.name) (\($0.id))").tag($0.id) }
+                                if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
+                            }
+                        }
+                        Picker("Text away from this Mac", selection: Binding(get: { AppAI.awayModel.id }, set: { awayModel = $0 })) {
+                            ForEach(AppAI.anthropicModels, id: \.id) { Text($0.label).tag($0.id) }
+                        }
+                        Picker("Images away from this Mac", selection: Binding(get: { AppAI.awayImageModel }, set: { awayImageModel = $0 })) {
+                            ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
+                        }
+                        Picker("Decisions away from this Mac", selection: Binding(get: { AppAI.awayDecisionModel.id }, set: { awayDecisionModel = $0 })) {
+                            ForEach(AppAI.awayDecisionModels, id: \.id) { Text($0.label).tag($0.id) }
+                        }
+                        if !Provider.hasKey {
+                            KeyNote(text: "Needs an OpenRouter key: without one, apps on your phone can only use AI near this Mac.")
+                        }
+                        Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() }
+                    }
+                    .underCheckbox()
+                }
+            } header: {
+                // Above the box, in a checkbox note's size and color rather than as a heading.
+                Text("Features the Lamp team is still working on. They may not be ready for prime time.")
+                    .font(.caption).fontWeight(.regular).foregroundStyle(.secondary)
             }
-        } header: { Text("Experimental") }
+        }
+        .settingsPane()
         .task {
             teams = await Devices.knownTeams()
             // The account signed in to Xcode is the one that can sign, so its team is the first choice
@@ -786,7 +828,7 @@ struct ComputerUseSettings: View {
                 }
             }
             if let problem {
-                Text(problem).font(.caption).foregroundStyle(.orange)
+                Text(problem).font(.caption).foregroundStyle(.secondary)
             }
         }
         .task { status = await ComputerUse.status() }
@@ -929,7 +971,7 @@ struct ProvidersSettings: View {
             } header: { Text("On this Mac") }
             Section {
                 if added.isEmpty {
-                    Text("No keys yet. Click + to add one; OpenRouter's gives apps the most to choose from.")
+                    Text("None configured yet. We recommend OpenRouter for the most options.")
                         .font(.callout).foregroundStyle(.secondary)
                 } else {
                     list(added.map(\.id))
@@ -957,7 +999,7 @@ struct ProvidersSettings: View {
                     .help("Only keys can be removed")
                     Spacer()
                 }
-            } header: { Text("With your key") }
+            } header: { Text("Cloud AI providers") }
         }
         .settingsPane()
         .sheet(item: $showing) { detail in
@@ -1318,7 +1360,7 @@ struct KeyNote: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Text(text).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            Text(text).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             Button("Add a Key…") { settingsSheet = "openrouter"; settingsTab = "providers" }.controlSize(.small)
         }
@@ -1402,7 +1444,7 @@ struct ModelPicker: View {
                     .lineLimit(1).truncationMode(.middle)
             }
             if provider == Builder.localProvider && local.installed.isEmpty {
-                Text("No models downloaded yet. Double-click Native Mac AI in Providers to get one.").font(.caption).foregroundStyle(.secondary)
+                Text("No models downloaded yet. Double-click Native Mac AI in AI Providers to get one.").font(.caption).foregroundStyle(.secondary)
             } else {
                 TextField("Search models", text: $search)
                     .textFieldStyle(.roundedBorder)

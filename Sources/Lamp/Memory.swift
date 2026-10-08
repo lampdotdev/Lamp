@@ -48,7 +48,7 @@ enum Memory {
     /// The summary is what rides along with requests, so it stays a line.
     static let summaryLimit = 120
 
-    /// An experiment, off until the person switches it on in Settings → Building → Experimental. Off, the
+    /// An experiment, off until the person switches it on in Settings → Experimental. Off, the
     /// agent hears nothing of the notes and has no tools for them, so nothing is noted and they cost nothing;
     /// what was noted while it was on stays, for when it's switched back on.
     static let switchKey = "experimentMemory"
