@@ -508,13 +508,46 @@ enum Template {
 
     /// Swift source with its comments and the insides of its strings taken out: what's left is what runs.
     /// A scene named in a comment ("was LampWidgetOnly() before") or in a string is not the app's scene, and
-    /// must not hide the window of an app that has one.
+    /// must not hide the window of an app that has one. Read the way the compiler reads them: comments in
+    /// comments, strings over several lines, and raw strings, whose quotes only end at their own `#` marks.
     static func code(in source: String) -> String {
-        var text = source
-        for pattern in [#"\"\"\"[\s\S]*?\"\"\""#, #"\"(\\.|[^\"\\\n])*\""#, #"/\*[\s\S]*?\*/"#, #"//[^\n]*"#] {
-            text = text.replacingOccurrences(of: pattern, with: "\"\"", options: .regularExpression)
+        let text = Array(source)
+        var out = ""
+        var i = 0
+        func starts(_ word: String, at index: Int) -> Bool {
+            let chars = Array(word)
+            return index + chars.count <= text.count && Array(text[index..<index + chars.count]) == chars
         }
-        return text
+        while i < text.count {
+            if starts("//", at: i) {
+                while i < text.count, text[i] != "\n" { i += 1 }
+            } else if starts("/*", at: i) {
+                var depth = 1
+                i += 2
+                while i < text.count, depth > 0 {
+                    if starts("/*", at: i) { depth += 1; i += 2 } else if starts("*/", at: i) { depth -= 1; i += 2 } else { i += 1 }
+                }
+                out.append(" ")
+            } else if text[i] == "\"" || (text[i] == "#" && { var j = i; while j < text.count, text[j] == "#" { j += 1 }; return j < text.count && text[j] == "\"" }()) {
+                var marks = 0
+                while text[i] == "#" { marks += 1; i += 1 }
+                let quotes = starts("\"\"\"", at: i) ? 3 : 1
+                i += quotes
+                let end = String(repeating: "\"", count: quotes) + String(repeating: "#", count: marks)
+                while i < text.count, !starts(end, at: i) {
+                    // A backslash hides the next character, quote included, except in a raw string.
+                    if marks == 0, text[i] == "\\" { i += 1 }
+                    if quotes == 1, i < text.count, text[i] == "\n" { break }   // an unfinished string ends with its line
+                    i += 1
+                }
+                if starts(end, at: i) { i += end.count }
+                out.append("\"\"")
+            } else {
+                out.append(text[i])
+                i += 1
+            }
+        }
+        return out
     }
 
     /// The widget's bundle id. macOS only takes an extension whose id begins with its app's.

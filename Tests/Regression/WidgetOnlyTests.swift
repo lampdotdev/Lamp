@@ -66,11 +66,15 @@ final class WidgetOnlyTests: XCTestCase {
         let project = try app()
         try write(WidgetBuildTests.widgetSwift, to: "Widget/Widget.swift", in: project)
         for mention in ["// Previously: LampWidgetOnly()", "/* was\n   LampWidgetOnly() */", "let note = \"LampWidgetOnly()\"",
-                        "let long = \"\"\"\n    LampWidgetOnly()\n    \"\"\""] {
+                        "let long = \"\"\"\n    LampWidgetOnly()\n    \"\"\"",
+                        "/* outer /* inner */ LampWidgetOnly() */", "let raw = #\"a \" LampWidgetOnly() \"#",
+                        "let raw = ##\"\"\"\n \"\"\" LampWidgetOnly() \n\"\"\"##", "let s = \"quote \\\" LampWidgetOnly()\""] {
             try write("import SwiftUI\n\(mention)\n@main struct MainApp: App { var body: some Scene { WindowGroup { Text(\"hi\") } } }\n",
                       to: "Sources/App.swift", in: project)
             XCTAssertFalse(Template.isWidgetOnly(project), mention)
         }
+        // What's left is the code: text around a comment or a string is kept.
+        XCTAssertEqual(Template.code(in: "a /* b /* c */ d */ e // f\ng \"h\" i #\"j\"k\"# l"), "a   e \ng \"\" i \"\" l")
         // With a comment beside it, the real scene still counts.
         try write("import SwiftUI\n// only a widget\n@main struct MainApp: App { var body: some Scene { LampWidgetOnly() } }\n", to: "Sources/App.swift", in: project)
         XCTAssertTrue(Template.isWidgetOnly(project))
