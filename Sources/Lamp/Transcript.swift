@@ -3,7 +3,7 @@ import SwiftUI
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, remember, offer, other }
 
     let name: String
     let argument: String
@@ -35,7 +35,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
-        "look_at_app": .look, "use_app": .use,
+        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "save_notes": .remember, "offer_setup": .offer,
     ]
 
     var icon: String {
@@ -52,6 +52,9 @@ struct ToolCall {
         case .delegate: "person.2"
         case .look: "eye"
         case .use: "cursorarrow.click.2"
+        case .recall: "note.text"
+        case .remember: "square.and.pencil"
+        case .offer: "sparkles"
         case .other: "wrench.adjustable"
         }
     }
@@ -70,6 +73,9 @@ struct ToolCall {
         case .delegate: "Started a subtask"
         case .look: "Looked at the app"
         case .use: "Tried the app"
+        case .recall: "Read its notes"
+        case .remember: "Updated its notes"
+        case .offer: "Suggested a setup"
         case .other: name
         }
     }
@@ -90,12 +96,38 @@ struct ToolCall {
         case .delegate: "started \(n("subtask", "subtasks"))"
         case .look: "looked at the app" + (count == 1 ? "" : " \(count) times")
         case .use: "tried the app" + (count == 1 ? "" : " \(count) times")
+        case .recall: "read its notes"
+        case .remember: "updated its notes"
+        case .offer: "suggested a setup"
         case .other: n("step", "steps")
         }
     }
 }
 
 extension LogLine {
+    /// About how many lines of a chat are on screen to begin with, and how many more come in each time
+    /// the chat is scrolled up towards the earliest of them. The chat lays out every row it shows, so this
+    /// is what bounds the cost of a long one.
+    static let recentCount = 60
+
+    /// Where the chat starts showing from: the request that opens a turn, far enough back that at least
+    /// `count` lines come before the latest request, or the beginning if there aren't that many. The latest
+    /// turn doesn't count towards it, so the start only moves when a request is sent, never while an answer
+    /// is being written under what someone is reading.
+    static func recentStart(in lines: [LogLine], atLeast count: Int) -> Int {
+        guard let latest = lines.lastIndex(where: { $0.kind == .user }) else { return 0 }
+        var start = latest
+        while start > 0, latest - start < count {
+            start = lines[..<start].lastIndex { $0.kind == .user } ?? 0
+        }
+        return start
+    }
+
+    /// How many lines before the latest request a chat starting at `start` is showing.
+    static func reach(in lines: [LogLine], from start: Int) -> Int {
+        (lines.lastIndex { $0.kind == .user } ?? start) - start
+    }
+
     /// The chat as most people read it: what they asked, what the agent answered and what happened to the
     /// app. The agent's working is left out, both its steps and what it says between them, which is where
     /// the file names and code are; the progress line stands in for it. Agent Details shows everything.
@@ -243,6 +275,8 @@ struct LogRow: View, Equatable {
     var isLatestRequest = false
     @State private var hovered = false
     @State private var expandedDetail = false
+    @State private var shownDetailHeight: CGFloat = 0
+    @State private var fullDetailHeight: CGFloat = 0
 
     static func == (a: LogRow, b: LogRow) -> Bool {
         a.line == b.line && a.busy == b.busy && a.dir == b.dir
@@ -340,12 +374,24 @@ struct LogRow: View, Equatable {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .lineLimit(expandedDetail ? nil : 12)
-                Button(expandedDetail ? "Show Less" : "Show Full Output") { expandedDetail.toggle() }
-                    .buttonStyle(.link)
-                    .font(.caption)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { shownDetailHeight = $0 }
+                    // The same text with no limit, unseen, says how tall it would be in full: the button to
+                    // show the rest appears only when there is a rest.
+                    .background {
+                        Text(line.text)
+                            .font(.caption.monospaced())
+                            .fixedSize(horizontal: false, vertical: true)
+                            .hidden()
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullDetailHeight = $0 }
+                    }
+                if expandedDetail || fullDetailHeight > shownDetailHeight + 1 {
+                    Button(expandedDetail ? "Show Less" : "Show Full Output") { expandedDetail.toggle() }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                }
             }
-        case .needsKey:
-            KeyCard(reason: line.text)
+        case .needsKey, .offer:
+            if let offer = line.setupOffer { SetupCard(offer: offer, reason: line.text, dir: dir) }
         }
     }
 
@@ -362,78 +408,6 @@ struct LogRow: View, Equatable {
         for range in code { string[range].backgroundColor = Color.primary.opacity(0.07) }
         if keep { proseCache[text] = string }
         return string
-    }
-}
-
-/// Asks for an OpenRouter key where it's first needed: in the chat of the app that wanted a picture. Once a
-/// key is saved (here or in Settings) the card just says so.
-struct KeyCard: View {
-    let reason: String
-    @State private var key = ""
-    @State private var checking = false
-    @State private var problem: String?
-    @State private var saved = Provider.hasKey
-    @Environment(\.openSettings) private var openSettings
-    @AppStorage("settingsTab") private var settingsTab = "building"
-    @AppStorage("settingsSheet") private var settingsSheet = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label {
-                Text(saved ? "Pictures are on: your OpenRouter key is saved." : reason).lineSpacing(2)
-            } icon: {
-                Image(systemName: saved ? "checkmark.circle.fill" : "photo.on.rectangle.angled")
-                    .foregroundStyle(saved ? .green : .secondary)
-            }
-            if !saved {
-                Text("One key covers pictures, icon artwork and the fast in-app models; you pay OpenRouter only for what you use.")
-                    .font(.caption).foregroundStyle(.secondary)
-                HStack {
-                    SecureField("OpenRouter key (sk-or-…)", text: $key)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit(save)
-                        .onChange(of: key) { problem = nil }
-                    if checking {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Button("Save", action: save).disabled(key.trimmed.isEmpty)
-                    }
-                    Link("Get a key", destination: URL(string: "https://openrouter.ai/keys")!)
-                }
-                if let problem {
-                    Label(problem, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
-                }
-                if let first = ImageModels.catalog.first {
-                    HStack(spacing: 4) {
-                        Text("Or make pictures on this Mac, free and private:").font(.caption).foregroundStyle(.secondary)
-                        Button(String(format: "Download %@ (%.1f GB)…", first.name, first.sizeGB)) {
-                            settingsTab = "providers"
-                            settingsSheet = Builder.localProvider
-                            openSettings()
-                        }
-                        .buttonStyle(.link).font(.caption)
-                    }
-                }
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
-        .onAppear { saved = Provider.hasKey }
-    }
-
-    private func save() {
-        let candidate = key.trimmed
-        guard !candidate.isEmpty, !checking else { return }
-        checking = true
-        Task {
-            defer { checking = false }
-            if let found = await SetupView.checkOpenRouterKey(candidate) { problem = found; return }
-            KeyStore.setOpenRouterKey(candidate)
-            key = ""
-            saved = true
-            await Store.shared.recheckSetup()
-        }
     }
 }
 

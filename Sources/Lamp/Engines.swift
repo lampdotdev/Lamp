@@ -156,9 +156,9 @@ enum Builder {
             switch piProvider {
             case localProvider:
                 let installed = LocalModels.scan()
-                if installed.isEmpty { return "Download a model in Settings → Providers → Native Mac AI." }
+                if installed.isEmpty { return "Download a model in Settings → AI Providers → Native Mac AI." }
                 if let model = installed.first(where: { $0.id == piModel }), model.format == .mlx, LocalModels.mlxServerPath == nil {
-                    return "\(model.name) needs a one-time install before it can run: click Install beside it in Settings → Providers → Native Mac AI."
+                    return "\(model.name) needs a one-time install before it can run: click Install beside it in Settings → AI Providers → Native Mac AI."
                 }
             case myPiProvider:
                 if !FileManager.default.fileExists(atPath: Agent.userConfigDir) { return "No pi setup found in ~/.pi/agent." }
@@ -290,7 +290,12 @@ extension Agent {
     /// Builds the command for one turn with the chosen engine. `files` are attachment paths
     /// relative to the app folder; `session` is the engine's saved conversation id, if any; `token` is the
     /// agent's own token for this turn (Store.agentTokens), never the app's.
-    static func run(prompt: String, files: [String], project: LampProject, session: String?, token: String) -> AgentRun {
+    @MainActor static func run(prompt: String, files: [String], project: LampProject, offered: Set<SetupOffer>,
+                               session: String?, token: String) -> AgentRun {
+        // A line on what Lamp remembers, and one on what AI the app has, go with the request when the
+        // conversation needs telling, the same for each engine.
+        let prompt = prompt + Memory.brief(for: project, engine: Builder.engine, session: session)
+            + AIStatus.brief(for: project, engine: Builder.engine, session: session, offered: offered)
         var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt(for: project), "LAMP_DIR": project.dir.path,
                                      "PATH": ToolLocator.userPath]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
@@ -302,6 +307,8 @@ extension Agent {
             env["LAMP_LOOK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/look"
             env["LAMP_USE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/use"
             env["LAMP_VERSIONS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/versions"
+            env["LAMP_MEMORY_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/memory"
+            env["LAMP_SETUP_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/setup"
             env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve"
             env["LAMP_TOKEN"] = token
             return AgentRun(command: command(fileCount: files.count),
@@ -340,7 +347,8 @@ extension Agent {
                         "command": "curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
             }
             var permissionMode = "acceptEdits"
-            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version"
+            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__offer_setup"
+            if Memory.isOn { allowed += ",mcp__lamp__read_notes,mcp__lamp__save_notes" }
             // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
             // it the only server. The config is a file that reads the token from the environment, so the
             // token isn't on the command line for every process on the Mac to see.
@@ -485,6 +493,7 @@ extension Agent {
         if let pattern = input["pattern"] as? String { return "\(name) \(pattern)" }
         if let command = input["command"] as? String { return "\(name): \(command)" }
         if let actions = input["actions"] as? [[String: Any]] { return "\(name) \(Agent.summary(of: actions))" }
+        if let note = Agent.noteArgument(name, input) { return "\(name) \(note)" }
         return name
     }
 
@@ -500,6 +509,7 @@ extension Agent {
         switch type {
         case "system":
             if obj["subtype"] as? String == "init", let id = obj["session_id"] as? String { return [.session(id)] }
+            if obj["subtype"] as? String == "compact_boundary" { return [.compacted] }
         case "assistant":
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
             return content.compactMap { block in
@@ -594,8 +604,33 @@ extension Agent {
 /// Whether Claude Code or Codex is signed in, and signing in without Terminal: both tools' login commands
 /// open the browser and finish on their own.
 enum EngineSignIn {
+    /// What the last check found for each engine, for what has to be answered without waiting (whether its
+    /// route can answer apps, `AppAI.resolve`). Missing until a check has run; a tool that can't tell leaves
+    /// it as it was. On the main actor: checks run concurrently, and their answers land one at a time.
+    @MainActor static var known: [Engine: Bool] = [:]
+    /// When each engine was last checked, so callers that act on it can check again after a while.
+    @MainActor static var checked: [Engine: Date] = [:]
+
     /// nil when Lamp can't tell (the tool didn't answer).
     static func isSignedIn(_ engine: Engine) async -> Bool? {
+        let answer = await ask(engine)
+        await MainActor.run {
+            if let answer { known[engine] = answer }
+            checked[engine] = Date()
+        }
+        return answer
+    }
+
+    /// Checks the engines that are installed and haven't been checked lately, so what Lamp knows of them is
+    /// current without asking on every call.
+    static func refresh(olderThan age: TimeInterval = 300) async {
+        for engine in [Engine.claude, .codex] where ToolLocator.path(for: engine) != nil {
+            let last = await MainActor.run { checked[engine] }
+            if Date().timeIntervalSince(last ?? .distantPast) > age { _ = await isSignedIn(engine) }
+        }
+    }
+
+    private static func ask(_ engine: Engine) async -> Bool? {
         guard let tool = ToolLocator.path(for: engine) else { return nil }
         switch engine {
         case .claude:
@@ -615,7 +650,9 @@ enum EngineSignIn {
     static func signIn(_ engine: Engine) async -> Bool {
         guard let tool = ToolLocator.path(for: engine) else { return false }
         let arguments = engine == .claude ? ["auth", "login"] : ["login"]
-        return await run(tool, arguments, timeout: 600).status == 0
+        let done = await run(tool, arguments, timeout: 600).status == 0
+        _ = await isSignedIn(engine)
+        return done
     }
 
     private static func run(_ tool: String, _ arguments: [String], timeout: TimeInterval) async -> (status: Int32, output: String) {

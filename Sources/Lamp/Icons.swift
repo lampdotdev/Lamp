@@ -1,6 +1,7 @@
 import AppKit
 import CoreImage
 import CryptoKit
+import ImagePlayground
 import Vision
 
 /// The editable description of an app's icon, kept in `icon.json` in the app folder
@@ -70,6 +71,12 @@ enum Icons {
     static var imageChoices: [(id: String, label: String)] {
         guard ImageModels.ready, let name = ImageModels.chosen?.name else { return artModels }
         return artModels + [(localArt, "\(name) on this Mac (free, private)")]
+    }
+
+    /// The choices that can make pictures now: the cloud models with a key, the Mac's own once it's in. With
+    /// none, Codex may still draw (`AppAI.imageRoute`), with no model to choose.
+    @MainActor static var usableChoices: [(id: String, label: String)] {
+        imageChoices.filter { $0.id == localArt ? ImageModels.ready : Provider.hasKey }
     }
 
     /// The image model for pictures inside apps (Settings → Apps → Image generation).
@@ -322,6 +329,16 @@ enum Icons {
     /// Xcode 26, .lamp/AppIcon.icon and .lamp/Assets.car (what macOS 26 uses for Liquid Glass). Returns the
     /// preview image.
     @discardableResult
+    /// The icon as Lamp shows it, rendered in a temporary folder and nothing of the app's touched: for the
+    /// chat while a build that will write the real files is still running.
+    static func preview(_ spec: IconSpec, art: NSImage?) async -> NSImage {
+        let tile = await tile(spec, foreground: foregroundLayer(spec, art: art), artwork: art != nil)
+        let grid = onGrid(tile, size: 256)
+        let image = NSImage(size: NSSize(width: 256, height: 256))
+        image.addRepresentation(grid)
+        return image
+    }
+
     static func write(_ spec: IconSpec, art: NSImage?, for project: LampProject) async throws -> NSImage {
         let fm = FileManager.default
         try fm.createDirectory(at: project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
@@ -428,8 +445,13 @@ enum Icons {
     /// Asks the image model for the object alone on a plain background (never a whole icon), so Lamp can
     /// cut it out and compose the icon itself. Returns PNG/JPEG data.
     static func generateArt(_ spec: IconSpec) async throws -> Data {
+        try await AppAI.image(prompt: artPrompt(spec), references: [], aspectRatio: "1:1", model: iconModel).0
+    }
+
+    /// What an image model is asked to draw for an icon.
+    static func artPrompt(_ spec: IconSpec) -> String {
         let bg = background(named: spec.background)
-        let prompt = """
+        return """
         A single \(spec.subject), drawn as the object for a macOS app icon in Apple's own icon style: one tangible \
         object with a simple, instantly recognizable silhouette, smooth rounded forms, subtle soft gradients and \
         gentle light from above, front or slight three-quarter view. Two or three colors at most, mainly \
@@ -437,7 +459,25 @@ enum Icons {
         70% of the frame, on a plain flat light gray background. No scene, no ground, no cast shadow, no \
         background elements, no text, no letters, no border, no frame, no rounded square tile, no app icon shape.
         """
-        return try await AppAI.image(prompt: prompt, references: [], aspectRatio: "1:1", model: iconModel).0
+    }
+
+    /// The same request as Image Playground takes it. Its sheet boils a long request down to a few words
+    /// and loses the "no …" list on the way, turns down anything naming macOS or Apple ("Try describing
+    /// something different"), and draws a whole rounded tile when asked for an "app icon". So it gets the
+    /// object and the look in one short sentence. It has no use for a hex color: the subject names its own.
+    static func playgroundPrompt(_ spec: IconSpec) -> String {
+        let subject = spec.subject.trimmed
+        return subject.prefix(1).uppercased() + subject.dropFirst() + """
+        , a single object with a simple bold shape, smooth rounded forms, soft gradients and gentle light \
+        from above. Centered on a plain flat light gray background, nothing else in the picture.
+        """
+    }
+
+    /// Whether this Mac can show Image Playground (Apple Intelligence on, a Mac that runs it). Apple's
+    /// picture maker has no way in for an app but its own sheet, where the person picks the picture.
+    static var playgroundAvailable: Bool {
+        if #available(macOS 15.1, *) { return ImagePlaygroundViewController.isAvailable }
+        return false
     }
 
     /// Lifts the object off its background with Vision's subject isolation (on-device, free).

@@ -5,6 +5,79 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.10.8
+
+- One answer to what answers your apps. Lamp works out, in one place, what handles an app's text, decisions
+  and pictures, here and away on a phone, and how well. When an app needs something nothing here can do, a
+  card in its chat offers the ways to set it up: a key typed in place, a download, a sign-in, or Image
+  Playground for the icon. Settings → AI Providers shows what answers your apps, and the agent is told what
+  the app has when it finishes a request.
+- Settings, tidied: Experimental is its own tab (Remember how I like things, and Build iOS apps with the
+  Apple team, the away-from-this-Mac models and the setup check under it); Providers is AI Providers; menus
+  list only what works now, with Not Ready beside a choice that can't be used.
+- Shared apps: the review shows the app's own icon and description; opening one you already have offers
+  Update or Keep Both; one opened during setup or the welcome is kept, builds with its progress shown, and
+  its review opens once setup is done.
+- The chat stays where you scrolled while the agent works, and follows the end again when you scroll back
+  down or send a message.
+- Stop pressed while sign-ins are being checked keeps the agent from starting; a sign-in Lamp last found
+  signed out is checked again before it's used.
+
+## 0.10.7
+
+- The Keychain prompt at launch is gone for good: a key item that another tool put there can't be replaced
+  by Lamp, so Lamp keeps that key in its own file (readable by your account only) and stops asking the
+  Keychain for it.
+- Running an iPhone or iPad app no longer flashes the setup window open and shut: it shows only when a
+  check takes a while.
+- A detail line's Show Full Output appears only when there's more to show.
+
+## 0.10.6
+
+- What you attach in the chat stays on your Mac. An app's own files (a logo, a data file) live in its new
+  `Assets` folder, the only folder bundled inside the app and shared with it; the agent copies an attachment
+  there when the app should use it. Apps that already use an attachment get it copied over at their next build.
+- Making an iPhone or iPad app no longer crashes Lamp when the setup window appears.
+- The Keychain stops asking for Lamp's key at every launch: a key item that was put there by another tool is
+  made Lamp's own after the first read.
+- A picture picked in Image Playground shows on the app in the chat at once, with a word that it goes on
+  the app when the current turn ends.
+- A long chat shows its end first, and earlier messages come in as you scroll up to them.
+
+## 0.10.5
+
+- Pictures no longer fall back to a ChatGPT Codex sign-in that happens to be on the Mac: Codex draws them only
+  when it's what builds your apps or answers inside them. Otherwise, with no OpenRouter key and no picture
+  model on this Mac, Lamp asks for one.
+- A chat can no longer leave Lamp stuck during a turn: every row shown is laid out, and a long chat shows its
+  end first, with earlier messages a scroll away.
+- An app's icon artwork shows in the chat the moment it's picked, rather than at the end of the build.
+- Making a new app while an earlier new app was still working sent the message to the earlier app. Each app
+  now has its own identity, kept through renames, so a fresh app's first message is its own.
+
+## 0.10.4
+
+- Lamp remembers, as an experiment you switch on in Settings → Building: it keeps short notes on how you
+  like things, so a new app starts out in your style, and on what you decided about each app and what you
+  turned down, so it isn't offered again. The notes carry over when you switch the agent or model, and the
+  AI opens them only when a request needs them. A Memory tab lists them, to read, change or clear.
+- When a key or sign-in is refused, or an account is out of credit, Lamp names the one that was used. It
+  used to name whatever builds your apps, so an OpenRouter key that didn't work could be reported as a
+  problem with ChatGPT Codex or Claude Code.
+- An app's icon can be made in Image Playground, on a Mac that has it: from the app's right-click menu, and
+  offered when nothing else can draw.
+- Settings checks an OpenRouter key with OpenRouter before saving it, so a mistyped key is caught at once
+  rather than failing later as a build or a picture. When OpenRouter can't be reached, you can save anyway.
+- Settings → Experimental: the iPhone & iPad setup check sits under its notes.
+
+## 0.10.3
+
+- A new app's first build ends with the app ready for you: the agent looks once to be sure it opens, then
+  asks whether you'd like it to test the app or change something first, instead of clicking around in it
+  while you're trying it. For later changes it still tries them out before saying they work.
+- With a model on this Mac chosen for text, Lamp's own quick calls (an app's name and parts, the suggested
+  next message, version titles) use it too, rather than going to OpenRouter.
+
 ## 0.10.2
 
 - Pictures are made with Nano Banana 2 again unless you pick another: Nano Banana 2.1 stays on the list, but its

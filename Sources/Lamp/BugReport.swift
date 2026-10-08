@@ -11,7 +11,7 @@ enum BugReport {
         case detail = "Agent detail"
         case tool = "Tool call"
         case summary = "Work finished"
-        case needsKey = "Key requested"
+        case setupOffered = "Setup offered"
     }
 
     static func errorSummary(_ message: String?) -> String {

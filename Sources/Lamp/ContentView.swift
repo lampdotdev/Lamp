@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import AVFoundation
 import QuickLook
+import ImagePlayground
 
 struct ContentView: View {
     @EnvironmentObject private var store: Store
@@ -29,6 +30,7 @@ struct ContentView: View {
         .sheet(item: $store.pendingImport) { pending in
             ImportReviewView(pending: pending)
         }
+        .modifier(PlaygroundIconSheet())
     }
 
     private var main: some View {
@@ -332,6 +334,25 @@ struct ReadyDot: View {
     }
 }
 
+/// Image Playground, opened from an app's menu to make its icon. The person picks a picture there and Lamp
+/// takes it from there; on a Mac without Image Playground there's nothing to open and no menu item for it.
+struct PlaygroundIconSheet: ViewModifier {
+    @EnvironmentObject private var store: Store
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15.1, *) {
+            content.imagePlaygroundSheet(isPresented: $store.showingPlayground,
+                                         concepts: [.text(store.playgroundPrompt)]) { url in
+                // The file is Image Playground's own and temporary, so it's read before anything else happens.
+                guard let project = store.playgroundIcon, let picture = try? Data(contentsOf: url) else { return }
+                Task { await store.useIconPicture(picture, for: project) }
+            }
+        } else {
+            content
+        }
+    }
+}
+
 struct AppMenu: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
@@ -353,6 +374,11 @@ struct AppMenu: View {
             .disabled(busy)
         Button("New Icon") { Task { await store.newIcon(project) } }
             .disabled(busy || project.untitled)
+        if Icons.playgroundAvailable {
+            // The sheet opens with the icon's own description, so there has to be one.
+            Button("Icon from Image Playground…") { store.iconFromPlayground(project) }
+                .disabled(project.untitled || Icons.load(project) == nil)
+        }
         Button("Show in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
         }
@@ -409,9 +435,15 @@ struct ProjectView: View {
     private var submissionPending: Bool { store.pendingSubmissions.contains(store.current(project)?.id ?? project.id) }
     /// A request on its way out again: what it replaces stays out of sight until the chat has let go of it.
     @State private var sendingAgain: UUID?
-    /// The end of the chat has been on screen. Only the rows in view are made, so this is how the chat
-    /// knows it opened on its latest messages (see `body`).
-    @State private var endShown = false
+    /// How many lines before the latest request the chat reaches back for. Scrolling up towards the earliest
+    /// of them raises it.
+    @State private var reach = LogLine.recentCount
+    /// The chat's scrolling is being watched, so earlier messages come in by themselves.
+    @State private var earlierOnScroll = false
+    /// Whether the chat is at its end, and so follows what's added there.
+    @State private var follow = ChatFollow()
+    /// Goes up with each message sent from here, which takes the chat back to its end.
+    @State private var sends = 0
     /// What the toolbar knows of the app's history, for which of its buttons can do anything. Nil until read.
     @State private var history: History?
 
@@ -461,15 +493,39 @@ struct ProjectView: View {
     /// The chat itself, scrolled to its end. Kept out of `body`, like the rows and the message box, because
     /// as one expression the whole view is more than the compiler can type-check in reasonable time.
     private func chat(_ lines: [LogLine]) -> some View {
-        ScrollViewReader { proxy in
+        // Only the end of a long chat is shown until more is asked for (see `LogLine.recentStart`).
+        let start = LogLine.recentStart(in: lines, atLeast: reach)
+        let shown = start > 0 ? Array(lines[start...]) : lines
+        return ScrollViewReader { proxy in
             GeometryReader { area in
                 ScrollView {
-                    // While a new app is being built, its card stays in view above the steps, if there's
-                    // room: in a short window a pinned card would fill the chat and hide everything else.
-                    let pinned: PinnedScrollableViews = building != nil && area.size.height >= Self.roomToPinCard ? [.sectionHeaders] : []
-                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: pinned) {
-                        chatRows(lines, height: area.size.height)
+                    // Every row shown is laid out, not only the ones in view. A stack that makes its rows as
+                    // they scroll into view has to guess the height of the rest, and during a turn that
+                    // guessing could go round without ever settling, with Lamp stuck for good.
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Earlier messages come in as the chat is scrolled up towards them (see `earlier`).
+                        // The button is only for when that can't be watched for.
+                        if start > 0, !earlierOnScroll {
+                            Button("Show Earlier Messages") {
+                                guard let top = shown.first?.id else { return }
+                                showEarlier(lines, from: start)
+                                // They come in above what's being read, which stays where it is.
+                                Task { @MainActor in
+                                    await Task.yield()
+                                    proxy.scrollTo(top, anchor: .top)
+                                }
+                            }
+                            .buttonStyle(.link)
+                            .font(.callout)
+                            .frame(maxWidth: .infinity)
+                            .padding(.bottom, 24)
+                        }
+                        // While a new app is being built, its card stays in view above the steps, if there's
+                        // room: in a short window a pinned card would fill the chat and hide everything else.
+                        chatRows(shown, height: area.size.height,
+                                 cardPinned: building != nil && area.size.height >= Self.roomToPinCard)
                     }
+                    .background(EarlierOnScroll(more: start > 0, follow: follow, watching: $earlierOnScroll) { showEarlier(lines, from: start) })
                     // A readable line length; wide windows get margins instead of longer lines.
                     .frame(maxWidth: 640)
                     .padding(.horizontal, 20).padding(.vertical, 16)
@@ -480,33 +536,35 @@ struct ProjectView: View {
                 // A chat opens on its latest messages: the scroll view starts at the bottom, with
                 // no scrolling to get there.
                 .defaultScrollAnchor(.bottom)
-                // That start is worked out from a guess at the height of the rows that aren't made yet,
-                // and in a long chat the guess can land anywhere: the top, the middle, past the end. So
-                // the chat then goes to its last row, which it can only do once it has been laid out:
-                // sooner does nothing, and there's no telling when that is but by the end showing up.
-                // It tries for half a second, and once more when the end is there, to land on it exactly.
-                .task {
-                    for attempt in 0..<10 {
-                        if attempt == 0 { await Task.yield() } else { try? await Task.sleep(for: .milliseconds(50)) }
-                        guard !Task.isCancelled else { return }
-                        let done = endShown
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                        if done { return }
-                    }
+                // The chat follows what's added at its end, but only from the end: scrolled up to read
+                // something earlier, it stays there. Sending a message goes back to the end.
+                .onChange(of: lines.count) { followEnd(proxy) }
+                .onChange(of: written(lines)) { followEnd(proxy) }
+                .onChange(of: queued.count) { followEnd(proxy) }
+                .onChange(of: store.progress[project.id]?.plan.count) { followEnd(proxy) }
+                .onChange(of: store.progress[project.id]?.screenshot != nil) { followEnd(proxy) }
+                .onChange(of: sends) {
+                    follow.atEnd = true
+                    followEnd(proxy)
                 }
-                .onChange(of: lines.count) { proxy.scrollTo("bottom", anchor: .bottom) }
-                .onChange(of: written(lines)) { proxy.scrollTo("bottom", anchor: .bottom) }
-                .onChange(of: queued.count) { proxy.scrollTo("bottom", anchor: .bottom) }
-                .onChange(of: store.progress[project.id]?.plan.count) { proxy.scrollTo("bottom", anchor: .bottom) }
-                .onChange(of: store.progress[project.id]?.screenshot != nil) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
         }
+    }
+
+    private func followEnd(_ proxy: ScrollViewProxy) {
+        if follow.atEnd { proxy.scrollTo("bottom", anchor: .bottom) }
+    }
+
+    /// Reaches one more lot back. From what's shown, not from what was asked for: a long turn can take the
+    /// chat further back than that, and the next lot has to start beyond it.
+    private func showEarlier(_ lines: [LogLine], from start: Int) {
+        reach = LogLine.reach(in: lines, from: start) + LogLine.recentCount
     }
 
     /// The chat's rows: the intro for a new app, the transcript with its build card or activity, and the
     /// messages waiting their turn.
     @ViewBuilder
-    private func chatRows(_ lines: [LogLine], height: CGFloat) -> some View {
+    private func chatRows(_ lines: [LogLine], height: CGFloat, cardPinned: Bool) -> some View {
         if lines.isEmpty && queued.isEmpty {
             // In the middle of the chat area: less the scroll view's own padding.
             NewAppIntro(project: project, draft: draftBinding)
@@ -517,13 +575,15 @@ struct ProjectView: View {
             // The build card goes straight after the request; what the agent says and
             // does follows it.
             transcript(Array(lines[...request]), busy: false)
-            Section {
-                transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy)
-            } header: {
-                BuildCard(project: project, progress: card)
-                    .padding(.top, 16).padding(.bottom, 12)
-                    .background(Color(nsColor: .textBackgroundColor))
-            }
+            BuildCard(project: project, progress: card)
+                .padding(.top, 16).padding(.bottom, 12)
+                .background(Color(nsColor: .textBackgroundColor))
+                // Pinned: once it reaches the top of the chat it stays there, over the steps going by.
+                .visualEffect { content, geometry in
+                    content.offset(y: cardPinned ? max(0, -geometry.frame(in: .scrollView).minY) : 0)
+                }
+                .zIndex(1)
+            transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy)
         } else {
             let progress = busy ? store.progress[project.id] : nil
             transcript(lines, busy: busy, progressShown: progress != nil)
@@ -534,7 +594,6 @@ struct ProjectView: View {
                 .padding(.top, lines.isEmpty ? 0 : 32)
         }
         Color.clear.frame(height: 1).id("bottom")
-            .onAppear { endShown = true }
     }
 
     /// The message box with the buttons around it.
@@ -616,9 +675,8 @@ struct ProjectView: View {
         Binding(get: { showInfo || (showVersions && saved) }, set: { if !$0 { showInfo = false; showVersions = false } })
     }
 
-    var body: some View {
-        let lines = self.lines
-        return VStack(spacing: 0) {
+    private func chrome(_ lines: [LogLine]) -> some View {
+        VStack(spacing: 0) {
             chat(lines)
             Divider()
             if let approval = store.approvals[project.id] {
@@ -650,7 +708,7 @@ struct ProjectView: View {
             Group {
                 if showVersions && saved { VersionsView(project: project) } else { AppInfoView(project: project) }
             }
-            .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
+            .inspectorColumnWidth(min: 300, ideal: 340, max: 460)
         }
         .navigationTitle(project.name)
         .navigationSubtitle(usageSummary)
@@ -659,6 +717,11 @@ struct ProjectView: View {
                 .disabled(busy)
         }
         .toolbar { toolbar }
+    }
+
+    // Split in two: as one expression the body is more than the type checker will take on in reasonable time.
+    private func observing(_ content: some View) -> some View {
+        content
         .task { await store.linkOldRequests(project) }
         .onAppear {
             focusRequest += 1
@@ -673,6 +736,10 @@ struct ProjectView: View {
         // A microphone plugged in (or taken away) while the chat is open shows or hides the button.
         .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasConnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
         .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasDisconnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
+    }
+
+    var body: some View {
+        observing(chrome(lines))
         .onDisappear { dictation.cancel() }
         .alert(dictation.problem?.title ?? "Dictation",
                isPresented: Binding(get: { dictation.problem != nil }, set: { if !$0 { dictation.problem = nil } }),
@@ -878,6 +945,7 @@ struct ProjectView: View {
         let submitted = Store.Draft(text: draft, attachments: attachments, replacing: replacing,
                                     setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? [])
         guard let token = store.beginSubmission(project) else { return }
+        sends += 1
         store.saveDraft(submitted, for: project)
         PhoneSetup.shared.perform(for: project, in: store, cancelled: {
             finishSubmission(token, captured: submitted, sent: false)
@@ -930,11 +998,44 @@ struct ProjectView: View {
     }
 }
 
+/// A label and its value on one row when they fit, else the value under the label, both left-aligned: the
+/// info panel is narrow, and a value squeezed to the right edge in two lines is hard to read.
+private struct InfoRow<Value: View>: View {
+    let title: String
+    let value: Value
+
+    init(_ title: String, @ViewBuilder value: () -> Value) {
+        self.title = title
+        self.value = value()
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                Spacer(minLength: 12)
+                value.fixedSize()
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                value
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+extension InfoRow where Value == Text {
+    init(_ title: String, value: String) {
+        self.init(title) { Text(value).foregroundStyle(.secondary) }
+    }
+}
+
 /// The info panel: what an app has cost, which models it uses, and where it lives.
 struct AppInfoView: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
-    /// This app's own model choices; nil fields follow Settings.
+    /// This app's own model choices, from an earlier Lamp that let it make them; nil fields follow Settings.
     @State private var models: AppModels
 
     init(project: LampProject) {
@@ -943,6 +1044,11 @@ struct AppInfoView: View {
     }
     /// Bumped when Settings changes, so the defaults shown are current.
     @State private var settingsRevision = 0
+    @AppStorage("settingsTab") private var settingsTab = "building"
+    @Environment(\.openSettings) private var openSettings
+    // What the AI rows resolve from, besides Settings: the models on this Mac (text, decisions, pictures).
+    @ObservedObject private var local = LocalModels.shared
+    @ObservedObject private var images = ImageModels.shared
 
     private var usage: AppUsage { store.usage[project.id] ?? AppUsage() }
     private var requests: Int { (store.logs[project.id] ?? []).filter { $0.kind == .user }.count }
@@ -964,72 +1070,71 @@ struct AppInfoView: View {
                 .frame(maxWidth: .infinity)
             }
             Section("Usage") {
-                LabeledContent("Total cost", value: dollars(usage.totalCost))
-                LabeledContent("Changes requested", value: "\(requests)")
-                LabeledContent("Building the app") {
-                    Text(runs(usage.agentRuns ?? 0, "agent run") + " · " + dollars(usage.agentCost ?? 0))
+                InfoRow("Total cost", value: dollars(usage.totalCost))
+                InfoRow("Changes requested", value: "\(requests)")
+                InfoRow("Building the app") {
+                    Text(runs(usage.agentRuns ?? 0, "agent run") + " · " + dollars(usage.agentCost ?? 0)).foregroundStyle(.secondary)
                 }
-                LabeledContent("AI inside the app") {
-                    Text(runs(usage.calls, "call") + " · " + dollars(usage.cost))
+                InfoRow("AI inside the app") {
+                    Text(runs(usage.calls, "call") + " · " + dollars(usage.cost)).foregroundStyle(.secondary)
                 }
             }
+            // What answers this app, read-only: models are chosen in Settings. Nothing that answers is Not Ready.
             Section {
-                let _ = settingsRevision
-                Picker("Text", selection: choice(\.text, default: AppAI.model.id)) {
-                    ForEach(AppAI.textRouteGroups(including: models.text), id: \.title) { group in
-                        Section(group.title) { ForEach(group.routes) { Text(Self.short($0.name)).tag($0.id) } }
-                    }
+                let _ = (settingsRevision, models)
+                ForEach(Capability.allCases) { capability in
+                    answerRow(capability.title, AppAI.resolve(capability, for: project))
                 }
-                Picker("Making images", selection: choice(\.image, default: Icons.artModel)) {
-                    ForEach(Icons.imageChoices, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
-                }
-                Picker("Decisions", selection: choice(\.decision, default: AppAI.decisionModel.id)) {
-                    ForEach(AppAI.decisionModels, id: \.id) { Text($0.label).tag($0.id) }
-                }
-                if project.platform == .iphone {
-                    Picker("Away from this Mac", selection: choice(\.away, default: AppAI.awayModel.id)) {
-                        ForEach(AppAI.anthropicModels, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
-                    }
-                    Picker("Pictures away", selection: choice(\.awayImage, default: AppAI.awayImageModel)) {
-                        ForEach(Icons.artModels, id: \.id) { Text(Self.short($0.label)).tag($0.id) }
-                    }
-                    Picker("Decisions away", selection: choice(\.awayDecision, default: AppAI.awayDecisionModel.id)) {
-                        ForEach(AppAI.awayDecisionModels, id: \.id) { Text($0.label).tag($0.id) }
+                if project.platform == .iphone, Experiments.iosApps {
+                    // Away from the Mac a phone answers only through the OpenRouter key: without one, one row says so.
+                    if Provider.hasKey {
+                        ForEach(Capability.allCases) { capability in
+                            answerRow("\(capability.title) away", AppAI.resolve(capability, for: project, in: .phoneAway))
+                        }
+                    } else {
+                        InfoRow("Away from this Mac") { NotReadyBadge() }
                     }
                 }
             } header: {
                 Text("AI inside this app")
             } footer: {
-                Text(Provider.hasKey ? "Starts as your choices in Settings. Changes apply straight away, without rebuilding." : "Without an OpenRouter key, text uses whatever builds your apps.")
-                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("Configure Providers…") { settingsTab = "providers"; openSettings() }
+                    // Choices an earlier Lamp let this app make for itself: the one thing left to change here.
+                    if models != AppModels() {
+                        Button("Use Settings' Choices") { models = AppModels(); models.save(project) }
+                    }
+                }
+                .controlSize(.small)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             Section {
                 let _ = settingsRevision
-                LabeledContent("Agent", value: Builder.engine.title)
+                InfoRow("Agent", value: Builder.engine.title)
                 if Builder.engine == .claude || Builder.engine == .codex {
                     let model = Builder.engineModel(Builder.engine)
                     let names = Builder.engine == .claude ? Builder.claudeModels : Builder.codexModels
-                    LabeledContent("Building with", value: model.isEmpty ? "\(Builder.engine.title)'s default"
+                    InfoRow("Building with", value: model.isEmpty ? "\(Builder.engine.title)'s default"
                                    : names.first { $0.id == model }?.label ?? model)
                 }
                 if Builder.engine == .pi {
-                    LabeledContent("Provider", value: providerName)
-                    if !Builder.piModel.isEmpty { LabeledContent("Building with", value: buildModel) }
+                    InfoRow("Provider", value: providerName)
+                    if !Builder.piModel.isEmpty { InfoRow("Building with", value: buildModel) }
                 }
             } header: {
                 Text("Building")
             } footer: {
-                SettingsLink { Text("Change in Settings…") }
-                    .buttonStyle(.link)
+                Button("Building Settings…") { settingsTab = "building"; openSettings() }
+                    .controlSize(.small)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             Section("App") {
                 if let stamp = store.stamps[project.id] {
-                    LabeledContent("Built with") {
+                    InfoRow("Built with") {
                         Text(stamp.summary).foregroundStyle(.secondary)
                     }
                 }
-                LabeledContent("Bundle ID") { Text(project.bundleID).textSelection(.enabled) }
+                InfoRow("Bundle ID") { Text(project.bundleID).foregroundStyle(.secondary).textSelection(.enabled) }
                 Button("Show App in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
                 }
@@ -1042,6 +1147,9 @@ struct AppInfoView: View {
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
             settingsRevision += 1
         }
+        // Keys and this app's own choices change what answers it too.
+        .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in settingsRevision += 1 }
+        .onReceive(NotificationCenter.default.publisher(for: AppModels.changed)) { _ in models = AppModels.load(project) }
         .onChange(of: project.id) { models = AppModels.load(project) }
     }
 
@@ -1053,13 +1161,13 @@ struct AppInfoView: View {
         return inside.hasPrefix("Claude") ? inside : String(label[..<open]).trimmed
     }
 
-    /// One of this app's model choices. Picking the model Settings uses means following Settings, so the app
-    /// keeps up if that default changes; any other pick is this app's own.
-    private func choice(_ field: WritableKeyPath<AppModels, String?>, default fallback: String) -> Binding<String> {
-        Binding(get: { models[keyPath: field] ?? fallback }, set: {
-            models[keyPath: field] = $0 == fallback ? nil : $0
-            models.save(project)
-        })
+    /// What answers one capability, named short (the panel is narrow), or Not Ready.
+    @ViewBuilder private func answerRow(_ title: String, _ resolution: Resolution) -> some View {
+        if resolution.tier == .none {
+            InfoRow(title) { NotReadyBadge() }
+        } else {
+            InfoRow(title, value: Self.short(resolution.answer ?? ""))
+        }
     }
 
     private var providerName: String {
@@ -1232,6 +1340,10 @@ struct ImportReviewView: View {
     let pending: Store.PendingImport
 
     private var review: ImportReview? { pending.review }
+    /// The app's own icon, once drawn from the file; the plain app icon until then, and for a file without one.
+    @State private var icon: NSImage?
+    /// What the app says it does, in its sender's words, when the file has that.
+    @State private var description: String?
     /// Opening takes a deliberate click (no Return) when the AI rates the app high, when the code was seen to
     /// do something sensitive, or when nothing checked it and the fixed checks found real capabilities.
     private var deliberate: Bool {
@@ -1242,13 +1354,32 @@ struct ImportReviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
-                Image(nsImage: NSWorkspace.shared.icon(for: .applicationBundle)).resizable().frame(width: 44, height: 44)
+                // Lamp's icons carry their own margin, so one fills a larger frame to sit like the plain icon did.
+                Image(nsImage: icon ?? NSWorkspace.shared.icon(for: .applicationBundle)).resizable()
+                    .frame(width: icon == nil ? 44 : 56, height: icon == nil ? 44 : 56)
+                    .frame(width: 56, height: 56)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Open “\(pending.package.name)”?").font(.title2.bold())
-                    Text("Someone shared this app with you. Lamp builds it and opens it here, where it can do anything an app you run can do.")
+                    if pending.waited {
+                        Text("You opened this during setup.").font(.callout).foregroundStyle(.secondary)
+                    }
+                    // The sender's words, so the line under them says whose they are.
+                    if let description {
+                        Text(verbatim: description).font(.callout).lineLimit(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.bottom, 2)
+                    }
+                    Text(description == nil
+                         ? "Someone shared this app with you. Lamp builds it and opens it here, where it can do anything an app you run can do."
+                         : "Someone shared this app with you, and the description above is theirs. Lamp builds it and opens it here, where it can do anything an app you run can do.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+            }
+            .task {
+                description = Sharing.description(of: pending.package)
+                icon = await Sharing.icon(of: pending.package)
             }
 
             if let review {
@@ -1260,7 +1391,7 @@ struct ImportReviewView: View {
                 }
                 section("What it can do on your Mac") { capabilities(review) }
                 if !pending.package.attachments.isEmpty {
-                    section("Included files") {
+                    section("Files the app uses") {
                         Text(pending.package.attachments.map(\.lastPathComponent).joined(separator: ", "))
                             .font(.callout).foregroundStyle(.secondary)
                     }
@@ -1291,13 +1422,35 @@ struct ImportReviewView: View {
                 .padding(.vertical, 20)
             }
 
+            if let existing = pending.existing {
+                // The buttons say what each does; this is what someone would worry about before choosing Update.
+                Label {
+                    Text("You already have this app\(existing.name == pending.package.name ? "" : ", as “\(existing.name)”"). Updating keeps your data, and you can go back if you change your mind.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(.secondary)
+                }
+            }
+
             HStack {
                 Spacer()
                 // Escape always cancels. Return builds only when the review is in and not worrying; an app
                 // that does something sensitive takes a deliberate click.
                 Button("Cancel", role: .cancel) { store.cancelImport() }
                     .keyboardShortcut(.cancelAction)
-                if deliberate || review == nil {
+                if pending.existing != nil {
+                    // The app is already here: the file either becomes its next version or a second app.
+                    Button("Keep Both") { store.confirmImport() }
+                        .disabled(review == nil)
+                    if deliberate || review == nil {
+                        Button(deliberate ? "Update Anyway" : "Update", role: deliberate ? .destructive : nil) { store.confirmUpdate() }
+                            .disabled(review == nil)
+                    } else {
+                        Button("Update") { store.confirmUpdate() }
+                            .keyboardShortcut(.defaultAction)
+                    }
+                } else if deliberate || review == nil {
                     Button(deliberate ? "Open Anyway" : "Build & Open", role: deliberate ? .destructive : nil) { store.confirmImport() }
                         .disabled(review == nil)
                 } else {

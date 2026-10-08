@@ -12,6 +12,10 @@
  *   (Undo).
  * - `list_versions`, `name_version`, `restore_version`: Lamp saves a version of the app after every request.
  *   These let the agent see them, name one, and bring one back when the user asks. Lamp does the work.
+ * - `read_notes`, `save_notes`: Lamp keeps short notes about the person and about this app, and tells the agent
+ *   in a line what they cover. These open them when a request needs them, and replace them.
+ * - `offer_setup`: asks Lamp to show the person a card in the chat for setting up a kind of AI the app can't
+ *   use yet (a key, a download, a sign-in). Lamp decides whether to show it and says what happened.
  * - `web_fetch`: reads a web page (or any URL) as text. Reading needs no approval.
  * - pi's file tools (read, edit, write, grep, find, ls) are checked before they run: inside the app's folder
  *   they need nothing, outside it Lamp decides (system files are fine, Lamp's own keys never, the rest asks
@@ -310,6 +314,43 @@ function computerTools() {
 	);
 }
 
+/** One of the notes tools: Lamp keeps the notes, so each call goes to it as it is. */
+function notesTool(name: string) {
+	return defineTool({
+		...spec(name),
+		async execute(_toolCallId, params, signal) {
+			const url = process.env.LAMP_MEMORY_URL;
+			if (!url) throw new Error("Lamp isn't available to keep notes.");
+			const response = await fetch(url, {
+				method: "POST",
+				headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+				body: JSON.stringify({ tool: name, arguments: params }),
+				signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
+			});
+			const reply = (await response.json()) as { text?: string; error?: string };
+			if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+			return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+		},
+	});
+}
+
+const offerSetup = defineTool({
+	...spec("offer_setup"),
+	async execute(_toolCallId, params, signal) {
+		const url = process.env.LAMP_SETUP_URL;
+		if (!url) throw new Error("Lamp isn't available to offer that.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
+		});
+		const reply = (await response.json()) as { text?: string; error?: string };
+		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+	},
+});
+
 export default function (pi: ExtensionAPI) {
 	const computer = computerTools();
 	if (computer.length > 0) {
@@ -335,4 +376,6 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(listVersions);
 	pi.registerTool(nameVersion);
 	pi.registerTool(restoreVersion);
+	pi.registerTool(offerSetup);
+	for (const name of ["read_notes", "save_notes"]) pi.registerTool(notesTool(name));
 }

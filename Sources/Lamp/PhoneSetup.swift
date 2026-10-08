@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import AppKit
 
@@ -128,9 +129,11 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
                 report = result
             }
         }
+        // A check that drags on (a first look at Xcode, a phone to wake) shows its window with the progress;
+        // the usual one, under a second before every run of an iPhone app, must not flash one open and shut.
         if request != nil {
             Task {
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: .seconds(3))
                 if generation == ticket, active?.id == request?.id, checking { present() }
             }
         }
@@ -202,18 +205,38 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         guard presentsWindow else { return }
         if window == nil {
             // The window is as tall as what it says: the next step's instructions run from two lines to six.
+            // Its size is set from the content by hand, after each change, rather than left to AppKit's
+            // constraints: a window whose frame follows its content's constraints changes size in the middle
+            // of a layout pass, and on macOS 26 the SwiftUI content then asks for another, which AppKit
+            // answers with an exception (that crashed Lamp when the window appeared for a new iPhone app).
             let content = NSHostingController(rootView: PhoneSetupView(model: self))
-            content.sizingOptions = [.preferredContentSize]
+            content.sizingOptions = []
             let window = NSWindow(contentViewController: content)
             window.styleMask = [.titled, .closable]
             window.delegate = self
             window.title = "iPhone & iPad Setup"
             window.isReleasedWhenClosed = false
-            window.center()
             self.window = window
+            fit()
+            window.center()
+            resizing = objectWillChange.sink { [weak self] _ in DispatchQueue.main.async { self?.fit() } }
         }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate()
+    }
+
+    private var resizing: AnyCancellable?
+
+    /// The window takes the size its content wants now. Called between layout passes, never inside one.
+    private func fit() {
+        guard let window, let controller = window.contentViewController as? NSHostingController<PhoneSetupView> else { return }
+        // What the content would like, asked of SwiftUI directly: the hosting view's own fitting size is
+        // nothing until it has been drawn once.
+        let size = controller.sizeThatFits(in: NSSize(width: 10_000, height: 10_000))
+        guard size.width > 0, size.height > 0, size != window.contentView?.frame.size else { return }
+        let top = window.frame.maxY
+        window.setContentSize(size)
+        window.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: top))
     }
 
     func act() {

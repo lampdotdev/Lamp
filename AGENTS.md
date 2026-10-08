@@ -12,18 +12,30 @@ the output of each is read by its own parser there (`parseClaude`, `parseCodex`,
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, the version tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
-  entry there, an `execute` in the extension, and a `case` in `Store.mcp`.
+  entry there, an `execute` in the extension, its name in pi's `--tools` list (`Agent.tools`) and Claude Code's
+  allowed tools (`Agent.run`), and a `case` in `Store.mcp`.
   Codex has no file tools of its own, so the endpoint also gives it `read`, `ls`, `find` and `grep`
   (`FileTools`, listed when the URL carries `files=1`): they mirror pi's built-in ones, and each call is
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file` and the version tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
+- **What Lamp remembers** (`Memory`): two short sets of notes, about the person (`about-you.md` in the
+  support folder) and about each app (`.lamp/notes.md`), each with a one-line summary. They must cost the
+  person tokens only when used: the agent is told just the summaries and opens the notes with `read_notes`
+  when it judges a request needs them; `save_notes` replaces a set. The summaries go at the end of the
+  request, in `Agent.run`, before the engine's `case`, not in the system prompt: Claude Code and Codex keep
+  the one a conversation began with when it is resumed, so anything that changes between turns has to ride
+  with the request. `Memory.brief` adds them once per conversation and again only when the notes were
+  changed by someone else, going by what `.lamp/notes-shown.json` says that engine's conversation last knew;
+  most requests carry nothing. A conversation its engine has compacted is told again (pi's and Claude Code's parsers report
+  `.compacted`; Codex doesn't say, so its conversations are told again every few requests), and it is an experiment (`Experiments.memory`, off by default, in Settings → Experimental): off, there are no notes tools, rule or summaries, and no Memory tab in Settings.
+  What is worth saving is said in `save_notes`'s description: every word there is paid for on every call.
 - **Approvals and privacy**: shell commands go through `/agent/approve` for every engine (pi's extension,
   Claude Code's hooks, Codex's hooks); file access outside the app's folder is checked the same way.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every
@@ -32,15 +44,30 @@ A capability given to one engine must be given to all of them that can take it, 
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
   Where an app's text AI goes is an `AppAI.TextRoute` (an OpenRouter model, the Claude Code or Codex sign-in,
   pi with its key provider, or a model on this Mac), listed by `AppAI.textRoutes` for the pickers in
-  Settings → Apps and an app's info panel, and dispatched by kind in `AppAI.dispatch`. The default
+  Settings → Apps (an app's info panel only shows what answers it), and dispatched by kind in `AppAI.dispatch`. The default
   (`AppAI.defaultRoute`) is the local model that builds apps when there is one, else Sonnet through
-  OpenRouter with a key, else the builder's own sign-in. Settings → Providers shows what each provider and
-  sign-in is doing (`ProvidersSettings.jobs`). Decisions (`AppAI.decisionModels`, `AppAI.decide`) go to Jev
+  OpenRouter with a key, else the builder's own sign-in. Settings → AI Providers lists each provider and
+  sign-in with its state, not what it's used for: that's in the menus that choose it. Decisions
+  (`AppAI.decisionModels`, `AppAI.decide`) go to Jev
   through OpenRouter or TypeSafe, to OpenAI's Decisions API (`decideViaOpenAI`, the same questions in its
   predicate/choice/score shape), to a Jev-class model on this Mac (`LocalModels.decisionCatalog`, run on the
   bundled llama-server; `decideLocally` does what the model's serving shim does: one forward pass per
   question, probabilities read off the label tokens at the "Answer:" slot), or by text through what answers
   apps (`decideByText`). A decision model is never offered for text or building (`LocalModels.isDecisionModel`).
+- **What answers apps, and offering better** (`Sources/Lamp/Capabilities.swift`): `AppAI.resolve(capability,
+  for: app, in: .mac | .phoneAway)` is the one answer to "what answers text / decisions / pictures for this
+  app, how well (`Resolution.Tier`: none, works, best), and what would make it better (`Upgrade`: a key, a
+  download, a sign-in)". Settings → Apps' menus and Not Ready rows, the notes under an app's
+  pickers, the sharing review, the keys a phone takes away (`keysForPhone`) and the agent's status line
+  all read it; don't work any of that out again elsewhere. A failure for want of setup carries
+  `AppAI.Failure.needs`; the gateway passes it to the app (`LampAI.Failure.needsSetup`, and
+  `LampAI.isAvailable` asks `/ai/status`) and offers a setup card in the app's chat (`Store.offerSetup`,
+  `SetupCard`, once per app and capability; "Not Now" keeps Lamp's own offers away from every app). The
+  agent is told what the app has at the end of a request (`AIStatus.brief`, beside `Memory.brief` and sent
+  the same way: once per conversation and when it changes) and raises the same card with `offer_setup`.
+  Before adding a capability, a way to make one better, or a new offer, read `design/setup-card/README.md`:
+  when an offer is worth making, how the card and Settings rows are built, and how to write their copy (for
+  someone who has never heard of a key or a model, never naming providers, routes or APIs).
 - **Using other apps** (`ComputerUse`): two drivers behind one `ComputerUse.Job`. When the ChatGPT app has
   its Computer Use plugin installed, Lamp drives that (`CodexComputerUse`: the `cua_repl` MCP server from
   `~/.codex/plugins/cache/openai-bundled/unified-computer-use/<newest>/.mcp.json`, one `js` tool in which the
@@ -72,7 +99,7 @@ installed Lamp into Lamp Dev, so the development build has something to work on.
 
 ## iPhone apps
 
-**Build iOS apps** (Settings → Building → Experimental, `Experiments.iosApps`) puts Mac / iPhone / iPad radio buttons in a new app's intro (`NewAppIntro`, `Store.setKind`). New App makes a draft, a folder with only `.lamp/meta.json`
+**Build iOS apps** (Settings → Experimental, `Experiments.iosApps`) puts Mac / iPhone / iPad radio buttons in a new app's intro (`NewAppIntro`, `Store.setKind`). New App makes a draft, a folder with only `.lamp/meta.json`
 (`Template.draft`), so its kind and name are just that file; the scaffold is written and committed when it first
 builds (`Store.materialize`, in the first turn after naming and in `run`), and `LampProject.scaffolded` tells the two apart. An iOS app is one app for both devices, as Apple has it; the radio buttons and the app's right-click menu's **Try On** pick which simulator it opens in (`LampProject.family`). It runs in the iPhone or iPad simulator on this Mac (`LampProject.platform == .iphone`,
 kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools: `Simulator`
@@ -147,6 +174,61 @@ code name and stays in code, comments, type names (`LampSupport`, `LampAI`, …)
 installs depend on: the bundle ID `dev.lamp.host`, `~/Library/Application Support/Lamp`,
 `~/Applications/Lamp Apps`, the `lamp://` scheme, the `.lampapp` extension and the signing certificates.
 Renaming any of those needs a migration, not a find-and-replace.
+
+## Interface
+
+Lamp's screens drift as features land: each adds its own explanation, warning or status, and an earlier
+tidy-up is undone. Before adding to any of them (Settings, the welcome, the chat and its cards, the build
+card), check:
+
+- **Is it a choice, an action, or the fix for one?** Screens are for doing, not explaining. Labels say what
+  something does; a note is only for what the person must accept to decide (an install, a permission, a
+  cost), in a sentence or two. No footers, captions, or badges summing up what something is used for.
+- **Can it be used now?** A control appears once it does something. Until then, its place shows why not
+  and the one thing that fixes it (Not Ready, a gray line, a Download or Sign In… button): no menu of
+  models that can't run, no field or switch that won't take effect yet. A menu lists only what works now,
+  and one with a single option is plain text. Disabled is for a moment's state in a standard control
+  (Remove with nothing selected), not for something that needs setting up first.
+- **Does it ever contradict itself?** What's shown is what Lamp does: a menu shows the choice actually
+  used, even when the saved one can't be. When all is well, say nothing; a problem is one orange mark and
+  one gray line with its fix. Never a choice on screen with words under it saying it won't work.
+- **Is this its only home?** Show a thing where it's chosen or changed, and from anywhere else link there
+  rather than repeat it: repeats drift from what Lamp actually does. An experiment and its settings live in
+  Settings → Experimental, under its checkbox; a feature leaving Experimental takes its settings to the tab
+  whose job they are.
+- **Does structure carry the meaning?** Related things share a group. What depends on something sits
+  indented under it and shows only while that's on. Details for the curious (paths, versions) go in `.help`.
+- **Same words for the same thing**, in every screen, Help and errors. Product names come from one place
+  (`Engine.title`: "ChatGPT Codex"), never a literal.
+
+### Settings
+
+Each tab has one job: **Building**, how Lamp builds apps; **Apps**, what apps use while they run; **AI
+Providers**, what's on this Mac, then cloud providers, with keys, sign-ins and downloads (other tabs' menus
+end in "Configure providers…", which leads here); **Experimental**, what the Lamp team is still working on.
+Lay out with the shared pieces in `Setup.swift`, and extend one rather than lay out by hand:
+`SettingsCheckboxes` (on/off is a checkbox, box first, never a switch), `.underCheckbox()`,
+`.checkboxNote(…)`, `NotReadyBadge`, `NotReadyRow`, `CapabilityNote` (the gray why-and-fix under Not Ready),
+`ImageModelRow`, and `.settingsPane()` at the end of each tab. A PR that adds to Settings says which tab, and why the option needs to exist at all.
+
+### The app's info panel
+
+The info panel (`AppInfoView`, ⓘ in an app's toolbar) shows facts about one app; it chooses nothing. What
+belongs: what the app has cost, what answers its AI (from `AppAI.resolve`, so it's what really answers),
+how Lamp builds it, and where it lives. What doesn't: menus, switches, explanations, upgrade offers, or
+anything that's the same for every app and already in Settings.
+
+- **Read-only.** A thing that can be changed is changed in Settings: each section ends in one small button
+  that opens the tab where it's chosen ("Configure Providers…", "Building Settings…"). The only exception is
+  undoing what an app was left with by an earlier Lamp ("Use Settings' Choices", shown only when there is
+  something to undo).
+- **Facts, not notes.** A row is a label and its value. Nothing answers: `NotReadyBadge` as the value, with
+  no sentence under it; the fix is in Settings, one button away. No footers or captions.
+- **Fit the width.** Rows are `InfoRow`: the value beside its label when it fits, else under it, both
+  left-aligned. Keep values short (`AppInfoView.short`), and keep the panel's width (`inspectorColumnWidth`)
+  wide enough that most rows fit on one line.
+- **Current.** The panel observes whatever its rows read (Settings, keys, the app's own choices, the models
+  on this Mac), so a value never outlives what it describes.
 
 ## Conventions
 

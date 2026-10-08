@@ -3,21 +3,24 @@ import Foundation
 /// The scaffold every generated app starts from.
 enum Template {
     static func scaffold(name: String, untitled: Bool = false, platform: Platform = .mac, family: DeviceFamily = .iphone,
-                         in root: URL) throws -> LampProject {
-        let project = try draft(name: name, untitled: untitled, platform: platform, family: family, in: root)
+                         instance: String? = nil, in root: URL) throws -> LampProject {
+        let project = try draft(name: name, untitled: untitled, platform: platform, family: family, instance: instance, in: root)
         try fill(project)
         return project
     }
 
     /// An app's folder with nothing in it but what Lamp knows of it. New App makes one, so the app can still
     /// change its name and kind for free; its scaffold is written (`fill`) when there's first something to build.
+    /// `instance` carries an existing app's identity into its replacement (rescaffolding under a new name);
+    /// a new app gets a fresh one.
     static func draft(name rawName: String, untitled: Bool = false, platform: Platform = .mac, family: DeviceFamily = .iphone,
-                      in root: URL) throws -> LampProject {
+                      instance: String? = nil, in root: URL) throws -> LampProject {
         let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
         let exe = identifier(from: name)
         let slug = freeSlug(for: exe, in: root)
         let project = LampProject(id: slug, name: name.isEmpty ? exe : name, exe: exe,
-                                   dir: root.appendingPathComponent(slug), untitled: untitled, platform: platform, family: family)
+                                   dir: root.appendingPathComponent(slug), instance: instance ?? UUID().uuidString,
+                                   untitled: untitled, platform: platform, family: family)
         try FileManager.default.createDirectory(at: project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
         try saveMeta(project)
         return project
@@ -37,7 +40,7 @@ enum Template {
     static func saveMeta(_ project: LampProject) throws {
         try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
                                              platform: project.platform, family: project.platform == .iphone ? project.family : nil,
-                                             device: project.device))
+                                             device: project.device, instance: project.instance.isEmpty ? nil : project.instance))
             .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
     }
 
@@ -48,6 +51,9 @@ enum Template {
         try write(iphone ? iPhoneContentViewSwift : contentViewSwift, to: "Sources/ContentView.swift", for: project)
         try write(iphone ? iPhoneAppMd : appMd, to: "APP.md", for: project)
         try write(".build/\nbuild/\n.lamp/\n", to: ".gitignore", for: project)
+        // Born with its Assets folder: the app's own files go there from the start, and the one-time adoption of
+        // attached files (Sharing.Assets.adopt) is for apps from before the folder existed, never a new one.
+        try FileManager.default.createDirectory(at: project.dir.appendingPathComponent(Sharing.Assets.folder), withIntermediateDirectories: true)
         try writeOwnedFiles(for: project)   // Package.swift last: it's what marks the app as no longer a draft
     }
 
@@ -323,14 +329,15 @@ enum Template {
 
     /// The Xcode project that builds the app for a real iPhone or iPad, written under .lamp/device: one app
     /// target over the package's Sources, with Xcode's automatic signing for the person's team, the icon in
-    /// an asset catalog and the chat's attachments copied in as a folder. Nothing else about the app changes:
+    /// an asset catalog and the app's own files (Assets/) copied in as a folder. Nothing else about the app changes:
     /// Package.swift stays what the simulator and the agent build with.
     static func writeDeviceProject(for project: LampProject, team: String) throws {
         let fm = FileManager.default
         let dir = project.dir.appendingPathComponent(".lamp/device")
         let xcodeproj = dir.appendingPathComponent("\(project.exe).xcodeproj")
         try fm.createDirectory(at: xcodeproj.appendingPathComponent("xcshareddata/xcschemes"), withIntermediateDirectories: true)
-        try fm.createDirectory(at: project.dir.appendingPathComponent(Attachments.folder), withIntermediateDirectories: true)
+        Sharing.Assets.adopt(in: project)
+        try fm.createDirectory(at: project.dir.appendingPathComponent(Sharing.Assets.folder), withIntermediateDirectories: true)
         let iconset = dir.appendingPathComponent("Assets.xcassets/AppIcon.appiconset")
         try fm.createDirectory(at: iconset, withIntermediateDirectories: true)
         try? fm.removeItem(at: iconset.appendingPathComponent("AppIcon.png"))
@@ -372,20 +379,20 @@ enum Template {
     	};
     	objectVersion = 77;
     	objects = {
-    		A00000000000000000000001 /* Attachments in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* Attachments */; };
+    		A00000000000000000000001 /* Assets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* Assets */; };
     		A00000000000000000000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000004 /* Assets.xcassets */; };
-    		A00000000000000000000002 /* Attachments */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Attachments; path = ../../Attachments; sourceTree = "<group>"; };
+    		A00000000000000000000002 /* Assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Assets; path = ../../Assets; sourceTree = "<group>"; };
     		A00000000000000000000004 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
     		A00000000000000000000005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
     		A00000000000000000000006 /* {{EXE}}.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "{{EXE}}.app"; sourceTree = BUILT_PRODUCTS_DIR; };
     		A00000000000000000000007 /* Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; name = Sources; path = ../../Sources; sourceTree = "<group>"; };
     		A00000000000000000000008 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000013 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
-    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Attachments */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
+    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
     		A0000000000000000000000A /* Products */ = {isa = PBXGroup; children = (A00000000000000000000006 /* {{EXE}}.app */); name = Products; sourceTree = "<group>"; };
     		A0000000000000000000000B /* {{EXE}} */ = {isa = PBXNativeTarget; buildConfigurationList = A0000000000000000000000C; buildPhases = (A0000000000000000000000D /* Sources */, A00000000000000000000008 /* Frameworks */, A0000000000000000000000E /* Resources */); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (A00000000000000000000007 /* Sources */); name = "{{EXE}}"; packageProductDependencies = (); productName = "{{EXE}}"; productReference = A00000000000000000000006 /* {{EXE}}.app */; productType = "com.apple.product-type.application"; };
     		A0000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {A0000000000000000000000B = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A00000000000000000000010; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000009; minimizedProjectReferenceProxies = 1; preferredProjectObjectVersion = 77; productRefGroup = A0000000000000000000000A /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A0000000000000000000000B /* {{EXE}} */); };
-    		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Attachments in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
+    		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Assets in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
     		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
     		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
@@ -647,8 +654,11 @@ enum Template {
         /// Answers what the gateway would, with the provider directly.
         static func handle(_ path: String, _ body: [String: Any]) async throws -> [String: Any] {
             guard let keys, let key = keys["openrouter"] as? String else {
-                throw LampAI.Failure(message: "Couldn't reach Lamp, and this phone has no key of its own yet. Open the app once while Lamp is reachable.")
+                throw LampAI.Failure(message: "Couldn't reach Lamp, and this phone has no key of its own yet. Open the app once while Lamp is reachable.",
+                                     needsSetup: .text)
             }
+            // What the phone carries answers all three.
+            if path == "/ai/status" { return ["text": true, "decisions": true, "pictures": true] }
             fputs("LampAI \(path): Lamp isn't reachable, using the key kept on this phone\n", stderr)
             switch path {
             case "/ai":
@@ -798,8 +808,11 @@ enum Template {
         }
 
         private static func decide(_ body: [String: Any], keys: [String: Any]) async throws -> [String: Any] {
-            let key = keys["openrouter"] as? String ?? ""
-            var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/systemone")!)
+            // Jev answers the same request through OpenRouter or TypeSafe; Lamp sends the TypeSafe key only
+            // when decisions away from the Mac go there.
+            let typesafe = keys["decision_provider"] as? String == "typesafe" ? keys["typesafe"] as? String : nil
+            let key = typesafe ?? keys["openrouter"] as? String ?? ""
+            var request = URLRequest(url: URL(string: typesafe == nil ? "https://openrouter.ai/api/v1/systemone" : "https://api.typesafe.ai/v1/systemone")!)
             request.httpMethod = "POST"
             request.timeoutInterval = 60
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
@@ -2097,12 +2110,12 @@ enum Template {
 
     #endif
 
-    /// Files attached in Lamp's chat, bundled inside this app (Contents/Resources/Attachments).
+    /// The app's own files, from its Assets/ folder, bundled inside it (Contents/Resources/Assets).
     ///
     ///     let logo = LampAssets.image("logo.png")
     ///     let csv = LampAssets.text("prices.csv")
     enum LampAssets {
-        static var folder: URL? { Bundle.main.resourceURL?.appendingPathComponent("Attachments") }
+        static var folder: URL? { Bundle.main.resourceURL?.appendingPathComponent("Assets") }
 
         static func url(_ name: String) -> URL? {
             guard let url = folder?.appendingPathComponent(name),
@@ -2114,7 +2127,7 @@ enum Template {
 
         static func text(_ name: String) -> String? { url(name).flatMap { try? String(contentsOf: $0, encoding: .utf8) } }
 
-        /// Every attached file's name.
+        /// Every file's name.
         static var names: [String] {
             guard let folder else { return [] }
             return ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).sorted()
@@ -2520,10 +2533,25 @@ enum Template {
     ///
     /// Text calls take a few seconds; decisions well under a second; image calls 10–60 seconds. Show a ProgressView, and show
     /// `error.localizedDescription` on failure. Aspect ratios look like "1:1", "16:9", "3:4".
+    ///
+    /// Not every Mac has every kind of AI set up. `await LampAI.isAvailable(.pictures)` (or `.text`, `.decisions`) says
+    /// whether it can answer now: check it where a feature depends on it, and show the feature with a short note
+    /// ("Pictures need AI set up in Lamp") rather than hiding it or failing at it. A call that fails for that reason has
+    /// `needsSetup` set on its `LampAI.Failure`, and Lamp offers the person a way to set it up.
     enum LampAI {
         struct Failure: LocalizedError {
             let message: String
+            /// What isn't set up, when that's why the call failed.
+            var needsSetup: Capability? = nil
             var errorDescription: String? { message }
+        }
+
+        enum Capability: String { case text, decisions, pictures }
+
+        /// Whether this kind of AI can answer now. False when Lamp can't be reached and the phone has no key.
+        static func isAvailable(_ capability: Capability) async -> Bool {
+            guard let reply = try? await post("/ai/status", [:], timeout: 10) else { return false }
+            return reply[capability.rawValue] as? Bool ?? false
         }
 
         /// `data` is text from outside the app (an email, a web page, a file) for the AI to work on, not obey.
@@ -2946,7 +2974,7 @@ enum Template {
                     if (response as? HTTPURLResponse)?.statusCode == 200 { return reply }
                     let message = reply["error"] as? String ?? "The AI request failed."
                     fputs("LampAI \(path) failed: \(message)\n", stderr)
-                    throw Failure(message: message)
+                    throw Failure(message: message, needsSetup: (reply["needs"] as? String).flatMap(Capability.init(rawValue:)))
                 } catch let error as URLError where error.code == .cannotConnectToHost && attempt == 0 {
                     // Lamp isn't running: start it in the background, then retry once. (A phone can't start
                     // it; the simulator app just waits a moment in case Lamp is coming up.)

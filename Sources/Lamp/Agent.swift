@@ -12,6 +12,7 @@ enum AgentEvent {
     case session(String)   // an external engine's conversation id, to resume next turn
     case step(String)      // the model has started on a tool call (its name), or on text ("")
     case stepArgs(String)  // a piece of that call's arguments, as they stream in
+    case compacted         // the engine summed up the conversation so far to make room
     case plan([PlanPart])  // the agent's checklist for the build card
 }
 
@@ -21,13 +22,14 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version")
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,offer_setup"
+            + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
     /// Lamp's own tools for pi (Resources/lamp-tools.ts): `look_at_app` has Lamp build and open the app
     /// mid-turn and shows the agent the result; `plan` is the checklist on the build card; `delete_file`
     /// removes a file, which pi's own tools can't; the version tools list, name and restore the app's saved
-    /// versions. Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
+    /// versions; `offer_setup` shows a setup card in the chat; `read_notes` and `save_notes` are Lamp's notes (Memory). Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
     static var lampTools: URL? {
         let url = Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.ts")
         return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
@@ -35,7 +37,7 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static var tryRules: String { lookRules + planRules }
+    static var tryRules: String { lookRules + planRules + setupRules + (Memory.isOn ? memoryRules : "") }
 
     private static let lookRules = """
 
@@ -47,13 +49,18 @@ enum Agent {
     scrolls and picks from menus, and shows you the result. It tells you what each click landed \
     on and whether the window changed: when nothing changed, the click probably missed, so aim again before \
     deciding the app is broken. It uses the app as last built, so call `look_at_app` again after editing code.
-    - Try the app before you say it works. After building a new app, or changing what it does (a button's \
-    effect, sorting, a form, a flow between screens, saving and loading), walk through the main things the \
-    user asked for with `use_app` as they would: add an item and see it appear, fill the form and submit it, \
-    quit and reopen to see what was kept. Fix what you find and try again. Then tell the user, in one plain \
-    sentence, what you tried and what happened ("I added three tasks, ticked one off and reopened the app: \
-    they were all still there"), and say honestly if something couldn't be tried. Don't try trivial changes \
-    (a label, a color) or a change you watched work already.
+    - A new app's first build is the user's to see first. Build it, call `look_at_app` once to be sure it \
+    opens and looks right (fix what you see), and stop there: don't `use_app` it. End by telling them it's \
+    ready and asking whether they'd like you to try it out ("Want me to test it out, or is there something \
+    you'd like changed first?"); they're probably already clicking around in it, and your clicks would get in \
+    their way. If they say yes, walk through it as below.
+    - Try a change before you say it works. After changing what the app does (a button's effect, sorting, a \
+    form, a flow between screens, saving and loading), walk through the main things the user asked for with \
+    `use_app` as they would: add an item and see it appear, fill the form and submit it, quit and reopen to \
+    see what was kept. Fix what you find and try again. Then tell the user, in one plain sentence, what you \
+    tried and what happened ("I added three tasks, ticked one off and reopened the app: they were all still \
+    there"), and say honestly if something couldn't be tried. Don't try trivial changes (a label, a color) or \
+    a change you watched work already.
     """
 
     /// Every engine has these too (pi's extension, Lamp's MCP endpoint). Kept apart from the look rules only
@@ -71,6 +78,28 @@ enum Agent {
     one (its id from `list_versions`) before a big or risky change, e.g. “Before the redesign”. \
     `restore_version` brings back an earlier version's files: use it only when the user asks to go back, \
     never to undo your own attempt, and find the version with `list_versions` first.
+    """
+
+    /// Short for the same reason. What AI the app has comes at the end of a request (AIStatus.brief), since it
+    /// changes between turns.
+    private static let setupRules = """
+
+    - The end of a request says what AI this app can use right now: text, decisions and pictures, each with \
+    what answers it, or "nothing can answer yet". Build for what's there. When a feature needs one that \
+    isn't set up, or would be clearly better with one that only works a slower way, build it anyway, have \
+    the app check `LampAI.isAvailable` and say so where the feature is, and call `offer_setup` once: Lamp \
+    shows the person how to set it up. Never ask for keys or send them to Settings yourself.
+    """
+
+    /// Kept short, like the tools' descriptions: every word here is sent with every call to the model. What the
+    /// notes cover comes at the end of a request (Memory.brief); the notes only when the agent asks.
+    private static let memoryRules = """
+
+    - Lamp keeps notes about the person and about this app between requests (`read_notes`, `save_notes`), and \
+    tells you in a line what they cover. Read them before you build a new app or a new screen, and whenever \
+    a request touches what they cover; not otherwise, since reading costs the person. Follow them, but what \
+    the person asks now wins: do that and correct the note. Don't mention them unless asked: the person sees \
+    them in Lamp's Settings, under Memory.
     """
 
     /// pi ships inside Lamp.app (see build.sh).
@@ -407,10 +436,12 @@ enum Agent {
         """
 
         static let attachments = """
-        - Files the user attaches are saved in Attachments/ and bundled inside the app. When the app should use \
-        one (a logo, a data file, a sound), load it with `LampAssets.url("name")`, `LampAssets.image("name")` or \
-        `LampAssets.text("name")` from LampSupport.swift, writing the full file name (e.g. "logo.png") in the code: \
-        shared copies of the app include only attachments the code names. Screenshots and mockups are usually just references for you.
+        - Files the user attaches are saved in Attachments/, for you to look at; they stay on this Mac and never \
+        ship with the app. When the app should use one (a logo, a data file, a sound), copy it into Assets/ at the \
+        app's root (make the folder if needed): that is the one folder bundled inside the app and shared with it. \
+        Load it with `LampAssets.url("name")`, `LampAssets.image("name")` or `LampAssets.text("name")` from \
+        LampSupport.swift, writing the full file name (e.g. "logo.png"). Screenshots and mockups are usually just \
+        references for you: leave them in Attachments/.
         """
 
         static let logs = """
@@ -677,6 +708,8 @@ enum Agent {
                 events.append(.failed(message["errorMessage"] as? String ?? "Unknown error"))
             }
             return events
+        case "compaction_end":
+            if obj["result"] != nil { return [.compacted] }
         case "auto_retry_end":
             if obj["success"] as? Bool == false { return [.failed(obj["finalError"] as? String ?? "Unknown error")] }
         default:
@@ -697,7 +730,18 @@ enum Agent {
         }
         if let pattern = args["pattern"] as? String { return "\(name) \(pattern)" }
         if let actions = args["actions"] as? [[String: Any]] { return "\(name) \(summary(of: actions))" }
+        if let note = noteArgument(name, args) { return "\(name) \(note)" }
         return name
+    }
+
+    /// Which notes a call to one of the notes tools is about, for the transcript.
+    static func noteArgument(_ name: String, _ args: [String: Any]) -> String? {
+        guard name == "read_notes" || name == "save_notes" else { return nil }
+        switch (args["about"] as? String)?.lowercased() {
+        case "you": return "about you"
+        case "app": return "about this app"
+        default: return name == "read_notes" ? "about you and this app" : nil
+        }
     }
 
     /// What a use_app call does, for the transcript: "click, type, key".

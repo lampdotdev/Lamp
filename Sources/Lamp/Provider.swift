@@ -41,7 +41,7 @@ enum Provider {
     static let typesafe = PiProvider(id: "typesafe", name: "TypeSafe", envVar: "TYPESAFE_API_KEY",
                                      keyURL: "https://typesafe.ai")
 
-    /// Every provider Lamp keeps an API key for, as listed in Settings → Providers.
+    /// Every provider Lamp keeps an API key for, as listed in Settings → AI Providers.
     static let keyProviders = (apiProviders + [typesafe])
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
@@ -63,9 +63,20 @@ enum Provider {
         return defaultModel
     }
 
-    static func friendlyError(_ raw: String) -> String {
+    /// OpenRouter's name, for the calls that go to it whatever builds apps.
+    static let openRouter = "OpenRouter"
+
+    /// What an engine's calls go through, as the person knows it: for Lamp's own agent, the provider whose
+    /// key it uses.
+    static func name(of engine: Engine) -> String {
+        engine == .pi ? (apiProvider(Builder.piProvider)?.name ?? "AI provider") : engine.title
+    }
+
+    /// A failed call's raw error, in words for the person. `name` is what that call went through, which is
+    /// often not what builds apps: an app's AI, its pictures, its decisions and Lamp's own quick calls each
+    /// have their own route, and someone told to check a sign-in they aren't using has nowhere to look.
+    static func friendlyError(_ raw: String, from name: String) -> String {
         let text = raw.lowercased()
-        let name = Builder.engine == .pi ? (apiProvider(Builder.piProvider)?.name ?? "AI provider") : Builder.engine.title
         if text.contains("401") || text.contains("authenticat") || text.contains("api key") || text.contains("unauthorized") {
             return ErrorMessages.authenticationFailed(name)
         }
@@ -123,12 +134,14 @@ enum KeyStore {
     /// Posted on the main thread once the keys have been read at launch: what was drawn without them draws again.
     static let loaded = Notification.Name("LampKeysLoaded")
     nonisolated(unsafe) private static var preloaded = false
+    /// Whether the launch-time read is in. Until it is, the main thread is told there are no keys.
+    static var keysRead: Bool { preloaded }
 
     /// Reads every provider's key, off the main thread, so the Keychain's questions (a password, when an
     /// item isn't Lamp's own) come at launch and not in the middle of drawing a view: a Keychain prompt
     /// inside a layout pass runs the event loop inside the layout, which AppKit answers by crashing. The
     /// main thread only ever reads what this has found, and says there's no key for anything it hasn't
-    /// (a question declined, say); Settings → Providers asks again when it opens.
+    /// (a question declined, say); Settings → AI Providers asks again when it opens.
     static func preload() {
         DispatchQueue.global(qos: .userInitiated).async {
             if usesKeychain { for provider in Provider.keyProviders { _ = key(for: provider.id) } }
@@ -162,12 +175,18 @@ enum KeyStore {
         let value: String?
         if usesKeychain {
             _ = movedFileToKeychain
-            let (status, key) = KeychainItem.read(provider)
-            // Don't cache a denied or cancelled prompt, so the next use can ask again.
-            guard status == errSecSuccess || status == errSecItemNotFound else { return key }
-            if let key { KeychainItem.adopt(key, provider) }
-            // A key the Keychain wouldn't take stays in the file (moveToKeychain tries again each launch).
-            value = key ?? (status == errSecItemNotFound ? KeyFile.stored()?[provider] : nil)
+            // A key still in the file is one the Keychain wouldn't take: an item under that name that isn't
+            // Lamp's and can't be replaced (made by the security tool, say). The file is Lamp's own; the
+            // item would ask at every read, so it isn't read.
+            if let kept = KeyFile.stored()?[provider] {
+                value = kept
+            } else {
+                let (status, key) = KeychainItem.read(provider)
+                // Don't cache a denied or cancelled prompt, so the next use can ask again.
+                guard status == errSecSuccess || status == errSecItemNotFound else { return key }
+                if let key { KeychainItem.adopt(key, provider) }
+                value = key
+            }
         } else {
             value = KeyFile.read()[provider]
         }
@@ -191,7 +210,12 @@ enum KeyStore {
             KeyFile.write(all)
         }
         Agent.keyChanged(for: provider, present: key != nil)   // pi's note of where to ask for it
+        // What each capability resolves to may have changed: setup cards and Settings' notes look again.
+        DispatchQueue.main.async { NotificationCenter.default.post(name: changed, object: provider) }
     }
+
+    /// Posted on the main thread after a key is saved or removed, with the provider's id.
+    static let changed = Notification.Name("LampKeyChanged")
 
     /// Takes in a key found outside the store (pi's auth file, where Lamp used to keep a copy) if this
     /// provider has none. True once the store holds a key for the provider; false when the store couldn't be
@@ -201,6 +225,10 @@ enum KeyStore {
         defer { lock.unlock() }
         if usesKeychain {
             _ = movedFileToKeychain   // the keys file first: its key is the saved one, pi's copy may be older
+            // What the launch-time read found (or the file holds) is the saved key; the Keychain is asked
+            // only when neither has one, so a foreign item isn't read here, on the main thread.
+            if let cached = cached(provider), cached != nil { return true }
+            if KeyFile.stored()?[provider] != nil { return true }
             let status = KeychainItem.read(provider).0
             if status == errSecSuccess { return true }
             guard status == errSecItemNotFound else { return false }
@@ -239,10 +267,12 @@ enum KeyStore {
         }
 
         @discardableResult
-        static func write(_ key: String, _ account: String) -> Bool {
+        static func write(_ key: String, _ account: String) -> Bool { add(key, account) == errSecSuccess }
+
+        static func add(_ key: String, _ account: String) -> OSStatus {
             var q = query(account)
             q[kSecValueData as String] = Data(key.utf8)
-            return SecItemAdd(q as CFDictionary, nil) == errSecSuccess
+            return SecItemAdd(q as CFDictionary, nil)
         }
 
         static func delete(_ account: String) { SecItemDelete(query(account) as CFDictionary) }
@@ -252,8 +282,12 @@ enum KeyStore {
         /// often Allow is clicked. Once a read has got through, the item is made Lamp's: written afresh,
         /// so its access list is this app's and no one is asked again.
         static func adopt(_ key: String, _ account: String) {
-            guard let team = teamID, let partitions = partitions(account),
-                  !partitions.contains("teamid:\(team)"), !partitions.contains("apple:") else { return }
+            guard let team = teamID, let access = access(account) else { return }
+            // Lamp's own item: its team's partition, and this app among the applications allowed to read it.
+            // One with the partition added by hand (security set-generic-password-partition-list) but not the
+            // app still asks every launch, so it's taken over too.
+            let partitionOK = access.partitions.contains("teamid:\(team)") || access.partitions.contains("apple:")
+            guard !(partitionOK && access.admitsThisApp) else { return }
             // The key is kept in the file, and read back, before the old item goes: if the new one can't be
             // added (or Lamp dies between the two), the file is what's read until it can be.
             var all: [String: String] = [:]
@@ -263,25 +297,32 @@ enum KeyStore {
             }
             all[account] = key
             guard KeyFile.write(all), KeyFile.stored()?[account] == key else { return }
+            // Deleting an item another tool made isn't allowed (errSecInvalidOwnerEdit): then the key lives in
+            // the file from here on, read before the Keychain, and the item is never asked about again.
             delete(account)
             if write(key, account) { KeyFile.forget(account) }
         }
 
-        /// The partitions an item's access list admits ("apple-tool:", "teamid:…", "apple:"): a hex-encoded
-        /// plist in the partition ACL's description. Nil when it can't be read.
-        private static func partitions(_ account: String) -> [String]? {
+        /// What an item's access list says: the partitions it admits ("apple-tool:", "teamid:…", "apple:"; a
+        /// hex-encoded plist in the partition ACL's description) and whether this app is among the
+        /// applications allowed to read it (an empty list means any). Nil when it can't be read.
+        private static func access(_ account: String) -> (partitions: [String], admitsThisApp: Bool)? {
             var ref: CFTypeRef?
             var q = query(account)
             q[kSecReturnRef as String] = true
             guard SecItemCopyMatching(q as CFDictionary, &ref) == errSecSuccess, let ref else { return nil }
             let item = ref as! SecKeychainItem
             var access: SecAccess?
-            guard SecKeychainItemCopyAccess(item, &access) == errSecSuccess, let access,
-                  let acl = (SecAccessCopyMatchingACLList(access, kSecACLAuthorizationPartitionID) as? [SecACL])?.first else { return nil }
-            var apps: CFArray?
-            var description: CFString?
-            var selector = SecKeychainPromptSelector()
-            guard SecACLCopyContents(acl, &apps, &description, &selector) == errSecSuccess, let hex = description as String? else { return nil }
+            guard SecKeychainItemCopyAccess(item, &access) == errSecSuccess, let access else { return nil }
+            func contents(_ authorization: CFString) -> (apps: [SecTrustedApplication]?, description: String?)? {
+                guard let acl = (SecAccessCopyMatchingACLList(access, authorization) as? [SecACL])?.first else { return nil }
+                var apps: CFArray?
+                var description: CFString?
+                var selector = SecKeychainPromptSelector()
+                guard SecACLCopyContents(acl, &apps, &description, &selector) == errSecSuccess else { return nil }
+                return (apps as? [SecTrustedApplication], description as String?)
+            }
+            guard let partition = contents(kSecACLAuthorizationPartitionID), let hex = partition.description else { return nil }
             var bytes = [UInt8]()
             var index = hex.startIndex
             while index < hex.endIndex, let next = hex.index(index, offsetBy: 2, limitedBy: hex.endIndex) {
@@ -290,7 +331,22 @@ enum KeyStore {
                 index = next
             }
             let plist = try? PropertyListSerialization.propertyList(from: Data(bytes), format: nil)
-            return (plist as? [String: Any])?["Partitions"] as? [String]
+            let partitions = (plist as? [String: Any])?["Partitions"] as? [String] ?? []
+            // The applications allowed to decrypt: nil means any; otherwise this app's bundle must be among them.
+            guard let decrypt = contents(kSecACLAuthorizationDecrypt) else { return nil }
+            let admits: Bool
+            if let apps = decrypt.apps {
+                let own = Bundle.main.bundleURL.standardizedFileURL.path
+                admits = apps.contains { app in
+                    var data: CFData?
+                    guard SecTrustedApplicationCopyData(app, &data) == errSecSuccess, let data else { return false }
+                    let path = String(decoding: Data(data as Data).prefix { $0 != 0 }, as: UTF8.self)
+                    return path == own || path.hasPrefix(own + "/")
+                }
+            } else {
+                admits = true
+            }
+            return (partitions, admits)
         }
     }
 
@@ -347,13 +403,11 @@ enum KeyStore {
             }
         }
 
-        /// True once the Keychain holds a key for the provider: its own, or this one.
+        /// True once the key is in the Keychain as Lamp's own item. An item already there under that name is
+        /// one Lamp couldn't replace (not its own); it isn't read, since reading it is what asks every time,
+        /// and the key stays in the file, which is read instead.
         private static func moved(_ key: String, to provider: String) -> Bool {
-            switch KeychainItem.read(provider).0 {
-            case errSecSuccess: return true
-            case errSecItemNotFound: return KeychainItem.write(key, provider)
-            default: return false
-            }
+            KeychainItem.add(key, provider) == errSecSuccess
         }
 
         /// A key set or removed in a signed build is the last word on that provider: whatever the file

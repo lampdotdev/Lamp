@@ -5,13 +5,16 @@ import Foundation
 /// entries, so running the one you're working on never touches the one you use. Everything that names
 /// Lamp on disk or on the network goes through here. Built-in choice: build.sh (FLAVOR=dev, the default)
 /// and release.sh (FLAVOR=release) set the bundle id, which this reads.
-/// Features that are in but not yet for everyone, switched on in Settings → Building → Experimental.
+/// Features that are in but not yet for everyone, switched on in Settings → Experimental.
 enum Experiments {
     /// iPhone and iPad apps: built and tried in the iOS Simulator. Needs Xcode and an Accessibility grant.
     /// With it, an app can go on the person's own iPhone or iPad too (chosen under Try On), signed with their
     /// Apple account through Xcode, with Lamp answering its AI over the local network and the app keeping a
     /// copy of the person's OpenRouter key for when it's away from the Mac.
     static var iosApps: Bool { UserDefaults.standard.bool(forKey: "experimentIOSApps") }
+    /// What Lamp remembers (Memory): notes about the person and about each app, kept between requests. Off,
+    /// nothing is noted and the agent has no rule, tools or word about notes.
+    static var memory: Bool { UserDefaults.standard.bool(forKey: Memory.switchKey) }
 }
 
 enum Edition {
