@@ -926,23 +926,25 @@ enum AppAI {
     static var imageRoute: ImageRoute? {
         if Provider.hasKey { return .openRouter }
         if ImageModels.ready { return .local }
-        if codexChosen, ToolLocator.path(for: .codex) != nil, codexSignedIn != false { return .codex }
+        if codexChosen(), ToolLocator.path(for: .codex) != nil, codexSignedIn != false { return .codex }
         return nil
     }
 
-    /// Codex draws pictures only when the person chose it for something: to build apps, or to answer inside
-    /// them. A Codex sign-in that merely happens to be on the Mac isn't spent on pictures.
-    private static var codexChosen: Bool {
+    /// Codex draws pictures only when the person chose it for something: to build apps, to answer inside
+    /// them, or as this one app's own text choice. A Codex sign-in that merely happens to be on the Mac isn't
+    /// spent on pictures.
+    private static func codexChosen(appText: String? = nil) -> Bool {
         Builder.engine == .codex || (UserDefaults.standard.string(forKey: "appModel") ?? "").hasPrefix("engine:codex")
+            || (appText ?? "").hasPrefix("engine:codex")
     }
 
     /// The route to use now. Codex counts only when it's chosen (above) and signed in (the copy inside the
     /// ChatGPT app is there whether or not anyone ever logged in); that's checked at most every few minutes.
     /// A model on this Mac makes pictures from words only, so a request that edits existing pictures skips it.
-    static func imageRoute(editing: Bool = false) async -> ImageRoute? {
+    static func imageRoute(editing: Bool = false, appText: String? = nil) async -> ImageRoute? {
         if Provider.hasKey { return .openRouter }
         if ImageModels.ready, !editing { return .local }
-        if codexChosen, ToolLocator.path(for: .codex) != nil {
+        if codexChosen(appText: appText), ToolLocator.path(for: .codex) != nil {
             if codexSignedIn == nil || Date().timeIntervalSince(codexChecked) > 300 {
                 codexSignedIn = await EngineSignIn.isSignedIn(.codex) ?? true
                 codexChecked = Date()
@@ -971,13 +973,13 @@ enum AppAI {
     /// Creates or edits an image. `references` are input images to edit or combine. Returns PNG data and
     /// the cost in USD (0 through Codex).
     static func image(prompt: String, references: [Image], aspectRatio: String?,
-                      model appChoice: String? = nil) async throws -> (Data, Double) {
+                      model appChoice: String? = nil, appText: String? = nil) async throws -> (Data, Double) {
         // Someone who picked the Mac's own model over the cloud ones gets it, key or no key.
         let wantsLocal = (appChoice == Icons.localArt || (appChoice == nil && Icons.artModel == Icons.localArt)) && ImageModels.ready
         if wantsLocal, !references.isEmpty {
             throw Failure(message: "\(ImageModels.chosen?.name ?? "The model on this Mac") makes pictures from words and can't edit one. Pick a cloud image model in Lamp → Settings → AI for this.")
         }
-        switch wantsLocal ? .local : await imageRoute(editing: !references.isEmpty) {
+        switch wantsLocal ? .local : await imageRoute(editing: !references.isEmpty, appText: appText) {
         case .openRouter: break
         case .codex: return (try await viaCodexImage(prompt: prompt, references: references, aspectRatio: aspectRatio), 0)
         case .local:
