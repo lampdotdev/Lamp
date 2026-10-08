@@ -4477,6 +4477,11 @@ enum Template {
             button.target = Clicks.shared
             button.action = #selector(Clicks.clicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            // VoiceOver can't right-click: the menu is an action of its own.
+            button.setAccessibilityCustomActions([NSAccessibilityCustomAction(name: "Show Menu") {
+                MainActor.assumeIsolated { showMenu() }
+                return true
+            }])
         }
 
         private final class Clicks: NSObject {

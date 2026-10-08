@@ -96,8 +96,10 @@ enum Agent {
     - `make_art` paints a picture into the app's Assets/ folder, in the same style as its icon: one object on a \
     transparent background, or a whole scene. Show it with `LampAssets.image("name.png")`. Use it where the app's \
     kind calls for art, never for icons on buttons or anything an SF Symbol shows. Each picture takes a while and \
-    costs the user: make only what the design needs, one picture animated rather than one per state, and look at \
-    each before using it (call it again with a better subject if it's wrong). When nothing can make pictures, use \
+    costs the user: make only what the design needs. For something that fills, grows or ripens, paint it once, \
+    complete (the full glass, the ripe tomato), and show how far along it is in code: the complete picture masked \
+    to the progress over a faint or outlined copy, so it reads as empty at zero; never paint the empty state too. \
+    Look at each picture before using it (call it again with a better subject if it's wrong). When nothing can make pictures, use \
     SF Symbols in the app's palette instead: Lamp offers the user a way to set that up.
     """
 
@@ -392,8 +394,8 @@ enum Agent {
               • Companion (water, a timer, habits, mood, a plant, breathing: a small ritual come back to many times a \
             day): one main screen built around one picture of where you are now (the glass, the timer, the plant), not \
             a list or a sidebar; history is one step away. That picture is art from `make_art`, never shapes drawn in \
-            code: animate it (fill, grow, move it with a mask, offset or scale) rather than make a picture for each \
-            state. A palette of two or three colors that suit the subject, as named colors with light and dark \
+            code, and it always shows the state: animate it (fill it with a mask, grow, move or scale it), never a \
+            static picture beside a progress bar. A palette of two or three colors that suit the subject, as named colors with light and dark \
             versions; text and controls keep system colors. The one number that matters is large (.largeTitle or \
             bigger, .rounded design). The main action is one big, obvious button or a tap on the picture, with a \
             spring animation\(haptic); something small and pleasant happens when a goal is met, and nothing nags. \
@@ -404,7 +406,8 @@ enum Agent {
             adaptive grid of cards (LazyVGrid) with large images and titles under them; a list as an option, not the \
             default. The detail is a full page with a large picture at the top and the facts below, like an album in \
             Music. Every item has a picture: the user's own photo, or else art from `make_art` for the kind of item, \
-            so the grid is never gray placeholders. Search, sort and filter as Photos does (toolbar menus, scopes), \
+            so the grid is never gray placeholders; the empty state shows some of that art too, so a new app doesn't \
+            open on a blank page. Search, sort and filter as Photos does (toolbar menus, scopes), \
             not as a form.
               • Dashboard (spending, fitness totals, a server's status: look, understand, leave): the one or two numbers \
             that matter come first and large, details below. Swift Charts for anything over time, kept simple: no \
@@ -529,7 +532,8 @@ enum Agent {
         - The app icon is defined in icon.json: `subject` (the ONE tangible object the icon shows, as a short noun \
         phrase, e.g. "a yellow legal pad with a red pencil"), `symbol` (an SF Symbol name shown until artwork is \
         ready), `background` (one of \(Icons.backgrounds.map(\.name).joined(separator: ", "))) and `tint` (hex main \
-        color of the object). To change the icon, edit icon.json; Lamp redraws it. Never create icon files yourself.
+        color of the object). To change the icon, edit icon.json; Lamp redraws it, which takes a while and costs the user, so only when \
+        they ask for a different icon or the app has become something else. Never create icon files yourself.
         """
 
         static let attachments = """
