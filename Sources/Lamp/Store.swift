@@ -322,8 +322,9 @@ final class Store: ObservableObject {
     let root = Edition.supportFolder.appendingPathComponent("Apps")
 
     private init() {
-        Migration.fromForge()
+        // Before the migration, whose git may be refused too (it is told once the apps below are known).
         Versions.refused = { [weak self] folder, refusal in self?.historyRefused(at: folder, refusal) }
+        Migration.fromForge()
         // The keys are read off the main thread first; what needs them (pi's auth file, the setup check, the
         // views drawn meanwhile) follows once they're in.
         KeyStore.preload()

@@ -72,13 +72,23 @@ final class HistoryRefusalTests: XCTestCase {
     }
 
     func testAHistoryKeptInAWayLampCantUseIsReported() async throws {
-        for setup in ["git config extensions.partialclone origin", "git config filter.lfs.clean 'git-lfs clean -- %f'", "echo '[broken' >> .git/config"] {
+        for setup in ["git config extensions.partialclone origin", "git config core.sparseCheckout true && echo '/Sources/' > .git/info/sparse-checkout", "git config filter.lfs.clean 'git-lfs clean -- %f'", "echo '[broken' >> .git/config"] {
             reported = []
             let project = try project(setup)
             let saved = try await saveAfterAChange(project)
             XCTAssertFalse(saved, setup)
             XCTAssertEqual(reported, [.format], setup)
         }
+    }
+
+    /// The migration at launch can't await, and runs git its own way: it reports as well.
+    func testTheMigrationsGitReportsToo() async throws {
+        let project = try project("git config extensions.partialclone origin")
+        let result = Versions.gitBlocking("git ls-files", cwd: project.dir)
+        XCTAssertEqual(result.status, Versions.Refusal.format.rawValue)
+        await Task.yield()
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(reported, [.format])
     }
 
     /// Settings Lamp has to remove and can't (the file is locked): it used to stop saving without a word.

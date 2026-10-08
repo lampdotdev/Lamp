@@ -52,7 +52,12 @@ enum Versions {
 
     /// The same, for the one caller that can't await (the migration, at launch).
     static func gitBlocking(_ command: String, cwd: URL) -> Subprocess.Result {
-        Subprocess.runBlocking("/bin/zsh", ["-c", script(command)], cwd: cwd, env: environment, mergeErrors: false, timeout: 120)
+        let result = Subprocess.runBlocking("/bin/zsh", ["-c", script(command)], cwd: cwd, env: environment, mergeErrors: false, timeout: 120)
+        // Said once the caller is done: at launch that is after the apps are known, so the line has a chat to go in.
+        if let refusal = Refusal(rawValue: result.status) {
+            DispatchQueue.main.async { MainActor.assumeIsolated { refused?(cwd, refusal) } }
+        }
+        return result
     }
 
     /// What is run for a git command: nothing at all unless the history is Lamp's to trust.
@@ -84,7 +89,7 @@ enum Versions {
     /// by one (text converters, signing programs, includes, hooks named in settings, and more with each
     /// release), so every setting is removed, with git's own command for it, except the ones below: how the
     /// history is stored (its format, hashes, where names of versions are kept), how git itself converts
-    /// line endings and which files it checks out, who the person is and where they push. None of those names
+    /// line endings, who the person is and where they push. None of those names
     /// a program. An app's history from before `.git` was closed can hold anything; one written since holds
     /// nothing else.
     ///
@@ -92,7 +97,9 @@ enum Versions {
     /// either, so git isn't run at all and nothing is changed (`Refusal.format`): a storage extension other
     /// than the two kept (a partial clone fetches what it lacks from wherever its settings say; per-worktree
     /// settings are a second file of them), and a filter, which is a program run on every file going in and
-    /// out (without it, files kept elsewhere or encrypted would be saved as they are on disk).
+    /// out (without it, files kept elsewhere or encrypted would be saved as they are on disk). The same goes
+    /// for a checkout of only some of the files: Lamp builds the app from its folder and saves all of it,
+    /// and git won't add a file that such a checkout leaves out.
     ///
     /// Before any of that, the history has to be a real folder in the app, with its settings a real file of
     /// its own: a `.git` that points somewhere else (a file or a link, or a shared folder named inside it)
@@ -106,10 +113,11 @@ enum Versions {
     git config --file .git/config --list >/dev/null 2>&1 || exit 98
     git config --file .git/config --name-only -z --list | while IFS= read -r -d '' key; do case "$key" in \
     extensions.objectformat|extensions.refstorage) ;; extensions.*|filter.*) exit 98 ;; esac; done
+    [ "$(git config --file .git/config --type=bool --get core.sparsecheckout 2>/dev/null)" != true ] || exit 98
     [ "$(stat -f %l .git/config)" = 1 ] || { fresh="$(mktemp .git/config.XXXXXXXX)" && cat .git/config > "$fresh" && mv -f "$fresh" .git/config; } || exit 99
     git config --file .git/config --name-only -z --list | sort -zu | while IFS= read -r -d '' key; do case "$key" in \
     core.repositoryformatversion|core.filemode|core.bare|core.logallrefupdates|core.ignorecase|core.precomposeunicode|core.symlinks) ;; \
-    extensions.objectformat|extensions.refstorage|core.eol|core.autocrlf|core.safecrlf|core.sparsecheckout|core.sparsecheckoutcone) ;; \
+    extensions.objectformat|extensions.refstorage|core.eol|core.autocrlf|core.safecrlf) ;; \
     user.name|user.email|remote.*.url|remote.*.pushurl|remote.*.fetch|remote.pushdefault|branch.*.remote|branch.*.merge|branch.*.rebase) ;; \
     push.default|pull.rebase|init.defaultbranch) ;; \
     *) git config --file .git/config --unset-all "$key" 2>/dev/null || exit 99 ;; esac; done
@@ -117,10 +125,18 @@ enum Versions {
     """#
 
     /// `git add -A`, without the repositories inside the app's folder. Git records one as a link to a commit
-    /// (none of its files), and from then on runs git inside it, with its settings, to see whether it changed.
-    /// Git has no switch for "never go in there", so this is a guard of Lamp's own: any link already recorded
-    /// is dropped before anything is added, and any just added is dropped again.
-    static let stage = "{ \(unlink) && git add -A && \(unlink); }"
+    /// (none of its files), and from then on runs git inside it, with its settings, to see whether it changed;
+    /// and it stops, saving nothing, at one it can't read (just made, with nothing saved in it yet, or with
+    /// settings of its own that are broken). Git has no switch for "leave those alone", so this is a guard of
+    /// Lamp's own: any link already recorded is dropped, the folders git's own status reports as repositories
+    /// are named to `git add` as places to leave out, and anything that got in anyway is dropped again.
+    static let stage = "{ \(unlink) && \(add) && \(unlink); }"
+
+    /// With every new file listed on its own, the only new entries that are folders are repositories.
+    private static let add = #"""
+    { inside=(); git status --porcelain -z --untracked-files=all --ignore-submodules=all -- . | while IFS= read -r -d '' entry; do \
+    case "$entry" in '?? '*/) entry=${entry#'?? '}; inside+=(":(exclude,literal)${entry%/}") ;; esac; done; git add -A -- . $inside; }
+    """#
 
     /// Takes every such link out of what's staged. Names end at a zero byte, so no name can hide one.
     private static let unlink = #"""

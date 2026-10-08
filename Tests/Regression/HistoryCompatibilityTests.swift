@@ -166,6 +166,7 @@ final class HistoryCompatibilityTests: XCTestCase {
         let cases = [
             ("a partial clone", "git config core.repositoryformatversion 1 && git config extensions.partialclone origin && git config remote.origin.url https://example.com/x.git && git config remote.origin.promisor true && git config remote.origin.partialclonefilter blob:none"),
             ("settings per worktree", "git config core.repositoryformatversion 1 && git config extensions.worktreeConfig true && git config --worktree core.autocrlf true"),
+            ("a checkout of only part of the files", "git config core.sparseCheckout true && echo '/Sources/' > .git/info/sparse-checkout"),
             ("a filter set up in this history", "git config filter.lfs.clean 'git-lfs clean -- %f' && git config filter.lfs.smudge 'git-lfs smudge -- %f' && git config filter.lfs.process 'git-lfs filter-process' && git config filter.lfs.required true"),
         ]
         for (what, setup) in cases {
@@ -208,6 +209,35 @@ final class HistoryCompatibilityTests: XCTestCase {
             _ = await Versions.git(Versions.status(".", everything: true), cwd: project.dir) { lines.append($0) }
             XCTAssertFalse(lines.isEmpty, "\(name.debugDescription): the folder would read as holding nothing of the person's")
             try await saveUndoAndGoBackKeeping(nested, in: project, name.debugDescription)
+        }
+    }
+
+    /// Whatever state it is in. Git stops at one it can't read (none of these has a version git could
+    /// record a link to), and that must not stop the app's own files being saved.
+    func testARepositoryInsideTheAppNeverStopsASave() async throws {
+        let shapes = [
+            ("just made, nothing saved in it", "git init -q && echo x > file"),
+            ("settings that can't be read", "git init -q && echo x > file && echo '[broken' >> .git/config"),
+            ("a format this git doesn't know", "git init -q && echo x > file && git config core.repositoryformatversion 1 && git config extensions.nosuch true"),
+            ("a pointer to nowhere", "echo 'gitdir: /nonexistent/elsewhere' > .git && echo x > file"),
+            ("an empty folder called .git", "mkdir .git && echo x > file"),
+        ]
+        for (what, make) in shapes {
+            let (project, _) = try await started()
+            let nested = project.dir.appendingPathComponent("Vendor/kit", isDirectory: true)
+            try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+            let made = try run(make, in: nested)
+            XCTAssertEqual(made.status, 0, "\(what): \(made.output)")
+            try "two\n".write(to: project.dir.appendingPathComponent("Sources/App.swift"), atomically: true, encoding: .utf8)
+            let saved = await Versions.save(project, message: "two")
+            XCTAssertTrue(saved, "\(what): the app's own change wasn't saved")
+            XCTAssertEqual(try run("git show HEAD:Sources/App.swift", in: project.dir).output, "two\n", what)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: nested.appendingPathComponent("file").path), what)
+            // And the next one, with the folder still there.
+            try "three\n".write(to: project.dir.appendingPathComponent("Sources/App.swift"), atomically: true, encoding: .utf8)
+            let again = await Versions.save(project, message: "three")
+            XCTAssertTrue(again, "\(what): the second save")
+            XCTAssertFalse(try run("git ls-files -s", in: project.dir).output.contains("160000 "), what)
         }
     }
 
