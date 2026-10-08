@@ -491,18 +491,19 @@ struct BuildingSettings: View {
     private var textChoices: [TextGroup] {
         _ = revision
         var groups: [TextGroup] = []
-        // The sign-ins, each model they offer; an uninstalled one is a single entry so it can still be picked
-        // and its fix shown.
+        // The sign-ins, each model they offer, once installed: AI Providers lists them either way, with the
+        // download, and Configure providers… goes there.
         if ToolLocator.path(for: .claude) != nil {
             // The tool's own default stays on offer, so the account's choice can be returned to.
             groups.append(TextGroup(title: Engine.claude.title, items: Builder.claudeModels.map { TextChoice(id: "claude:\($0.id)", label: $0.label) }))
-        } else {
-            groups.append(TextGroup(title: Engine.claude.title, items: [TextChoice(id: "claude:", label: "Not installed")]))
         }
         if ToolLocator.path(for: .codex) != nil {
             groups.append(TextGroup(title: Engine.codex.title, items: Builder.codexModels.map { TextChoice(id: "codex:\($0.id)", label: $0.label) }))
-        } else {
-            groups.append(TextGroup(title: Engine.codex.title, items: [TextChoice(id: "codex:", label: "Not installed")]))
+        }
+        // Chosen and since uninstalled: kept, so the menu isn't blank beside Not Ready and its download.
+        if selectedEngine != .pi, ToolLocator.path(for: selectedEngine) == nil {
+            let id = "\(selectedEngine.rawValue):\(Builder.engineModel(selectedEngine))"
+            groups.append(TextGroup(title: selectedEngine.title, items: [TextChoice(id: id, label: "Not installed")]))
         }
         for api in addedProviders {
             var items: [TextChoice] = []
@@ -889,10 +890,10 @@ struct ProvidersSettings: View {
         return Provider.keyProviders.filter { KeyStore.key(for: $0.id) == nil }
     }
 
-    /// On this Mac: Native Mac AI, Ollama and LM Studio (always there), and the coding agents when installed.
+    /// On this Mac: Native Mac AI, Ollama and LM Studio, and the coding agents, installed or not: this is
+    /// where Building's Configure providers… leads, so a missing one is listed with its download.
     private var onThisMac: [String] {
-        [Builder.localProvider] + LocalModels.externalIDs
-            + [Engine.claude, .codex].filter { ToolLocator.path(for: $0) != nil }.map { "engine:\($0.rawValue)" }
+        [Builder.localProvider] + LocalModels.externalIDs + [Engine.claude, .codex].map { "engine:\($0.rawValue)" }
     }
 
     /// One row: logo, name and state. What each is used for is chosen, and shown, in Building and Apps.
@@ -912,7 +913,7 @@ struct ProvidersSettings: View {
             .contextMenu(forSelectionType: String.self) { ids in
                 if let id = ids.first {
                     if id.hasPrefix("engine:") {
-                        Button("Sign In…") { showing = ProviderDetail(id) }
+                        Button(detail(id) == "Not installed" ? "Download…" : "Sign In…") { showing = ProviderDetail(id) }
                     } else {
                         Button(Provider.keyProvider(id) == nil ? "Show Models…" : "Edit…") { showing = ProviderDetail(id) }
                     }
@@ -985,6 +986,10 @@ struct ProvidersSettings: View {
             Text("Lamp forgets its API key. Apps and builds that use it stop working until you add it again.")
         }
         .onAppear { openPending(); refreshSignIns(); KeyStore.preload() }   // a key declined at launch is asked for again
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            revision += 1   // looks for Claude Code and Codex again: one may have been installed meanwhile
+            refreshSignIns()
+        }
         .onChange(of: pendingSheet) { openPending() }
         .task { local.refresh(); await local.detectExternal() }
     }
@@ -999,6 +1004,8 @@ struct ProvidersSettings: View {
 
     private func detail(_ id: String) -> String {
         if id.hasPrefix("engine:"), let engine = Engine(rawValue: String(id.dropFirst(7))) {
+            _ = revision
+            guard ToolLocator.path(for: engine) != nil else { return "Not installed" }
             switch signedIn[engine] {
             case .some(.some(true)): return "Signed in"
             case .some(.some(false)): return "Not signed in"
@@ -1071,6 +1078,29 @@ private struct EngineSheet: View {
     @State private var working = false
 
     var body: some View {
+        if ToolLocator.path(for: engine) == nil, let app = engine.desktopApp {
+            notInstalled(app)
+        } else {
+            installed
+        }
+    }
+
+    /// Claude Code and Codex come with their desktop apps: the one thing to do is get the app.
+    private func notInstalled(_ app: (name: String, download: URL)) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ProviderHeader(id: "engine:\(engine.rawValue)", detail: "\(engine.title) comes with the \(app.name) app. Once it's installed and you've signed in, it can build apps and answer inside them.")
+            HStack {
+                Spacer()
+                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Download the \(app.name) App") { NSWorkspace.shared.open(app.download); dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+    }
+
+    private var installed: some View {
         VStack(alignment: .leading, spacing: 16) {
             ProviderHeader(id: "engine:\(engine.rawValue)",
                            detail: signedIn == true ? "Signed in. Builds apps and answers inside them with your \(engine == .claude ? "Claude" : "ChatGPT") subscription."
