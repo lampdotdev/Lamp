@@ -41,6 +41,20 @@ final class HeldInstallsTests: XCTestCase {
         XCTAssertTrue(held.due(amongClosed: ["sips"]).isEmpty)       // installed: asking again finds nothing
     }
 
+    /// Giving an app back asks again, and taking it gives it back: an app that can't take its install (still
+    /// open, or with no build to install) must not come up as due, or the asking would never end.
+    func testAnAppThatCantTakeItsInstallIsNeverDue() {
+        var held = HeldInstalls()
+        XCTAssertFalse(held.mayInstall("sips", running: true))
+        var asked = 0
+        for _ in 0..<3 {
+            XCTAssertTrue(held.due(amongClosed: ["sips"]) { _ in asked += 1; return false }.isEmpty)
+        }
+        XCTAssertEqual(asked, 3)
+        XCTAssertEqual(held.waiting, ["sips"])   // still waiting: the next build brings the icon
+        XCTAssertEqual(held.due(amongClosed: ["sips"]) { _ in true }, ["sips"])
+    }
+
     func testABuildBringsTheIconAndEndsTheWait() {
         var held = HeldInstalls()
         XCTAssertFalse(held.mayInstall("sips", running: true))

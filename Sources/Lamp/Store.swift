@@ -1515,10 +1515,17 @@ final class Store: ObservableObject {
     /// installed then, and a turn that only replied, was stopped or failed installs nothing itself. Owning
     /// the app meanwhile, like any install.
     private func installHeldIcons(for candidates: Set<String>) {
-        for project in projects where heldInstalls.due(amongClosed: candidates).contains(project.id) && !isRunning(project) {
+        // Only an app that's closed and has a build is taken: giving it back asks here again, so taking one
+        // with nothing to install would go round for ever.
+        let due = heldInstalls.due(amongClosed: candidates) { id in
+            guard let project = projects.first(where: { $0.id == id }) else { return false }
+            return !isRunning(project) && FileManager.default.fileExists(atPath: project.builtURL.path)
+        }
+        for project in projects where due.contains(project.id) {
             guard begin(project) != nil else { continue }
             Task {
-                if FileManager.default.fileExists(atPath: project.builtURL.path) { await installIcon(project) }
+                // Installed or not, the wait ends here (`mayInstall`), so the app being given back finds nothing due.
+                await installIcon(project)
                 finish(project)
             }
         }

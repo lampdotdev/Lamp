@@ -20,8 +20,12 @@ struct HeldInstalls {
         return false
     }
 
-    /// The apps that just closed and have an install waiting: theirs to do now.
-    func due(amongClosed closed: Set<String>) -> Set<String> { waiting.intersection(closed) }
+    /// The apps among these that have an install waiting and can take it now: closed, with a build to
+    /// install. One that can't isn't due, however often it's asked about: an app with no build gets its icon
+    /// with the next build, and asking again in the meantime must find nothing to do.
+    func due(amongClosed closed: Set<String>, where installable: (String) -> Bool = { _ in true }) -> Set<String> {
+        waiting.intersection(closed).filter(installable)
+    }
 
     /// A build installed the app, icon and all: nothing is waiting for it any more.
     mutating func installed(_ app: String) { waiting.remove(app) }
