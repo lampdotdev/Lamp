@@ -3392,6 +3392,18 @@ final class Store: ObservableObject {
             let engine: Engine = request.path.contains("format=codex") ? .codex : request.path.contains("format=claude") ? .claude : .pi
             let confined = shell && engine != .codex && Sandbox.confines(engine) ? Sandbox.wrap(command, for: project) : nil
             let sandboxed = shell && (engine == .codex ? Sandbox.confines(.codex) : confined != nil)
+            // No sandbox, no shell: a command that can't be confined isn't run rather than run loose.
+            if shell && engine != .codex && Sandbox.confines(engine) && confined == nil {
+                log(project, .error, "A shell command was refused: Lamp could not set up the sandbox that keeps it inside the app.")
+                let reason = "Lamp could not confine this command; use the file tools instead."
+                if escalated {
+                    return (200, ["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": ["behavior": "deny", "message": reason]]])
+                }
+                if engine == .claude {
+                    return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason]])
+                }
+                return (200, ["allow": false, "reason": reason])
+            }
             if request.path.contains("format=codex") {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.
                 let allowed = await approveCommand(command, for: project, escalated: false, sandboxed: sandboxed)

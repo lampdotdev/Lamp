@@ -447,10 +447,22 @@ extension Agent {
                     .map { "-i \"$LAMP_FILE_\($0.offset)\"" }.joined(separator: " ")
                 launch = "\"$LAMP_TOOL\" exec \(options) -C \"$LAMP_DIR\" \(images) -- \"$LAMP_PROMPT\""
             }
-            // The whole run confined to the app, with Codex's own folder (sign-in, sessions, caches) open to it.
+            // The whole run confined to the app. Codex's own folder is readable, and writable only where Codex
+            // keeps its state: the files at its top (databases, locks, the sign-in it refreshes, caches) and
+            // the folders of sessions, logs, caches, snapshots and memories. What tells Codex how to behave
+            // (config.toml, AGENTS.md, and the rules, skills, plugins and prompts folders) stays out of reach
+            // of its apply_patch, which, unlike a shell command, never asks Lamp.
             let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let codex = home + "/.codex"
             let install = ToolLocator.path(for: .codex).map(Sandbox.installFolders(of:)) ?? []
-            let command = confined ? (Sandbox.wrapEngine(launch, for: project, opening: [home + "/.codex"], reading: install) ?? launch) : launch
+            let state = ["sessions", "archived_sessions", "log", "tmp", ".tmp", "cache", "shell_snapshots", "memories",
+                         "thread-writer-locks", "mcp-oauth-locks"].map { codex + "/" + $0 }
+            // Without the sandbox tool Codex doesn't run at all: nothing else keeps its commands inside the app.
+            let command = confined
+                ? Sandbox.wrapEngine(launch, for: project, opening: state, reading: install + [codex], writing: [codex],
+                                     keeping: [codex + "/config.toml", codex + "/AGENTS.md"])
+                    ?? "echo 'Lamp could not set up the sandbox that keeps ChatGPT Codex inside the app.' >&2; exit 1"
+                : launch
             return AgentRun(command: command, env: env)
         }
     }
