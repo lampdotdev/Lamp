@@ -7,14 +7,18 @@ plain "Lamp x.y.z" line.
 
 ## Unreleased
 
+- Fewer needless questions about commands. Reading, building, and creating, editing or deleting inside the
+  app's own folder run without asking, however the agent writes them. What reaches beyond the app (an
+  install for the whole Mac, a push, an upload, anything touching sign-ins or keys) still comes to you, and
+  once Lamp has flagged a command that way nothing waves it through without you.
+
+## 0.11.0
+
 - The agent's shell commands run confined to the app: its folder, the system and developer tools, caches,
   temporary folders and the network, and nothing else on your Mac. A command that reaches elsewhere is
   simply refused by macOS, so Lamp no longer has to read commands to guess where they look, and the
   approval card is about what a command does. For anything outside, the agent uses its file tools, which
   ask you. With Codex, the whole of Codex runs confined that way.
-
-## 0.11.0
-
 - iPhone and iPad apps are for everyone, no longer an experiment. Choose Mac, iPhone or iPad when you start
   an app, your very first one included, and the starter ideas follow what you chose. Lamp tries the app in a
   simulator on your Mac and, with Xcode and your Apple Account, puts it on your own iPhone or iPad.

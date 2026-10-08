@@ -43,7 +43,9 @@ A capability given to one engine must be given to all of them that can take it, 
   closes the rest of the home folder and both Lamps' folders), so nothing reads a command's text to see
   where it looks. Codex's hook can't change a command and a sandbox can't be nested, so Codex itself runs
   inside the profile (`Sandbox.wrapEngine`, with `~/.codex` opened and Codex's own sandbox off) and its
-  commands with it. Nothing reads a command's text for paths any more; don't bring that back.
+  commands with it. SwiftPM's own sandbox can't start inside Lamp's, so a `swift` shim first on the path
+  (`Sandbox.bin`) gives `swift build`/`test`/`run`/`package` `--disable-sandbox`. Nothing reads a command's text
+  for paths any more; don't bring that back.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items.

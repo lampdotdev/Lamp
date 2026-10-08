@@ -11,26 +11,65 @@ import Foundation
 /// Codex's hook can't, and a sandbox can't be nested, so Codex itself runs inside the profile (with its own
 /// sandbox off, and its own folder opened), and its commands with it.
 enum Sandbox {
-    /// Every engine's shell commands run confined, when the sandbox tool is there.
-    static func confines(_ engine: Engine) -> Bool { FileManager.default.isExecutableFile(atPath: executable) }
-
     static let executable = "/usr/bin/sandbox-exec"
 
-    /// The command, confined to the app. Nil when the sandbox tool isn't there.
+    /// The command, confined to the app. Nil when the profile can't be written; the caller then refuses the
+    /// command rather than run it loose (the sandbox tool itself is part of macOS).
     static func wrap(_ command: String, for project: LampProject) -> String? {
         guard let file = writeProfile(for: project) else { return nil }
-        return "\(executable) -f \(quoted(file.path)) /bin/bash -c \(quoted(command))"
+        return launch(command, profile: file)
+    }
+
+    /// The shell line that runs `command` under `profile`, with Lamp's `swift` first on the path (below). A
+    /// login shell started inside (Codex runs its commands with `zsh -lc`) rebuilds the path with the system's
+    /// folders first, so zsh is also given Lamp's startup files, which put the shims back in front; the
+    /// person's own startup files are in the home folder, which the sandbox closes anyway.
+    private static func launch(_ command: String, profile: URL) -> String {
+        "\(executable) -f \(quoted(profile.path)) /usr/bin/env PATH=\(quoted(bin.path))':'\"$PATH\" ZDOTDIR=\(quoted(zdot.path)) /bin/bash -c \(quoted(command))"
+    }
+
+    /// Programs put before the agent's own on the path. SwiftPM runs its builds under a sandbox of its own,
+    /// which macOS won't start inside Lamp's, so `swift build` would fail with "sandbox_apply: Operation not
+    /// permitted": this `swift` hands its build, test, run and package commands `--disable-sandbox` (Lamp's
+    /// sandbox already keeps the build inside the app) and passes everything else to the real one.
+    static let bin = folder.appendingPathComponent("bin")
+    static let zdot = folder.appendingPathComponent("zsh")
+
+    private static let swiftShim = """
+    #!/bin/bash
+    # Written by Lamp. SwiftPM's own sandbox can't start inside Lamp's, which already confines the build.
+    here="$(cd "$(dirname "$0")" && pwd)"
+    rest="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vx "$here" | paste -sd: -)"
+    real="$(PATH="$rest" command -v swift)"
+    case "$1" in
+        build|test|run|package) exec "$real" "$1" --disable-sandbox "${@:2}" ;;
+        *) exec "$real" "$@" ;;
+    esac
+
+    """
+
+    private static func writeShims() -> Bool {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: bin, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        try? fm.createDirectory(at: zdot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        let front = "# Written by Lamp: its programs stay first on the path.\npath=(\(quoted(bin.path)) $path)\n"
+        let files = [(bin.appendingPathComponent("swift"), swiftShim, 0o755),
+                     (zdot.appendingPathComponent(".zshenv"), front, 0o644), (zdot.appendingPathComponent(".zprofile"), front, 0o644)]
+        for (file, text, mode) in files where (try? String(contentsOf: file, encoding: .utf8)) != text {
+            guard fm.createFile(atPath: file.path, contents: Data(text.utf8), attributes: [.posixPermissions: mode]) else { return false }
+        }
+        return true
     }
 
     /// A whole engine run, confined to the app with what the engine itself needs opened as well: `opening`
     /// for reading and writing, `reading` for reading, `writing` the files directly inside a folder only
     /// read (Codex keeps its databases and sign-in beside its settings), and `keeping` single files that
-    /// stay read-only whatever else was opened. Nil when the sandbox tool isn't there or the profile can't
+    /// stay read-only whatever else was opened. Nil when the profile can't
     /// be written.
     static func wrapEngine(_ command: String, for project: LampProject, opening folders: [String], reading: [String] = [],
                            writing: [String] = [], keeping: [String] = []) -> String? {
         guard let file = writeProfile(for: project, opening: folders, reading: reading, writing: writing, keeping: keeping) else { return nil }
-        return "\(executable) -f \(quoted(file.path)) /bin/bash -c \(quoted(command))"
+        return launch(command, profile: file)
     }
 
     /// Where an engine's program lives when that's under the home folder (a Node install, say): the install
@@ -57,12 +96,13 @@ enum Sandbox {
 
     private static func writeProfile(for project: LampProject, opening folders: [String] = [], reading: [String] = [],
                                      writing: [String] = [], keeping: [String] = []) -> URL? {
-        guard FileManager.default.isExecutableFile(atPath: executable) else { return nil }
         let fm = FileManager.default
         try? fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        guard writeShims() else { return nil }
         let cutoff = Date().addingTimeInterval(-3600)
         for old in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        where ((try? old.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantFuture) < cutoff {
+        where old.pathExtension == "sb"
+            && ((try? old.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantFuture) < cutoff {
             try? fm.removeItem(at: old)
         }
         let file = folder.appendingPathComponent("\(project.id)-\(UUID().uuidString).sb")
@@ -86,11 +126,13 @@ enum Sandbox {
             "(version 1)",
             "(allow default)",
             "(deny file-read* file-write* (subpath \"/Users\") (subpath \"/Volumes\") (subpath \"/Network\") (subpath \"/private/var/root\"))",
+            // The Mac's shared app data and keychains: not a person's files, but not a build's business either.
+            "(deny file-read* file-write* (subpath \"/Library/Application Support\") (subpath \"/Library/Keychains\"))",
             "(deny file-read* file-write* (subpath \(quotedPath(home))))",
             // What a build or a script needs from the home folder: the toolchain, package caches, git's
             // settings. Read only, apart from the caches.
             "(allow file-read* (subpath \(quotedPath(home + "/Library/Developer"))) (subpath \(quotedPath(home + "/.swiftpm"))) (literal \(quotedPath(home + "/.gitconfig"))) (subpath \(quotedPath(home + "/.config/git"))))",
-            "(allow file-read* file-write* (subpath \(quotedPath(home + "/Library/Caches"))) (subpath \"/private/tmp\") (subpath \"/tmp\"))",
+            "(allow file-read* file-write* (subpath \(quotedPath(home + "/Library/Caches"))) (subpath \(quotedPath(home + "/Library/org.swift.swiftpm"))) (subpath \"/private/tmp\") (subpath \"/tmp\"))",
         ]
         if let tmp = ProcessInfo.processInfo.environment["TMPDIR"], !tmp.isEmpty {
             lines.append("(allow file-read* file-write* (subpath \(quotedPath(real(tmp)))))")
@@ -99,6 +141,8 @@ enum Sandbox {
         for name in ["Lamp", "Lamp Dev"] {
             lines.append("(deny file-read* file-write* (subpath \(quotedPath(support + "/" + name))))")
         }
+        // Lamp's shims and shell startup files may be read and run, and not changed.
+        lines.append("(allow file-read* (subpath \(quotedPath(real(bin.path)))) (subpath \(quotedPath(real(zdot.path)))))")
         lines.append("(allow file-read* file-write* (subpath \(quotedPath(app))))")
         for folder in folders {
             lines.append("(allow file-read* file-write* (subpath \(quotedPath(real(folder)))))")

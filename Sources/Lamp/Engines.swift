@@ -323,7 +323,7 @@ extension Agent {
             // Shell commands go through a PreToolUse hook that asks Lamp and waits for the user's answer; Lamp
             // replies in Claude Code's hook format. If Lamp can't be reached the hook fails and the command is denied.
             env["LAMP_TOKEN"] = token
-            env["LAMP_SYSTEM"] = systemPrompt(for: project) + tryRules + (Sandbox.confines(.claude) ? sandboxNote : "")
+            env["LAMP_SYSTEM"] = systemPrompt(for: project) + tryRules + sandboxNote
             // How commands are approved (Settings → Building):
             // - auto: Claude Code's own classifier (--permission-mode auto) runs routine commands; when it would
             //   ask, its PermissionRequest hook sends the request to Lamp's approval card.
@@ -409,8 +409,7 @@ extension Agent {
             // Isolated from the user's own Codex setup (--ignore-user-config --ignore-rules: their model, MCP
             // servers, features and rules), keeping their sign-in. Lamp's rules go in as developer instructions.
             env["LAMP_TOOL"] = ToolLocator.path(for: .codex) ?? "codex"
-            let confined = Sandbox.confines(.codex)
-            env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt(for: project) + tryRules + Self.codexNote + (confined ? sandboxNote : ""))
+            env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt(for: project) + tryRules + Self.codexNote + sandboxNote)
             // Approvals (Settings → Building): a PreToolUse hook sends each shell command to Lamp before it runs,
             // and Lamp applies the setting: the decision model, then the in-app model's risk rating, then the
             // user (Only when risky, Anything unusual), or the user every time (Always). "Never" has no hook. In
@@ -430,7 +429,8 @@ extension Agent {
             if !codexModel.isEmpty { env["LAMP_MODEL"] = codexModel }
             // Inside Lamp's sandbox (below) Codex's own is off: one can't run inside the other, and Lamp's closes
             // the rest of the Mac to reads as well as writes, which Codex's never did.
-            let sandboxMode = confined ? "-s danger-full-access" : "-c sandbox_mode=\"workspace-write\" -c sandbox_workspace_write.network_access=true"
+            // Codex's own sandbox stays off: it runs inside Lamp's (below), and one can't be nested in the other.
+            let sandboxMode = "-c sandbox_mode=\"danger-full-access\""
             let options = (codexModel.isEmpty ? "" : "-m \"$LAMP_MODEL\" ") + """
             --json --ignore-user-config --ignore-rules --dangerously-bypass-hook-trust --skip-git-repo-check \\
               \(sandboxMode) \\
@@ -457,12 +457,10 @@ extension Agent {
             let install = ToolLocator.path(for: .codex).map(Sandbox.installFolders(of:)) ?? []
             let state = ["sessions", "archived_sessions", "log", "tmp", ".tmp", "cache", "shell_snapshots", "memories",
                          "thread-writer-locks", "mcp-oauth-locks"].map { codex + "/" + $0 }
-            // Without the sandbox tool Codex doesn't run at all: nothing else keeps its commands inside the app.
-            let command = confined
-                ? Sandbox.wrapEngine(launch, for: project, opening: state, reading: install + [codex], writing: [codex],
-                                     keeping: [codex + "/config.toml", codex + "/AGENTS.md"])
-                    ?? "echo 'Lamp could not set up the sandbox that keeps ChatGPT Codex inside the app.' >&2; exit 1"
-                : launch
+            // Without its profile Codex doesn't run at all: nothing else keeps its commands inside the app.
+            let command = Sandbox.wrapEngine(launch, for: project, opening: state, reading: install + [codex], writing: [codex],
+                                             keeping: [codex + "/config.toml", codex + "/AGENTS.md"])
+                ?? "echo 'Lamp could not set up the sandbox that keeps ChatGPT Codex inside the app.' >&2; exit 1"
             return AgentRun(command: command, env: env)
         }
     }

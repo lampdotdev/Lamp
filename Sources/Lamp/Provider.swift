@@ -47,11 +47,23 @@ enum Provider {
 
     static func keyProvider(_ id: String) -> PiProvider? { keyProviders.first { $0.id == id } }
 
+    /// A model Lamp lists by name. `id` is what a setting keeps and `openRouter` what OpenRouter calls it
+    /// (the same thing in the building list). The pickers show `label`: what the model is good for, then
+    /// its name in brackets; `name` alone is for a sentence when OpenRouter's own name for the model isn't
+    /// to hand (`modelName`).
+    struct ListedModel {
+        let id: String
+        let name: String
+        let blurb: String
+        let openRouter: String
+        var label: String { "\(blurb) (\(name))" }
+    }
+
     /// Suggested building models when using OpenRouter (any model from the full list also works).
-    static let models: [(id: String, label: String)] = [
-        ("anthropic/claude-fable-5.1", "Smartest, priciest (Claude Fable)"),
-        ("anthropic/claude-opus-5.5", "Best at coding (Claude Opus)"),
-        ("anthropic/claude-sonnet-5.5", "Faster & cheaper (Claude Sonnet)"),
+    static let models: [ListedModel] = [
+        ListedModel(id: "anthropic/claude-fable-5.1", name: "Claude Fable", blurb: "Smartest, priciest", openRouter: "anthropic/claude-fable-5.1"),
+        ListedModel(id: "anthropic/claude-opus-5.5", name: "Claude Opus", blurb: "Best at coding", openRouter: "anthropic/claude-opus-5.5"),
+        ListedModel(id: "anthropic/claude-sonnet-5.5", name: "Claude Sonnet", blurb: "Faster & cheaper", openRouter: "anthropic/claude-sonnet-5.5"),
     ]
 
     /// The default building model through OpenRouter.
@@ -61,6 +73,13 @@ enum Provider {
     static var model: String {
         if Builder.engine == .pi, Builder.piProvider == "openrouter", !Builder.piModel.isEmpty { return Builder.piModel }
         return defaultModel
+    }
+
+    /// A model's name for a sentence ("Checked by …"), for an OpenRouter id: the name OpenRouter publishes
+    /// for it when Lamp has that (`ModelNames`), else the name in Lamp's own lists, else the id as it is,
+    /// which is how the pickers show a model Lamp doesn't list.
+    static func modelName(_ id: String, published: (String) -> String? = ModelNames.openRouter) -> String {
+        published(id) ?? (models + AppAI.anthropicModels).first { $0.openRouter == id }?.name ?? id
     }
 
     /// OpenRouter's name, for the calls that go to it whatever builds apps.
