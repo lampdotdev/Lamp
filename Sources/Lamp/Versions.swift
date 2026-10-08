@@ -58,15 +58,23 @@ enum Versions {
     /// (none of its files), and from then on runs git inside it, with its settings, to see whether it changed.
     /// Git has no switch for "never go in there", so this is a guard of Lamp's own: any link already recorded
     /// is dropped before anything is added, and any just added is dropped again and its folder put on the
-    /// history's own ignore list, so it stops counting as unsaved work.
-    static let stage = "{ \(unlink) && git add -A && \(unlink); }"
+    /// history's own ignore list, so it stops counting as unsaved work. The list is started again at every
+    /// save: a folder that has stopped being a repository is the app's files again, and is saved.
+    static let stage = "{ \(forget) && \(unlink) && git add -A && \(unlink); }"
+
+    /// Lamp's part of the ignore list is everything from this line on.
+    private static let listed = "# Lamp: repositories inside the app's folder"
+    private static let forget = """
+    { [ ! -f .git/info/exclude ] || sed -i '' "/^\(listed)$/,\\$d" .git/info/exclude; } \\
+    && mkdir -p .git/info && echo "\(listed)" >> .git/info/exclude
+    """
 
     /// Takes every such link out of what's staged. Names end at a zero byte, so no name can hide one; a name
     /// with a line break in it can't be written as an ignore rule, and is dropped each time instead.
     private static let unlink = #"""
     git ls-files -s -z | while IFS= read -r -d '' entry; do case "$entry" in 160000\ *) name=${entry#*$'\t'}; \
     git rm -qf --cached -- ":(literal)$name" || exit 1; \
-    case "$name" in *$'\n'*) ;; *) mkdir -p .git/info && printf '/%s/\n' "$name" | sed 's/[^A-Za-z0-9\/._-]/\\&/g' >> .git/info/exclude ;; esac ;; \
+    case "$name" in *$'\n'*) ;; *) printf '/%s/\n' "$name" | sed 's/[^A-Za-z0-9\/._-]/\\&/g' >> .git/info/exclude ;; esac ;; \
     esac; done
     """#
 
@@ -127,7 +135,7 @@ enum Versions {
         let command = name.isEmpty
             ? "git tag -d \"forge/$LAMP_VERSION\""
             : "git -c user.name=Lamp -c user.email=lamp@localhost tag -f -a \"forge/$LAMP_VERSION\" -m \"$LAMP_NAME\" \"$LAMP_VERSION\""
-        _ = await Shell.run(command, cwd: project.dir, env: ["LAMP_VERSION": version, "LAMP_NAME": name]) { _ in }
+        _ = await git(command, cwd: project.dir, env: ["LAMP_VERSION": version, "LAMP_NAME": name])
     }
 
     /// Puts the app's files back as they were in a version, without committing. Attachments stay:

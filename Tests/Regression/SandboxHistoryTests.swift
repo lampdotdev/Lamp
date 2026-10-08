@@ -116,6 +116,13 @@ final class SandboxHistoryTests: XCTestCase {
         XCTAssertFalse(staged.output.contains("160000 "), staged.output)
         let unsaved = await Versions.hasUnsavedChanges(project)
         XCTAssertFalse(unsaved, "a repository inside the app shouldn't count as unsaved work")
+        // Once it's no longer a repository it's the app's files again, and they are saved.
+        try FileManager.default.removeItem(at: project.dir.appendingPathComponent("Vendor/odd\tname/.git"))
+        try await saveAndLook(project)
+        let files = try loose("git ls-files -z | tr '\\0' '\\n'", in: project)
+        XCTAssertTrue(files.output.contains("Vendor/odd\tname/file"), files.output)
+        let rules = try String(contentsOf: project.dir.appendingPathComponent(".git/info/exclude"), encoding: .utf8)
+        XCTAssertFalse(rules.contains("Vendor"), rules)
     }
 
     /// An app whose history was written before it was closed (0.11.0 confined commands and left it open):
@@ -126,6 +133,14 @@ final class SandboxHistoryTests: XCTestCase {
         let planted = try loose("\(script(".git/hooks/post-commit", touching: escaped)) && \(script(".git/hooks/post-index-change", touching: escaped)) && git config core.fsmonitor \(touch)", in: project)
         XCTAssertEqual(planted.status, 0, planted.output)
         try await saveAndLook(project)
+        // Naming a version writes a tag, which has hooks of its own.
+        let hooked = try loose(script(".git/hooks/reference-transaction", touching: escaped), in: project)
+        XCTAssertEqual(hooked.status, 0, hooked.output)
+        let head = await Versions.head(project)
+        await Versions.name(project, try XCTUnwrap(head), "Before the redesign")
+        let named = try loose("git tag -l 'forge/*'", in: project)
+        XCTAssertTrue(named.output.contains("forge/"), named.output)
+        await Versions.name(project, try XCTUnwrap(head), "")
         XCTAssertFalse(FileManager.default.fileExists(atPath: escaped.path), "a hook or setting already in the history ran")
     }
 
