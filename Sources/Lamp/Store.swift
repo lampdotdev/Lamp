@@ -63,7 +63,8 @@ struct AppUsage: Codable {
 
 struct LogLine: Identifiable, Codable, Equatable {
     /// `needsKey` is a setup offer from before offers named their capability: it was always about pictures.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer }
+    /// `drawIcon` offers to draw the app's icon in Image Playground; its text is the design it's for (`Icons.artKey`).
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, drawIcon }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -3029,11 +3030,13 @@ final class Store: ObservableObject {
     private func upgradeIconArt(_ project: LampProject) {
         guard let spec = Icons.load(project), !spec.subject.trimmed.isEmpty,
               Icons.cachedArt(project, spec: spec) == nil else { return }
+        // The person chose to draw icons themselves: Lamp draws nothing, key or no key, and asks for no key.
+        guard !Icons.drawnByHand else { return offerDrawing(project, spec: spec) }
         guard artInProgress.insert(project.id).inserted else { return }
         Task {
             defer { artInProgress.remove(project.id) }
             guard await AppAI.imageRoute() != nil else {
-                offerSetup(project, SetupOffer(capability: .pictures),
+                offerSetup(project, SetupOffer(capability: .pictures, icon: true),
                            because: "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) a proper icon, and your apps will be able to make pictures too.")
                 return
             }
@@ -3066,12 +3069,22 @@ final class Store: ObservableObject {
                 finish(project)
             } catch let failure as AppAI.Failure where failure.needs == .pictures {
                 // Codex signed out between the check and the pictures: the key card is still the right answer.
-                offerSetup(project, SetupOffer(capability: .pictures),
+                offerSetup(project, SetupOffer(capability: .pictures, icon: true),
                            because: "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) a proper icon, and your apps will be able to make pictures too.")
             } catch {
                 log(project, .detail, "Icon artwork failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Says in the chat that the app's icon is waiting to be drawn, with the button that opens Image
+    /// Playground: once per design, and once the app has been built, so it comes when the app is ready
+    /// rather than in the middle of its first build.
+    func offerDrawing(_ project: LampProject, spec: IconSpec) {
+        let key = Icons.artKey(project, spec: spec)
+        guard FileManager.default.fileExists(atPath: project.builtURL.path),
+              !(logs[project.id] ?? []).contains(where: { $0.kind == .drawIcon && $0.text == key }) else { return }
+        log(project, .drawIcon, key)
     }
 
     /// Designs a fresh icon (different from the current one) and applies it without restarting the app.
@@ -3084,6 +3097,11 @@ final class Store: ObservableObject {
         await renderIcon(project, spec: spec)
         if FileManager.default.fileExists(atPath: project.builtURL.path) {
             try? await deploy(project)
+        }
+        // Drawn by hand, the new design's artwork is the person's to make: the sheet opens for it now.
+        guard !Icons.drawnByHand else {
+            log(project, .status, "New icon applied.")
+            return iconFromPlayground(project)
         }
         log(project, .status, AppAI.imageRoute != nil ? "New icon applied. Artwork is on its way." : "New icon applied.")
         Task { upgradeIconArt(project) }

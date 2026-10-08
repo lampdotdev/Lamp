@@ -255,8 +255,19 @@ extension AppAI {
 struct SetupOffer: Codable, Equatable, Hashable {
     let capability: Capability
     var away: Bool? = nil
+    /// The card is about the app's own icon (Lamp wanted artwork for it), not something the app tried: it
+    /// also offers drawing icons by hand. Cards from before this was noted don't say.
+    var icon: Bool? = nil
 
     var context: AIContext { away == true ? .phoneAway : .mac }
+
+    /// One card per capability and place per app, whatever raised it: an app whose icon card is in the chat
+    /// isn't given another when it tries to make a picture, so `icon` is no part of which offer this is.
+    static func == (a: SetupOffer, b: SetupOffer) -> Bool { a.capability == b.capability && a.context == b.context }
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(capability)
+        hasher.combine(away == true)
+    }
 
     /// "Not Now" is remembered for the app it was said in, and for every app: Lamp doesn't raise the same
     /// offer by itself elsewhere. The agent may still raise it in another app, with a reason of its own.

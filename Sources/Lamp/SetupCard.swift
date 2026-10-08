@@ -20,13 +20,15 @@ struct SetupCard: View {
     var body: some View {
         let _ = revision
         let resolution = AppAI.resolve(offer.capability, for: project, in: offer.context)
-        let done = resolution.tier == .best
+        // An icon's card is also answered by the person choosing to draw icons themselves.
+        let byHand = offer.icon == true && Icons.drawnByHand
+        let done = resolution.tier == .best || byHand
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: CardColumn.gap) {
                 badge
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.headline)
-                    status(resolution, done: done).font(.body).foregroundStyle(.secondary)
+                    status(resolution, done: done, byHand: byHand).font(.body).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
@@ -43,8 +45,11 @@ struct SetupCard: View {
                 Divider()
                 VStack(alignment: .leading, spacing: 12) {
                     UpgradeList(upgrades: resolution.upgrades) { revision += 1 }
-                    if offer.capability == .pictures, offer.context == .mac, resolution.tier == .none, let project {
-                        PlaygroundUpgrade(project: project)
+                    if offer.icon == true, resolution.tier == .none {
+                        // The app's icon is waiting, so the choice is followed by the line that draws it.
+                        PlaygroundUpgrade {
+                            if let project, let spec = Icons.load(project) { Store.shared.offerDrawing(project, spec: spec) }
+                        }
                     }
                     // Something answers already, just not as well: say what, so nothing looks broken meanwhile.
                     if resolution.tier == .works, let answer = resolution.answer {
@@ -105,10 +110,10 @@ struct SetupCard: View {
 
     /// Why it's offered; once it's set up, what answers now; after Not Now, where to find it later.
     @ViewBuilder
-    private func status(_ resolution: Resolution, done: Bool) -> some View {
+    private func status(_ resolution: Resolution, done: Bool, byHand: Bool) -> some View {
         if done {
             Label {
-                Text(doneText(resolution.answer ?? ""))
+                Text(byHand ? "All set. You draw each app's icon with Image Playground." : doneText(resolution.answer ?? ""))
             } icon: {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
             }
@@ -370,18 +375,40 @@ private struct SignInUpgrade: View {
     }
 }
 
-/// The backup for when nothing else can draw: Apple's own picture maker, which only the person can work,
-/// so it's for this app's icon and not for pictures inside apps.
+/// Drawing icons by hand, offered where nothing can draw them: on the card about an app's icon and under
+/// Not Ready in Settings → Building. It's a choice for every app's icon (`Icons.byHand`), made once, and
+/// only the person can work Apple's picture maker, so it's never offered for pictures inside apps.
 struct PlaygroundUpgrade: View {
+    var compact = false
+    var onChange: () -> Void = {}
+
+    var body: some View {
+        if Icons.playgroundAvailable, !Icons.drawnByHand {
+            OptionRow(symbol: "paintbrush.pointed", title: "Draw icons yourself",
+                      detail: "Free, with Image Playground. You pick each app's picture.", compact: compact) {
+                Button("Use for Icons") {
+                    Icons.iconChoice = Icons.byHand
+                    onChange()
+                }
+            }
+        }
+    }
+}
+
+/// The line in the chat that offers to draw an app's icon, for someone who chose to draw icons themselves:
+/// what's so, and the button that opens Image Playground. It's shown only while it has something to offer
+/// (`Icons.awaitsDrawing`).
+struct DrawIconLine: View {
     let project: LampProject
 
     var body: some View {
-        if Icons.playgroundAvailable, !project.untitled, Icons.load(project) != nil {
-            OptionRow(symbol: "paintbrush.pointed", title: "Draw the icon yourself",
-                      detail: "Image Playground, Apple's picture maker, can make \(project.name)'s icon for free. It's for the icon only, not for pictures inside your apps.") {
-                Button("Open…") { Store.shared.iconFromPlayground(project) }
-            }
+        HStack(spacing: 8) {
+            Image(systemName: "paintbrush.pointed").foregroundStyle(.secondary)
+            Text("\(project.name) has a plain icon for now.").foregroundStyle(.secondary)
+            Button("Draw Icon…") { Store.shared.iconFromPlayground(project) }
+                .controlSize(.small)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -391,6 +418,8 @@ struct CapabilityNote: View {
     let capability: Capability
     var project: LampProject? = nil
     var context: AIContext = .mac
+    /// Under icon artwork's own setting (Settings → Building), drawing icons by hand is one of the fixes.
+    var forIcons = false
     @ObservedObject private var local = LocalModels.shared
     @State private var revision = 0
 
@@ -405,6 +434,7 @@ struct CapabilityNote: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 UpgradeList(upgrades: resolution.upgrades, compact: true) { revision += 1 }
+                if forIcons { PlaygroundUpgrade(compact: true) }
             }
             // Keys, the choices in Settings and an app's own choices all change what a capability resolves to.
         .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in revision += 1 }

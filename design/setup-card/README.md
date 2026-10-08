@@ -34,6 +34,12 @@ feature at hand is worth the interruption.
 - **A new way to make something better** is a case of `Upgrade`, a line in `UpgradeView.isOffered` when not
   every Mac can do it, and a row view built from `OptionRow`. The row has a long `detail` for the card and a
   short one for Settings (`compact`).
+- **Drawing icons by hand is a choice, not an upgrade.** Image Playground only works with the person at its
+  sheet, so it can't answer pictures and isn't in `resolve`. It's a value of the icon artwork setting
+  (`Icons.byHand`, Settings → Building), offered by `PlaygroundUpgrade` on a card about an app's icon
+  (`SetupOffer.icon`) and under Not Ready in Building, never for pictures inside apps. Chosen, Lamp draws no
+  icon and raises no card for one: `Store.offerDrawing` puts one line with **Draw Icon…** in the chat
+  (`LogLine.Kind.drawIcon`), shown only while that design has no artwork.
 - **Raising the card:** Lamp's own offers go through `Store.offerSetup(project, SetupOffer(…), because:)`,
   usually from `Store.failed` when the gateway's failure carries `needs`. The agent raises the same card with
   `offer_setup`, which goes to the same function with `fromAgent: true`.
@@ -50,7 +56,7 @@ It is built like the build card above it in the chat, so the chat reads as one t
 - **Header:** a 44pt tile with the capability's symbol on the accent colour (never the app's icon: this is
   Lamp asking, not the app), a headline, a status line under it, and **Not Now** on the right.
 - **Body,** under a divider: one row per upgrade, best first. Each row has a symbol, a title, a line of detail,
-  and a small standard button on the right ("Add Key…", "Download", "Sign In…", "Open…"). A key is typed in
+  and a small standard button on the right ("Add Key…", "Download", "Sign In…", "Use for Icons"). A key is typed in
   place: the row opens a field with Cancel and Save (Return saves), and a link to get one. Progress replaces
   the button while something downloads.
 - **States:** offered; *works for now* (a last line says what's filling in); *all set* (the body folds
