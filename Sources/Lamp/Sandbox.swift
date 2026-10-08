@@ -6,8 +6,6 @@ import Foundation
 /// command that reaches for Documents or a key gets "Operation not permitted" and nothing leaves; the agent
 /// is told to use its file tools for anything outside, which ask the user. So nothing has to read a
 /// command to know what it touches, and the approval card is about what a command does, not where it looks.
-/// Inside the app's folder one place is read-only, its history (`.git`): Lamp's own git runs unconfined and
-/// would run what a command left there (see `Versions.git` for the rest of that).
 ///
 /// Claude Code's and pi's commands are wrapped one by one (their hooks can hand back a changed command).
 /// Codex's hook can't, and a sandbox can't be nested, so Codex itself runs inside the profile (with its own
@@ -177,15 +175,8 @@ enum Sandbox {
         if !Privacy.sharesPictures || !Privacy.sharesLog {
             lines.append("(deny file-read* (subpath \(quotedPath(app + "/.lamp/runtime"))))")
         }
-        // The app's history is Lamp's to write. Lamp's own git runs outside the sandbox, and git runs what it
-        // finds in there (a hook, or a setting that names a program), so a command that could write it could
-        // have something run unconfined at the next save. Reading stays: git status, log, diff and show work.
-        lines.append("(deny file-write* (subpath \(quotedPath(app + "/" + history))))")
         return lines.joined(separator: "\n") + "\n"
     }
-
-    /// The folder in the app that holds its history.
-    static let history = ".git"
 
     /// A path inside a profile rule: double-quoted, with backslashes and quotes escaped.
     private static func quotedPath(_ path: String) -> String {

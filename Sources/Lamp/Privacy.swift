@@ -39,12 +39,6 @@ enum Privacy {
                 if name.hasSuffix(".png"), !sharesPictures { return .deny(picturesOff) }
                 if name.hasSuffix("log.txt"), !sharesLog { return .deny(logOff) }
             }
-            // The app's history is Lamp's to write (Sandbox says why); the comparison ignores case, as the
-            // Mac's usual file system does.
-            let lowered = inside.lowercased()
-            if !readers.contains(tool), lowered == "/" + Sandbox.history || lowered.hasPrefix("/" + Sandbox.history + "/") {
-                return .deny("The app's history is kept by Lamp and can only be read. Lamp saves a version after each turn.")
-            }
             return .allow
         }
         // Lamp's keys, its agent's sign-ins and the user's other apps: never, whatever the settings say.

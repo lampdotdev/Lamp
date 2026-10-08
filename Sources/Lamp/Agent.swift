@@ -45,10 +45,7 @@ enum Agent {
     - Your shell commands run confined to the app's folder, plus the system, developer tools, caches and \
     temporary folders, with network access; anything else on this Mac is "Operation not permitted" to them. \
     To read a file elsewhere, use your file tools, which ask the user. `gh` can't see its sign-in there: clone \
-    public repositories with `git clone --depth 1 https://github.com/owner/name .lamp/reference/name`. \
-    The app's own history (its `.git`) is Lamp's and read-only: `git status`, `log`, `diff` and `show` work, \
-    anything that would change it doesn't. Lamp saves a version after every turn; to go back to one, use \
-    `list_versions` and `restore_version`.
+    public repositories with `git clone --depth 1 https://github.com/owner/name .lamp/reference/name`.
     """
 
     private static let lookRules = """

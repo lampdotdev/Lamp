@@ -145,6 +145,6 @@ enum Migration {
             touched = true
         }
         guard touched, commit else { return }
-        _ = Versions.gitBlocking("\(Versions.stage) && \(Versions.commit) -qm 'Rename to Lamp'", cwd: dir)
+        _ = Versions.gitBlocking("git add -A && \(Versions.commit) -qm 'Rename to Lamp'", cwd: dir)
     }
 }
