@@ -652,6 +652,7 @@ struct BuildingSettings: View {
                     }
                 }
             }
+            if hasPhoneApps { PhoneSigningSection() }
         }
         .settingsPane()
         .onChange(of: notify) { Notifier.shared.setBadge(store.unread.count) }
@@ -669,10 +670,14 @@ struct BuildingSettings: View {
     }
 
     private func recheck() { Task { await store.recheckSetup() } }
+
+    /// Signing for a phone only matters to someone with an iPhone or iPad app.
+    private var hasPhoneApps: Bool { store.projects.contains { $0.platform == .iphone } }
 }
 
 /// The AI, images and decisions that apps use while they run.
 struct AppsSettings: View {
+    @EnvironmentObject private var store: Store
     @AppStorage("appModel") private var appModel = AppAI.defaultRoute.id
     @ObservedObject private var local = LocalModels.shared
     @AppStorage("settingsTab") private var settingsTab = "building"
@@ -721,6 +726,8 @@ struct AppsSettings: View {
                     }
                 }
             }
+            // Only for someone with an iPhone or iPad app: nothing else goes on a phone.
+            if store.projects.contains(where: { $0.platform == .iphone }) { PhoneAwaySection(revision: revision) }
             ComputerUseSettings()
         }
         .settingsPane()
@@ -738,62 +745,13 @@ struct AppsSettings: View {
 
 /// What's in Lamp but not yet for everyone: each switch here brings a feature into the interface.
 struct ExperimentalSettings: View {
-    @EnvironmentObject private var store: Store
-    @AppStorage("experimentIOSApps") private var iosApps = false
     @AppStorage(Memory.switchKey) private var memory = false
-    @AppStorage("appleTeam") private var team = ""
-    @AppStorage("awayModel") private var awayModel = ""
-    @AppStorage("awayImageModel") private var awayImageModel = ""
-    @AppStorage("awayDecisionModel") private var awayDecisionModel = ""
-    @State private var teams: [(id: String, name: String)] = []
 
     var body: some View {
         Form {
             Section {
-                // Build iOS apps comes last so its parts, which are form rows rather than checkboxes, sit right
-                // under it.
                 SettingsCheckboxes {
                     Toggle("Remember how I like things", isOn: $memory)
-                    Toggle("Build iOS apps", isOn: $iosApps)
-                        .onChange(of: iosApps) { store.updateLocalNetwork() }
-                }
-                if iosApps {
-                    // Where an app opens (a simulator or the person's own phone) is chosen per app under Try On, so
-                    // what's here is for the phone: the team its builds are signed for, and what an app on it uses
-                    // when it can't reach this Mac. Then it can only reach OpenRouter, so these are OpenRouter's
-                    // models, and that's the one thing a phone needs a key for.
-                    Group {
-                        if teams.isEmpty {
-                            TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
-                        } else {
-                            Picker("Apple Team", selection: $team) {
-                                ForEach(teams, id: \.id) { Text("\($0.name) (\($0.id))").tag($0.id) }
-                                if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
-                            }
-                        }
-                        if Provider.hasKey {
-                            Picker("Text away from this Mac", selection: Binding(get: { AppAI.awayModel.id }, set: { awayModel = $0 })) {
-                                ForEach(AppAI.anthropicModels, id: \.id) { Text($0.label).tag($0.id) }
-                            }
-                            Picker("Images away from this Mac", selection: Binding(get: { AppAI.awayImageModel }, set: { awayImageModel = $0 })) {
-                                ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
-                            }
-                            // Only what a phone can carry the key for; a choice whose key is gone shows the text
-                            // route that stands in for it, as Store.keysForPhone does.
-                            let awayDecisions = AppAI.awayDecisionModels.filter { $0.provider == "text" || $0.provider == "openrouter" || KeyStore.key(for: $0.provider) != nil }
-                            Picker("Decisions away from this Mac", selection: Binding(get: {
-                                _ = awayDecisionModel
-                                let chosen = AppAI.awayDecisionModel.id
-                                return awayDecisions.contains { $0.id == chosen } ? chosen : awayDecisions.first { $0.provider == "text" }!.id
-                            }, set: { awayDecisionModel = $0 })) {
-                                ForEach(awayDecisions, id: \.id) { Text($0.label).tag($0.id) }
-                            }
-                        } else {
-                            CapabilityNote(capability: .text, context: .phoneAway)
-                        }
-                        Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() }
-                    }
-                    .underCheckbox()
                 }
             } header: {
                 // Above the box, in a checkbox note's size and color rather than as a heading.
@@ -802,6 +760,27 @@ struct ExperimentalSettings: View {
             }
         }
         .settingsPane()
+    }
+}
+
+/// How an iPhone or iPad app is signed for the person's own phone, in Building. Where an app opens (a
+/// simulator or a phone) is chosen per app under Try On; this is the team its phone builds are signed for.
+struct PhoneSigningSection: View {
+    @AppStorage("appleTeam") private var team = ""
+    @State private var teams: [(id: String, name: String)] = []
+
+    var body: some View {
+        Section("iPhone and iPad apps") {
+            if teams.isEmpty {
+                TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
+            } else {
+                Picker("Apple Team", selection: $team) {
+                    ForEach(teams, id: \.id) { Text("\($0.name) (\($0.id))").tag($0.id) }
+                    if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
+                }
+            }
+            Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() }
+        }
         .task {
             teams = await Devices.knownTeams()
             // The account signed in to Xcode is the one that can sign, so its team is the first choice
@@ -809,6 +788,42 @@ struct ExperimentalSettings: View {
             let signedIn = Devices.xcodeTeams()
             if let first = signedIn.first, !signedIn.contains(where: { $0.id == team }) { team = first.id }
             else if team.isEmpty, let first = teams.first { team = first.id }
+        }
+    }
+}
+
+/// What an app on the person's own phone uses when it can't reach this Mac, in Apps. Then it can only reach
+/// OpenRouter, so these are OpenRouter's models, and that's the one thing a phone needs a key for.
+struct PhoneAwaySection: View {
+    @AppStorage("awayModel") private var awayModel = ""
+    @AppStorage("awayImageModel") private var awayImageModel = ""
+    @AppStorage("awayDecisionModel") private var awayDecisionModel = ""
+    let revision: Int
+
+    var body: some View {
+        Section("On a phone away from this Mac") {
+            let _ = revision   // re-read KeyStore after keys change
+            if Provider.hasKey {
+                Picker("Text generation", selection: Binding(get: { AppAI.awayModel.id }, set: { awayModel = $0 })) {
+                    ForEach(AppAI.anthropicModels, id: \.id) { Text($0.label).tag($0.id) }
+                }
+                Picker("Image model", selection: Binding(get: { AppAI.awayImageModel }, set: { awayImageModel = $0 })) {
+                    ForEach(Icons.artModels, id: \.id) { Text($0.label).tag($0.id) }
+                }
+                // Only what a phone can carry the key for; a choice whose key is gone shows the text
+                // route that stands in for it, as Store.keysForPhone does.
+                let awayDecisions = AppAI.awayDecisionModels.filter { $0.provider == "text" || $0.provider == "openrouter" || KeyStore.key(for: $0.provider) != nil }
+                Picker("Decision model", selection: Binding(get: {
+                    _ = awayDecisionModel
+                    let chosen = AppAI.awayDecisionModel.id
+                    return awayDecisions.contains { $0.id == chosen } ? chosen : awayDecisions.first { $0.provider == "text" }!.id
+                }, set: { awayDecisionModel = $0 })) {
+                    ForEach(awayDecisions, id: \.id) { Text($0.label).tag($0.id) }
+                }
+            } else {
+                NotReadyRow(title: "Text generation")
+                CapabilityNote(capability: .text, context: .phoneAway)
+            }
         }
     }
 }
@@ -1132,7 +1147,7 @@ private struct EngineSheet: View {
             ProviderHeader(id: "engine:\(engine.rawValue)",
                            detail: signedIn == true ? "Signed in. Builds apps and answers inside them with your \(engine == .claude ? "Claude" : "ChatGPT") subscription."
                                 : signedIn == false ? "Not signed in yet." : "Checking the sign-in…")
-            if Experiments.iosApps {
+            if Store.shared.projects.contains(where: { $0.platform == .iphone }) {   // said only to someone it concerns
                 Text("The sign-in stays on this Mac: iOS apps can use it only on the same Wi‑Fi network as it. Away from it they need an OpenRouter key.")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
