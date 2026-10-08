@@ -687,11 +687,13 @@ struct AppsSettings: View {
                     NotReadyRow(title: "Decision model")
                     KeyNote(text: "Decisions need an OpenRouter key, or something to answer apps' text.")
                 } else if decisions.count == 1 {
+                    // decisionRoute falls back to the one that can answer, so naming it is naming what's used.
                     LabeledContent("Decision model", value: decisions[0].label)
                 } else {
-                    // A choice that can't be used falls back to the text model answering as JSON, as AppAI.decide does.
+                    // What AppAI.decide actually uses, which is the saved choice only when that can answer.
                     Picker("Decision model", selection: Binding(get: {
-                        decisions.contains { $0.id == decisionModel } ? decisionModel : decisions.first { $0.provider == "text" }?.id ?? decisions[0].id
+                        _ = decisionModel
+                        return AppAI.decisionRoute(for: nil)?.id ?? decisions[0].id
                     }, set: { decisionModel = $0 })) {
                         ForEach(decisions, id: \.id) { Text($0.label).tag($0.id) }
                     }
@@ -707,13 +709,8 @@ struct AppsSettings: View {
     /// downloaded, and the text model when something answers apps.
     private var decisionChoices: [(id: String, label: String, provider: String, model: String)] {
         _ = revision
-        return AppAI.decisionModels.filter { choice in
-            switch choice.provider {
-            case "local": LocalModels.decisionCatalog.first.map { local.isInstalled($0) } ?? false
-            case "text": AppAI.canAnswer
-            default: KeyStore.key(for: choice.provider) != nil
-            }
-        }
+        _ = local.installed
+        return AppAI.decisionModels.filter(AppAI.canDecide)
     }
 }
 
@@ -1478,6 +1475,7 @@ struct ModelPicker: View {
 /// Native Mac AI: models on this Mac (shared with Local and the Hugging Face cache), plus downloads.
 private struct LocalAISheet: View {
     @EnvironmentObject private var store: Store
+    @AppStorage("decisionModel") private var decisionModel = AppAI.decisionModel.id
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var local = LocalModels.shared
     @ObservedObject private var images = ImageModels.shared
@@ -1574,7 +1572,11 @@ private struct LocalAISheet: View {
     }
 
     private func installedRow(_ model: InstalledModel) -> some View {
-        let inUse = Builder.engine == .pi && Builder.piProvider == Builder.localProvider && Builder.piModel == model.id
+        // A decision model answers apps' decisions and can't build: its Use chooses it for decisions.
+        let decides = LocalModels.isDecisionModel(model.id)
+        _ = decisionModel   // read so In use follows Use for Decisions
+        let inUse = decides ? AppAI.decisionRoute(for: nil)?.provider == "local"
+                            : Builder.engine == .pi && Builder.piProvider == Builder.localProvider && Builder.piModel == model.id
         let needsMLX = model.format == .mlx && LocalModels.mlxServerPath == nil
         return HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
@@ -1594,7 +1596,13 @@ private struct LocalAISheet: View {
                 if tools.installing.contains(.mlx) { ProgressView().controlSize(.small) }
                 else { Button("Install") { installMLX() } }
             } else if !inUse {
-                Button("Use") { use(model.id) }
+                if decides {
+                    Button("Use for Decisions") {
+                        if let local = AppAI.decisionModels.first(where: { $0.provider == "local" }) { decisionModel = local.id }
+                    }
+                } else {
+                    Button("Use") { use(model.id) }
+                }
             }
             if model.deletable { Button("Delete", role: .destructive) { local.delete(model.id) } }
         }

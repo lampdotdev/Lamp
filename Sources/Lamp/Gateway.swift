@@ -585,22 +585,45 @@ enum AppAI {
         return decisionModels[0]
     }
 
+    /// Whether a decision model can answer now: its key, or its download for the one on this Mac; by text
+    /// whenever something answers apps.
+    @MainActor static func canDecide(with choice: (id: String, label: String, provider: String, model: String)) -> Bool {
+        switch choice.provider {
+        case "text": canAnswer
+        case "local": localDecisionModel() != nil
+        default: KeyStore.key(for: choice.provider) != nil
+        }
+    }
+
+    /// What answers for a choice (an app's own, else Settings'): the choice when it can, else the first
+    /// decision model that can, else the text model as JSON when something answers apps, else nil. Settings
+    /// shows this, so what it names is what really answers.
+    @MainActor static func decisionRoute(for appChoice: String?) -> (id: String, label: String, provider: String, model: String)? {
+        let wanted = decisionModels.first { $0.id == appChoice } ?? decisionModel
+        if canDecide(with: wanted) { return wanted }
+        return decisionModels.first { $0.provider != "text" && canDecide(with: $0) }
+            ?? decisionModels.first { $0.provider == "text" && canDecide(with: $0) }
+    }
+
     /// Sends `state` and typed `questions` (TypeSafe's System One format) to the decision model.
     /// Returns the answers keyed like the questions, and the cost in USD.
     static func decide(state: Any, questions: [String: Any],
                        model appChoice: String? = nil) async throws -> ([String: Any], Double) {
-        let choice = decisionModels.first { $0.id == appChoice } ?? decisionModel
+        guard let choice = await decisionRoute(for: appChoice) else {
+            let wanted = decisionModels.first { $0.id == appChoice } ?? decisionModel
+            if wanted.provider == "local" {
+                throw Failure(message: "The decision model on this Mac isn't downloaded yet. Get it in Lamp → Settings (⌘,) → AI Providers → Native Mac AI.")
+            }
+            let name = wanted.provider == "typesafe" ? "a TypeSafe" : wanted.provider == "openai" ? "an OpenAI" : "an OpenRouter"
+            throw Failure(message: "Decisions need \(name) key. Add one in Lamp → Settings (⌘,) → AI Providers.")
+        }
         if choice.provider == "text" { return try await decideByText(state: state, questions: questions) }
-        if choice.provider == "local" {
-            if let id = await localDecisionModel() { return try await decideLocally(state: state, questions: questions, model: id) }
-            if canAnswer { return try await decideByText(state: state, questions: questions) }
-            throw Failure(message: "The decision model on this Mac isn't downloaded yet. Get it in Lamp → Settings (⌘,) → Apps.")
+        if choice.provider == "local", let id = await localDecisionModel() {
+            return try await decideLocally(state: state, questions: questions, model: id)
         }
         guard let key = KeyStore.key(for: choice.provider) else {
-            // No decision model: a small text model answers the same questions in JSON instead.
-            if canAnswer { return try await decideByText(state: state, questions: questions) }
-            let name = choice.provider == "typesafe" ? "a TypeSafe" : choice.provider == "openai" ? "an OpenAI" : "an OpenRouter"
-            throw Failure(message: "Decisions need \(name) key. Add one in Lamp → Settings (⌘,) → AI.")
+            // Gone since the route was chosen: the text model answers the same questions in JSON instead.
+            return try await decideByText(state: state, questions: questions)
         }
         if choice.provider == "openai" { return try await decideViaOpenAI(state: state, questions: questions, key: key, model: choice.model) }
         let endpoint = choice.provider == "typesafe" ? "https://api.typesafe.ai/v1/systemone"
