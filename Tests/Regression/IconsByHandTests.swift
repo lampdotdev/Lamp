@@ -153,6 +153,20 @@ final class IconsByHandTests: XCTestCase {
         XCTAssertTrue(LogLine.offersDrawing("a.png", after: [reply, pictures]))
     }
 
+    func testTheDrawingIsOfferedWhenTheTurnFinishesNotDuringIt() {
+        let lines = [LogLine(kind: .user, text: "A tip calculator"), LogLine(kind: .status, text: "Building…")]
+        // The agent builds and opens the app to look at it mid-turn: the offer waits for the turn's end.
+        XCTAssertEqual(LogLine.drawingOffer("a.png", after: lines, built: true, inTurn: true), .held)
+        XCTAssertEqual(LogLine.drawingOffer("a.png", after: lines, built: true, inTurn: false), .now)
+        // Before there's an app there's nothing to hold: the install that makes one asks again.
+        XCTAssertEqual(LogLine.drawingOffer("a.png", after: lines, built: false, inTurn: true), .none)
+        XCTAssertEqual(LogLine.drawingOffer("a.png", after: lines, built: false, inTurn: false), .none)
+        // Offered already for this design: not held for a second line either.
+        let offered = lines + [LogLine(kind: .drawIcon, text: "a.png")]
+        XCTAssertEqual(LogLine.drawingOffer("a.png", after: offered, built: true, inTurn: true), .none)
+        XCTAssertEqual(LogLine.drawingOffer("b.png", after: offered, built: true, inTurn: true), .held)
+    }
+
     func testAPictureOfferTakesThePlaceOfAnAnsweredIconCard() {
         let reply = LogLine(kind: .agent, text: "Tide Times is ready.")
         let iconCard = LogLine(kind: .offer, text: "Nothing on this Mac can draw pictures yet.", offer: SetupOffer(capability: .pictures, icon: true))

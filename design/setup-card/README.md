@@ -39,7 +39,9 @@ feature at hand is worth the interruption.
   (`Icons.byHand`, Settings → Building), offered by `PlaygroundUpgrade` on a card about an app's icon
   (`SetupOffer.icon`) and under Not Ready in Building, never for pictures inside apps. Chosen, Lamp draws no
   icon and raises no card for one: `Store.offerDrawing` puts one line with **Draw Icon…** in the chat
-  (`LogLine.Kind.drawIcon`), shown only while that design has no artwork. A chat that already has the icon's
+  (`LogLine.Kind.drawIcon`), shown only while that design has no artwork. Wanted while a turn has the app
+  (the agent's first look builds and opens it), the line is held and logged when the turn finishes, like
+  artwork that arrives mid-turn, so it ends the turn under the reply. A chat that already has the icon's
   card gets no line: the card folds to "All set" and carries **Draw Icon…** itself while the icon is plain.
 - **Raising the card:** Lamp's own offers go through `Store.offerSetup(project, SetupOffer(…), because:)`,
   usually from `Store.failed` when the gateway's failure carries `needs`. The agent raises the same card with

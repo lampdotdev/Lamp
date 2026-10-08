@@ -120,6 +120,14 @@ struct LogLine: Identifiable, Codable, Equatable {
         !lines.contains { $0.kind == .drawIcon && $0.text == key || $0.setupOffer?.icon == true }
     }
 
+    /// What to do about offering to draw the design `key`: nothing (no built app yet, or it's offered
+    /// already), hold it until the turn that has the app finishes, or put the line in the chat now.
+    enum DrawingOffer: Equatable { case none, held, now }
+    static func drawingOffer(_ key: String, after lines: [LogLine], built: Bool, inTurn: Bool) -> DrawingOffer {
+        guard built, offersDrawing(key, after: lines) else { return .none }
+        return inTurn ? .held : .now
+    }
+
     /// Lamp knows where the app was before this request, so it can be changed and sent again from there.
     /// Not so for some requests from before that was noted.
     var canSendAgain: Bool { kind == .user && (before != nil || version != nil) }
@@ -324,6 +332,7 @@ final class Store: ObservableObject {
     }
     private var artInProgress: Set<String> = []
     private var pendingIconArt: Set<String> = []     // artwork finished during a turn, to apply after it
+    private var heldDrawingOffers: Set<String> = []  // "Draw Icon…" wanted during a turn, to offer after it
     private var artApplied: [String: IconSpec] = [:] // the spec whose artwork the rendered icon includes
     private var iconDesigns: [String: Task<Void, Never>] = [:]   // icons designed from the first message
     private var tokens: [String: String] = [:]   // app token → project id, for the app's own routes (/ai…)
@@ -1448,12 +1457,22 @@ final class Store: ObservableObject {
             Task {
                 await applyIconArt(project, spec: spec)
                 release(project)
+                offerHeldDrawing(project)
                 startQueued(project)
             }
             return
         }
         release(project)
+        offerHeldDrawing(project)
         startQueued(project)
+    }
+
+    /// The offer to draw the icon that was wanted while the turn had the app, made now it's over: the last
+    /// thing the turn leaves in the chat, under the reply and "… is ready". It's worked out afresh, since
+    /// the icon may have been drawn or designed again meanwhile, or the choice of what draws icons changed.
+    private func offerHeldDrawing(_ project: LampProject) {
+        guard heldDrawingOffers.remove(project.id) != nil, exists(project) else { return }
+        upgradeIconArt(project)
     }
 
     /// Renders the icon with its artwork and installs it, when there's a built app to install it into;
@@ -3128,14 +3147,20 @@ final class Store: ObservableObject {
     }
 
     /// Says in the chat that the app's icon is waiting to be drawn, with the button that opens Image
-    /// Playground: once per design, and once the app has been built, so it comes when the app is ready
-    /// rather than in the middle of its first build. An app whose chat has the card about its icon (from
-    /// before the person chose to draw icons) has the button there, for whatever design it has.
+    /// Playground: once per design, and once the app has been built. While a turn has the app (the agent
+    /// builds and opens it to look at it, long before it's done) the offer is held, like artwork that
+    /// arrives mid-turn, and made when the turn finishes (`offerHeldDrawing`), so it's the last line of
+    /// the turn and not one among its steps. An app whose chat has the card about its icon (from before
+    /// the person chose to draw icons) has the button there, for whatever design it has.
     private func offerDrawing(_ project: LampProject, spec: IconSpec) {
-        let lines = logs[project.id] ?? []
-        guard FileManager.default.fileExists(atPath: project.builtURL.path),
-              LogLine.offersDrawing(Icons.artKey(project, spec: spec), after: lines) else { return }
-        log(project, .drawIcon, Icons.artKey(project, spec: spec))
+        let key = Icons.artKey(project, spec: spec)
+        switch LogLine.drawingOffer(key, after: logs[project.id] ?? [],
+                                    built: FileManager.default.fileExists(atPath: project.builtURL.path),
+                                    inTurn: turns[project.id] != nil) {
+        case .none: break
+        case .held: heldDrawingOffers.insert(project.id)
+        case .now: log(project, .drawIcon, key)
+        }
     }
 
     /// Designs a fresh icon (different from the current one) and applies it without restarting the app.
