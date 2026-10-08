@@ -381,6 +381,67 @@ extension Sharing {
         Capability(label: "Contains encoded data (can hide what it does)", icon: "eye.slash", level: .sensitive, patterns: ["Data(base64Encoded"]),
     ]
 
+    /// Said under the checklist when Lamp has no AI to read the code with. It tells the reader what they're
+    /// not getting and that opening doesn't depend on it; it isn't a problem to fix first.
+    static let aiNotSetUp = "Lamp can also have AI read a shared app's code before you open it. That's available once AI is set up in Lamp → Settings; you don't need it to open this app."
+
+    /// The app in its sender's words, for the top of the review: what APP.md says it does, as plain text.
+    /// Nil when the file has none, or only what Lamp wrote into a new app.
+    static func description(of package: Package) -> String? {
+        guard let about = try? String(contentsOf: package.folder.appendingPathComponent("APP.md"), encoding: .utf8) else { return nil }
+        return description(fromAbout: about)
+    }
+
+    static func description(fromAbout about: String) -> String? {
+        // Paragraphs by section: "" is what comes before the first "## " heading.
+        var sections: [String: [String]] = [:]
+        var heading = ""
+        var paragraph: [String] = []
+        func close() {
+            if !paragraph.isEmpty { sections[heading, default: []].append(paragraph.joined(separator: " ")) }
+            paragraph = []
+        }
+        for line in about.components(separatedBy: .newlines).map(\.trimmed) {
+            if line.hasPrefix("##") {
+                close()
+                heading = line.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces).lowercased()
+            } else if line.isEmpty || line.hasPrefix("#") {
+                close()
+            } else {
+                paragraph.append(line)
+            }
+        }
+        close()
+        // What a new app's APP.md says before anyone has described it (Template.appMd).
+        let scaffold = ["Nothing yet: fresh scaffold.", "A macOS SwiftUI app built and live-edited with Lamp."]
+        let candidates = (sections["what it does"] ?? []).prefix(1) + (sections[""] ?? []).prefix(1)
+        guard let found = candidates.first(where: { !scaffold.contains($0) }) else { return nil }
+        // Shown as written, never as formatting or links: the commonest marks are dropped, the rest is text.
+        let plain = found.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+        return plain.count > 280 ? String(plain.prefix(279)).trimmed + "…" : plain
+    }
+
+    /// The app's own icon, drawn from the icon.json and artwork in the file the way Lamp will draw it once
+    /// built. Nil when the file has no icon. Nothing of the sender's runs: the artwork is read as a picture,
+    /// and only when it's the size and kind Lamp itself makes.
+    static func icon(of package: Package) async -> NSImage? {
+        guard let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
+              let spec = try? JSONDecoder().decode(IconSpec.self, from: data) else { return nil }
+        return await Icons.preview(spec, art: artwork(at: package.folder.appendingPathComponent("icon-art.png")))
+    }
+
+    /// The artwork, when it's a cut-out object (what `finishImport` keeps) no larger than Lamp paints them.
+    /// The size comes from the file's header, so a picture made to exhaust memory is never unpacked.
+    private static func artwork(at url: URL) -> NSImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              max(width, height) <= 4096,
+              let art = try? Data(contentsOf: url), Icons.isCutOut(art) else { return nil }
+        return NSImage(data: art)
+    }
+
     static func review(_ package: Package) async -> ImportReview {
         // The fixed checks read every file; only what goes to the model is capped, since a sender picks
         // the file order and could put the interesting part last.
@@ -401,8 +462,12 @@ extension Sharing {
 
         var review = ImportReview(summary: "", capabilities: [], concerns: [], risk: "unknown", detected: detected)
         if truncated { review.concerns.append("This app is too large for Lamp to check all of its code.") }
-        guard AppAI.canAnswer else {
-            review.note = "Set up AI in Lamp → Settings to have it check what this app does."
+        // No AI to ask is an ordinary state for someone who was only sent an app, not a failure: the same
+        // words whether nothing can answer at all or the route apps use is OpenRouter without a key.
+        var ready = AppAI.canAnswer
+        if ready, !Provider.hasKey, case .openRouter = await AppAI.model.kind { ready = false }
+        guard ready else {
+            review.note = aiNotSetUp
             return review
         }
 
