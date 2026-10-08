@@ -462,7 +462,11 @@ extension Simulator {
             var lines: [String] = []
             var before = try? Data(contentsOf: picture)
             // Asked again after every wait inside an action too: the screen has to be this iPhone's each time.
-            func here() async -> Bool { await live() && shows(screen) }
+            // The turn last: reading the screen takes a moment, and Stop may come during it.
+            func here() async -> Bool {
+                guard shows(screen) else { return false }
+                return await live()
+            }
             for action in actions {
                 guard await live() else {
                     lines.append("stopped before the rest: the app was stopped, deleted or closed")
@@ -575,6 +579,7 @@ extension Simulator {
                     return scroller.map(turnPage) == true ? "scrolled \(amount >= 0 ? "down" : "up") a page at \(at) (Device Hub scrolls a page at a time)"
                         : "scroll at \(at): nothing there scrolls \(amount >= 0 ? "down" : "up")"
                 }
+                guard await live() else { return "stopped before scrolling at \(at)" }
                 swipe(from: point, by: CGVector(dx: 0, dy: -amount * screen.zoom), pid: screen.pid)
                 return "scrolled \(amount >= 0 ? "down" : "up") at \(at)"
             case "swipe":
@@ -610,12 +615,14 @@ extension Simulator {
                 }
                 // A button of that name already there (the keyboard has a "delete") isn't what the swipe uncovers.
                 let already = action.item.map { buttons(named: $0, in: screen).map(frame) } ?? []
+                guard await live() else { return "stopped before swiping at \(at)" }
                 swipe(from: point, by: delta, pid: screen.pid)
                 if let item = action.item {
                     try? await Task.sleep(for: .milliseconds(500))
                     guard await live() else { return "swiped \(direction) at \(at), then stopped before tapping \"\(item)\"" }
                     // What the swipe uncovered (a row's actions, say): tap the one named.
                     if let button = buttons(named: item, in: screen).first(where: { !already.contains(frame(of: $0)) }) {
+                        guard await live() else { return "swiped \(direction) at \(at), then stopped before tapping \"\(item)\"" }
                         _ = press(button)
                         return "swiped \(direction) at \(at) and tapped \"\(item)\""
                     }
