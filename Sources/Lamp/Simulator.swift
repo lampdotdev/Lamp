@@ -49,7 +49,7 @@ enum Simulator {
         _ = await Subprocess.run("/usr/bin/xcrun", ["simctl", "boot", udid], timeout: 60)   // "already booted" is fine
         let status = await Subprocess.run("/usr/bin/xcrun", ["simctl", "bootstatus", udid, "-b"], timeout: 120)
         guard status.ok else { throw Failure(message: "The iPhone simulator didn't start.") }
-        if show { await self.show() }
+        if show { await self.show(udid) }
     }
 
     static func install(_ app: URL, on udid: String) async throws {
@@ -87,10 +87,22 @@ enum Simulator {
         return true
     }
 
-    /// Brings the Simulator window to the front.
-    static func show() async {
-        guard let developer = PhoneTools.discover() else { return }
-        _ = await Subprocess.run("/usr/bin/open", [developer + "/Applications/Simulator.app"], timeout: 30)
+    /// The app that puts simulators on the Mac's screen: Simulator, or Device Hub, which took its place in
+    /// Xcode 27. Both show the iPhone's screen and its accessibility tree the same way.
+    static let viewers = ["com.apple.iphonesimulator", "com.apple.dt.Devices"]
+
+    /// Where that app is in this Xcode, given its Developer folder.
+    static func viewer(in developer: String) -> URL? {
+        let xcode = URL(fileURLWithPath: developer).deletingLastPathComponent()
+        return [URL(fileURLWithPath: developer + "/Applications/Simulator.app"), xcode.appendingPathComponent("Applications/DeviceHub.app")]
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// Brings the simulator's window to the front, showing this iPhone when the app shows one device at a time.
+    static func show(_ udid: String? = nil) async {
+        guard let developer = PhoneTools.discover(), let viewer = viewer(in: developer) else { return }
+        _ = await Subprocess.run("/usr/bin/open", [viewer.path], timeout: 30)
+        if let udid { await Driver.choose(udid) }
     }
 }
 
@@ -145,34 +157,106 @@ extension Simulator {
         }
 
         static func screen(of udid: String, owner: String) async -> Screen? {
-            guard let simulator = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.iphonesimulator").first else { return nil }
+            guard let pid = viewer() else { return nil }
             let width = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_WIDTH"], timeout: 20)).output.trimmed) ?? 0
             let height = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_HEIGHT"], timeout: 20)).output.trimmed) ?? 0
             let scale = Double((await Subprocess.run("/usr/bin/xcrun", ["simctl", "getenv", udid, "SIMULATOR_MAINSCREEN_SCALE"], timeout: 20)).output.trimmed) ?? 0
             guard width > 0, height > 0, scale > 0 else { return nil }
-            let app = AXUIElementCreateApplication(simulator.processIdentifier)
-            // The Simulator titles each window "<device> – <runtime>", which is the whole identity it shows:
-            // the one window with exactly this device's title, and none when two devices share it.
+            let app = AXUIElementCreateApplication(pid)
+            // Each window is titled "<device> – <runtime>", which is the whole identity it shows: the one
+            // window with exactly this device's title, and none when two devices share it.
             guard let title = deviceTitle(udid) else { return nil }
-            let windows = (attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? [])
-                .filter { attribute($0, kAXTitleAttribute) as? String == title }
+            func titled() -> [AXUIElement] {
+                (attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? []).filter { attribute($0, kAXTitleAttribute) as? String == title }
+            }
+            var windows = titled()
+            // Device Hub has one window for whichever device is chosen in its list: choose this one.
+            if windows.isEmpty, choose(udid, in: app) {
+                for _ in 0..<10 where windows.isEmpty {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    windows = titled()
+                }
+            }
             guard windows.count == 1, let window = windows.first else { return nil }
-            // The screen is the group shaped like the device's screen (the Simulator may draw it smaller or
-            // larger than its size in points: its window can be zoomed), the largest such if several.
             let points = CGSize(width: width / scale, height: height / scale)
-            let ratio = points.width / points.height
-            // Spelled out step by step: as one chained expression it's more than the compiler can type-check.
-            let elements: [AXUIElement] = children(window).filter { (element: AXUIElement) -> Bool in
-                attribute(element, kAXRoleAttribute) as? String == kAXGroupRole
+            // The picture of the screen can arrive a moment after the window does.
+            var found = screenFrame(in: window, shaped: points)
+            for _ in 0..<10 where found == nil {
+                try? await Task.sleep(for: .milliseconds(200))
+                found = screenFrame(in: window, shaped: points)
             }
-            let groups: [CGRect] = elements.map { frame(of: $0) }.filter { (rect: CGRect) -> Bool in
-                guard rect.width > 50, rect.height > 50 else { return false }
-                let shape: CGFloat = rect.width / rect.height
-                return abs(shape - ratio) < 0.02
-            }
-            guard let frame = groups.max(by: { $0.width < $1.width }) else { return nil }
+            guard let frame = found else { return nil }
             return Screen(app: app, window: window, rect: frame, udid: udid, owner: owner, scale: scale,
-                          zoom: frame.width / points.width, pid: simulator.processIdentifier)
+                          zoom: frame.width / points.width, pid: pid)
+        }
+
+        /// The screen is the group shaped like the device's screen (it may be drawn smaller or larger than
+        /// its size in points: the window can be zoomed), the largest such if several. Simulator has it at
+        /// the top of its window and Device Hub a few layers down, so the window is searched; not inside a
+        /// match, where the app's own full-screen views have the same shape.
+        private static func screenFrame(in window: AXUIElement, shaped points: CGSize) -> CGRect? {
+            let ratio = points.width / points.height
+            var matches: [CGRect] = []
+            func visit(_ element: AXUIElement, depth: Int) {
+                for child in children(element) {
+                    let rect = frame(of: child)
+                    if attribute(child, kAXRoleAttribute) as? String == kAXGroupRole, rect.width > 50, rect.height > 50,
+                       abs(rect.width / rect.height - ratio) < 0.02 {
+                        matches.append(rect)
+                    } else if depth < 8, rect.width > 50, rect.height > 50 {
+                        visit(child, depth: depth + 1)
+                    }
+                }
+            }
+            visit(window, depth: 0)
+            return matches.max(by: { $0.width < $1.width })
+        }
+
+        /// The process showing simulators on screen (Simulator.viewers), if it's running.
+        private static func viewer() -> pid_t? {
+            for id in Simulator.viewers {
+                guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: id).first else { continue }
+                if app.processIdentifier > 0 { return app.processIdentifier }
+                // Device Hub can be listed without its process id; its windows still say whose they are.
+                let windows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+                let pids = Set(windows.filter { $0[kCGWindowOwnerName as String] as? String == app.localizedName }
+                    .compactMap { $0[kCGWindowOwnerPID as String] as? pid_t })
+                if let pid = pids.first(where: { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier == id }) { return pid }
+            }
+            return nil
+        }
+
+        /// Has Device Hub show this simulator: it shows one device at a time, the one chosen in its list,
+        /// where each row carries its device's identifier. Simulator needs none of this (every booted device
+        /// has a window), and without the permission to control the computer the list is left as it is.
+        static func choose(_ udid: String) async {
+            guard isAllowed else { return }
+            // Just opened: its window takes a moment to arrive.
+            for _ in 0..<15 {
+                if let pid = viewer(), choose(udid, in: AXUIElementCreateApplication(pid)) { return }
+                if NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.iphonesimulator").first != nil { return }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+        }
+
+        @discardableResult
+        private static func choose(_ udid: String, in app: AXUIElement) -> Bool {
+            func names(_ element: AXUIElement, depth: Int) -> Bool {
+                if (attribute(element, kAXIdentifierAttribute) as? String)?.hasSuffix(udid) == true { return true }
+                return depth < 4 && children(element).contains { names($0, depth: depth + 1) }
+            }
+            func row(in element: AXUIElement, depth: Int) -> AXUIElement? {
+                if attribute(element, kAXRoleAttribute) as? String == kAXRowRole { return names(element, depth: 0) ? element : nil }
+                guard depth < 12 else { return nil }
+                for child in children(element) { if let found = row(in: child, depth: depth + 1) { return found } }
+                return nil
+            }
+            for window in attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? [] {
+                guard let row = row(in: window, depth: 0) else { continue }
+                if (attribute(row, kAXSelectedAttribute) as? Bool) == true { return true }
+                return AXUIElementSetAttributeValue(row, kAXSelectedAttribute as CFString, kCFBooleanTrue) == .success
+            }
+            return false
         }
 
         /// Carries out the actions in order and says what each one did, like the Mac apps' driver. `live` is
@@ -317,14 +401,12 @@ extension Simulator {
                 let rect = CGRect(origin: origin, size: size)
                 // The rest of the Simulator's window (its own buttons and lists) isn't the iPhone's screen.
                 guard rect.isEmpty || screen.rect.intersects(rect) else { return }
-                var label = ((read[2] as? String)?.nilIfEmpty ?? (read[3] as? String)?.nilIfEmpty ?? "").trimmed
-                var value = (read[4].flatMap { $0 as? String ?? ($0 as? NSNumber).map(number) } ?? "").trimmed
-                // Plain text keeps its words in its value; a field's value is what it shows, typed or not.
-                if label.isEmpty, !textRoles.contains(role) { (label, value) = (value, "") }
-                var caption = under
-                let onScreen = !rect.isEmpty && screen.rect.contains(CGPoint(x: rect.midX, y: rect.midY))
                 // Listed even with no name: something to tap, or a row of segments, which comes with nothing inside.
                 let control = interactiveRoles.contains(role) || role == kAXTabGroupRole
+                let (label, value) = naming(control: control, label: (read[2] as? String)?.nilIfEmpty ?? (read[3] as? String) ?? "",
+                                            value: read[4].flatMap { $0 as? String ?? ($0 as? NSNumber).map(number) } ?? "")
+                var caption = under
+                let onScreen = !rect.isEmpty && screen.rect.contains(CGPoint(x: rect.midX, y: rect.midY))
                 let named = !label.isEmpty && role != kAXWindowRole
                 if onScreen, control || (named && !(label == under && role == kAXStaticTextRole)) {
                     let item = Item(role: subrole == "AXSearchField" || subrole == "AXSecureTextField" ? subrole : role,
@@ -342,7 +424,13 @@ extension Simulator {
             return found
         }
 
-        private static let textRoles: Set<String> = [kAXTextFieldRole, kAXTextAreaRole]
+        /// What a thing is called and what it holds. Plain text keeps its words in its value, so they are
+        /// its name; a control's value is its state (a switch on, a field's contents), and stays that even
+        /// when the control has no name, which is then plain to see.
+        static func naming(control: Bool, label: String, value: String) -> (label: String, value: String) {
+            let label = label.trimmed, value = value.trimmed
+            return label.isEmpty && !control ? (value, "") : (label, value)
+        }
 
         /// A number as a person would write it: a slider at 0.3076923 is at 0.31.
         private static func number(_ value: NSNumber) -> String {

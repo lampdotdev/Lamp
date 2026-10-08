@@ -110,7 +110,11 @@ prompt's `iPhoneHardware` rule lists what a phone has and what the simulator can
 `use_app` drives the simulator from outside the app (`Simulator.Driver`): the Simulator app shows the
 iPhone's whole accessibility tree to the Mac, so Lamp finds what's under a point and presses it, sets a
 field's text, and sends real mouse events for swipes, scrolls and long presses. Pictures are made at point
-size, so a pixel in them is a point on the screen. That needs Lamp to be allowed in System Settings →
+size, so a pixel in them is a point on the screen. The same tree, read whole, is the screen as text that
+`look_at_app` and `use_app` return beside the picture (`Driver.screenText`: one line per control or piece of
+text, with the point to tap it). The app showing the simulator is Simulator, or from Xcode 27 Device Hub
+(`Simulator.viewers`), which shows one device at a time: Lamp chooses the device in its list
+(`Driver.choose`) and finds the screen a few layers down its window (`Driver.screenFrame`). That needs Lamp to be allowed in System Settings →
 Privacy & Security → Accessibility; the first `use_app` asks.
 
 **On the person's own phone** (part of Build iOS apps; nothing more to switch on): Try On also lists the iPhones and iPads the Mac can see (`Devices.list`, through

@@ -40,6 +40,23 @@ final class ScreenTextTests: XCTestCase {
         XCTAssertTrue(text?.hasSuffix("\nbutton @365,75 30x30") == true)
     }
 
+    func testAControlWithNoNameKeepsItsStateAndPlainTextIsNamedByItsWords() {
+        // A switch that's on, with no label: still "on", and still plainly unnamed.
+        let unnamed = Simulator.Driver.naming(control: true, label: "", value: "1")
+        XCTAssertEqual([unnamed.label, unnamed.value], ["", "1"])
+        let frame = CGRect(x: 0, y: 0, width: 10, height: 10)
+        let lines = Simulator.Driver.text(for: [
+            Item(role: "AXCheckBox", label: unnamed.label, value: unnamed.value, frame: frame),
+            Item(role: "AXRadioButton", value: "1", frame: frame),
+            Item(role: "AXSlider", value: "0.5", frame: frame)
+        ])?.components(separatedBy: "\n").dropFirst() ?? []
+        XCTAssertEqual(Array(lines), ["switch = on @5,5 10x10", "choice, selected @5,5 10x10", "slider = 0.5 @5,5 10x10"])
+        let words = Simulator.Driver.naming(control: false, label: "", value: " 2 of 4 packed ")
+        XCTAssertEqual([words.label, words.value], ["2 of 4 packed", ""])
+        let named = Simulator.Driver.naming(control: true, label: "Days away", value: "0.31")
+        XCTAssertEqual([named.label, named.value], ["Days away", "0.31"])
+    }
+
     func testLongTextAndLongScreensAreCutSoATurnStaysSmall() {
         let frame = CGRect(x: 0, y: 0, width: 10, height: 10)
         let note = Item(role: "AXStaticText", label: String(repeating: "word ", count: 100) + "\nsecond line", frame: frame)
