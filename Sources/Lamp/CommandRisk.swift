@@ -209,16 +209,17 @@ enum CommandRisk {
         guard confined else { return Judgment(verdict: .risky, reason: .notConfined) }
         let asked = questions(hasRequest: !request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         let aboutCommand = asked.filter { $0.key != requestQuestion }
-        guard var given = try? await decide(state(command: command, folder: folder), aboutCommand) else { return Judgment(verdict: .unsure) }
+        guard let given = try? await decide(state(command: command, folder: folder), aboutCommand),
+              var answers = Answers(given, asked: aboutCommand) else { return Judgment(verdict: .unsure) }
+        // Risky on what the command does is settled here: nothing about the request can lift it, and neither
+        // can the request's question going unanswered.
+        if verdict(answers) == .risky { return Judgment(verdict: .risky, reason: reason(answers)) }
         if let question = asked[requestQuestion] {
-            guard let answer = try? await decide(state(command: command, request: request, folder: folder), [requestQuestion: question]) else {
-                return Judgment(verdict: .unsure)
-            }
-            given[requestQuestion] = answer[requestQuestion]
+            guard let answer = try? await decide(state(command: command, request: request, folder: folder), [requestQuestion: question]),
+                  let matches = Answers(given.merging(answer) { $1 }, asked: asked)?.matchesRequest else { return Judgment(verdict: .unsure) }
+            answers.matchesRequest = matches
         }
-        guard let answers = Answers(given, asked: asked) else { return Judgment(verdict: .unsure) }
-        let verdict = verdict(answers)
-        return Judgment(verdict: verdict, reason: verdict == .risky ? reason(answers) : nil)
+        return Judgment(verdict: verdict(answers))
     }
 
     // MARK: The rating

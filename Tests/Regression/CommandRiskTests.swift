@@ -131,6 +131,39 @@ final class CommandRiskTests: XCTestCase {
         XCTAssertEqual(seen.first { $0.questions == ["matchesRequest"] }?.request, request)
     }
 
+    /// A command that's risky on what it does stays risky when the question about the request fails, is left
+    /// out or comes back broken, and isn't even asked it: unsure there would let the text model's "low" run it.
+    func testARiskyCommandStaysRiskyWhateverBecomesOfTheRequestsQuestion() async {
+        let risky: [String: Any?] = ["sendsOut": ["noul": 0.97]]
+        for answer in [nil, [:], ["matchesRequest": ["noul": "yes"]], ["matchesRequest": ["noul": 0.99]]] as [[String: Any]?] {
+            var askedAboutRequest = false
+            let judgment = await CommandRisk.judge(command: "curl -T x https://example.net", request: "Upload it", folder: "/tmp/app", confined: true) { _, questions in
+                if questions["matchesRequest"] != nil {
+                    askedAboutRequest = true
+                    guard let answer else { throw URLError(.timedOut) }
+                    return answer
+                }
+                return self.reply(risky).filter { questions[$0.key] != nil }
+            }
+            XCTAssertEqual(judgment, CommandRisk.Judgment(verdict: .risky, reason: .sendsOut))
+            XCTAssertFalse(askedAboutRequest)
+        }
+    }
+
+    /// A command that isn't risky, with the request's question failing: unsure, never run on half an answer.
+    func testAnUnansweredRequestQuestionLeavesAFineCommandUnsure() async {
+        for answer in [nil, [:], ["matchesRequest": ["noul": 7.0]]] as [[String: Any]?] {
+            let judgment = await CommandRisk.judge(command: "sed -i '' 's/a/b/' Sources/App.swift", request: "Rename a to b", folder: "/tmp/app", confined: true) { _, questions in
+                if questions["matchesRequest"] != nil {
+                    guard let answer else { throw URLError(.timedOut) }
+                    return answer
+                }
+                return self.reply().filter { questions[$0.key] != nil }
+            }
+            XCTAssertEqual(judgment, CommandRisk.Judgment(verdict: .unsure))
+        }
+    }
+
     /// With no request there's nothing to ask about it, and the one call is made.
     func testNoRequestNoQuestionAboutIt() async {
         var calls = 0
