@@ -3186,9 +3186,10 @@ final class Store: ObservableObject {
             }
             if request.path == "/ai/image" {
                 do {
+                    let models = AppModels.load(project)
                     let (png, cost) = try await AppAI.image(prompt: prompt, references: images,
                                                             aspectRatio: body["aspect_ratio"] as? String,
-                                                            model: AppModels.load(project).image)
+                                                            model: models.image, appText: models.text)
                     record(project, cost: cost)
                     return (200, ["image": png.base64EncodedString(), "media_type": "image/png"])
                 } catch let failure as AppAI.Failure where failure.message == AppAI.noImageRoute {

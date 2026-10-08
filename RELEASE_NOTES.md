@@ -5,6 +5,12 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## Unreleased
+
+- Pictures no longer fall back to a ChatGPT Codex sign-in that happens to be on the Mac: Codex draws them only
+  when it's what builds your apps or answers inside them. Otherwise, with no OpenRouter key and no picture
+  model on this Mac, Lamp asks for one.
+
 ## 0.10.4
 
 - Lamp remembers, as an experiment you switch on in Settings → Building: it keeps short notes on how you
