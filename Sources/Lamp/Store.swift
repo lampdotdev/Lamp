@@ -150,16 +150,31 @@ final class Store: ObservableObject {
     }
 
     func endSubmission(_ token: UUID) { pendingSubmissions.end(token) }
-    @Published var setup = SetupCheck()
+    @Published var setup = SetupCheck() {
+        didSet {
+            guard setup.checked, !awaitingSetupCheck.isEmpty else { return }
+            let waiting = awaitingSetupCheck
+            awaitingSetupCheck = []
+            waiting.forEach { $0.resume() }
+        }
+    }
+    private var awaitingSetupCheck: [CheckedContinuation<Void, Never>] = []
+
+    /// Returns once Lamp has really looked at setup. Until then `setup` only assumes everything is in place,
+    /// which is how a file that launched Lamp could be let through on a Mac with nothing set up.
+    private func setupChecked() async {
+        guard !setup.checked else { return }
+        await withCheckedContinuation { awaitingSetupCheck.append($0) }
+    }
     /// The welcome finished this run. Normally the saved setting says so too, but `-onboarded NO` on the
     /// command line (for checking the welcome) keeps that setting from changing until Lamp quits.
     @Published var welcomeFinished = false
     @Published var usage: [String: AppUsage] = [:]
     @Published var icons: [String: NSImage] = [:]
-    @Published var pendingImport: PendingImport?
-    /// A shared app being built while the welcome is up. The welcome has no chat to show the build in,
-    /// so it shows this instead, until the app opens.
-    @Published var importBuild: ImportBuild?
+    /// The shared app whose review is up. When it goes, the next one kept from before setup gets its turn.
+    @Published var pendingImport: PendingImport? {
+        didSet { if pendingImport == nil, oldValue != nil { openWaitingImport() } }
+    }
 
     /// A shell command an agent wants to run, or a file outside the app's folder it wants, waiting for the user
     /// (see ApprovalCard).
@@ -962,21 +977,6 @@ final class Store: ObservableObject {
         }
     }
 
-    struct ImportBuild: Equatable {
-        let id: String
-        let name: String
-        var failed = false
-
-        /// What the welcome shows once app `id`'s build has ended: nothing if it opened, that it didn't
-        /// otherwise. A newer import may have taken the welcome's place meanwhile: then this result isn't its.
-        static func after(_ shown: ImportBuild?, finished id: String, opened: Bool) -> ImportBuild? {
-            guard var build = shown, build.id == id else { return shown }
-            guard !opened else { return nil }
-            build.failed = true
-            return build
-        }
-    }
-
     struct PendingImport: Identifiable {
         let id = UUID()
         let package: Sharing.Package
@@ -994,22 +994,41 @@ final class Store: ObservableObject {
         return projects.first { $0.platform == .mac && $0.scaffolded && Sharing.identity(of: $0, create: false) == identity }
     }
 
-    /// Opens a shared `.lampapp`: unpacks it, then shows a review (fixed checklist + AI check) before building.
-    func importApp(from file: URL, waited: Bool = false) {
+    /// Opens a shared `.lampapp`. Its review (fixed checklist + AI check) opens only when setup is really done
+    /// and the welcome is over, so that an AI agent is there to check the app before it runs. Until then the
+    /// file is kept, and its review opens by itself once the person is through setup.
+    func importApp(from file: URL) {
         NSApp.activate()
-        guard setup.ready else {
-            let alert = NSAlert()
-            alert.messageText = "Finish setting up Lamp first"
-            alert.informativeText = waitingImport.keep(file)
-                ? "Lamp will open the shared app as soon as setup is done."
-                : "Then open the shared app again."
-            alert.runModal()
-            return
+        Task {
+            // A file that launched Lamp arrives before Lamp has looked at setup: the look is waited for, so
+            // the same file on the same Mac always goes the same way.
+            await setupChecked()
+            guard reviewsCanOpen else {
+                let alert = NSAlert()
+                alert.messageText = "Finish setting up Lamp first"
+                if waitingImport.keep(file) {
+                    alert.informativeText = waitingImport.count > 1
+                        ? "Lamp will open your shared apps as soon as setup is done."
+                        : "Lamp will open the shared app as soon as setup is done."
+                } else {
+                    alert.informativeText = "Then open the shared app again."
+                }
+                alert.runModal()
+                return
+            }
+            review(file)
         }
+    }
+
+    /// Setup is in place (Apple's tools and an AI agent) and the person is through the welcome.
+    private var reviewsCanOpen: Bool {
+        WaitingImport.reviewsCanOpen(setupReady: setup.checked && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
+    }
+
+    /// Unpacks a shared app and shows its review. `waited`: it was kept from before setup was done.
+    private func review(_ file: URL, waited: Bool = false) {
         // The newest request wins: a file opened while an earlier one is still unpacking, or a Cancel
-        // meanwhile, makes the earlier result unwanted when it arrives. So does one still kept from before
-        // setup was ready (an agent chosen in the welcome, "Start building" not yet clicked).
-        waitingImport.discard()
+        // meanwhile, makes the earlier result unwanted when it arrives.
         let request = UUID()
         importRequest = request
         if let previous = pendingImport { try? FileManager.default.removeItem(at: previous.package.folder) }
@@ -1020,7 +1039,10 @@ final class Store: ObservableObject {
             do {
                 package = try await Task.detached { try Sharing.open(file) }.value
             } catch {
-                if importRequest == request { NSAlert(error: error).runModal() }
+                guard importRequest == request else { return }
+                importRequest = nil
+                NSAlert(error: error).runModal()
+                openWaitingImport()   // one that can't be opened doesn't hold up the ones kept after it
                 return
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
@@ -1035,11 +1057,13 @@ final class Store: ObservableObject {
 
     private var waitingImport: WaitingImport { WaitingImport(folder: waitingFiles) }
 
-    /// A shared app opened before setup finished gets its review once the person is through setup: called when
-    /// setup becomes ready and when the welcome ends, whichever comes last.
+    /// Shared apps opened before setup was done get their reviews once the person is through setup, one at a
+    /// time in the order they were opened: called when setup becomes ready, when the welcome ends, and when a
+    /// review closes.
     func openWaitingImport() {
+        guard pendingImport == nil, importRequest == nil else { return }
         let file = waitingImport.take(setupReady: setup.checked && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
-        if let file { importApp(from: file, waited: true) }
+        if let file { review(file, waited: true) }
     }
 
     func cancelImport() {
@@ -1071,14 +1095,8 @@ final class Store: ObservableObject {
         importRequest = nil
         pendingImport = nil
         selection = project.id
-        // With the welcome still up there's no chat to show the build in: it shows this one as it does a new app's.
-        if !Onboarding.isDone && !welcomeFinished { importBuild = ImportBuild(id: project.id, name: project.name) }
         Task {
-            var opened = false
-            defer {
-                importBuild = ImportBuild.after(importBuild, finished: project.id, opened: opened)
-                finish(project)
-            }
+            defer { finish(project) }
             let package = pending.package
             defer { try? FileManager.default.removeItem(at: package.folder) }
             let before = "Before updating from a shared file"
@@ -1140,15 +1158,12 @@ final class Store: ObservableObject {
                 versionsRevision += 1
             } else if !newArtwork {
                 log(project, .status, "You already have this version.")
-                opened = true   // nothing was to open: the welcome has no failure to report
                 return
             }
             // The same code with a new icon picture still gets built, which is what draws and installs the icon.
             log(project, .status, "Updated from a shared file. Building it now…")
             if await build(project) == nil {
                 await installReportingCrash(project)
-                refreshOpenApps()
-                opened = openApps.contains(project.id)
             } else {
                 log(project, .error, ErrorMessages.appDoesNotBuild)
             }
@@ -1178,12 +1193,10 @@ final class Store: ObservableObject {
         reload()
         selection = project.id
         log(project, .status, "Imported from a shared file. Building it now…")
-        if !Onboarding.isDone && !welcomeFinished { importBuild = ImportBuild(id: project.id, name: project.name) }
         Task {
             _ = await Shell.run("git init -q && git add -A && \(Self.commit) -qm 'Imported from a shared file'",
                                 cwd: project.dir) { _ in }
-            let opened = await run(project)
-            importBuild = ImportBuild.after(importBuild, finished: project.id, opened: opened)
+            await run(project)
         }
     }
 
@@ -1239,7 +1252,7 @@ final class Store: ObservableObject {
                 }
             }
         }
-        if let shared = waitingImport.keptFolder { kept.insert(shared) }
+        kept.formUnion(waitingImport.keptFolders)
         let folders = (try? FileManager.default.contentsOfDirectory(at: waitingFiles, includingPropertiesForKeys: nil)) ?? []
         for folder in folders where !kept.contains(folder.path) { try? FileManager.default.removeItem(at: folder) }
     }
@@ -2255,21 +2268,14 @@ final class Store: ObservableObject {
         return true
     }
 
-    /// Whether the app is open afterwards.
-    @discardableResult
-    func run(_ project: LampProject) async -> Bool {
-        guard begin(project) != nil else { return false }
+    func run(_ project: LampProject) async {
+        guard begin(project) != nil else { return }
         defer { finish(project) }
-        guard let project = await materialize(project) else { return false }
+        guard let project = await materialize(project) else { return }
         if await build(project) == nil {
             await installReportingCrash(project)
-            // A crash isn't the only way not to open (it may not install, or macOS may refuse to launch
-            // it), so what counts is that it's running.
-            refreshOpenApps()
-            return openApps.contains(project.id)
         } else {
             log(project, .error, ErrorMessages.appDoesNotBuild)
-            return false
         }
     }
 
