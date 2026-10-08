@@ -134,8 +134,21 @@ prompt's `iPhoneHardware` rule lists what a phone has and what the simulator can
 `use_app` drives the simulator from outside the app (`Simulator.Driver`): the Simulator app shows the
 iPhone's whole accessibility tree to the Mac, so Lamp finds what's under a point and presses it, sets a
 field's text, and sends real mouse events for swipes, scrolls and long presses. Pictures are made at point
-size, so a pixel in them is a point on the screen. That needs Lamp to be allowed in System Settings →
-Privacy & Security → Accessibility; the first `use_app` asks.
+size, so a pixel in them is a point on the screen. The same tree, read whole, is the screen as text that
+`look_at_app` and `use_app` return beside the picture (`Driver.screenText`: one line per control or piece of
+text, with the point to tap it). The app showing the simulator is Simulator, or from Xcode 27 Device Hub
+(`Simulator.viewers`), which shows one device at a time: Lamp chooses the device in its list
+(`Driver.choose`) and finds the screen a few layers down its window (`Driver.screenBoxes`: a group shaped like
+the screen that Device Hub marks `iOSContentGroup`, an undocumented subrole; two candidates in different places
+are refused). That needs Lamp to be allowed in System Settings → Privacy & Security → Accessibility; the first
+`use_app` asks. The driver runs on its own queue (`AccessibilityActor`), never the main thread, and no call to
+the other app waits more than `Driver.patience`; when the screen can't be used, `Driver.Trouble` says which
+reason it was, in words for the agent. Device Hub (checked on Xcode 27.0) doesn't pass on mouse or key events
+posted to it, so there a scroll is the page scroll the iPhone's own elements offer, a row's swipe action is the
+row's own named action, return is the on-screen keyboard's key, and a long press, a sideways swipe and escape
+are refused with the reason rather than reported as done. Its list holds the devices added to it, not every
+booted one, and it loses a device's display when the simulator restarts: both are told to the agent as they
+are. `SimulatorLiveTests` runs the driver against a real window when `LAMP_LIVE_UDID` is set.
 
 **On the person's own phone**: Try On also lists the iPhones and iPads the Mac can see (`Devices.list`, through
 `devicectl`): paired ones to choose, and plugged-in ones that haven't trusted the Mac yet, which it offers

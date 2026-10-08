@@ -252,7 +252,9 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
             guard let developer = report?.developer else { return }
             open(URL(fileURLWithPath: developer).deletingLastPathComponent().deletingLastPathComponent())
         case .simulator:
-            Task { await Simulator.show() }
+            guard let developer = report?.developer else { return }
+            guard let viewer = Simulator.viewer(in: developer) else { return }
+            open(viewer)
         case .settings:
             UserDefaults.standard.set("building", forKey: "settingsTab")
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)

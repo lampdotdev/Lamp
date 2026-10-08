@@ -1,5 +1,4 @@
 import Foundation
-import CoreServices
 
 /// Phone builds need the full Xcode app. Keep the choice inside Lamp's process: its shells, all three
 /// agents, simctl and devicectl inherit it, without changing xcode-select for anything else on the Mac.
@@ -65,13 +64,18 @@ enum PhoneTools {
             let app = URL(fileURLWithPath: developer).deletingLastPathComponent().deletingLastPathComponent()
             return NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist"))?["CFBundleShortVersionString"] as? String
         }
-        var hasSimulatorApp: (String) -> Bool = { developer in
-            FileManager.default.fileExists(atPath: developer + "/Applications/Simulator.app")
-                || LSCopyApplicationURLsForBundleIdentifier("com.apple.iphonesimulator" as CFString, nil) != nil
-        }
+        var hasViewer: (String) -> Bool = { viewer(in: $0) != nil }
         var teams: () -> [(id: String, name: String)] = xcodeTeams
         var team: () -> String = { (UserDefaults.standard.string(forKey: teamPreference) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased() }
         var chooseTeam: (String) -> Void = { UserDefaults.standard.set($0, forKey: teamPreference) }
+    }
+
+    /// The app that puts simulators on the Mac's screen, in this Xcode: Simulator, or Device Hub, which took
+    /// its place in Xcode 27 (`Simulator.viewer`).
+    static func viewer(in developer: String) -> URL? {
+        let xcode = URL(fileURLWithPath: developer).deletingLastPathComponent()
+        return [URL(fileURLWithPath: developer + "/Applications/Simulator.app"), xcode.appendingPathComponent("Applications/DeviceHub.app")]
+            .first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
     /// The team phone builds are signed for, as Settings → Building keeps it (`Devices.team`).
@@ -217,10 +221,10 @@ enum PhoneTools {
         guard devices.ok, Simulator.device(family, listing: devices.output) != nil else {
             return stop(.simulator, "Add an \(family.name) simulator", "There's no \(family.name) for Lamp to try your app on yet. Click Open Simulator, then choose File → New Simulator from the menu bar. Pick any \(family.name) with iOS \(minimumIOS) or later, click Create, and come back to Lamp.", .simulator)
         }
-        // The devices are run by a service, and shown by the Simulator app: an Xcode without that app (it has
-        // happened) would run the app on a screen nobody can see. Any copy on the Mac will do (Simulator.show).
-        guard probe.hasSimulatorApp(developer) else {
-            return stop(.simulator, "Install the Simulator app", "The simulator is the iPhone or iPad that appears on your Mac's screen, and the Xcode on this Mac doesn't have the app that shows it. Click Open Xcode, choose Xcode → Settings from the menu bar, then click Components and make sure iOS and its simulator are installed. If they are, reinstall Xcode from the App Store. Come back to Lamp when it has finished.", .components)
+        // The devices are run by a service and shown by an app (Simulator, or Device Hub in Xcode 27): an Xcode
+        // without it would run the app on a screen nobody can see.
+        guard probe.hasViewer(developer) else {
+            return stop(.simulator, "Finish installing Xcode", "The simulator is the iPhone or iPad that appears on your Mac's screen, and the Xcode on this Mac is missing the app that shows it. Click Open Xcode, choose Xcode → Settings from the menu bar, then click Components and make sure iOS and its simulator are installed. If they are, reinstall Xcode from the App Store. Come back to Lamp when it has finished.", .components)
         }
         report.passed.append(.simulator)
         if let phone {

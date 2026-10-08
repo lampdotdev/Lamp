@@ -12,7 +12,7 @@ final class PhoneToolsChecks {
     private func probe(fail: PhoneTools.Step? = nil, phoneVersion: String? = "17.0", runtime: String? = nil,
                        commands: (([String]) -> Void)? = nil) -> PhoneTools.Probe {
         var p = probeWithoutAccount(fail: fail, phoneVersion: phoneVersion, runtime: runtime, commands: commands)
-        p.hasSimulatorApp = { _ in true }
+        p.hasViewer = { _ in true }
         p.teams = { fail == .account ? [] : [(id: "ABCDE12345", name: "Test Team")] }
         p.team = { "ABCDE12345" }
         p.chooseTeam = { _ in }
@@ -110,7 +110,7 @@ final class PhoneToolsChecks {
 
     func testAnXcodeWithoutTheSimulatorAppIsNotReady() {
         var p = probe()
-        p.hasSimulatorApp = { developer in expectEqual(developer, self.developer); return false }
+        p.hasViewer = { developer in expectEqual(developer, self.developer); return false }
         let report = PhoneTools.check(probe: p)
         expectEqual(report.issue?.step, .simulator)
         expectEqual(report.issue?.action, .components)
