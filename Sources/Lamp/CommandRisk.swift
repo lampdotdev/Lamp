@@ -136,19 +136,20 @@ enum CommandRisk {
     private static let askedInside = 0.6
     private static let riskyRisk = 2.5
 
-    /// Run when nothing must-not fires and the command is routine (it only reads), harmless (what it changes
-    /// is inside the app's folder, level 1, and the model is sure) or asked for (level 2, such as a download,
-    /// that the request calls for). Risky when a must-not clearly fires or the level is 3 and up. Anything
-    /// between is unsure.
+    /// Risky when a must-not clearly fires or the level is 3 and up: checked first, so no other answer can
+    /// outvote it (the questions are judged separately and may disagree, as when a command is called
+    /// read-only and level 3 at once). Otherwise run when nothing must-not fires and the command is routine
+    /// (it only reads), harmless (what it changes is inside the app's folder, level 1, and the model is
+    /// sure) or asked for (level 2, such as a download, that the request calls for). Anything between is
+    /// unsure.
     static func verdict(_ answers: Answers) -> Verdict {
         let mustNot = [answers.sendsOut, answers.readsSecrets, answers.hidesWhatItDoes, answers.readsPersonalFiles ?? 0]
+        if mustNot.contains(where: { $0 >= flagged }) || answers.risk >= riskyRisk { return .risky }
         let clear = mustNot.allSatisfy { $0 <= no }
         let routine = answers.onlyReads >= yes
         let harmless = answers.risk <= harmlessRisk && answers.riskConfidence >= harmlessConfidence && answers.staysInside >= harmlessInside
         let asked = answers.risk <= askedRisk && (answers.matchesRequest ?? 0) >= yes && answers.staysInside >= askedInside
-        if clear && (routine || harmless || asked) { return .run }
-        if mustNot.contains(where: { $0 >= flagged }) || answers.risk >= riskyRisk { return .risky }
-        return .unsure
+        return clear && (routine || harmless || asked) ? .run : .unsure
     }
 
     /// One command, judged: the questions put to `decide` (the decision model), and the verdict from its

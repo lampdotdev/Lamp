@@ -86,10 +86,11 @@ enum Privacy {
     /// folders and back (`stepsBack`).
     static func reachesOutside(_ command: String, project: LampProject) -> Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        // `cd Sources; …; cd ..` comes back to the app's folder: that `..` leads nowhere outside it.
-        var returns = stepsBack(in: command, project: project)
-        for word in words(in: command) {
-            if word == "..", returns > 0 { returns -= 1; continue }
+        // `cd Sources; …; cd ..` comes back to the app's folder: that `..` leads nowhere outside it. Only
+        // that very word, by where it stands: any other `..` in the command is still a step out.
+        let returns = stepsBack(in: command, project: project)
+        for (word, place) in placedWords(in: command) {
+            if word == "..", returns.contains(place) { continue }
             // `--from=/path` and `VAR=/path` carry a path after the sign.
             var path = word.split(separator: "=", maxSplits: 1).last.map(String.init) ?? word
             for name in ["${HOME}", "$HOME"] where path.hasPrefix(name) { path = home + path.dropFirst(name.count) }
@@ -114,19 +115,23 @@ enum Privacy {
         return false
     }
 
-    /// How many `cd ..` in a command only undo a `cd` into one of the app's own folders, so never leave it:
-    /// `cd Sources; sed …; cd ..`. Counted only where that can be told for certain from the words: the `cd`
-    /// going in comes first in the command, names a folder that exists inside the app's folder, and stands
-    /// on its own (not after `&&`, in a pipe, a subshell or a condition, where it might not happen); and
-    /// nothing in between could move the shell some other way (`eval`, `source`, another `cd`). Anything
-    /// else counts none, and every `..` is then a step out of the app's folder, as before.
-    static func stepsBack(in command: String, project: LampProject) -> Int {
-        guard let steps = steps(of: command) else { return 0 }
+    /// The `..` of each `cd ..` in a command that only undoes a `cd` into one of the app's own folders, so
+    /// never leaves it (`cd Sources; sed …; cd ..`), by where the word starts in the command. Only where
+    /// that can be told for certain from the words: the `cd` going in comes first in the command, names a
+    /// folder inside the app's folder that exists and can be entered, and stands on its own (not after `&&`,
+    /// in a pipe, a subshell or a condition, where it might not happen); and nothing in between could move
+    /// the shell some other way (`eval`, `source`, another `cd`). Anything else gives none, and every `..`
+    /// is then a step out of the app's folder, as before.
+    /// The folder is looked at now and entered a moment later, when the command runs: nothing earlier in
+    /// the same command can change it in between (only `cd`s may come first), which is as far as reading
+    /// the words can go.
+    static func stepsBack(in command: String, project: LampProject) -> Set<Int> {
+        guard let steps = steps(of: command) else { return [] }
         let home = resolved(project.dir.path, in: project.dir)
         let moves: Set<String> = ["eval", "source", ".", "builtin", "command", "exec", "pushd", "popd", "alias", "set", "setopt", "trap"]
         var folder = home
         var onlyGoneIn = true   // every step so far was a `cd` into the app's folder
-        var count = 0
+        var count: Set<Int> = []
         for step in steps {
             guard let first = step.words.first else { continue }
             guard first.text == "cd" else {
@@ -142,13 +147,16 @@ enum Privacy {
                 // (after `&&`), it's deeper inside than counted, which leaves nothing.
                 guard folder != home else { return count }
                 folder = (folder as NSString).deletingLastPathComponent
-                count += 1
+                count.insert(target.at)
                 continue
             }
             var isFolder: ObjCBool = false
             let path = resolved(target.text, in: URL(fileURLWithPath: folder))
+            // There, a folder, and one this user may enter: a `cd` the shell refuses leaves it where it was,
+            // and after a `;` the rest of the command carries on from there.
             guard onlyGoneIn, target.literal, step.alone, path.hasPrefix(home + "/"),
-                  FileManager.default.fileExists(atPath: path, isDirectory: &isFolder), isFolder.boolValue else { return count }
+                  FileManager.default.fileExists(atPath: path, isDirectory: &isFolder), isFolder.boolValue,
+                  access(path, X_OK) == 0 else { return count }
             folder = path
         }
         return count
@@ -158,18 +166,19 @@ enum Privacy {
     /// than commands one after another: a subshell, a group, a substitution, a background job, a loop or a
     /// condition. A heredoc's text is left out (it's input, not commands). `alone`: the command always runs,
     /// by itself (it follows the start, `;` or a new line, and isn't piped). `literal`: the word is exactly
-    /// what's written, with nothing the shell would fill in (`$x`, `*`, `~`).
-    static func steps(of command: String) -> [(words: [(text: String, literal: Bool)], alone: Bool)]? {
+    /// what's written, with nothing the shell would fill in (`$x`, `*`, `~`). `at`: where the word starts in
+    /// the command, the same place `placedWords` gives it.
+    static func steps(of command: String) -> [(words: [(text: String, literal: Bool, at: Int)], alone: Bool)]? {
         let characters = Array(command)
-        var steps: [(words: [(text: String, literal: Bool)], alone: Bool)] = []
-        var words: [(text: String, literal: Bool)] = []
-        var current = "", started = false, literal = true
+        var steps: [(words: [(text: String, literal: Bool, at: Int)], alone: Bool)] = []
+        var words: [(text: String, literal: Bool, at: Int)] = []
+        var current = "", started = false, literal = true, start = 0
         var quote: Character?
         var alone = true          // for the step being read
         var heredocs: [(mark: String, tabs: Bool)] = []
         var index = 0
         func endWord() {
-            if started { words.append((current, literal)) }
+            if started { words.append((current, literal, start)) }
             (current, started, literal) = ("", false, true)
         }
         func endStep(piped: Bool = false, nextAlone: Bool) {
@@ -180,6 +189,7 @@ enum Privacy {
         }
         while index < characters.count {
             let character = characters[index]
+            if !started { start = index }
             index += 1
             if let open = quote {
                 if character == open { quote = nil; continue }
@@ -261,6 +271,35 @@ enum Privacy {
         return steps.contains(where: { syntax.contains($0.words[0].text) }) ? nil : steps
     }
 
+    /// `words(in:)`, each with where it starts in the command.
+    static func placedWords(in command: String) -> [(text: String, at: Int)] {
+        var words: [(text: String, at: Int)] = []
+        var current = "", start = 0, begun = false
+        var quote: Character?
+        var escaped = false
+        func end() {
+            if !current.isEmpty { words.append((current, start)) }
+            (current, begun) = ("", false)
+        }
+        for (index, character) in command.enumerated() {
+            let splits = quote == nil && !escaped && (character.isWhitespace || ";|&<>()".contains(character))
+            if !begun, !splits { (start, begun) = (index, true) }
+            if escaped { current.append(character); escaped = false; continue }
+            if character == "\\", quote != "'" { escaped = true; continue }
+            if let open = quote {
+                if character == open { quote = nil } else { current.append(character) }
+            } else if character == "'" || character == "\"" {
+                quote = character
+            } else if splits {
+                end()
+            } else {
+                current.append(character)
+            }
+        }
+        end()
+        return words
+    }
+
     /// `~`, `~/Documents`, `~matt` or `~matt/Documents`: the shell's home-folder shorthand. Not `~=` or other
     /// code that happens to start with a tilde.
     private static func isHomePath(_ word: String) -> Bool {
@@ -272,25 +311,7 @@ enum Privacy {
     /// The words of a shell line, with quotes and escapes worked out, so a quoted path with a space in it
     /// (the app's own folder has one) stays whole.
     static func words(in command: String) -> [String] {
-        var words: [String] = []
-        var current = ""
-        var quote: Character?
-        var escaped = false
-        for character in command {
-            if escaped { current.append(character); escaped = false; continue }
-            if character == "\\", quote != "'" { escaped = true; continue }
-            if let open = quote {
-                if character == open { quote = nil } else { current.append(character) }
-            } else if character == "'" || character == "\"" {
-                quote = character
-            } else if character.isWhitespace || ";|&<>()".contains(character) {
-                if !current.isEmpty { words.append(current); current = "" }
-            } else {
-                current.append(character)
-            }
-        }
-        if !current.isEmpty { words.append(current) }
-        return words
+        placedWords(in: command).map(\.text)
     }
 
     /// What the approval card says for a file request.

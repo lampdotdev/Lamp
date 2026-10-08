@@ -91,6 +91,32 @@ final class CommandFolderTests: XCTestCase {
         }
     }
 
+    /// A folder that's there but can't be entered: the shell refuses the `cd` and carries on where it was.
+    func testAFolderThatCannotBeEnteredCountsForNothing() throws {
+        let locked = project.dir.appendingPathComponent("Locked")
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+        XCTAssertTrue(outside("cd Locked; cd ..; cat notes/.lamp/token"))
+    }
+
+    /// Only the `..` of the `cd` that comes back is let through, by where it stands: another `..` in the
+    /// command is a step out, whichever the shell reads first and however it's written.
+    func testOnlyTheReturningCdIsLetThrough() {
+        XCTAssertTrue(outside("cd Sources; ls ..; cd .."))
+        XCTAssertTrue(outside("cd Sources; cd ..; ls .."))
+        XCTAssertTrue(outside("cd Sources; cd .\\\n.; ls .."))
+        XCTAssertTrue(outside("cd Sources; printf '%s' '..'; cd .."))
+        XCTAssertEqual(Privacy.stepsBack(in: "cd Sources; ls ..; cd ..", project: project), [22])
+    }
+
+    func testWordsKeepTheirPlaces() {
+        let command = #"cd "My Sources"; grep 'a b' x\ y.swift | head"#
+        XCTAssertEqual(Privacy.placedWords(in: command).map(\.text), Privacy.words(in: command))
+        XCTAssertEqual(Privacy.placedWords(in: command).map(\.at), [0, 3, 17, 22, 28, 41])
+        XCTAssertEqual(Privacy.words(in: command), ["cd", "My Sources", "grep", "a b", "x y.swift", "head"])
+    }
+
     /// A link inside the app's folder that leads out of it is where it leads.
     func testAFolderThatIsALinkOutCountsAsOutside() throws {
         try FileManager.default.createSymbolicLink(at: project.dir.appendingPathComponent("Linked"), withDestinationURL: root.appendingPathComponent("Apps/notes"))

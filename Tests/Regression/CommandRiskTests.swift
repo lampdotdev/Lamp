@@ -39,6 +39,14 @@ final class CommandRiskTests: XCTestCase {
         XCTAssertEqual(CommandRisk.verdict(answers(risk: 4.0, inside: 0.01)), .risky)
     }
 
+    /// The answers are separate judgments and can contradict each other: "it only reads" doesn't run a
+    /// command the same model puts at level 3, nor does being asked for.
+    func testAHighLevelIsRiskyWhateverElseIsAnswered() {
+        XCTAssertEqual(CommandRisk.verdict(answers(risk: 2.5, reads: 0.97)), .risky)
+        XCTAssertEqual(CommandRisk.verdict(answers(risk: 3.4, reads: 0.97, inside: 0.95, match: 0.95)), .risky)
+        XCTAssertEqual(CommandRisk.verdict(answers(risk: 2.4, reads: 0.97)), .run)
+    }
+
     /// Each "must not" stops a command that would otherwise run: one that only reads, or edits in the folder.
     func testEachMustNotOverridesReadingAndEditing() {
         for reads in [0.96, 0.02] {
