@@ -2,10 +2,10 @@
 import { Image } from "astro:assets";
 import habitStreaks from "../../assets/icons/habit-streaks.png";
 
-// For "Works with what's on your Mac", shown under the words: an app Lamp made rising from the tile's bottom
-// edge, with what it can reach fanned out above it and joined to it by faint lines. The marks are simple
-// drawings of our own in each kind's usual colour, not Apple's app icons. Positions are on a 600×300 canvas,
-// spaced along an arc around the app.
+// For "Plugged into your day", shown under the words: an app Lamp made rising from the tile's bottom edge, with
+// what it can reach fanned out above it and joined to it by faint lines. The marks are simple drawings of our
+// own in each kind's usual colour, not Apple's app icons. Positions are on a 600×300 canvas, spaced along an
+// arc around the app narrow enough (about 400 wide with the labels) for the tile's four columns of ten.
 const centre = { x: 300, y: 250 };
 const services = [
   { name: "Calendar", colour: "#ff3b30", glyph: "calendar" },
@@ -16,7 +16,7 @@ const services = [
   { name: "Messages", colour: "#34c759", glyph: "messages" },
 ].map((service, index) => {
   const angle = ((165 - index * 30) * Math.PI) / 180;
-  return { ...service, x: Math.round(centre.x + 225 * Math.cos(angle)), y: Math.round(centre.y - 185 * Math.sin(angle)) };
+  return { ...service, x: Math.round(centre.x + 165 * Math.cos(angle)), y: Math.round(centre.y - 185 * Math.sin(angle)) };
 });
 ---
 
@@ -26,7 +26,7 @@ const services = [
     <svg viewBox="0 0 600 300" class="absolute inset-0 size-full overflow-visible">
       {
         services.map((service) => (
-          <line x1={centre.x} y1={centre.y} x2={service.x} y2={service.y} stroke="rgba(0,0,0,0.1)" stroke-width="1.5" stroke-dasharray="3 5" />
+          <line x1={centre.x} y1={centre.y} x2={service.x} y2={service.y} stroke="currentColor" stroke-opacity="0.3" stroke-width="1.5" stroke-dasharray="3 5" />
         ))
       }
     </svg>
@@ -74,7 +74,7 @@ const services = [
               )}
             </svg>
           </div>
-          <span class="mt-1.5 text-[12px] font-medium text-muted">{service.name}</span>
+          <span class="mt-1.5 text-[12px] font-medium opacity-80">{service.name}</span>
         </div>
       ))
     }

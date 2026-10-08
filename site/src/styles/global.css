@@ -16,6 +16,17 @@
   --color-graphite: #33302e;
   --color-graphite-deep: #141311;
 
+  /* The feature tiles' own colours, strong like the app icons. Amber and mint take the page's dark words; sky and
+     lilac are deep enough for white ones, darkest where the words sit (the top of sky, the bottom of lilac). */
+  --color-amber-from: #ffd25e;
+  --color-amber-to: #ff9f1c;
+  --color-sky-from: #0b5ccc;
+  --color-sky-to: #3d9bff;
+  --color-lilac-from: #a77bff;
+  --color-lilac-to: #6a32cf;
+  --color-mint-from: #5fd97f;
+  --color-mint-to: #34c759;
+
   /* Where the feature tiles go side by side: the page's full width (max-w-6xl), the width their illustrations
      are drawn for. Narrower than that, the tiles stack, each as wide as the page. */
   --breakpoint-bento: 72rem;
