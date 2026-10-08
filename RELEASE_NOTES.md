@@ -5,11 +5,14 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
-## Unreleased
+## 0.10.7
 
 - The Keychain prompt at launch is gone for good: a key item that another tool put there can't be replaced
   by Lamp, so Lamp keeps that key in its own file (readable by your account only) and stops asking the
   Keychain for it.
+- Running an iPhone or iPad app no longer flashes the setup window open and shut: it shows only when a
+  check takes a while.
+- A detail line's Show Full Output appears only when there's more to show.
 
 ## 0.10.6
 
