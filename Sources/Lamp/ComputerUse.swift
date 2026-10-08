@@ -473,6 +473,8 @@ enum ComputerUse {
         var env: [String: String] = ["PATH": ToolLocator.userPath, "LAMP_TOKEN": token,
                                      "LAMP_SYSTEM": task.systemPrompt, "LAMP_PROMPT": task.taskText,
                                      "MCP_TOOL_TIMEOUT": "600000"]
+        // What the turn goes through, for an error to name.
+        var source = Provider.name(of: engine)
         let command: String
         switch engine {
         case .pi:
@@ -487,6 +489,7 @@ enum ComputerUse {
                 env["LAMP_PROVIDER"] = provider == Builder.localProvider ? LocalModels.piProvider(for: model) : provider
                 env["LAMP_MODEL"] = model
                 env["PI_CODING_AGENT_DIR"] = Agent.configDir
+                source = piRoute?.group ?? source
             }
             env["LAMP_COMPUTER_TOOLS_JSON"] = toolsFile.path
             env["LAMP_COMPUTER_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/computer"
@@ -555,13 +558,13 @@ enum ComputerUse {
             }
         }
         guard enabled else { throw stopped }
-        if let failure { throw Failure(message: Provider.friendlyError(failure)) }
+        if let failure { throw Failure(message: Provider.friendlyError(failure, from: source)) }
         guard status == 0 || !text.isEmpty else {
             let why = notice ?? (lastLine.hasPrefix("{") ? "" : lastLine.trimmed)
             // 137 is a kill: the agent was stopped from outside, before it said anything.
             let stoppedEarly = status == 137 && text.isEmpty && why.isEmpty
             throw Failure(message: stoppedEarly ? "\(engine.title) stopped before it could answer. Try again."
-                          : "The AI didn't answer." + (why.isEmpty ? "" : " " + Provider.friendlyError(why)))
+                          : "The AI didn't answer." + (why.isEmpty ? "" : " " + Provider.friendlyError(why, from: source)))
         }
         return (text.trimmed, cost)
     }
@@ -612,7 +615,7 @@ enum ComputerUse {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200, let message = ((obj["choices"] as? [[String: Any]])?.first?["message"]) as? [String: Any] else {
             let detail = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-            throw Failure(message: Provider.friendlyError("\(status) \(detail)"))
+            throw Failure(message: Provider.friendlyError("\(status) \(detail)", from: Provider.openRouter))
         }
         var kept: [String: Any] = ["role": "assistant", "content": message["content"] as? String ?? ""]
         if let calls = message["tool_calls"] { kept["tool_calls"] = calls }

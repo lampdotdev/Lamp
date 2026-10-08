@@ -63,9 +63,20 @@ enum Provider {
         return defaultModel
     }
 
-    static func friendlyError(_ raw: String) -> String {
+    /// OpenRouter's name, for the calls that go to it whatever builds apps.
+    static let openRouter = "OpenRouter"
+
+    /// What an engine's calls go through, as the person knows it: for Lamp's own agent, the provider whose
+    /// key it uses.
+    static func name(of engine: Engine) -> String {
+        engine == .pi ? (apiProvider(Builder.piProvider)?.name ?? "AI provider") : engine.title
+    }
+
+    /// A failed call's raw error, in words for the person. `name` is what that call went through, which is
+    /// often not what builds apps: an app's AI, its pictures, its decisions and Lamp's own quick calls each
+    /// have their own route, and someone told to check a sign-in they aren't using has nowhere to look.
+    static func friendlyError(_ raw: String, from name: String) -> String {
         let text = raw.lowercased()
-        let name = Builder.engine == .pi ? (apiProvider(Builder.piProvider)?.name ?? "AI provider") : Builder.engine.title
         if text.contains("401") || text.contains("authenticat") || text.contains("api key") || text.contains("unauthorized") {
             return ErrorMessages.authenticationFailed(name)
         }

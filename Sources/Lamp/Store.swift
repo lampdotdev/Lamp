@@ -1567,7 +1567,7 @@ final class Store: ObservableObject {
             log(project, .status, "Claude Code's auto mode isn't available, so Lamp will ask before every command.")
             return await runAgent(prompt, files: files, on: project)
         }
-        log(project, .error, Provider.friendlyError(failure))
+        log(project, .error, Provider.friendlyError(failure, from: Provider.name(of: engine)))
         return false
     }
 
