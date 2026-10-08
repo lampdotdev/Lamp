@@ -179,6 +179,25 @@ final class HistoryInTheSandboxTests: XCTestCase {
         XCTAssertTrue(unsaved)
     }
 
+    /// Mac-wide settings spread over several files in the home folder (work and personal, say), one of them
+    /// brought in only for some folders: git stops at a settings file it is told of and can't read.
+    func testMacWideSettingsSplitOverSeveralFiles() async throws {
+        let app = try escape.app()
+        let ignored = app.root.appendingPathComponent(".gitignore_global")
+        try "*.log\n".write(to: ignored, atomically: true, encoding: .utf8)
+        try "[core]\n\texcludesFile = \(ignored.path)\n[include]\n\tpath = more/deeper.inc\n".write(to: app.root.appendingPathComponent(".gitconfig-work"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: app.root.appendingPathComponent("more"), withIntermediateDirectories: true)
+        try "[pull]\n\tff = only\n".write(to: app.root.appendingPathComponent("more/deeper.inc"), atomically: true, encoding: .utf8)
+        try "[user]\n\tname = Someone\n".write(to: app.root.appendingPathComponent(".gitconfig for apps"), atomically: true, encoding: .utf8)
+        try macWide("[include]\n\tpath = \(app.root.path)/.gitconfig-work\n[includeIf \"gitdir:\(app.root.path)/\"]\n\tpath = \"\(app.root.path)/.gitconfig for apps\"\n")
+        let first = await Versions.save(app.project, message: "everything so far")
+        XCTAssertTrue(first)
+        try write("noise", app, "debug.log")
+        let unsaved = await Versions.hasUnsavedChanges(app.project)
+        XCTAssertFalse(unsaved, "a file ignored through an included settings file reads as unsaved work")
+        try await saveUndoAndGoBack(app, "settings in several files")
+    }
+
     // MARK: What can't escape can't stall a save either
 
     func testAHookThatHangsOrFailsDoesNotStopASave() async throws {

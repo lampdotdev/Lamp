@@ -84,35 +84,52 @@ enum Versions {
         return environment
     }()
 
-    /// The person's Mac-wide ignore and attributes files, when their settings keep them outside the places
-    /// the sandbox already opens (a `~/.gitignore_global`, say): without them Lamp would save what the person
-    /// ignores everywhere. And the settings file itself when it has been moved with GIT_CONFIG_GLOBAL. Git is
-    /// asked, away from any app's folder, and asked again only when a settings file has changed: asking
-    /// costs more than the git command it is asked for.
+    /// The person's own git files that the sandbox doesn't already open: Mac-wide settings kept in more than
+    /// one file (git stops, saving nothing, at a settings file it is told to read and can't), a settings file
+    /// moved with GIT_CONFIG_GLOBAL, and the ignore and attributes files those settings name (a
+    /// `~/.gitignore_global`, say: without it Lamp would save what the person ignores everywhere). They are
+    /// worked out away from any app's folder, and again only when one of the settings files has changed:
+    /// asking git costs more than the git command it is asked for.
     private static func personalFiles() -> [String] {
         let fm = FileManager.default
-        let moved = ProcessInfo.processInfo.environment["GIT_CONFIG_GLOBAL"]?.nilIfEmpty
         let home = fm.homeDirectoryForCurrentUser.path
-        let settings = moved.map { [$0] } ?? [home + "/.gitconfig", home + "/.config/git/config"]
-        let stamp = settings.map { path in
-            let changed = (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date
-            return "\(path)@\(changed?.timeIntervalSince1970 ?? 0)"
-        }.joined(separator: "\n")
+        let moved = ProcessInfo.processInfo.environment["GIT_CONFIG_GLOBAL"]?.nilIfEmpty
+        let starts = moved.map { [$0] } ?? [home + "/.gitconfig", home + "/.config/git/config"]
+        func stamp(_ files: [String]) -> String {
+            files.map { "\($0)@\(((try? fm.attributesOfItem(atPath: $0))?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)" }
+                .joined(separator: "\n")
+        }
+        func ask(_ arguments: [String]) -> String? {
+            let answer = Subprocess.runBlocking("/usr/bin/git", ["config"] + arguments, cwd: URL(fileURLWithPath: "/"),
+                                                mergeErrors: false, timeout: 10)
+            return answer.ok ? answer.output : nil
+        }
         return asked.withLock { known in
-            if known.stamp != stamp {
-                var files = moved.map { [$0] } ?? []
-                for key in ["core.excludesFile", "core.attributesFile"] {
-                    let answer = Subprocess.runBlocking("/usr/bin/git", ["config", "--global", "--type=path", "--get", key],
-                                                        cwd: URL(fileURLWithPath: "/"), mergeErrors: false, timeout: 10)
-                    if answer.ok, let path = answer.output.trimmed.nilIfEmpty { files.append(path) }
+            guard known.starts != starts || known.stamp != stamp(known.settings) else { return known.files }
+            // Every settings file the person's own may bring in, whatever the condition on it: which apply
+            // depends on the folder git runs in. Each is read on its own, so one names the next.
+            var settings: [String] = []
+            var next = starts
+            while let file = next.popLast(), settings.count < 50 {
+                guard !settings.contains(file) else { continue }
+                settings.append(file)
+                let included = ask(["--file", file, "--type=path", "-z", "--get-regexp", #"^include(if\..*)?\.path$"#]) ?? ""
+                for entry in included.split(separator: "\0") {
+                    guard let path = entry.split(separator: "\n", maxSplits: 1).last.map(String.init), !path.isEmpty else { continue }
+                    next.append(path.hasPrefix("/") ? path : URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: file).deletingLastPathComponent()).standardizedFileURL.path)
                 }
-                known = (stamp, files)
             }
-            return known.files
+            var files = settings
+            for key in ["core.excludesFile", "core.attributesFile"] {
+                if let path = ask(["--global", "--includes", "--type=path", "--get", key])?.trimmed.nilIfEmpty { files.append(path) }
+            }
+            known = (starts, settings, stamp(settings), files)
+            return files
         }
     }
 
-    private static let asked = OSAllocatedUnfairLock<(stamp: String, files: [String])>(initialState: ("", []))
+    private static let asked = OSAllocatedUnfairLock<(starts: [String], settings: [String], stamp: String, files: [String])>(
+        initialState: ([], [], "", []))
 
     /// Newest first.
     static func list(_ project: LampProject) async -> [AppVersion] {
