@@ -1394,7 +1394,10 @@ struct ImportReviewView: View {
                     Text(verbatim: line).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 if let note = review.note {
-                    Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    // Why the check didn't run can be a provider's own words, of any length, and this part
+                    // doesn't scroll: a few lines here, the whole of it on hover.
+                    Text(note).font(.callout).foregroundStyle(.secondary).lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true).help(note)
                 }
                 Text("Lamp's check is a guide, not a guarantee. Only open apps from people you trust.")
                     .font(.caption).foregroundStyle(.secondary)
