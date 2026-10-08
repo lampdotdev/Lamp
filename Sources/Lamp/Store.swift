@@ -24,6 +24,14 @@ enum AppKind: String, CaseIterable {
     var family: DeviceFamily { self == .ipad ? .ipad : .iphone }
     /// For the prompts that describe the app to a model: "a Mac app", "an iPhone app".
     var phrase: String { self == .mac ? "a Mac app" : "an \(rawValue) app" }
+    /// The device's picture where the kind is chosen.
+    var symbol: String {
+        switch self {
+        case .mac: "laptopcomputer"
+        case .iphone: "iphone"
+        case .ipad: "ipad"
+        }
+    }
 }
 
 struct LampProject: Identifiable, Hashable {

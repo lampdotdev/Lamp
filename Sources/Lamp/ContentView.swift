@@ -1285,14 +1285,9 @@ struct NewAppIntro: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 400)
             if !project.scaffolded {   // a draft, so its kind is still open (Store.setKind)
-                Picker("Kind", selection: kind) {
-                    ForEach(AppKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.radioGroup)
-                .horizontalRadioGroupLayout()
-                .labelsHidden()
-                .disabled(busy)
-                .padding(.top, 4)
+                KindPicker(selection: kind)
+                    .disabled(busy)
+                    .padding(.top, 4)
             }
             if fresh && draft.trimmed.isEmpty && !ideas.isEmpty {
                 StarterIdeas(ideas: ideas, kind: AppKind(project)) { prompt in
@@ -1638,6 +1633,41 @@ struct ApprovalCard: View {
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// What a new app is made as, as a small picture of each device rather than its name: the welcome and a new
+/// app's intro both choose with it. The name is still there for the pointer and VoiceOver.
+struct KindPicker: View {
+    @Binding var selection: AppKind
+    @Environment(\.isEnabled) private var enabled
+    @State private var hovered: AppKind?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(AppKind.allCases, id: \.self) { kind in
+                let chosen = kind == selection
+                Button { selection = kind } label: {
+                    Image(systemName: kind.symbol)
+                        .font(.system(size: 20, weight: .regular))
+                        .foregroundStyle(chosen ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                        .frame(width: 46, height: 36)
+                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(chosen ? AnyShapeStyle(.tint.opacity(0.12))
+                                         : AnyShapeStyle(Color.primary.opacity(hovered == kind && enabled ? 0.05 : 0))))
+                        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .strokeBorder(chosen ? AnyShapeStyle(.tint.opacity(0.5)) : AnyShapeStyle(.clear), lineWidth: 1))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
+                .onHover { hovered = $0 ? kind : (hovered == kind ? nil : hovered) }
+                .help(kind.rawValue)
+                .accessibilityLabel(kind.rawValue)
+                .accessibilityAddTraits(chosen ? .isSelected : [])
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: selection)
     }
 }
 

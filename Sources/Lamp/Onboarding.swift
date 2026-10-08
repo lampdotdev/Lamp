@@ -201,13 +201,7 @@ private struct IdeaStep: View {
             Spacer(minLength: 40)
             Heading(title: "What should your first app do?")
 
-            Picker("Kind", selection: $kind) {
-                ForEach(AppKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.radioGroup)
-            .horizontalRadioGroupLayout()
-            .labelsHidden()
-            .font(.system(size: 14))
+            KindPicker(selection: $kind)
             .padding(.top, 18)
             .onChange(of: kind) {
                 // An idea picked for the other kind goes with it; anything typed stays.
