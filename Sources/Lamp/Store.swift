@@ -1810,12 +1810,14 @@ final class Store: ObservableObject {
             log(project, .status, "Ran: \(command)")
             return true
         case .risky where !escalated, .unusual where !escalated:
-            let verdict = await commandVerdict(command, for: project, sandboxed: sandboxed)
-            if verdict == .run {
+            let judgment = await commandJudgment(command, for: project, sandboxed: sandboxed)
+            if judgment.verdict == .run {
                 log(project, .status, "Ran: \(command)")
                 return true
             }
-            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: verdict == .risky)
+            // A risky verdict always has its reason; if one were ever missing, the card still comes up as flagged.
+            let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
+            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged)
         default:
             return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed)
         }
@@ -1823,12 +1825,9 @@ final class Store: ObservableObject {
 
     /// Whether a command is plainly fine, for every engine: the decision model's answers (CommandRisk),
     /// against the user's request. No decision model available → not plainly fine.
-    private func commandVerdict(_ command: String, for project: LampProject, sandboxed: Bool) async -> CommandRisk.Verdict {
-        // What a command does can be judged from its words; where it reaches can't (a link in the app's
-        // folder that leads out of it, a variable, a script). Confined, macOS answers that. Not confined,
-        // nothing does, so it's the person's call every time, whatever a model makes of the words.
-        guard sandboxed else { return .risky }
-        return await CommandRisk.judge(command: command, request: turns[project.id]?.request ?? "", folder: project.dir.path) { state, questions in
+    private func commandJudgment(_ command: String, for project: LampProject, sandboxed: Bool) async -> CommandRisk.Judgment {
+        await CommandRisk.judge(command: command, request: turns[project.id]?.request ?? "", folder: project.dir.path,
+                                confined: sandboxed) { state, questions in
             try await AppAI.decide(state: state, questions: questions).0
         }
     }
@@ -1851,35 +1850,19 @@ final class Store: ObservableObject {
 
     /// Asks the in-app AI model to describe a command for a non-technical person: what it does, and its risk.
     private func explain(_ command: String, for project: LampProject, sandboxed: Bool = false) async -> CommandExplanation? {
-        let system = """
-        You explain shell commands to people who don't use the command line. An AI agent building \(AppKind(project).phrase) \
-        called "\(project.name)" wants to run a command, and the user has to decide whether to allow it.
-        Reply as JSON: {"summary": "<one plain sentence, under 20 words, saying what it does and why it might \
-        help, without jargon or command names>", "risk": "low" | "medium" | "high", "why": "<under 15 words: \
-        the main reason for that risk level, e.g. what it could change, delete, install or send>"}
-        low: only reads, or creates, edits or deletes files inside the app's own folder (the agent's file tools do \
-        the same without asking, and every change is kept in the app's history). medium: downloads things, installs tools for \
-        this project, or changes files elsewhere that are easy to restore. high: deletes or overwrites files outside \
-        the app's folder, needs administrator rights, changes system settings, sends personal data somewhere, reads \
-        sign-ins, keys, passwords or browser data, or runs code downloaded from the internet.
-        """
-        let prompt = "The user's request: \(turns[project.id]?.request ?? "(unknown)")\n\nThe command:\n\(command)"
-        guard let (text, _) = try? await AppAI.complete(prompt: prompt, images: [], system: system, json: true),
-              let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
-              let summary = (json["summary"] as? String)?.trimmed, !summary.isEmpty else { return nil }
-        let risk = (json["risk"] as? String)?.lowercased() ?? "medium"
-        // The model judges what a command changes, and calls reading harmless. Reading outside the app's folder
-        // is at least what the same read through a file tool is: its contents go to the AI model.
-        return CommandExplanation(summary: summary, risk: ["low", "medium", "high"].contains(risk) ? risk : "medium",
-                                  why: (json["why"] as? String)?.trimmed ?? "")
+        await CommandRisk.rating(command: command, request: turns[project.id]?.request ?? "",
+                                 building: "\(AppKind(project).phrase) called \"\(project.name)\"") { prompt, system in
+            try await AppAI.complete(prompt: prompt, images: [], system: system, json: true).0
+        }
     }
 
     /// Waits for the user to allow or deny a shell command. One request per app at a time; others queue.
     /// There's no timeout: commands wait until the user answers, stops the turn, or the turn ends.
-    /// `flagged`: a check found the command risky, so no model's low rating runs it without the card.
+    /// `flagged`: the check that found the command risky. No model's low rating runs it without the card
+    /// then, and the card gives that check's reason rather than call it low risk.
     func requestApproval(for project: LampProject, command: String, title: String? = nil,
                          explanation given: CommandExplanation? = nil, shell: Bool = true, sandboxed: Bool = false,
-                         flagged: Bool = false) async -> Bool {
+                         flagged: CommandRisk.Reason? = nil) async -> Bool {
         guard !command.trimmed.isEmpty else { return false }
         if turns[project.id]?.allowAll == true {
             log(project, .detail, "Ran (allowed for this turn): \(command)")
@@ -1895,7 +1878,7 @@ final class Store: ObservableObject {
         // check already flagged it: that model reads the command as text, and a command can be written to
         // talk it round.
         var given = given
-        if shell, title == nil, !flagged, CommandApproval.current == .risky {
+        if shell, title == nil, flagged == nil, CommandApproval.current == .risky {
             note("Checking a command", for: project)
             if given == nil { given = await explain(command, for: project, sandboxed: sandboxed) }
             guard turn.agent != nil else { return false }
@@ -1908,13 +1891,13 @@ final class Store: ObservableObject {
         NSApp.requestUserAttention(.informationalRequest)
         note(title == nil ? "Waiting for your OK to run a command" : "Waiting for your OK", for: project)
         return await withCheckedContinuation { continuation in
-            var pending = PendingApproval(command: command, answer: continuation, explanation: given)
+            var pending = PendingApproval(command: command, answer: continuation, explanation: given?.raised(for: flagged))
             if let title { pending.title = title }
             approvals[project.id] = pending
             // Explain it while the card is up; the card shows the raw command until (and if) this arrives.
             if given == nil { Task {
                 if let explanation = await explain(command, for: project, sandboxed: sandboxed), approvals[project.id]?.id == pending.id {
-                    approvals[project.id]?.explanation = explanation
+                    approvals[project.id]?.explanation = explanation.raised(for: flagged)
                 }
             } }
         }

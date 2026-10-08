@@ -9,6 +9,9 @@ runs each. A safety gate that's a model has to be measured: run this when a ques
     # And for the commands whose only fault is where they reach (corpus.LINKS and the ones marked confined):
     LAMP_EVAL_CORPUS=/tmp/lamp-eval-corpus-links.json LAMP_EVAL_PROFILE=/tmp/lamp-eval.sb … swift test --filter CommandApprovalEvalTests
     python3 compare.py enforce /tmp/lamp-eval.sb   # runs each under the app's sandbox profile, in bash and zsh
+    # And the generated commands (corpus.generated: every place an app lives, every kind of request), judged
+    # twice by the Swift test, once with LAMP_EVAL_REQUEST_EVERYWHERE=1 and LAMP_EVAL_OUT naming where to write:
+    python3 compare.py generated before.json after.json
 
 The held-out commands (corpus.HELD_OUT) were never used to set a question or threshold: run the Swift test
 on their file too and read its `.after.json`; every must-ask there should be "risky" in every run.
@@ -18,8 +21,8 @@ command reaches isn't judged, so `enforce` is the check for that: it runs the ma
 and writers under the profile and fails if one gets through. Main has no sandbox.
 
 Main's side is before.py (its questions and thresholds, copied) with main-outside.json, what main's
-Privacy.reachesOutside answered for each command. This branch's side is the app's own code, run by the
-Swift test above. Both sides then go through the same second step: the in-app model's rating, low runs.
+Privacy.reachesOutside answered for each command. This branch's side is the app's own code all the way,
+run by the Swift test above: the judgment, and the in-app model's rating when the judgment is unsure.
 """
 import json, os, sys, collections, concurrent.futures as cf
 
@@ -29,7 +32,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SANDBOXED = True   # as the app judges: a command that won't run confined always gets the card
 
 def prepare():
-    from corpus import CORPUS, HELD_OUT, LINKS
+    from corpus import CORPUS, HELD_OUT, LINKS, generated
     for folder in ["Sources/Deep", "Resources", "build/tmp-icons", ".lamp/runtime", ".git/hooks", "../notes", "../Sources", "../Sibling"]:
         os.makedirs(os.path.join(APP, folder), exist_ok=True)
     for name in ["Package.swift", "APP.md", "Sources/PowerMonitor.swift", "Sources/ContentView.swift", "Sources/App.swift",
@@ -47,7 +50,8 @@ def prepare():
     held = PATH.replace(".json", "-held-out.json")
     for path, commands in ((PATH, CORPUS), (held, HELD_OUT), (PATH.replace(".json", "-links.json"), LINKS)):
         json.dump([dict(c, command=c["command"].replace("{APP}", APP)) for c in commands], open(path, "w"), indent=1)
-    print(f"{len(CORPUS)} commands in {PATH}, {len(HELD_OUT)} held out in {held}, {len(LINKS)} in the -links file; the app's folder is {APP}")
+    json.dump(generated(), open(PATH.replace(".json", "-generated.json"), "w"), indent=1)
+    print(f"{len(CORPUS)} commands in {PATH}, {len(HELD_OUT)} held out in {held}, {len(LINKS)} in the -links file, {len(generated())} generated in the -generated file; the app's folder is {APP}")
 
 CANARY = "MADE-UP-OUTSIDE-CONTENT"
 
@@ -104,6 +108,24 @@ def enforce(profile):
     print(f"\nConfined, {through} of {2 * len(links)} runs reached a file outside the app.")
     sys.exit(1 if through else 0)
 
+def generated_table(before_path, after_path):
+    """The generated commands, by group: with the request in front of every question (as it was) and kept to
+    its own question (as it is)."""
+    from corpus import generated
+    sides = [json.load(open(before_path)), json.load(open(after_path))]
+    groups = collections.OrderedDict()
+    for item in generated():
+        row = groups.setdefault((item["expect"], item["group"]), [[0, 0, 0], [0, 0, 0]])
+        for side, results in enumerate(sides):
+            for one in results[item["id"]]:
+                row[side][0] += 1; row[side][1] += one["outcome"] == "run"; row[side][2] += one["verdict"] == "risky"
+    for expect, title, head in (("run", "Should run", "asked anyway"), ("ask", "Must ask", "ran without asking")):
+        print(f"\n| {title}: {head} | request in front of every question | request kept to its own question |\n| --- | --- | --- |")
+        for (kind, group), row in groups.items():
+            if kind != expect: continue
+            cells = [f"{(n - ran) if expect == 'run' else ran} of {n}" + (f" ({flagged} flagged outright)" if expect == "ask" else "") for n, ran, flagged in row]
+            print(f"| {group} | {cells[0]} | {cells[1]} |")
+
 def table(runs):
     import before
     corpus = json.load(open(PATH))
@@ -112,12 +134,9 @@ def table(runs):
     def old(item):
         try: return before.judge(item, outside[item["id"]])
         except Exception as e: return "error", str(e)[:60]
-    def new(job):
+    def new(job):   # the Swift test took it all the way: judged, and rated when the judgment was unsure
         item, first = job
-        if first["verdict"] == "run": return "run", first["why"]
-        if first["verdict"] == "risky": return "ask", first["why"]
-        low, rating = before.rated_low(item)
-        return ("run" if low else "ask"), f"{first['why']}; unsure, rated {rating}"
+        return ("run" if first["outcome"] == "run" else "ask"), first["why"] + (f"; unsure, rated {first['rating']}" if "rating" in first else "")
     with cf.ThreadPoolExecutor(12) as pool:
         olds = list(pool.map(old, [item for item in corpus for _ in range(runs)]))
         news = list(pool.map(new, [(item, first) for item in corpus for first in after[item["id"]]]))
@@ -166,4 +185,5 @@ def table(runs):
     print(f"\nRan on the decision model's answers alone, this branch: {totals['first', 'run']} of {totals['after', 'run', 'all']} should-run, {totals['first', 'ask']} of {totals['after', 'ask', 'all']} must-ask.", file=sys.stderr)
 
 if __name__ == "__main__":
-    {"prepare": prepare, "enforce": lambda: enforce(sys.argv[2]), "table": lambda: table(int(sys.argv[2]))}[sys.argv[1]]()
+    {"prepare": prepare, "enforce": lambda: enforce(sys.argv[2]), "table": lambda: table(int(sys.argv[2])),
+     "generated": lambda: generated_table(sys.argv[2], sys.argv[3])}[sys.argv[1]]()

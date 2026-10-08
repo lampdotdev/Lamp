@@ -74,6 +74,16 @@ enum CommandRisk {
         return questions
     }
 
+    /// What the questions about the command itself are put over: the command and where the app is, and not
+    /// the request. Shown the request, the model let it colour what the command does: an edit inside the
+    /// app's folder was scored as an install for the whole Mac when the same request also asked for one.
+    /// A request can also be written to talk a command down, and now has nothing to say about its risk.
+    static func state(command: String, folder: String) -> [String: Any] {
+        ["command": command, "working_folder": "The app's own project folder: \(folder)"]
+    }
+
+    /// The one question about the request, and what it's put over.
+    static let requestQuestion = "matchesRequest"
     static func state(command: String, request: String, folder: String) -> [String: Any] {
         ["command": command, "user_request": request, "working_folder": "The app's own project folder: \(folder)"]
     }
@@ -117,14 +127,19 @@ enum CommandRisk {
 
     // Measured with Jev over Tests/CommandApprovals, several runs a command. Plainly fine commands answered
     // the "must not" questions at 0.22 or less and commands that must ask at 0.7 or more on the one
-    // that applies to them; edits inside the folder scored 1.0 to 1.3 with `staysInside` at 0.8 or more, and
-    // nothing that must ask scored under 2.9 without one of them firing.
+    // that applies to them; edits inside the folder scored 1.0 to 1.3, and nothing that must ask scored
+    // under 2.2 without one of them firing (one command sits there: a git hook that phones home, which
+    // lands unsure rather than risky in a few runs in a hundred).
+    // `staysInside` is a second opinion on level 1, not what holds risky commands back: over 915 runs of
+    // must-ask commands none was level 1 with the must-nots quiet, at any value of it. With the request out
+    // of view the model puts a build or a test run at 0.6 to 0.8 (they write caches it can't place), so the
+    // bar is 0.6: at 0.75 one should-run command in eight waited on the second model for nothing.
     private static let yes = 0.8
     private static let no = 0.3
     private static let flagged = 0.5
     private static let harmlessRisk = 1.3
     private static let harmlessConfidence = 0.7
-    private static let harmlessInside = 0.75
+    private static let harmlessInside = 0.6
     private static let askedRisk = 2.3
     private static let askedInside = 0.6
     private static let riskyRisk = 2.5
@@ -145,13 +160,102 @@ enum CommandRisk {
         return clear && (routine || harmless || asked) ? .run : .unsure
     }
 
-    /// One command, judged: the questions put to `decide` (the decision model), and the verdict from its
-    /// answers. A model that can't be reached or leaves a question out is unsure, never run.
-    static func judge(command: String, request: String, folder: String,
-                      decide: (_ state: [String: Any], _ questions: [String: Any]) async throws -> [String: Any]) async -> Verdict {
-        let questions = questions(hasRequest: !request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        guard let given = try? await decide(state(command: command, request: request, folder: folder), questions),
-              let answers = Answers(given, asked: questions) else { return .unsure }
-        return verdict(answers)
+    /// Why a command is risky, for the card: the check that flagged it, in the person's words.
+    enum Reason: Equatable {
+        case sendsOut, readsSecrets, hidesWhatItDoes, reachesFar, reachesBeyond, notConfined
+
+        var risk: String {
+            switch self {
+            case .reachesBeyond, .notConfined: "medium"
+            default: "high"
+            }
+        }
+
+        var why: String {
+            switch self {
+            case .sendsOut: "It sends files or data from this Mac somewhere else."
+            case .readsSecrets: "It reads sign-ins, keys or passwords."
+            case .hidesWhatItDoes: "What it will really run can't be read from the command."
+            case .reachesFar: "It reaches well beyond this app, and may be hard to undo."
+            case .reachesBeyond: "It changes something beyond this app's own folder."
+            case .notConfined: "Lamp can't keep this command inside the app."
+            }
+        }
+    }
+
+    /// The check that makes a command risky, nil when none does: the "must not" that fires hardest, else
+    /// how far it reaches.
+    static func reason(_ answers: Answers) -> Reason? {
+        let mustNot: [(Double, Reason)] = [(answers.readsSecrets, .readsSecrets), (answers.sendsOut, .sendsOut), (answers.hidesWhatItDoes, .hidesWhatItDoes)]
+        if let worst = mustNot.filter({ $0.0 >= flagged }).max(by: { $0.0 < $1.0 }) { return worst.1 }
+        if answers.risk >= 3.5 { return .reachesFar }
+        return answers.risk >= riskyRisk ? .reachesBeyond : nil
+    }
+
+    struct Judgment: Equatable {
+        var verdict: Verdict
+        /// Set when the verdict is risky.
+        var reason: Reason?
+    }
+
+    /// One command, judged, for every engine: the questions put to `decide` (the decision model), and the
+    /// verdict from its answers. A model that can't be reached or leaves a question out is unsure, never run.
+    ///
+    /// What a command does can be judged from its words; where it reaches can't (a link in the app's folder
+    /// that leads out of it, a variable, a script). Confined, macOS answers that. Not confined, nothing
+    /// does, so it's the person's call every time, whatever a model makes of the words.
+    static func judge(command: String, request: String, folder: String, confined: Bool,
+                      decide: (_ state: [String: Any], _ questions: [String: Any]) async throws -> [String: Any]) async -> Judgment {
+        guard confined else { return Judgment(verdict: .risky, reason: .notConfined) }
+        let asked = questions(hasRequest: !request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        let aboutCommand = asked.filter { $0.key != requestQuestion }
+        guard var given = try? await decide(state(command: command, folder: folder), aboutCommand) else { return Judgment(verdict: .unsure) }
+        if let question = asked[requestQuestion] {
+            guard let answer = try? await decide(state(command: command, request: request, folder: folder), [requestQuestion: question]) else {
+                return Judgment(verdict: .unsure)
+            }
+            given[requestQuestion] = answer[requestQuestion]
+        }
+        guard let answers = Answers(given, asked: asked) else { return Judgment(verdict: .unsure) }
+        let verdict = verdict(answers)
+        return Judgment(verdict: verdict, reason: verdict == .risky ? reason(answers) : nil)
+    }
+
+    // MARK: The rating
+
+    /// What a command does and how risky it is, in plain words, from the in-app text model (`complete`: the
+    /// prompt and its system text in, the model's JSON reply out). It writes the card's summary, and under
+    /// "Only when risky" its "low" runs a command the judgment above was unsure of. Nil when it doesn't answer.
+    /// `building` is what the agent is making: `a Mac app called "Tally"`.
+    static func rating(command: String, request: String, building: String,
+                       complete: (_ prompt: String, _ system: String) async throws -> String) async -> Store.CommandExplanation? {
+        let system = """
+        You explain shell commands to people who don't use the command line. An AI agent building \(building) \
+        wants to run a command, and the user has to decide whether to allow it.
+        Reply as JSON: {"summary": "<one plain sentence, under 20 words, saying what it does and why it might \
+        help, without jargon or command names>", "risk": "low" | "medium" | "high", "why": "<under 15 words: \
+        the main reason for that risk level, e.g. what it could change, delete, install or send>"}
+        low: only reads, or creates, edits or deletes files inside the app's own folder (the agent's file tools do \
+        the same without asking, and every change is kept in the app's history). medium: downloads things, installs tools for \
+        this project, or changes files elsewhere that are easy to restore. high: deletes or overwrites files outside \
+        the app's folder, needs administrator rights, changes system settings, sends personal data somewhere, reads \
+        sign-ins, keys, passwords or browser data, or runs code downloaded from the internet.
+        """
+        let prompt = "The user's request: \(request.isEmpty ? "(unknown)" : request)\n\nThe command:\n\(command)"
+        guard let text = try? await complete(prompt, system),
+              let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+              let summary = (json["summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty else { return nil }
+        let risk = (json["risk"] as? String)?.lowercased() ?? "medium"
+        return Store.CommandExplanation(summary: summary, risk: ["low", "medium", "high"].contains(risk) ? risk : "medium",
+                                        why: (json["why"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+    }
+}
+
+extension Store.CommandExplanation {
+    /// The card for a command a check flagged never calls it low risk: when the text model does, the card
+    /// gives the check's own reason instead, which is why Lamp is asking.
+    func raised(for reason: CommandRisk.Reason?) -> Store.CommandExplanation {
+        guard let reason, risk == "low" else { return self }
+        return Store.CommandExplanation(summary: summary, risk: reason.risk, why: reason.why)
     }
 }
