@@ -169,10 +169,14 @@ card), check:
 - **Is it a choice, an action, or the fix for one?** Screens are for doing, not explaining. Labels say what
   something does; a note is only for what the person must accept to decide (an install, a permission, a
   cost), in a sentence or two. No footers, captions, or badges summing up what something is used for.
-- **Does it ever contradict itself?** What's shown is what Lamp does. Offer only what works now: a single
-  option is plain text, not a menu, and none is a Not Ready state with its fix. When all is well, say
-  nothing; a problem is one orange mark and one gray line with the one thing that fixes it. Never a choice
-  on screen with words under it saying it won't work.
+- **Can it be used now?** A control appears once it does something. Until then, its place shows why not
+  and the one thing that fixes it (Not Ready, a gray line, a Download or Sign In… button): no menu of
+  models that can't run, no field or switch that won't take effect yet. A menu lists only what works now,
+  and one with a single option is plain text. Disabled is for a moment's state in a standard control
+  (Remove with nothing selected), not for something that needs setting up first.
+- **Does it ever contradict itself?** What's shown is what Lamp does: a menu shows the choice actually
+  used, even when the saved one can't be. When all is well, say nothing; a problem is one orange mark and
+  one gray line with its fix. Never a choice on screen with words under it saying it won't work.
 - **Is this its only home?** Show a thing where it's chosen or changed, and from anywhere else link there
   rather than repeat it: repeats drift from what Lamp actually does. An experiment and its settings live in
   Settings → Experimental, under its checkbox; a feature leaving Experimental takes its settings to the tab
