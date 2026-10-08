@@ -253,7 +253,8 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
             open(URL(fileURLWithPath: developer).deletingLastPathComponent().deletingLastPathComponent())
         case .simulator:
             guard let developer = report?.developer else { return }
-            open(URL(fileURLWithPath: developer + "/Applications/Simulator.app"))
+            guard let viewer = Simulator.viewer(in: developer) else { return }
+            open(viewer)
         case .updatePhone:
             open(URL(string: "https://support.apple.com/118575")!)
         case .retry:
