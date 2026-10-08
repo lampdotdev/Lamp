@@ -9,10 +9,25 @@ final class ChatFollow {
     /// How near the end, in points, counts as being at it when scrolling back down.
     static let slack: CGFloat = 24
 
-    /// What a move of the scroll view makes of it. `fromEnd` is how far the end is below what's in view.
-    /// Any move up that leaves the end stops the following, however small: a reply written quickly would
-    /// otherwise pull back each small step of a scroll before the next. New words or lines arriving don't
-    /// move the scroll view, so they never stop it.
+    /// Where the scroll view was, to tell a move up from a move down. It stays where it is through moves up
+    /// too small to count, so that a slow scroll in steps of half a point adds up to one.
+    private var place: CGFloat?
+
+    /// The scroll view moved: `y` is how far down the chat it is, `fromEnd` how far the end is below what's
+    /// in view.
+    func moved(to y: CGFloat, fromEnd: CGFloat) {
+        guard let from = place else { return place = y }
+        let movedUp = y < from - 0.5
+        if movedUp || y > from { place = y }
+        atEnd = Self.following(was: atEnd, movedUp: movedUp, fromEnd: fromEnd)
+    }
+
+    /// The scroll view is another one, or the same one somewhere new: where it was says nothing now.
+    func forgetPlace() { place = nil }
+
+    /// What a move of the scroll view makes of it. Any move up that leaves the end stops the following,
+    /// however small: a reply written quickly would otherwise pull back each small step of a scroll before
+    /// the next. New words or lines arriving don't move the scroll view, so they never stop it.
     static func following(was: Bool, movedUp: Bool, fromEnd: CGFloat) -> Bool {
         if movedUp { return fromEnd <= 1 }
         return was || fromEnd <= slack
@@ -49,8 +64,6 @@ struct EarlierOnScroll: NSViewRepresentable {
 
         var more = false
         var follow: ChatFollow?
-        /// Where the scroll view was when it last moved, to tell a move up from a move down.
-        private var lastY: CGFloat?
         var load: (() -> Void)?
         var found: (() -> Void)?
         private weak var scroll: NSScrollView?
@@ -64,7 +77,7 @@ struct EarlierOnScroll: NSViewRepresentable {
             scroll = nil
             guard window != nil, let scroll = enclosingScrollView, let content = scroll.documentView else { return }
             self.scroll = scroll
-            lastY = nil
+            follow?.forgetPlace()
             scroll.contentView.postsBoundsChangedNotifications = true
             content.postsFrameChangedNotifications = true
             NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification,
@@ -78,12 +91,8 @@ struct EarlierOnScroll: NSViewRepresentable {
             if let scroll, let content = scroll.documentView {
                 let visible = scroll.contentView.bounds
                 let flipped = content.isFlipped
-                let y = flipped ? visible.minY : -visible.minY
-                let fromEnd = flipped ? content.frame.height - visible.maxY : visible.minY
-                if let follow, let lastY {
-                    follow.atEnd = ChatFollow.following(was: follow.atEnd, movedUp: y < lastY - 0.5, fromEnd: fromEnd)
-                }
-                lastY = y
+                follow?.moved(to: flipped ? visible.minY : -visible.minY,
+                              fromEnd: flipped ? content.frame.height - visible.maxY : visible.minY)
             }
             check()
         }

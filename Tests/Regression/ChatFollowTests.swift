@@ -29,4 +29,25 @@ final class ChatFollowTests: XCTestCase {
     func testFollowingDownKeepsFollowing() {
         XCTAssertTrue(ChatFollow.following(was: true, movedUp: false, fromEnd: 140))
     }
+
+    /// A slow scroll moves the scroll view by less than a point at a time. The steps add up: a hundred of
+    /// half a point leave the chat fifty points from its end, and no longer following.
+    func testSmallStepsUpAddUp() {
+        let follow = ChatFollow()
+        follow.moved(to: 1000, fromEnd: 0)
+        for step in 1...100 { follow.moved(to: 1000 - 0.5 * CGFloat(step), fromEnd: 0.5 * CGFloat(step)) }
+        XCTAssertFalse(follow.atEnd)
+    }
+
+    func testAScrollUpThenBackToTheEnd() {
+        let follow = ChatFollow()
+        follow.moved(to: 1000, fromEnd: 0)
+        follow.moved(to: 700, fromEnd: 300)
+        XCTAssertFalse(follow.atEnd)
+        // More arrives at the end: the scroll view doesn't move, and the chat stays where it is.
+        follow.moved(to: 700, fromEnd: 520)
+        XCTAssertFalse(follow.atEnd)
+        follow.moved(to: 1210, fromEnd: 10)
+        XCTAssertTrue(follow.atEnd)
+    }
 }
