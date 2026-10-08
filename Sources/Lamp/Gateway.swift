@@ -38,8 +38,8 @@ final class Gateway: @unchecked Sendable {
         self.listener = listener
     }
 
-    /// Also answers on the local network, for apps on the person's own iPhone or iPad (Settings →
-    /// Experimental). Requests that come in this way are marked, and the handler lets them use only the
+    /// Also answers on the local network, for apps on the person's own iPhone or iPad (chosen under Try
+    /// On). Requests that come in this way are marked, and the handler lets them use only the
     /// app routes; the agent's stay on this Mac.
     func setLocalNetwork(_ on: Bool) {
         queue.async { [self] in
@@ -444,7 +444,7 @@ enum AppAI {
             files.append(name)
         }
         var env = Agent.environment(prompt: prompt, files: files, session: "", sessionDir: folder.path)
-        env["LAMP_SYSTEM"] = system.isEmpty ? "You are a helpful assistant inside a Mac app." : system
+        env["LAMP_SYSTEM"] = system.isEmpty ? "You are a helpful assistant inside an app." : system
         let fileArgs = files.indices.map { "\"@$LAMP_FILE_\($0)\"" }.joined(separator: " ")
         let command = """
         "$LAMP_PI" --mode json --provider "$LAMP_PROVIDER" --model "$LAMP_MODEL" --no-tools --no-session \\
@@ -484,7 +484,7 @@ enum AppAI {
             files.append(name)
         }
         var env: [String: String] = ["PATH": ToolLocator.userPath, "LAMP_TOOL": ToolLocator.path(for: engine) ?? "",
-                                     "LAMP_SYSTEM": system.isEmpty ? "You are a helpful assistant inside a Mac app." : system,
+                                     "LAMP_SYSTEM": system.isEmpty ? "You are a helpful assistant inside an app." : system,
                                      "LAMP_PROMPT": prompt]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
         let command: String

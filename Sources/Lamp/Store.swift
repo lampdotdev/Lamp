@@ -14,6 +14,26 @@ enum DeviceFamily: String, Codable {
     var name: String { self == .ipad ? "iPad" : "iPhone" }
 }
 
+/// What a new app is made as, chosen before its first message: in the welcome and in a new app's intro.
+/// iPhone and iPad are the same kind of app to Lamp; the choice is which simulator it opens in.
+enum AppKind: String, CaseIterable {
+    case mac = "Mac", iphone = "iPhone", ipad = "iPad"
+
+    init(_ project: LampProject) { self = project.platform == .mac ? .mac : project.family == .ipad ? .ipad : .iphone }
+    var platform: Platform { self == .mac ? .mac : .iphone }
+    var family: DeviceFamily { self == .ipad ? .ipad : .iphone }
+    /// For the prompts that describe the app to a model: "a Mac app", "an iPhone app".
+    var phrase: String { self == .mac ? "a Mac app" : "an \(rawValue) app" }
+    /// The device's picture where the kind is chosen.
+    var symbol: String {
+        switch self {
+        case .mac: "laptopcomputer"
+        case .iphone: "iphone"
+        case .ipad: "ipad"
+        }
+    }
+}
+
 struct LampProject: Identifiable, Hashable {
     let id: String      // folder name; also used in lamp:// links
     let name: String    // display name
@@ -321,7 +341,8 @@ final class Store: ObservableObject {
         selection = projects.first?.id
         startGateway()
         watchOpenApps()
-        refreshDevices()
+        // Asking for phones runs devicectl, so only for someone with iPhone apps; Try On asks again when it's opened.
+        if projects.contains(where: { $0.platform == .iphone }) { refreshDevices() }
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
@@ -655,8 +676,9 @@ final class Store: ObservableObject {
 
     /// The kind chosen in a new app's intro: a draft only says what it will be, so this is a change to that.
     /// Quietly, as nothing in the chat would make sense of it.
-    func setKind(_ project: LampProject, platform: Platform, family: DeviceFamily) {
-        guard platform == .mac || Experiments.iosApps, !project.scaffolded, !busy.contains(project.id),
+    func setKind(_ project: LampProject, _ kind: AppKind) {
+        let platform = kind.platform, family = kind.family
+        guard !project.scaffolded, !busy.contains(project.id),
               let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
         var changed = projects[index]
         changed.platform = platform
@@ -688,7 +710,7 @@ final class Store: ObservableObject {
         changed.device = udid
         try? Template.saveMeta(changed)
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
-        updateLocalNetwork()
+        syncLocalNetwork()
         let name = devices.first(where: { $0.udid == udid })?.name
         log(changed, .status, name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
                                ?? "\(changed.name) will open on the \(changed.family.name) simulator from now on.")
@@ -708,7 +730,7 @@ final class Store: ObservableObject {
 
     /// What Try On shows beside Play: the simulator's kind, or the chosen phone's name.
     func tryOnName(_ project: LampProject) -> String {
-        guard Experiments.iosApps, let udid = project.device else { return project.family.name }
+        guard let udid = project.device else { return project.family.name }
         return devices.first(where: { $0.udid == udid })?.name ?? "Your phone"
     }
 
@@ -747,7 +769,6 @@ final class Store: ObservableObject {
     @Published var pairing: Set<String> = []
 
     func refreshDevices() {
-        guard Experiments.iosApps else { if !devices.isEmpty { devices = [] }; return }
         Task {
             let found = await Devices.list()
             if found != devices { devices = found }
@@ -770,9 +791,11 @@ final class Store: ObservableObject {
     }
 
     /// An untitled app you left without ever using is deleted, so trying New App leaves nothing behind.
+    /// Words in its message box count as using it: they're kept, like a draft in any other app.
     private func discardIfUnused(_ id: String) {
         guard let project = projects.first(where: { $0.id == id }), project.untitled,
               (logs[id] ?? []).isEmpty, queued[id] == nil, !busy.contains(id), !pendingSubmissions.contains(id),
+              draft(for: project).text.trimmed.isEmpty,
               !FileManager.default.fileExists(atPath: project.builtURL.path) else { return }
         try? FileManager.default.removeItem(at: project.dir)
         projects.removeAll { $0.id == id }
@@ -1848,7 +1871,7 @@ final class Store: ObservableObject {
     /// Asks the in-app AI model to describe a command for a non-technical person: what it does, and its risk.
     private func explain(_ command: String, for project: LampProject) async -> CommandExplanation? {
         let system = """
-        You explain shell commands to people who don't use the command line. An AI agent building a Mac app \
+        You explain shell commands to people who don't use the command line. An AI agent building \(AppKind(project).phrase) \
         called "\(project.name)" wants to run a command, and the user has to decide whether to allow it.
         Reply as JSON: {"summary": "<one plain sentence, under 20 words, saying what it does and why it might \
         help, without jargon or command names>", "risk": "low" | "medium" | "high", "why": "<under 15 words: \
@@ -1942,7 +1965,7 @@ final class Store: ObservableObject {
     func open(_ project: LampProject) async {
         if project.platform == .iphone {
             // Running already: bring the simulator forward. Otherwise build (if needed) and launch.
-            let toSimulator = !(Experiments.iosApps && project.device != nil)
+            let toSimulator = project.device == nil
             if toSimulator, let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id { await Simulator.show(running.udid); return }
             if FileManager.default.fileExists(atPath: project.builtURL.path), stamps[project.id]?.isOutdated != true {
                 guard begin(project) != nil else { return }
@@ -2570,7 +2593,7 @@ final class Store: ObservableObject {
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
             // The person's own phone gets the app when they press Play or a change is finished; the agent's
             // looks (not in front) stay on the simulator, which is the only screen Lamp can see.
-            if inFront, Experiments.iosApps, let udid = project.device {
+            if inFront, let udid = project.device {
                 return await installOnDevice(project, owner: owner, udid: udid)
             }
             return await installOnSimulator(project, owner: owner, inFront: inFront)
@@ -2693,7 +2716,7 @@ final class Store: ObservableObject {
     /// Retry the phone operation alone: an account or device problem is never sent to the coding agent.
     func retryPhone(_ project: LampProject, udid: String) async {
         guard let current = projects.first(where: { $0.id == project.id }), current.device == udid,
-              Experiments.iosApps, let owner = begin(current) else { return }
+              let owner = begin(current) else { return }
         defer { finish(current) }
         _ = await installOnDevice(current, owner: owner, udid: udid)
     }
@@ -3224,7 +3247,7 @@ final class Store: ObservableObject {
         let gateway = Gateway { request in await Store.shared.handleAI(request) }
         do {
             try gateway.start()
-            gateway.setLocalNetwork(Experiments.iosApps && projects.contains { $0.platform == .iphone && $0.device != nil })
+            gateway.setLocalNetwork(projects.contains { $0.platform == .iphone && $0.device != nil })
             self.gateway = gateway
         } catch {
             NSLog("Lamp AI gateway failed to start: \(error)")
@@ -3232,15 +3255,9 @@ final class Store: ObservableObject {
     }
 
     /// The gateway answers on the local network only while an app is set to open on the person's own phone:
-    /// kept in step with the list of apps (Try On, deletion, rename, reload) and the experiment's switch.
+    /// kept in step with the list of apps (Try On, deletion, rename, reload).
     func syncLocalNetwork() {
-        gateway?.setLocalNetwork(Experiments.iosApps && projects.contains { $0.platform == .iphone && $0.device != nil })
-    }
-
-    /// The experiment's switch changed: the listener and the list of phones follow.
-    func updateLocalNetwork() {
-        syncLocalNetwork()
-        refreshDevices()
+        gateway?.setLocalNetwork(projects.contains { $0.platform == .iphone && $0.device != nil })
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
@@ -3479,12 +3496,12 @@ final class Store: ObservableObject {
         return (200, reply)
     }
 
-    /// What an app on the person's own phone keeps so its AI works away from the Mac (Settings → Experimental):
+    /// What an app on the person's own phone keeps so its AI works away from the Mac:
     /// the OpenRouter key, the TypeSafe key when decisions go there, and the models the app is set to, as
-    /// `AppAI.resolve` has them for `.phoneAway`. Only for iPhone apps, only while the switch is on; a Mac app
+    /// `AppAI.resolve` has them for `.phoneAway`. Only for iPhone apps; a Mac app
     /// or the simulator never needs it, and the key stays in the phone's Keychain, put there by the app itself.
     private func keysForPhone(_ project: LampProject) -> (Int, [String: Any]) {
-        guard project.platform == .iphone, Experiments.iosApps else { return (403, ["error": "Not for this app."]) }
+        guard project.platform == .iphone else { return (403, ["error": "Not for this app."]) }
         guard AppAI.resolve(.text, for: project, in: .phoneAway).tier != .none, let key = KeyStore.openRouterKey else {
             return (404, ["error": "There's no OpenRouter key to keep."])
         }

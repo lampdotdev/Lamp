@@ -269,7 +269,7 @@ enum VersionTitles {
     static let examples = ["Added account shortcuts", "Fixed vanishing profile photo", "Darker sidebar"]
 
     private static let prompt = """
-    Write a title for one saved version of a small Mac app, from the change below. It's shown in a list of \
+    Write a title for one saved version of a small app, from the change below. It's shown in a list of \
     versions so the user can find the one they want to go back to.
 
     Say what changed for the person using the app, in 2 to 5 plain words, starting with a past-tense verb \

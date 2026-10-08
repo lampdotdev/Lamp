@@ -76,7 +76,7 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         guard current.platform == .iphone else { then(current); return }
         perform(resolve: {
             guard let current = store.current(project) else { return nil }
-            return Context(family: current.family, phone: Experiments.iosApps ? current.device : nil,
+            return Context(family: current.family, phone: current.device,
                            requiresPhoneTools: current.platform == .iphone)
         }, cancelled: cancelled) {
             if let current = store.current(project) { then(current) }
