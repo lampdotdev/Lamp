@@ -195,14 +195,18 @@ asked before every build) gives the app's Package.swift a second program, built 
 puts it in the app as `Contents/PlugIns/<Exe>Widget.appex` with the bundle id `<app's id>.widget`. It is
 signed by itself, sandboxed (`Template.widgetEntitlementsPlist`), before the app around it
 (`AppSigning.command`): macOS shows no widget that isn't sandboxed, and the app stays unsandboxed. The widget
-shares no code with `Sources/` and doesn't get `LampSupport.swift`. Nobody but the person can place a widget
+shares no code with `Sources/` and doesn't get `LampSupport.swift`, only its own small file (below). Nobody but the person can place a widget
 (Edit Widgets), and `look_at_app` can't see one. A rebuild in place keeps a placed widget; moving the app,
 which renaming it does, removes it. A shared app (`.lampapp`) doesn't carry its widget yet.
 
-How a widget reads what its app saved isn't decided, and lives in one place, `Template.WidgetSharing`: the
-entitlements a way would need and the sentence the agent is told. Today it is empty and the agent says a
-widget can't show the app's data. macOS refuses an app group to a certificate with no team ID, which is how
-Lamp signs.
+The widget gets the app's data by asking the app (`Template.WidgetSharing` says why, and is the one place
+to change it): macOS refuses an app group to a certificate with no team ID, which is how Lamp signs, and Lamp
+doesn't use exceptions to the sandbox. `LampWidget.share(value, as:)` in LampSupport.swift keeps what the app
+shares, answers on this Mac's own address at a port worked out from the app's id (`Template.widgetPort`) to
+whoever sends the app's widget secret (`Template.widgetToken`), and reloads the widget. `LampWidget.read` in
+`Widget/LampWidgetSupport.swift`, a fourth file Lamp owns and rewrites (`Template.writeWidgetSupport`, only
+for an app with a widget), asks, and keeps the last answer in the widget's own sandbox for when the app is
+closed. So a widget is as fresh as the last time its app ran.
 
 ## Naming: Lamp and Lamp
 

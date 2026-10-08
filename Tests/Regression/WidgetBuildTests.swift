@@ -102,15 +102,61 @@ final class WidgetBuildTests: XCTestCase {
 
     // MARK: - Signing
 
-    func testTheWidgetIsSandboxedAndNothingOfTheAppsIsOpenedToIt() throws {
+    func testTheWidgetIsSandboxedWithNoExceptions() throws {
         let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(Template.widgetEntitlementsPlist.utf8), format: nil) as? [String: Any])
+        // Sandboxed, and allowed to connect out: that is all. No app group (macOS refuses one to a certificate
+        // with no team ID) and no exception to the sandbox: the widget asks its app for data instead.
         XCTAssertEqual(plist["com.apple.security.app-sandbox"] as? Bool, true)
         XCTAssertEqual(plist["com.apple.security.network.client"] as? Bool, true)
-        // How a widget reads its app's data isn't decided (Template.WidgetSharing): until it is, the
-        // signature carries no app group and no exception to the sandbox, and the agent is told there's no way.
         XCTAssertEqual(Set(plist.keys), ["com.apple.security.app-sandbox", "com.apple.security.network.client"])
-        XCTAssertTrue(Template.WidgetSharing.entitlements.isEmpty)
+        XCTAssertFalse(Template.widgetEntitlementsPlist.contains("temporary-exception"))
         XCTAssertTrue(Agent.Rules.widget.contains(Template.WidgetSharing.rule))
+    }
+
+    // MARK: - The app's data in the widget
+
+    func testAppAndWidgetAreBuiltWithTheSamePortAndSecret() throws {
+        let project = try app()
+        try addWidget(to: project)
+        try Template.writeOwnedFiles(for: project)
+        let port = Template.widgetPort(for: project)
+        XCTAssertTrue((49_152..<65_152).contains(port))
+        XCTAssertEqual(port, Template.widgetPort(for: project))
+        let token = Template.widgetToken(for: project)
+        XCTAssertEqual(token, Template.widgetToken(for: project))   // kept, so a rebuilt app still answers a placed widget
+        XCTAssertNotEqual(token, Template.token(for: project))      // not the secret the app shows Lamp's gateway
+        for file in ["Sources/LampSupport.swift", "Widget/LampWidgetSupport.swift"] {
+            let code = try text(file, in: project)
+            XCTAssertTrue(code.contains("private static let firstPort: UInt16 = \(port)\n"), file)
+            XCTAssertTrue(code.contains("private static let token = \"\(token)\"\n"), file)
+            XCTAssertFalse(code.contains("{{WIDGET"), file)
+        }
+        // Another app gets another port and another secret.
+        let other = try Template.scaffold(name: "Moon Phase", in: try XCTUnwrap(root))
+        XCTAssertNotEqual(Template.widgetPort(for: other), port)
+        XCTAssertNotEqual(Template.widgetToken(for: other), token)
+    }
+
+    func testLampsFileInTheWidgetFolderIsNotAWidget() throws {
+        let project = try app()
+        // No widget, no file: an app that never asked for one keeps its one program.
+        XCTAssertFalse(FileManager.default.fileExists(atPath: project.dir.appendingPathComponent("Widget").path))
+        try addWidget(to: project)
+        try Template.writeOwnedFiles(for: project)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: project.dir.appendingPathComponent("Widget/LampWidgetSupport.swift").path))
+        // The agent takes its widget away: Lamp's file alone doesn't keep the second program.
+        try FileManager.default.removeItem(at: project.dir.appendingPathComponent("Widget/Widget.swift"))
+        XCTAssertFalse(Template.hasWidget(project))
+        try Template.writeOwnedFiles(for: project)
+        XCTAssertFalse(try text("Package.swift", in: project).contains("Widget"))
+    }
+
+    func testTheAgentIsToldHowTheWidgetGetsTheAppsData() {
+        let mac = Agent.systemPrompt
+        XCTAssertTrue(mac.contains("LampWidget.share("))
+        XCTAssertTrue(mac.contains("LampWidget.read("))
+        XCTAssertFalse(mac.contains("isn't possible yet"))
+        XCTAssertFalse(Agent.iPhonePrompt(for: .iphone).contains("LampWidget"))
     }
 
     func testTheWidgetIsSignedBeforeTheApp() {
@@ -178,13 +224,16 @@ final class WidgetBuildTests: XCTestCase {
     import WidgetKit
     import SwiftUI
 
-    struct Entry: TimelineEntry { let date: Date }
+    struct Tide: Codable { var height: Double }
+    struct Entry: TimelineEntry { let date: Date; var tide: Tide? }
 
     struct Provider: TimelineProvider {
         func placeholder(in context: Context) -> Entry { Entry(date: .now) }
         func getSnapshot(in context: Context, completion: @escaping (Entry) -> Void) { completion(Entry(date: .now)) }
         func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> Void) {
-            completion(Timeline(entries: [Entry(date: .now)], policy: .after(.now.addingTimeInterval(900))))
+            LampWidget.read(Tide.self, from: "tide") { tide in
+                completion(Timeline(entries: [Entry(date: .now, tide: tide)], policy: .after(.now.addingTimeInterval(900))))
+            }
         }
     }
 

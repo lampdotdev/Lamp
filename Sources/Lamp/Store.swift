@@ -1622,7 +1622,7 @@ final class Store: ObservableObject {
     /// request's attachments before the agent starts.
     private func agentChangedFiles(_ project: LampProject) async -> Bool {
         var output = ""
-        let ignored = "':!Sources/LampSupport.swift' ':!icon.json' ':!\(Attachments.folder)'"
+        let ignored = "':!Sources/LampSupport.swift' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!icon.json' ':!\(Attachments.folder)'"
         _ = await Shell.run("git status --porcelain -- . \(ignored)", cwd: project.dir) {
             output += $0
         }
@@ -2265,7 +2265,8 @@ final class Store: ObservableObject {
             ? String(target.path.dropFirst((target.path.hasPrefix(root.path + "/") ? root.path : project.dir.path).count + 1)) : ""
         guard !relative.isEmpty else { return (400, ["error": "Only files inside the app's folder can be deleted."]) }
         // Compared without regard to case: the Mac's usual file system treats "package.swift" as the same file.
-        let protected = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift"]
+        let protected = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift",
+                         Template.widgetFolder + "/" + Template.widgetSupportFile]
         let lowered = relative.lowercased()
         if protected.contains(where: { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + "/") }) {
             return (400, ["error": "\(relative) belongs to Lamp and can't be deleted."])
