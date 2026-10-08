@@ -1620,7 +1620,17 @@ final class Store: ObservableObject {
         guard let turn = turns[project.id] else { return false }   // only inside a turn (startQueued)
         turn.stopped = false
         let sessionFile = Self.sessionFile(for: project, engine: engine)
-        await EngineSignIn.refresh()   // what the agent is told about the app's AI follows the sign-ins as they are
+        // What the agent is told about the app's AI follows the sign-ins as they are. Checking them can take a
+        // while, and Stop pressed meanwhile has no agent to end yet: if the turn was stopped or replaced, or the
+        // app deleted, during the wait, the agent isn't started.
+        await EngineSignIn.refresh()
+        guard turns[project.id] === turn, !turn.stopped, exists(project) else {
+            if turn.stopped, exists(project) {
+                turn.stopped = false
+                log(project, .status, "Stopped. Any changes made so far are kept; press Undo to discard them.")
+            }
+            return false
+        }
         let run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
                             session: engine == .pi ? Self.piSession(for: project) : Self.savedSession(sessionFile),
                             token: turn.agentToken)
