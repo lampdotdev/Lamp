@@ -1676,10 +1676,8 @@ struct ApprovalCard: View {
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
             }
             HStack {
-                if let explanation, explanation.risk.isEmpty {
-                    // Nothing rated it: no level to show, just what to do.
-                    Text(explanation.why).font(.callout).foregroundStyle(.secondary)
-                } else if let explanation {
+                // Nothing rated it: no level to show, so nothing here.
+                if let explanation, !explanation.risk.isEmpty {
                     (Text("\(explanation.risk.capitalized) risk").bold() + Text(explanation.why.isEmpty ? "" : ": \(explanation.why)"))
                         .font(.callout)
                         .foregroundStyle(riskColor)
