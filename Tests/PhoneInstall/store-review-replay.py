@@ -127,16 +127,7 @@ text += r'''
     }
     static func runChecks() async throws {
         let expected = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1])))
-        let previousDefaults = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
-        defer { UserDefaults.standard.setVolatileDomain(previousDefaults, forName: UserDefaults.argumentDomain) }
         let project = LampProject()
-        UserDefaults.standard.setVolatileDomain(["experimentIOSApps": false], forName: UserDefaults.argumentDomain)
-        let disabled = Store(); disabled.projects = [project]
-        await disabled.retryPhone(project, udid: "TEST-PHONE")
-        check(disabled.turns.isEmpty && Devices.builds == 0 && Devices.installs == 0,
-              "Retry does nothing while the current iOS setting is off")
-        UserDefaults.standard.setVolatileDomain(["experimentIOSApps": true, "experimentDevices": false], forName: UserDefaults.argumentDomain)
-        check(Experiments.iosApps, "the current iOS setting enables phone Retry without the retired device switch")
         let store = Store(); store.projects = [project]
         let retry = Task { await store.retryPhone(project, udid: "TEST-PHONE") }
         while !Devices.checking { await Task.yield() }

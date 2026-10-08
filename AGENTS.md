@@ -38,6 +38,12 @@ A capability given to one engine must be given to all of them that can take it, 
   What is worth saving is said in `save_notes`'s description: every word there is paid for on every call.
 - **Approvals and privacy**: shell commands go through `/agent/approve` for every engine (pi's extension,
   Claude Code's hooks, Codex's hooks); file access outside the app's folder is checked the same way.
+  Claude Code's and pi's approved commands come back confined (`Sandbox`: `sandbox-exec` with a profile
+  that opens the app's folder, the system, developer tools, caches, temp folders and the network, and
+  closes the rest of the home folder and both Lamps' folders), so nothing reads a command's text to see
+  where it looks. Codex's hook can't change a command and a sandbox can't be nested, so Codex itself runs
+  inside the profile (`Sandbox.wrapEngine`, with `~/.codex` opened and Codex's own sandbox off) and its
+  commands with it. Nothing reads a command's text for paths any more; don't bring that back.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items.
@@ -99,7 +105,7 @@ installed Lamp into Lamp Dev, so the development build has something to work on.
 
 ## iPhone apps
 
-**Build iOS apps** (Settings → Experimental, `Experiments.iosApps`) puts Mac / iPhone / iPad radio buttons in a new app's intro (`NewAppIntro`, `Store.setKind`). New App makes a draft, a folder with only `.lamp/meta.json`
+A new app's intro (`NewAppIntro`) and the welcome's first-app step (`IdeaStep`) have Mac / iPhone / iPad radio buttons (`AppKind`, `Store.setKind`), and the starter ideas follow the choice (`Ideas.phonePool`). New App makes a draft, a folder with only `.lamp/meta.json`
 (`Template.draft`), so its kind and name are just that file; the scaffold is written and committed when it first
 builds (`Store.materialize`, in the first turn after naming and in `run`), and `LampProject.scaffolded` tells the two apart. An iOS app is one app for both devices, as Apple has it; the radio buttons and the app's right-click menu's **Try On** pick which simulator it opens in (`LampProject.family`). It runs in the iPhone or iPad simulator on this Mac (`LampProject.platform == .iphone`,
 kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools: `Simulator`
@@ -129,20 +135,20 @@ field's text, and sends real mouse events for swipes, scrolls and long presses. 
 size, so a pixel in them is a point on the screen. That needs Lamp to be allowed in System Settings →
 Privacy & Security → Accessibility; the first `use_app` asks.
 
-**On the person's own phone** (part of Build iOS apps; nothing more to switch on): Try On also lists the iPhones and iPads the Mac can see (`Devices.list`, through
+**On the person's own phone**: Try On also lists the iPhones and iPads the Mac can see (`Devices.list`, through
 `devicectl`): paired ones to choose, and plugged-in ones that haven't trusted the Mac yet, which it offers
 to pair (`Devices.pair`, `devicectl manage pair`, which puts the Trust prompt on the phone) before telling
 the person about Developer Mode. `LampProject.device` remembers the chosen one. Play and the end of a turn then go through
 `Store.installOnDevice`: `Template.writeDeviceProject` writes a small Xcode project under `.lamp/device`
 (one app target over the package's Sources as a synchronized group, the icon in an asset catalog, the
 attachments as a folder reference, a real Info.plist) and `Devices.build` runs `xcodebuild` with automatic
-signing for the team in Settings (`Devices.team`, found from the Mac's Apple Development certificates), so
+signing for the team in Settings → Building (`Devices.team`, found from the Mac's Apple Development certificates), so
 Xcode registers the phone and makes the certificate and profile with the account signed in to Xcode; Lamp
 never holds the account. The bundle id carries the team (`deviceBundleID(team:)`). `devicectl` installs and
 launches the app with `--console`, so what it prints reaches the app's log. The agent's looks stay on the
 simulator: the phone's screen can't be photographed. The app reaches Lamp's gateway at the Mac's Bonjour
 name (`Devices.macHost`, the `{{MACHOST}}` placeholder, chosen in LampSupport by `targetEnvironment`): the
-gateway also listens on the network while some app is set to open on a phone (`Store.updateLocalNetwork`), marks those
+gateway also listens on the network while some app is set to open on a phone (`Store.syncLocalNetwork`), marks those
 requests, and admits them only to the app routes with the Mac's own name as Host (`Store.isMacHost`).
 Away from the Mac, a phone app answers for itself (`LampDirect` in LampSupport, device builds only): `post`
 first asks `/ai/keys` with a four-second timeout, at most every half minute; while the Mac answers, the

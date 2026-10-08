@@ -3,7 +3,8 @@ import XCTest
 
 /// Not a regression test: runs Lamp's judgment of each command in a corpus against the real decision model,
 /// several times, and writes what it decided, for Tests/CommandApprovals/compare.py. Skipped unless
-/// LAMP_EVAL_CORPUS names the corpus; needs OPENROUTER_API_KEY.
+/// LAMP_EVAL_CORPUS names the corpus; needs OPENROUTER_API_KEY. LAMP_EVAL_SANDBOXED=0 judges as on a Mac
+/// where commands can't be confined.
 final class CommandApprovalEvalTests: XCTestCase {
     func testJudgeTheCorpus() async throws {
         let environment = ProcessInfo.processInfo.environment
@@ -11,7 +12,8 @@ final class CommandApprovalEvalTests: XCTestCase {
         let runs = Int(environment["LAMP_EVAL_RUNS"] ?? "") ?? 5
         let corpus = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as? [[String: String]] ?? []
         let folder = URL(fileURLWithPath: environment["LAMP_EVAL_APP"] ?? "/Users/Shared/lamp-eval/Apps/tally")
-        let project = LampProject(id: folder.lastPathComponent, name: "Tally", exe: "Tally", dir: folder)
+        // As when the command will run confined to the app (Sandbox): where it reads isn't asked then.
+        let sandboxed = environment["LAMP_EVAL_SANDBOXED"] != "0"
 
         @Sendable func decide(_ state: [String: Any], _ questions: [String: Any]) async throws -> [String: Any] {
             var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/systemone")!)
@@ -36,9 +38,8 @@ final class CommandApprovalEvalTests: XCTestCase {
             func add() {
                 guard let item = waiting.popFirst(), let id = item["id"], let command = item["command"] else { return }
                 group.addTask {
-                    if Privacy.reachesOutside(command, project: project) { return (id, ["verdict": "risky", "why": "names a place outside the app's folder"]) }
                     var why = "the model didn't answer"
-                    let verdict = await CommandRisk.judge(command: command, request: item["request"] ?? "", folder: folder.path, asksOutside: true) { state, questions in
+                    let verdict = await CommandRisk.judge(command: command, request: item["request"] ?? "", folder: folder.path, asksOutside: !sandboxed) { state, questions in
                         let answers = try await decide(state, questions)
                         if let read = CommandRisk.Answers(answers, asked: questions) {
                             why = String(format: "level %.1f (sure %.2f), reads %.2f, inside %.2f, sends %.2f, secrets %.2f, hides %.2f, personal %.2f, asked %.2f",

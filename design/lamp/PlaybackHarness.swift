@@ -79,7 +79,7 @@ import AVFoundation
 
     private func update() {
         titleLabel.stringValue = ["What do you wish you had?", "What should your first app do?", "Get Lamp ready"][step]
-        subtitle.stringValue = ["Lamp turns your ideas into your very own Mac apps.", "Describe an idea. Make it yours.", "Two things to set up, then you can start."][step]
+        subtitle.stringValue = ["Lamp turns your ideas into your very own apps, for your Mac, iPhone and iPad.", "Describe an idea. Make it yours.", "Two things to set up, then you can start."][step]
         film.go(to: step, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 
