@@ -425,10 +425,12 @@ enum Agent {
         """
 
         static let attachments = """
-        - Files the user attaches are saved in Attachments/ and bundled inside the app. When the app should use \
-        one (a logo, a data file, a sound), load it with `LampAssets.url("name")`, `LampAssets.image("name")` or \
-        `LampAssets.text("name")` from LampSupport.swift, writing the full file name (e.g. "logo.png") in the code: \
-        shared copies of the app include only attachments the code names. Screenshots and mockups are usually just references for you.
+        - Files the user attaches are saved in Attachments/, for you to look at; they stay on this Mac and never \
+        ship with the app. When the app should use one (a logo, a data file, a sound), copy it into Assets/ at the \
+        app's root (make the folder if needed): that is the one folder bundled inside the app and shared with it. \
+        Load it with `LampAssets.url("name")`, `LampAssets.image("name")` or `LampAssets.text("name")` from \
+        LampSupport.swift, writing the full file name (e.g. "logo.png"). Screenshots and mockups are usually just \
+        references for you: leave them in Attachments/.
         """
 
         static let logs = """

@@ -1295,7 +1295,7 @@ struct ImportReviewView: View {
                 }
                 section("What it can do on your Mac") { capabilities(review) }
                 if !pending.package.attachments.isEmpty {
-                    section("Included files") {
+                    section("Files the app uses") {
                         Text(pending.package.attachments.map(\.lastPathComponent).joined(separator: ", "))
                             .font(.callout).foregroundStyle(.secondary)
                     }

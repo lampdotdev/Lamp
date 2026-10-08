@@ -23,6 +23,33 @@ enum Sharing {
         var exportedAt: Date
     }
 
+    /// The one folder in an app that leaves the Mac: files the app itself uses (a logo, a data file, a
+    /// sound), bundled inside it and shared with it. The chat's attachments are kept apart, in Attachments/,
+    /// and never ship; the agent copies into here the ones the app should use.
+    enum Assets {
+        static let folder = "Assets"
+
+        /// A file the chat attached that the app's code names is the app's: it's copied in here, once, so an
+        /// app made when attachments were bundled as they were keeps working. Nothing is moved: the chat
+        /// keeps its copy.
+        static func adopt(in project: LampProject) {
+            let fm = FileManager.default
+            let attachments = regularFiles(in: project.dir.appendingPathComponent(Attachments.folder))
+            guard !attachments.isEmpty else { return }
+            let code = swiftSources(in: project.dir.appendingPathComponent("Sources"))
+                .filter { $0.lastPathComponent != "LampSupport.swift" }
+                .compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+                .joined(separator: "\n")
+            let assets = project.dir.appendingPathComponent(folder)
+            for file in attachments where code.contains("\"\(file.lastPathComponent)\"") {
+                let target = assets.appendingPathComponent(file.lastPathComponent)
+                guard !fm.fileExists(atPath: target.path) else { continue }
+                try? fm.createDirectory(at: assets, withIntermediateDirectories: true)
+                try? fm.copyItem(at: file, to: target)
+            }
+        }
+    }
+
     /// Writes `<Name>.lampapp` to a temporary folder and returns its URL.
     static func export(_ project: LampProject) throws -> URL {
         // Another Lamp would open the file as a Mac app; iPhone apps keep to this Mac until import knows them.
@@ -39,16 +66,16 @@ enum Sharing {
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
         }
-        // Attached files the app itself uses (through LampAssets), capped so shared apps stay small enough
-        // to send and within what another Lamp accepts (`open`). The rest were only for the chat, such as
-        // screenshots or reference documents, and stay private.
+        // The app's own files (Assets/), capped so shared apps stay small enough to send and within what
+        // another Lamp accepts (`open`). The chat's attachments stay private.
+        Assets.adopt(in: project)
         var attachedBytes = 0
-        for file in usedAttachments(of: project) {
+        for file in regularFiles(in: project.dir.appendingPathComponent(Assets.folder)) {
             attachedBytes += (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             guard attachedBytes <= maxAttachedBytes else {
-                throw ImportError("This app's attached files are over \(maxAttachedBytes / 1_000_000) MB, too big to share.")
+                throw ImportError("This app's files are over \(maxAttachedBytes / 1_000_000) MB, too big to share.")
             }
-            let target = stage.appendingPathComponent(Attachments.folder).appendingPathComponent(file.lastPathComponent)
+            let target = stage.appendingPathComponent(Assets.folder).appendingPathComponent(file.lastPathComponent)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
         }
@@ -81,15 +108,9 @@ enum Sharing {
     /// Attached files up to this much go into a shared app: under the archive limit, with room for the code.
     static let maxAttachedBytes = maxArchiveBytes - 8 * 1024 * 1024
 
-    /// Attached files the app's code uses: those it names, or all of them if it lists them with `LampAssets.names`.
-    static func usedAttachments(of project: LampProject) -> [URL] {
-        let code = swiftSources(in: project.dir.appendingPathComponent("Sources"))
-            .filter { $0.lastPathComponent != "LampSupport.swift" }
-            .compactMap { try? String(contentsOf: $0, encoding: .utf8) }
-            .joined(separator: "\n")
-        let files = regularFiles(in: project.dir.appendingPathComponent(Attachments.folder))
-        if code.contains("LampAssets.names") { return files }
-        return files.filter { code.contains($0.lastPathComponent) }
+    /// The files in the app's Assets/ folder.
+    static func assetFiles(of project: LampProject) -> [URL] {
+        regularFiles(in: project.dir.appendingPathComponent(Assets.folder))
     }
 
     /// The contents of a `.lampapp`, unpacked and checked, ready to become a project.
@@ -97,7 +118,7 @@ enum Sharing {
         let name: String
         let folder: URL          // unpacked, temporary
         let sources: [URL]       // .swift files only
-        let attachments: [URL]   // files attached in the sender's chat; bundled as data, never run by Lamp
+        let attachments: [URL]   // the app's own files (Assets/); bundled as data, never run by Lamp
         let fileCount: Int
     }
 
@@ -134,7 +155,9 @@ enum Sharing {
         let sources = swiftSources(in: folder.appendingPathComponent("Sources"))
         guard !sources.isEmpty else { throw ImportError("This Lamp app file has no code in it.") }
         let all = fm.enumerator(at: folder, includingPropertiesForKeys: nil)?.allObjects.count ?? 0
-        let attachments = regularFiles(in: folder.appendingPathComponent(Attachments.folder))
+        // Assets/, or Attachments/ from a Lamp that bundled the chat's files: either way the app's own now.
+        let attachments = regularFiles(in: folder.appendingPathComponent(Assets.folder))
+            + regularFiles(in: folder.appendingPathComponent(Attachments.folder))
         return Package(name: manifest.name, folder: folder, sources: sources, attachments: attachments, fileCount: all)
     }
 

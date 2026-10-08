@@ -820,7 +820,7 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return old
         }
-        for path in [".lamp/chat.json", ".lamp/usage.json", ".lamp/notes.md", Attachments.folder] {
+        for path in [".lamp/chat.json", ".lamp/usage.json", ".lamp/notes.md", Attachments.folder, Sharing.Assets.folder] {
             let from = old.dir.appendingPathComponent(path)
             if fm.fileExists(atPath: from.path) {
                 try? fm.copyItem(at: from, to: project.dir.appendingPathComponent(path))
@@ -1033,7 +1033,7 @@ final class Store: ObservableObject {
                 try fm.copyItem(at: file, to: target)
             }
             if !package.attachments.isEmpty {
-                let folder = project.dir.appendingPathComponent(Attachments.folder)
+                let folder = project.dir.appendingPathComponent(Sharing.Assets.folder)
                 try fm.createDirectory(at: folder, withIntermediateDirectories: true)
                 for file in package.attachments {
                     try fm.copyItem(at: file, to: folder.appendingPathComponent(file.lastPathComponent))
@@ -2652,10 +2652,12 @@ final class Store: ObservableObject {
         }
         _ = await Shell.run(script, cwd: project.dir,
                             env: ["LAMP_APP": app.path, "LAMP_NAME": project.name, "LAMP_ICON": Icons.squareURL(project).path]) { _ in }
-        let attachments = project.dir.appendingPathComponent(Attachments.folder)
+        Sharing.Assets.adopt(in: project)
+        let assets = project.dir.appendingPathComponent(Sharing.Assets.folder)
         try? fm.removeItem(at: app.appendingPathComponent(Attachments.folder))
-        if fm.fileExists(atPath: attachments.path) {
-            try? fm.copyItem(at: attachments, to: app.appendingPathComponent(Attachments.folder))
+        try? fm.removeItem(at: app.appendingPathComponent(Sharing.Assets.folder))
+        if fm.fileExists(atPath: assets.path) {
+            try? fm.copyItem(at: assets, to: app.appendingPathComponent(Sharing.Assets.folder))
         }
         _ = await Shell.run("xattr -cr \"$LAMP_APP\" && codesign --force -s - --entitlements \"$LAMP_ENTITLEMENTS\" \"$LAMP_APP\"", cwd: project.dir,
                             env: ["LAMP_APP": app.path, "LAMP_ENTITLEMENTS": entitlements.path]) { _ in }
@@ -2708,11 +2710,14 @@ final class Store: ObservableObject {
                 plutil -replace CFBundleIconFile -string AppIcon "$LAMP_APP/Contents/Info.plist" && \(iconName)
                 """, cwd: project.dir, env: ["LAMP_APP": project.builtURL.path]) { _ in }
         }
-        // Files attached in Lamp's chat ship inside the app, where LampAssets finds them.
-        let attachments = project.dir.appendingPathComponent(Attachments.folder)
+        // The app's own files (Assets/) ship inside it, where LampAssets finds them; the chat's attachments
+        // don't. An older bundle's copy of them goes.
+        Sharing.Assets.adopt(in: project)
+        let assets = project.dir.appendingPathComponent(Sharing.Assets.folder)
         try? fm.removeItem(at: resources.appendingPathComponent(Attachments.folder))
-        if fm.fileExists(atPath: attachments.path) {
-            try fm.copyItem(at: attachments, to: resources.appendingPathComponent(Attachments.folder))
+        try? fm.removeItem(at: resources.appendingPathComponent(Sharing.Assets.folder))
+        if fm.fileExists(atPath: assets.path) {
+            try fm.copyItem(at: assets, to: resources.appendingPathComponent(Sharing.Assets.folder))
         }
         // Signed from Lamp's own keychain, which the script unlocks, so nobody is asked for keychain access.
         // Files copied into the bundle (attachments, icon artwork, an edited Info.plist) can carry Finder
