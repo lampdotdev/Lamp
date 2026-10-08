@@ -5,6 +5,14 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## Unreleased
+
+- The agent's shell commands run confined to the app: its folder, the system and developer tools, caches,
+  temporary folders and the network, and nothing else on your Mac. A command that reaches elsewhere is
+  simply refused by macOS, so Lamp no longer has to read commands to guess where they look, and the
+  approval card is about what a command does. For anything outside, the agent uses its file tools, which
+  ask you. (Codex keeps its own sandbox and the earlier check.)
+
 ## 0.10.8
 
 - One answer to what answers your apps. Lamp works out, in one place, what handles an app's text, decisions

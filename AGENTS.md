@@ -38,6 +38,11 @@ A capability given to one engine must be given to all of them that can take it, 
   What is worth saving is said in `save_notes`'s description: every word there is paid for on every call.
 - **Approvals and privacy**: shell commands go through `/agent/approve` for every engine (pi's extension,
   Claude Code's hooks, Codex's hooks); file access outside the app's folder is checked the same way.
+  Claude Code's and pi's approved commands come back confined (`Sandbox`: `sandbox-exec` with a profile
+  that opens the app's folder, the system, developer tools, caches, temp folders and the network, and
+  closes the rest of the home folder and both Lamps' folders), so nothing reads a command's text to see
+  where it looks. Codex runs in its own sandbox, which can't close reads, so its commands are still read
+  for paths outside (`Privacy.reachesOutside`); keep that check for Codex only.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items.

@@ -1780,28 +1780,30 @@ final class Store: ObservableObject {
     /// The latest request per app, so the decision model can judge commands against what the user asked for.
 
     /// Applies Settings → Building → "Ask before running commands" to one command.
-    private func approveCommand(_ command: String, for project: LampProject, escalated: Bool, shell: Bool = true) async -> Bool {
+    /// `sandboxed`: the command will run confined to the app (Sandbox), so where it looks isn't in question.
+    private func approveCommand(_ command: String, for project: LampProject, escalated: Bool, shell: Bool = true, sandboxed: Bool) async -> Bool {
         switch CommandApproval.current {
         case .never:
             log(project, .status, "Ran: \(command)")
             return true
         case .risky where !escalated, .unusual where !escalated:
-            if await commandLooksSafe(command, for: project) {
+            if await commandLooksSafe(command, for: project, sandboxed: sandboxed) {
                 log(project, .status, "Ran: \(command)")
                 return true
             }
-            return await requestApproval(for: project, command: command, shell: shell)
+            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed)
         default:
-            return await requestApproval(for: project, command: command, shell: shell)
+            return await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed)
         }
     }
 
     /// For agents without their own classifier (pi): obviously risky commands always go to the user; the rest
     /// are judged by the decision model against the user's request. No decision model available → ask.
-    private func commandLooksSafe(_ command: String, for project: LampProject) async -> Bool {
+    private func commandLooksSafe(_ command: String, for project: LampProject, sandboxed: Bool) async -> Bool {
         // What's outside the app's folder goes to the AI model once read, so that's the user's call and not a
         // model's: a command that names such a place is never routine, however the decision model would score it.
-        if Privacy.reachesOutside(command, project: project) { return false }
+        // A confined command can't get there, so its text isn't read for it.
+        if !sandboxed, Privacy.reachesOutside(command, project: project) { return false }
         let state: [String: Any] = [
             "command": command,
             "user_request": turns[project.id]?.request ?? "",
@@ -1809,7 +1811,8 @@ final class Store: ObservableObject {
         ]
         // A command that reads is held to the privacy setting the file tools follow: what's outside the app's
         // folder goes to the AI model once read, so it's the user's call, however harmless the command looks.
-        let asks = Privacy.asksOutsideFolder
+        // Confined, it can't read there, so that part of the question falls away.
+        let asks = Privacy.asksOutsideFolder && !sandboxed
         let question: [String: Any] = [
             "type": "noul",
             "instructions": "Is it safe to run `command` without asking the user first, given `user_request`?",
@@ -1846,7 +1849,7 @@ final class Store: ObservableObject {
     }
 
     /// Asks the in-app AI model to describe a command for a non-technical person: what it does, and its risk.
-    private func explain(_ command: String, for project: LampProject) async -> CommandExplanation? {
+    private func explain(_ command: String, for project: LampProject, sandboxed: Bool = false) async -> CommandExplanation? {
         let system = """
         You explain shell commands to people who don't use the command line. An AI agent building a Mac app \
         called "\(project.name)" wants to run a command, and the user has to decide whether to allow it.
@@ -1866,7 +1869,7 @@ final class Store: ObservableObject {
         let risk = (json["risk"] as? String)?.lowercased() ?? "medium"
         // The model judges what a command changes, and calls reading harmless. Reading outside the app's folder
         // is at least what the same read through a file tool is: its contents go to the AI model.
-        if risk == "low", Privacy.reachesOutside(command, project: project) {
+        if risk == "low", !sandboxed, Privacy.reachesOutside(command, project: project) {
             return CommandExplanation(summary: summary, risk: "medium", why: Privacy.outsideRead)
         }
         return CommandExplanation(summary: summary, risk: ["low", "medium", "high"].contains(risk) ? risk : "medium",
@@ -1876,7 +1879,7 @@ final class Store: ObservableObject {
     /// Waits for the user to allow or deny a shell command. One request per app at a time; others queue.
     /// There's no timeout: commands wait until the user answers, stops the turn, or the turn ends.
     func requestApproval(for project: LampProject, command: String, title: String? = nil,
-                         explanation given: CommandExplanation? = nil, shell: Bool = true) async -> Bool {
+                         explanation given: CommandExplanation? = nil, shell: Bool = true, sandboxed: Bool = false) async -> Bool {
         guard !command.trimmed.isEmpty else { return false }
         if turns[project.id]?.allowAll == true {
             log(project, .detail, "Ran (allowed for this turn): \(command)")
@@ -1892,7 +1895,7 @@ final class Store: ObservableObject {
         var given = given
         if shell, title == nil, CommandApproval.current == .risky {
             note("Checking a command", for: project)
-            if given == nil { given = await explain(command, for: project) }
+            if given == nil { given = await explain(command, for: project, sandboxed: sandboxed) }
             guard turn.agent != nil else { return false }
             if let explanation = given, explanation.risk == "low" {
                 log(project, .status, "Ran: \(command)")
@@ -1908,7 +1911,7 @@ final class Store: ObservableObject {
             approvals[project.id] = pending
             // Explain it while the card is up; the card shows the raw command until (and if) this arrives.
             if given == nil { Task {
-                if let explanation = await explain(command, for: project), approvals[project.id]?.id == pending.id {
+                if let explanation = await explain(command, for: project, sandboxed: sandboxed), approvals[project.id]?.id == pending.id {
                     approvals[project.id]?.explanation = explanation
                 }
             } }
@@ -3374,25 +3377,33 @@ final class Store: ObservableObject {
             }
             // Claude Code already ran its own classifier before asking ("claude-permission"), so ask the user.
             let escalated = request.path.contains("format=claude-permission")
+            // Whose command: Claude Code's and pi's run confined (Sandbox), Codex's in Codex's own sandbox.
+            let engine: Engine = request.path.contains("format=codex") ? .codex : request.path.contains("format=claude") ? .claude : .pi
+            let confined = shell && Sandbox.confines(engine) ? Sandbox.wrap(command, for: project) : nil
             if request.path.contains("format=codex") {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.
-                let allowed = await approveCommand(command, for: project, escalated: false)
+                let allowed = await approveCommand(command, for: project, escalated: false, sandboxed: false)
                 return (200, allowed ? [:] : ["hookSpecificOutput": ["hookEventName": "PreToolUse",
                                                                      "permissionDecision": "deny",
                                                                      "permissionDecisionReason": "The user denied this command in Lamp."]])
             }
-            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell)
+            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: confined != nil)
             let reason = allowed ? "Approved in Lamp." : "The user denied this command in Lamp."
+            // An allowed command goes back confined: the hooks run what Lamp hands them.
             if escalated {
-                let decision: [String: Any] = allowed ? ["behavior": "allow"] : ["behavior": "deny", "message": reason]
+                var decision: [String: Any] = allowed ? ["behavior": "allow"] : ["behavior": "deny", "message": reason]
+                if allowed, let confined { decision["updatedInput"] = ["command": confined] }
                 return (200, ["hookSpecificOutput": ["hookEventName": "PermissionRequest", "decision": decision]])
             }
             if request.path.contains("format=claude") {
-                return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse",
-                                                     "permissionDecision": allowed ? "allow" : "deny",
-                                                     "permissionDecisionReason": reason]])
+                var output: [String: Any] = ["hookEventName": "PreToolUse", "permissionDecision": allowed ? "allow" : "deny",
+                                             "permissionDecisionReason": reason]
+                if allowed, let confined { output["updatedInput"] = ["command": confined] }
+                return (200, ["hookSpecificOutput": output])
             }
-            return (200, ["allow": allowed, "reason": reason])
+            var answer: [String: Any] = ["allow": allowed, "reason": reason]
+            if allowed, let confined { answer["command"] = confined }
+            return (200, answer)
         }
         return (404, ["error": "Not found"])
     }
