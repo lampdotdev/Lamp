@@ -405,7 +405,7 @@ struct BuildingSettings: View {
     @AppStorage("settingsTab") private var tab = "building"
     @AppStorage("notify") private var notify = true
     @AppStorage("commandApproval") private var approval = CommandApproval.risky.rawValue
-    private var approvalChoice: Binding<String> {   // a saved "auto" from before shows as Only when risky
+    private var approvalChoice: Binding<String> {   // a saved "auto" or "unusual" from before shows as Only when risky
         Binding(get: { CommandApproval(rawValue: approval)?.rawValue ?? CommandApproval.risky.rawValue }, set: { approval = $0 })
     }
     @AppStorage("askOutsideFolder") private var askOutsideFolder = true

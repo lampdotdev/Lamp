@@ -1662,17 +1662,18 @@ struct ApprovalCard: View {
             .foregroundStyle(.secondary)
             if showCommand {
                 // A short command takes only the room it needs; a long one scrolls rather than pushing the chat
-                // out of the window.
-                ViewThatFits(in: .vertical) {
-                    commandText
-                    ScrollView { commandText }
-                }
-                .frame(maxHeight: 120)
-                .padding(8)
+                // out of the window. The limit goes on a scroll view sized to what's in it: a frame with only
+                // a maximum takes all the height it's offered, which made a one-line command a five-line box.
+                ScrollView { commandText }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(maxHeight: 120)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(8)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
             }
             HStack {
-                if let explanation {
+                // Nothing rated it: no level to show, so nothing here.
+                if let explanation, !explanation.risk.isEmpty {
                     (Text("\(explanation.risk.capitalized) risk").bold() + Text(explanation.why.isEmpty ? "" : ": \(explanation.why)"))
                         .font(.callout)
                         .foregroundStyle(riskColor)
