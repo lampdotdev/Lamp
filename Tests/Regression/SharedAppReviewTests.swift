@@ -372,6 +372,20 @@ final class SharedAppReviewTests: XCTestCase {
         XCTAssertEqual(Template.name(from: " \n\u{200B}\"“ "), "")
     }
 
+    func testASecondAppWithALongNameKeepsItsNumber() {
+        let long = String(repeating: "a", count: 200)
+        let first = Template.name(from: long, besides: [])
+        XCTAssertEqual(first.count, Template.maxNameLength)
+        let second = Template.name(from: long, besides: [first])
+        XCTAssertEqual(second, String(repeating: "a", count: 58) + " 2")
+        let third = Template.name(from: long, besides: [first, second])
+        XCTAssertEqual(third, String(repeating: "a", count: 58) + " 3")
+        // What the app is then kept as is the name it was given: cleaning it again changes nothing.
+        for name in [first, second, third] { XCTAssertEqual(Template.name(from: name), name) }
+        XCTAssertEqual(Template.name(from: "Tally", besides: ["tally", "tally 2"]), "Tally 3")
+        XCTAssertEqual(Template.name(from: " Tally\n", besides: []), "Tally")
+    }
+
     func testAFilesNameIsCleanedWhenItIsOpened() throws {
         func opened(named name: String) throws -> Sharing.Package {
             let folder = try appFolder(name: name, sources: ["App.swift": Data("let a = 1\n".utf8)])

@@ -982,15 +982,7 @@ final class Store: ObservableObject {
 
     /// Display names must be unique: each app installs as "<name>.app" in the apps folder (Edition.appsFolder).
     private func uniqueName(_ name: String, ignoring id: String? = nil) -> String {
-        let taken = Set(projects.filter { $0.id != id }.map { $0.name.lowercased() })
-        let base = name.trimmed
-        var candidate = base
-        var n = 2
-        while taken.contains(candidate.lowercased()) {
-            candidate = "\(base) \(n)"
-            n += 1
-        }
-        return candidate
+        Template.name(from: name, besides: Set(projects.filter { $0.id != id }.map { $0.name.lowercased() }))
     }
 
     // MARK: - Sharing

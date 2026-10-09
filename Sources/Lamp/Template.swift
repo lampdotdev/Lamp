@@ -46,6 +46,21 @@ enum Template {
         return String(words.prefix(maxNameLength)).trimmed
     }
 
+    /// The name an app gets beside the ones already here (`taken`, lowercased): the cleaned name, numbered
+    /// when it's taken. The number is counted in the length, so it is never what the limit cuts off: two
+    /// apps with one name would install over each other.
+    static func name(from raw: String, besides taken: Set<String>) -> String {
+        let base = name(from: raw)
+        var candidate = base
+        var n = 2
+        while taken.contains(candidate.lowercased()) {
+            let number = " \(n)"
+            candidate = String(base.prefix(maxNameLength - number.count)).trimmed + number
+            n += 1
+        }
+        return candidate
+    }
+
     /// Long enough for any real name; a title, a sidebar row and a file name all have room for it.
     static let maxNameLength = 60
 
