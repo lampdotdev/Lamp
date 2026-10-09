@@ -614,8 +614,7 @@ enum ComputerUse {
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200, let message = ((obj["choices"] as? [[String: Any]])?.first?["message"]) as? [String: Any] else {
-            let detail = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-            throw Failure(message: Provider.friendlyError("\(status) \(detail)", from: Provider.openRouter))
+            throw Failure(message: Provider.friendlyError(status: status, reply: obj, from: Provider.openRouter))
         }
         var kept: [String: Any] = ["role": "assistant", "content": message["content"] as? String ?? ""]
         if let calls = message["tool_calls"] { kept["tool_calls"] = calls }
