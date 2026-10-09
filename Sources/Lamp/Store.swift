@@ -849,7 +849,7 @@ final class Store: ObservableObject {
 
     /// Renames while the app is marked busy, so nothing else starts on it meanwhile.
     private func performRename(_ project: LampProject, to rawName: String) async -> LampProject {
-        let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
+        let name = Template.name(from: rawName)
         guard !name.isEmpty, name != project.name || project.untitled,
               let current = projects.first(where: { $0.id == project.id }) else { return project }
         let unique = uniqueName(name, ignoring: current.id)
