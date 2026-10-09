@@ -588,7 +588,13 @@ enum ComputerUse {
     static func within<T: Sendable>(_ overrun: @escaping () -> Failure?, every interval: Duration = .seconds(1),
                                     cut: @escaping () -> Void = {}, _ work: @escaping () async throws -> T) async throws -> T {
         let race = Race<T>()
-        let working = Task { await race.end(Result { try await work() }) }
+        let working = Task {
+            do {
+                await race.end(.success(try await work()))
+            } catch {
+                await race.end(.failure(error))
+            }
+        }
         let clock = Task {
             while overrun() == nil {
                 guard (try? await Task.sleep(for: interval)) != nil else { return }   // the work ended first
