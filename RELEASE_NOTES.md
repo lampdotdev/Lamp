@@ -5,6 +5,29 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.12.0
+
+- Mac apps can have a desktop widget. Ask for one and the agent builds it into the app; add it from the
+  desktop's Edit Widgets as you would any other.
+- New apps look like their kind. Before writing a line, the agent decides whether it's making a tool, a
+  companion, a collection, a dashboard, a canvas, a utility or a game, and designs for that: a water
+  reminder no longer comes out looking like a database.
+- The agent can paint pictures into an app, in the same style as its icon, and sees what it painted. What
+  it costs counts towards the app, like the icon.
+- Lamp remembers. Its notes about you and about each app are on for everyone now, with the switch in
+  Settings → Memory; it was the last experiment, so the Experimental tab is gone until the next one.
+- Fewer approval cards: a command that steps into one of the app's own folders and back isn't treated as
+  leaving it, Lamp's own git work runs under the same sandbox as the agent's, and Claude Code reads its
+  own saved output without asking.
+- Built apps are signed with Lamp's certificate on macOS 26 as well, so macOS keeps an app's permissions
+  across changes; an app that moves from an ad hoc signature to Lamp's is told its permissions will be
+  asked for once more.
+- A shared Mac app arrives with a note on how to open it and a description written for the person receiving
+  it, and the review of a shared app no longer passes
+  one it only partly read.
+- The App menu has one New Icon, drawn by whatever Settings says draws icons, and a failed icon says in
+  plain words what went wrong.
+
 ## 0.11.1
 
 - Before an app goes on your own iPhone or iPad, Lamp checks that an Apple Account is signed in to Xcode
