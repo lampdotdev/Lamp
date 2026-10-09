@@ -5,6 +5,7 @@ import Base from "../layouts/Base.astro";
 import Carousel from "../components/Carousel.astro";
 import DownloadButton from "../components/DownloadButton.astro";
 import QuickLook from "../components/QuickLook.astro";
+import FirstIdea from "../components/FirstIdea.astro";
 import Bento, { type Point } from "../components/Bento.astro";
 import { together } from "../lib/text";
 import MakesTheCall from "../components/visuals/MakesTheCall.astro";
@@ -239,6 +240,8 @@ const description = `${pitch} ${noCode}`;
     </section>
 
     </div>
+
+    <FirstIdea />
 
     <section>
       <div class="mx-auto max-w-6xl px-4 pt-20 sm:px-6 sm:pt-24">
