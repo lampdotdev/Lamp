@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { SHAPES, SITUATIONS } from "./situations.js";
+import { SHAPES, SITUATIONS, TYPED } from "./situations.js";
 import { redis, reserve } from "./quota.js";
 
 // The model that asks the follow-up and writes the request, through OpenRouter. Set FIRST_IDEA_MODEL in
@@ -16,7 +16,7 @@ export const QUOTAS = [
 ];
 
 export const MAX_BODY_BYTES = 8192;
-const LIMITS = { words: 500, answer: 300, question: 300, turns: 3, passed: 16 };
+const LIMITS = { words: TYPED.words, answer: TYPED.answer, question: 300, turns: 3, passed: 16 };
 
 export const RULES = `You are Lamp, talking with someone on Lamp's website. Lamp is a Mac app that builds apps for people who have never programmed: they describe what they want in a sentence or two and Lamp makes it. They just told you about something that happens to them a lot. Ask very little, then write the request they'll paste into Lamp to make an app that does it for them.
 

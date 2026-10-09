@@ -32,6 +32,10 @@ export const SITUATIONS = {
   "finding-2": { shape: "finding", text: "You type the same replies, addresses or phrases over and over." },
 };
 
+// The longest a visitor's own words and each of their answers may be: the page stops typing there and the
+// server refuses longer.
+export const TYPED = { words: 500, answer: 300 };
+
 // Four at a time. Each round spans different kinds of situation and shows only shapes the rounds before it
 // didn't, so "None of these" always moves somewhere new.
 export const ROUNDS = [

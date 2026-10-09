@@ -80,7 +80,7 @@ import { together } from "../lib/text";
 </section>
 
 <script>
-  import { SHAPES, SITUATIONS, ROUNDS, SCRIPT } from "../../lib/situations.js";
+  import { SHAPES, SITUATIONS, ROUNDS, SCRIPT, TYPED } from "../../lib/situations.js";
   import { shapeIcon } from "../lib/shape-icons";
 
   const section = document.getElementById("first-idea")!;
@@ -173,6 +173,8 @@ import { together } from "../lib/text";
   function composerShown(show: boolean, placeholder = "") {
     typing.hidden = !show;
     if (placeholder) box.placeholder = placeholder;
+    // Answers to a question are shorter than the words that start a conversation; the server holds both.
+    box.maxLength = phase === "talk" ? TYPED.answer : TYPED.words;
   }
 
   // ---------- Situations ----------
@@ -294,7 +296,9 @@ import { together } from "../lib/text";
     count("question", String(turns.length + 1));
     composerShown(true, "Or say it your way…");
     await lamp(q);
-    if (options.length) quick(options, (o) => { me(o); answer(o); });
+    // They may have typed an answer while the question was still coming in: then its choices are stale.
+    if (pending !== q) return;
+    if (options.length) quick(options, (o) => { if (pending !== q) return; me(o); answer(o); });
   }
 
   function answer(a: string) {
@@ -307,15 +311,20 @@ import { together } from "../lib/text";
 
   async function scriptedNext() {
     const shape = picked!.situation ? SITUATIONS[picked!.situation].shape as keyof typeof SHAPES : null;
-    if (shape && !turns.length) {
+    // A situation's wish is written from the answer to its own built-in question, which is asked even when
+    // the model had already asked others before it stopped answering.
+    const own = shape ? turns.find((t) => t.q === SCRIPT[shape][0]) : null;
+    if (shape && !own) {
       await wait(700);
       const [q, options] = SCRIPT[shape];
       return showQuestion(q, options);
     }
     const lower = (t: string) => t.replace(/^\w/, (c) => c.toLowerCase());
+    const sentence = (t: string) => (/[.!?]$/.test(t) ? t : `${t}.`);
+    const details = turns.length ? ` A few details: ${turns.map((t) => lower(t.a.replace(/[.!?]$/, ""))).join("; ")}.` : "";
     const request = shape
-      ? SCRIPT[shape][2](lower(turns[turns.length - 1]?.a ?? ""))
-      : `A Mac app that helps with this: ${picked!.words} It asks me before changing anything.`;
+      ? SCRIPT[shape][2](lower(own!.a))
+      : `A Mac app that helps with this: ${sentence(picked!.words!)}${details} It asks me before changing anything.`;
     count("request", "script");
     await wait(700);
     showDraft("", request);
@@ -432,7 +441,7 @@ import { together } from "../lib/text";
   // ---------- The composer: their own words, at any point ----------
   composer.addEventListener("submit", (e) => {
     e.preventDefault();
-    const t = box.value.trim().slice(0, 500);
+    const t = box.value.trim().slice(0, phase === "talk" ? TYPED.answer : TYPED.words);
     if (!t) return;
     box.value = "";
     if (phase === "cards" || phase === "own") {
