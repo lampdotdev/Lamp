@@ -265,14 +265,29 @@ and the app's name, the one thing Lamp puts into it, only among the values after
 which site the button opens. The id's check (`Connections.verify`) turns an id away only for an answer
 about the id; services differ in what else they want asked.
 
-Only a sign-in that needs no secret can be an entry, because everything in one ships readable in every app:
-GitHub's device flow is that. A service that wants a client secret (Notion, Slack, Google's device sign-in)
-can't be connected, and there is deliberately nowhere to put one; one that only signs in through a browser
-redirect needs a flow the helper doesn't have yet.
+There are two ways in, and an entry has one: a code the person enters on the service's site (OAuth's device
+flow, `deviceURL`: GitHub, Microsoft), or the service's own sign-in page (the authorization code flow with
+PKCE, `authorizeURL`: Spotify, Dropbox). For the second the entry says where the service sends the person
+back (`redirect`, checked by `Connections.checkedRedirect`): `app`, a private address of Lamp's
+(`dev.lamp.connect:/oauth`) that only the system's web sign-in session answers
+(`ASWebAuthenticationSession`, on Mac and iPhone); `loopback`, this Mac's own address
+(`http://127.0.0.1`, as OAuth lays down for native apps), where a Mac app listens for the one request and an
+iPhone app can't, so on a phone such a service says it needs a Mac; or the exact form a service dictates.
+Never an address on the web: the answer would go to whoever runs the site. `parameters` are what else the
+sign-in page's address must carry, never one the helper sets itself. Everything after the sign-in (the
+Keychain, renewing, `send`) is the same for both ways.
+
+Only a sign-in that needs no secret can be an entry, because everything in one ships readable in every app.
+A service that wants a client secret at the token step (Notion, Slack, Discord, Google's device and desktop
+sign-ins) can't be connected, and there is deliberately nowhere to put one: `client_secret` is refused even
+as a parameter. The agent is told to read a service's documentation before ruling it out, and to say the
+limit is Lamp's.
 
 `LAMP_CONNECTION_SERVER=http://127.0.0.1:PORT` in an app's environment sends its sign-in and its calls to a
 stand-in on the same machine (`ConnectionTests` has one, and runs the helper as apps get it against it:
-sign-in, Keychain, renewal). It takes only that address and keeps what it's given under another Keychain
+sign-in, Keychain, renewal). With it, nobody is there to use a sign-in window, so the browser way asks the
+stand-in's page itself and reads where it would send the person back; the window and the listener are
+only run by hand. It takes only that address and keeps what it's given under another Keychain
 name, so it can't carry a real sign-in anywhere. The iPhone simulator gives an app built by Lamp no Keychain
 (Xcode's builds say which app the program is; Lamp's simulator build doesn't). So in the simulator only, a
 sign-in the Keychain refuses is held in memory for that launch, and the gate and the button say it lasts

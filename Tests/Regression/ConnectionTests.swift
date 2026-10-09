@@ -1,5 +1,6 @@
 import XCTest
 import Network
+import CryptoKit
 @testable import Lamp
 
 /// `LampConnection`, the helper every app made with Lamp uses to sign the person in to another service: what
@@ -21,6 +22,12 @@ final class ConnectionTests: XCTestCase {
         service.clientID = "lamp-test-client"
         return service
     }()
+
+    /// A service signed in to in the browser, as the agent would describe one.
+    private static let webService = Connections.Service(
+        id: "webby", name: "Webby", clientID: "lamp-web-client", deviceURL: "", tokenURL: "https://webby.example/login/oauth/access_token",
+        authorizeURL: "https://webby.example/authorize", redirect: "app", parameters: ["token_access_type": "offline"],
+        hosts: ["api.webby.example"], accountURL: "https://api.webby.example/user", accountField: "login", scopes: [], basic: "", icon: "")
 
     private func app(platform: Platform = .mac) throws -> LampProject {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-connection-test-\(UUID().uuidString)")
@@ -251,10 +258,16 @@ final class ConnectionTests: XCTestCase {
             XCTAssertTrue(prompt.contains("LampConnection.send(request, to: .github)"))
             XCTAssertTrue(prompt.contains("Never ask the person for a token, key or password"))
             XCTAssertTrue(prompt.contains("Lamp puts a card in the chat"))
-            XCTAssertTrue(prompt.contains("never put a secret, key or token in the app"))
+            XCTAssertTrue(prompt.contains("Never put a secret, key or token in the app"))
             // A link that fills the service's form in is the agent's to look up, not to guess.
             XCTAssertTrue(prompt.contains("read the service's documentation on registering an app for URL or query parameters"))
             XCTAssertTrue(prompt.contains("never make parameters up"))
+            // The browser way in, and what to say when a service has neither.
+            XCTAssertTrue(prompt.contains(#"give `"authorizeURL"` (its sign-in page) in place of `"deviceURL"`"#))
+            XCTAssertTrue(prompt.contains("read its current OAuth documentation"))
+            XCTAssertTrue(prompt.contains("don't decide from memory"))
+            XCTAssertTrue(prompt.contains("the limit is Lamp's"))
+            XCTAssertFalse(prompt.contains("Notion, Slack and Google are like"))
         }
         // Lamp's services are named whether or not there is an id yet: registering is the card's job.
         XCTAssertTrue(Agent.systemPrompt.contains("GitHub (`.github`"))
@@ -277,7 +290,7 @@ final class ConnectionTests: XCTestCase {
     private static let harness: Result<URL, Error> = Result {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-connection-harness-\(UUID().uuidString)")
         let project = try Template.scaffold(name: "Harness", in: folder.appendingPathComponent("apps"))
-        let source = Template.supportSwift(for: project, services: [service]) + driver
+        let source = Template.supportSwift(for: project, services: [service, webService]) + driver
         try source.write(to: folder.appendingPathComponent("Harness.swift"), atomically: true, encoding: .utf8)
         let built = try run(Shell.compatibleSDK + "xcrun swiftc -parse-as-library -o harness Harness.swift 2>&1", in: folder)
         guard built.status == 0 else { throw Problem(text: String(built.output.suffix(4000))) }
@@ -332,6 +345,23 @@ final class ConnectionTests: XCTestCase {
                     }
                     print("five \(answers.filter { $0.hasPrefix("call 200") }.count)")
                 case "wait": try? await Task.sleep(nanoseconds: 1_500_000_000)
+                case "web-connect":
+                    let state = await MainActor.run { LampConnectionState(.webby, scopes: ["files.read"]) }
+                    await MainActor.run { state.connect() }
+                    waiting: while true {
+                        let (on, step) = await MainActor.run { (state.isOn, state.step) }
+                        if on {
+                            print("connected as \(state.account ?? "nobody")")
+                            break waiting
+                        }
+                        if case .failed(let why) = step {
+                            print("failed: \(why)")
+                            break waiting
+                        }
+                        try? await Task.sleep(nanoseconds: 50_000_000)
+                    }
+                case "web-has": print("has \(LampConnection.has(.webby, scopes: ["files.read"]))")
+                case "web-call": print(await call("https://api.webby.example/user", .webby))
                 case "leave-during-call":
                     // The person disconnects while a call is out renewing the sign-in.
                     async let answer = call("https://api.github.com/user", service)
@@ -377,7 +407,9 @@ final class ConnectionTests: XCTestCase {
     /// The stand-in's sign-ins are kept apart from real ones, under their own name in the Keychain. Taken
     /// out by the system's own tool, which needs nobody's leave to delete.
     private static func forget() {
-        _ = try? run("security delete-generic-password -s lamp -a lamp-connection-github-test >/dev/null 2>&1", in: FileManager.default.temporaryDirectory)
+        for service in ["github", "webby"] {
+            _ = try? run("security delete-generic-password -s lamp -a lamp-connection-\(service)-test >/dev/null 2>&1", in: FileManager.default.temporaryDirectory)
+        }
     }
 
     /// Runs the steps in one launch of the harness, pointed at the stand-in, and gives back what it printed
@@ -483,6 +515,115 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(try drive("has"), ["has false"])
     }
 
+    // MARK: - Signing in through the browser
+
+    func testSigningInOnTheServicesPageConnectsTheApp() throws {
+        try start { $0.lifetime = 3600 }
+        XCTAssertEqual(try drive("web-has", "web-connect", "web-has", "web-call"),
+                       ["has false", "connected as octocat", "has true", #"call 200 {"login":"octocat"}"#])
+        let server = try XCTUnwrap(self.server)
+        let page = try XCTUnwrap(server.requests.first { $0.path == "/authorize" })
+        XCTAssertEqual(page.fields["response_type"], "code")
+        XCTAssertEqual(page.fields["client_id"], "lamp-web-client")
+        XCTAssertEqual(page.fields["redirect_uri"], "dev.lamp.connect:/oauth")
+        XCTAssertEqual(page.fields["scope"], "files.read")
+        XCTAssertEqual(page.fields["code_challenge_method"], "S256")
+        XCTAssertEqual(page.fields["token_access_type"], "offline")
+        // What proves the code is this app's is made for this one sign-in, and never a secret that ships.
+        let trade = try XCTUnwrap(server.requests.first { $0.fields["grant_type"] == "authorization_code" })
+        XCTAssertEqual(trade.fields["code"], "web-code")
+        XCTAssertEqual(trade.fields["redirect_uri"], "dev.lamp.connect:/oauth")
+        XCTAssertEqual(trade.fields["client_id"], "lamp-web-client")
+        let verifier = try XCTUnwrap(trade.fields["code_verifier"])
+        XCTAssertGreaterThanOrEqual(verifier.count, 43)
+        XCTAssertEqual(StandIn.challenge(for: verifier), page.fields["code_challenge"])
+        XCTAssertTrue(server.requests.allSatisfy { $0.fields["client_secret"] == nil })
+        // Kept and renewed like any other sign-in.
+        server.endAccess()
+        XCTAssertEqual(try drive("web-call", "web-has"), [#"call 200 {"login":"octocat"}"#, "has true"])
+        XCTAssertEqual(server.renewals.count, 1)
+    }
+
+    func testAnAnswerThatIsNotToThisSignInIsRefused() throws {
+        try start { $0.sendsBackAnotherState = true }
+        XCTAssertEqual(try drive("web-connect", "web-has"), ["failed: Webby didn't finish the sign-in.", "has false"])
+        XCTAssertNil(try XCTUnwrap(server).requests.first { $0.fields["grant_type"] == "authorization_code" })
+    }
+
+    func testTurningItDownOnTheServicesPageSaysSo() throws {
+        try start { $0.outcome = .denied }
+        XCTAssertEqual(try drive("web-connect", "web-has"), ["failed: The request was turned down on Webby.", "has false"])
+    }
+
+    func testACodeNobodyElseCanTrade() throws {
+        // The service refuses a code offered without what the sign-in was started with.
+        try start { $0.forgetsTheChallenge = true }
+        XCTAssertEqual(try drive("web-connect").last, "failed: The code verifier doesn't match.")
+    }
+
+    func testWhereAServiceMaySendThePersonBack() {
+        XCTAssertEqual(Connections.checkedRedirect(nil), "app")
+        XCTAssertEqual(Connections.checkedRedirect("app"), "app")
+        XCTAssertEqual(Connections.checkedRedirect("loopback"), "loopback")
+        XCTAssertEqual(Connections.checkedRedirect("http://127.0.0.1:8080/callback"), "http://127.0.0.1:8080/callback")
+        XCTAssertEqual(Connections.checkedRedirect("http://127.0.0.1/callback"), "http://127.0.0.1/callback")
+        XCTAssertEqual(Connections.checkedRedirect("{{REVERSED_ID}}:/oauth2redirect"), "{{REVERSED_ID}}:/oauth2redirect")
+        XCTAssertEqual(Connections.checkedRedirect("com.example.app:/oauth"), "com.example.app:/oauth")
+        // Never a website, another machine, a port the system keeps, or a scheme something else owns.
+        for bad in ["https://evil.example/callback", "http://evil.example/callback", "http://localhost:8080/cb", "http://127.0.0.1:80/cb",
+                    "http://127.0.0.1.evil.example/cb", "https:/x", "file:/etc/passwd", "mailto:/x", "javascript:/x", "tel:/1", "x-apple.systempreferences:/y y"] {
+            XCTAssertNil(Connections.checkedRedirect(bad), bad)
+        }
+    }
+
+    func testAServiceSignedInToInTheBrowserIsCheckedLikeAnyOther() throws {
+        func kept(_ change: (inout Connections.Declared) -> Void) -> Connections.Declared? {
+            var entry = Connections.Declared(id: "webby", name: "Webby", tokenURL: "https://webby.example/token",
+                                             authorizeURL: "https://webby.example/authorize", hosts: ["api.webby.example"])
+            change(&entry)
+            return Connections.checked([entry]).first
+        }
+        XCTAssertEqual(kept { _ in }?.redirect, "app")
+        XCTAssertNil(kept { $0.authorizeURL = "http://webby.example/authorize" })
+        XCTAssertNil(kept { $0.authorizeURL = nil })
+        XCTAssertNil(kept { $0.redirect = "https://evil.example/callback" })
+        // The page's address carries what the service documents, never what Lamp sets itself, and never a secret.
+        let extras = kept { $0.parameters = ["token_access_type": "offline", "client_secret": "s3cret", "redirect_uri": "https://evil.example",
+                                             "state": "fixed", "prompt": "con sent"] }
+        XCTAssertEqual(extras?.parameters, ["token_access_type": "offline"])
+        // A service with both ways in uses the code to enter, which needs nothing of the browser.
+        let both = kept { $0.deviceURL = "https://webby.example/device" }
+        XCTAssertNil(both?.authorizeURL)
+        XCTAssertNil(both?.redirect)
+        // Nothing to ask the service without the person there, so the id is kept as given.
+        let service = try XCTUnwrap(Connections.services(declared: [try XCTUnwrap(kept { _ in })]).last)
+        XCTAssertEqual(Connections.redirectToRegister(service), "dev.lamp.connect:/oauth")
+        XCTAssertNil(Connections.redirectToRegister(Connections.github))
+    }
+
+    func testTheCardListsWhereTheServiceSendsThePersonBack() throws {
+        func service(redirect: String?, values: [Connections.Register.Value]?, url: String = "https://webby.example/apps/new") throws -> Connections.Service {
+            let entry = Connections.Declared(id: "webby", name: "Webby", tokenURL: "https://webby.example/token",
+                                             authorizeURL: "https://webby.example/authorize", redirect: redirect, hosts: ["api.webby.example"],
+                                             register: .init(url: url, values: values, notes: nil, idLabel: nil))
+            return try XCTUnwrap(Connections.services(declared: [entry]).last)
+        }
+        // Where the entry says, under the form's own label; and when the entry forgot, all the same.
+        XCTAssertEqual(ConnectionCard.values(try service(redirect: "loopback", values: [.init(label: "Redirect URIs", value: "{{REDIRECT}}")]), app: "Trip Planner"),
+                       [.init(label: "Redirect URIs", value: "http://127.0.0.1/oauth")])
+        XCTAssertEqual(ConnectionCard.values(try service(redirect: nil, values: [.init(label: "App name", value: "{{NAME}}")]), app: "Trip Planner"),
+                       [.init(label: "App name", value: "Trip Planner"), .init(label: "Redirect URI", value: "dev.lamp.connect:/oauth")])
+        // One made from the id can't be listed before there is an id.
+        XCTAssertEqual(ConnectionCard.values(try service(redirect: "{{REVERSED_ID}}:/oauth2redirect", values: [.init(label: "Redirect", value: "{{REDIRECT}}")]),
+                                             app: "Trip Planner"), [])
+        // A fill-in link can carry it too.
+        let link = try service(redirect: nil, values: nil, url: "https://webby.example/apps/new?name={{NAME}}&redirect={{REDIRECT}}")
+        XCTAssertEqual(ConnectionCard.page(link, app: "Trip Planner")?.absoluteString,
+                       "https://webby.example/apps/new?name=Trip%20Planner&redirect=dev.lamp.connect%3A%2Foauth")
+        // GitHub's card is as it was: it signs in with a code and has nowhere to be sent back to.
+        XCTAssertEqual(ConnectionCard.values(Connections.github, app: "Repo Radar").map(\.label), ["Application name", "Homepage URL", "Authorization callback URL"])
+    }
+
     func testAServiceTooBusyToRenewKeepsTheSignIn() throws {
         try start { $0.lifetime = 3600 }
         XCTAssertEqual(try drive("connect").last, "connected as octocat")
@@ -553,6 +694,17 @@ private final class StandIn {
     var busyRenewals = 0
     /// Seconds a renewal's answer takes.
     var renewalDelay = 0.0
+    /// The sign-in page sends back an answer to some other sign-in.
+    var sendsBackAnotherState = false
+    /// The service has lost what the sign-in was started with, as if the code were offered by someone else.
+    var forgetsTheChallenge = false
+    private var challenge: String?
+
+    /// What a service works out from the value an app shows when it trades its code (PKCE, S256).
+    static func challenge(for verifier: String) -> String {
+        Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    }
 
     private let listener: NWListener
     private let queue = DispatchQueue(label: "lamp.connection.stand-in")
@@ -594,8 +746,11 @@ private final class StandIn {
             guard let self else { return }
             let all = soFar + (data ?? Data())
             if let request = Self.parse(all) {
-                let (status, body) = self.answer(request)
-                let head = "HTTP/1.1 \(status) OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n"
+                let (status, answer) = self.answer(request)
+                // A sign-in page answers by sending the person on: the address is all there is to it.
+                let head = status == 302 ? "HTTP/1.1 302 Found\r\nLocation: \(answer)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    : "HTTP/1.1 \(status) OK\r\nContent-Type: application/json\r\nContent-Length: \(answer.utf8.count)\r\nConnection: close\r\n\r\n"
+                let body = status == 302 ? "" : answer
                 let late = request.fields["grant_type"] == "refresh_token" ? self.lock.withLock { self.renewalDelay } : 0
                 self.queue.asyncAfter(deadline: .now() + late) {
                     connection.send(content: Data((head + body).utf8), completion: .contentProcessed { _ in connection.cancel() })
@@ -622,11 +777,13 @@ private final class StandIn {
         let body = data[end.upperBound...]
         guard body.count >= Int(headers["content-length"] ?? "0") ?? 0 else { return nil }
         var fields: [String: String] = [:]
-        for pair in String(decoding: body, as: UTF8.self).split(separator: "&") {
+        // What a page is asked for with is after the "?" in its address; what is posted is in the body.
+        let address = String(first[1]).split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        for pair in (String(decoding: body, as: UTF8.self) + "&" + (address.count > 1 ? address[1] : "")).split(separator: "&") {
             let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
             fields[String(parts[0])] = parts.count > 1 ? String(parts[1]).removingPercentEncoding : ""
         }
-        return Request(method: String(first[0]), path: String(first[1]), fields: fields, authorization: headers["authorization"])
+        return Request(method: String(first[0]), path: address[0], fields: fields, authorization: headers["authorization"])
     }
 
     private func answer(_ request: Request) -> (Int, String) {
@@ -644,6 +801,16 @@ private final class StandIn {
             return (404, #"{"error":"Not Found"}"#)
         case ("POST", "/login/device/code"):
             return (200, #"{"device_code":"device-1","user_code":"WDJB-MJHT","verification_uri":"http://127.0.0.1:\#(port)/login/device","expires_in":900,"interval":1}"#)
+        case ("GET", "/authorize"):
+            challenge = forgetsTheChallenge ? "nobody's" : request.fields["code_challenge"]
+            let back = request.fields["redirect_uri"] ?? ""
+            let state = sendsBackAnotherState ? "another" : request.fields["state"] ?? ""
+            return (302, outcome == .denied ? "\(back)?error=access_denied&state=\(state)" : "\(back)?code=web-code&state=\(state)")
+        case ("POST", "/login/oauth/access_token") where request.fields["grant_type"] == "authorization_code":
+            guard request.fields["code"] == "web-code", let verifier = request.fields["code_verifier"], Self.challenge(for: verifier) == challenge else {
+                return (400, #"{"error":"invalid_grant","error_description":"The code verifier doesn't match."}"#)
+            }
+            return (200, signIn())
         case ("POST", "/login/oauth/access_token") where request.fields["grant_type"] == "refresh_token" && busyRenewals > 0:
             busyRenewals -= 1
             return busyRenewals % 2 == 1 ? (503, #"{"message":"Service unavailable"}"#) : (200, #"{"error":"temporarily_unavailable"}"#)

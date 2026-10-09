@@ -27,8 +27,15 @@ enum Connections {
         /// the app shows that it isn't set up and its chat has the card.
         var clientID: String
         /// Where an app asks for a code to show (OAuth's device flow), and where it trades it for the sign-in.
+        /// Empty for a service signed in to in the browser.
         var deviceURL: String
         var tokenURL: String
+        /// The service's own sign-in page, for the other way in (the authorization code flow with PKCE).
+        var authorizeURL = ""
+        /// Where the service sends the person back from that page (`checkedRedirect`).
+        var redirect = ""
+        /// What else the sign-in page's address has to carry.
+        var parameters: [String: String] = [:]
         /// The service's API: the only hosts an app's sign-in is sent to.
         var hosts: [String]
         /// Who signed in, for the button's "GitHub: octocat": an address answering JSON, and the field in it.
@@ -48,7 +55,8 @@ enum Connections {
     }
 
     /// Registering an app with a service: the page to open, what to enter there, and what the id is called.
-    /// `{{NAME}}` in any of it is the app's name. The page's address may carry the form's values, for a
+    /// `{{NAME}}` in any of it is the app's name, and `{{REDIRECT}}` the address the service is to send the
+    /// person back to, for a service signed in to in the browser. The page's address may carry the form's values, for a
     /// service whose form takes them from there (a fill-in link): `…/apps/new?name={{NAME}}&url=…`. That is
     /// the same for every service, Lamp's or one an app declares, and so is what guards it: the address is
     /// https with nobody's name or password in it, the app's name is the only thing Lamp puts into it, and
@@ -116,6 +124,9 @@ enum Connections {
         var name: String?
         var deviceURL: String?
         var tokenURL: String?
+        var authorizeURL: String?
+        var redirect: String?
+        var parameters: [String: String]?
         var hosts: [String]?
         var accountURL: String?
         var accountField: String?
@@ -131,6 +142,9 @@ enum Connections {
             name = try? values.decode(String.self, forKey: .name)
             deviceURL = try? values.decode(String.self, forKey: .deviceURL)
             tokenURL = try? values.decode(String.self, forKey: .tokenURL)
+            authorizeURL = try? values.decode(String.self, forKey: .authorizeURL)
+            redirect = try? values.decode(String.self, forKey: .redirect)
+            parameters = try? values.decode([String: String].self, forKey: .parameters)
             hosts = try? values.decode([String].self, forKey: .hosts)
             accountURL = try? values.decode(String.self, forKey: .accountURL)
             accountField = try? values.decode(String.self, forKey: .accountField)
@@ -139,9 +153,11 @@ enum Connections {
         }
 
         init(id: String, clientID: String? = nil, name: String? = nil, deviceURL: String? = nil, tokenURL: String? = nil,
+             authorizeURL: String? = nil, redirect: String? = nil, parameters: [String: String]? = nil,
              hosts: [String]? = nil, accountURL: String? = nil, accountField: String? = nil, scopes: [String: String]? = nil,
              register: Register? = nil) {
             self.id = id; self.clientID = clientID; self.name = name; self.deviceURL = deviceURL; self.tokenURL = tokenURL
+            self.authorizeURL = authorizeURL; self.redirect = redirect; self.parameters = parameters
             self.hosts = hosts; self.accountURL = accountURL; self.accountField = accountField; self.scopes = scopes
             self.register = register
         }
@@ -167,7 +183,22 @@ enum Connections {
             guard matches(entry.id, #"^[a-z][A-Za-z0-9]{1,23}$"#), !taken.contains(entry.id),
                   let name = entry.name.flatMap({ line($0, limit: 30) }),
                   !known.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }),
-                  let deviceURL = entry.deviceURL.flatMap(secure), let tokenURL = entry.tokenURL.flatMap(secure) else { continue }
+                  let tokenURL = entry.tokenURL.flatMap(secure) else { continue }
+            // One way in or the other: a code to enter (the device flow), or the service's page in the browser.
+            let deviceURL = entry.deviceURL.flatMap(secure)
+            let authorizeURL = deviceURL == nil ? entry.authorizeURL.flatMap(secure) : nil
+            guard deviceURL != nil || authorizeURL != nil else { continue }
+            let redirect = authorizeURL == nil ? nil : checkedRedirect(entry.redirect)
+            // A redirect that doesn't pass leaves no way back from the browser, so the service isn't taken.
+            if authorizeURL != nil, redirect == nil { continue }
+            var parameters: [String: String] = [:]
+            if authorizeURL != nil {
+                for (name, value) in (entry.parameters ?? [:]).sorted(by: { $0.key < $1.key }) where parameters.count < 6 {
+                    if matches(name, #"^[a-z][a-z0-9_]{0,39}$"#), !ownParameters.contains(name), matches(value, #"^[A-Za-z0-9._~-]{1,80}$"#) {
+                        parameters[name] = value
+                    }
+                }
+            }
             let hosts = (entry.hosts ?? []).map { $0.lowercased() }.filter { matches($0, #"^([a-z0-9-]{1,63}\.)+[a-z]{2,24}$"#) }.prefix(5)
             guard !hosts.isEmpty else { continue }
             // Who signed in is asked of the service's own API or not at all.
@@ -189,11 +220,51 @@ enum Connections {
                 register = Register(url: url, values: values.isEmpty ? nil : Array(values), notes: notes.isEmpty ? nil : Array(notes),
                                     idLabel: asked.idLabel.flatMap { line($0, limit: 30) })
             }
-            kept.append(Declared(id: entry.id, clientID: clientID, name: name, deviceURL: deviceURL, tokenURL: tokenURL, hosts: Array(hosts),
+            kept.append(Declared(id: entry.id, clientID: clientID, name: name, deviceURL: deviceURL, tokenURL: tokenURL,
+                                 authorizeURL: authorizeURL, redirect: redirect, parameters: parameters.isEmpty ? nil : parameters, hosts: Array(hosts),
                                  accountURL: accountField == nil ? nil : accountURL, accountField: accountURL == nil ? nil : accountField,
                                  scopes: scopes.isEmpty ? nil : scopes, register: register))
         }
         return kept
+    }
+
+    /// What the sign-in page's address carries for every sign-in, which an entry can't set or replace, and
+    /// the one thing it must never carry: there is no secret in an app.
+    private static let ownParameters: Set<String> = ["response_type", "client_id", "redirect_uri", "scope", "state", "code_challenge",
+                                                     "code_challenge_method", "client_secret", "code_verifier", "code"]
+
+    /// Lamp's own private address for coming back from a service's page, in the form OAuth asks of native
+    /// apps (RFC 8252): a scheme under a domain that is Lamp's. Only the system's sign-in window answers it.
+    static let appRedirect = "dev.lamp.connect:/oauth"
+
+    /// Where a service may send the person back, or nothing. "app" (the default) is Lamp's private address,
+    /// which works on Mac and iPhone. "loopback" is this Mac's own address on any free port, for a service
+    /// that only takes that; a Mac app listens there, and an iPhone app can't. A service that dictates the
+    /// form gets it written out: `http://127.0.0.1` with the port it wants, or a private scheme with a dot in
+    /// it (so never one the system or another kind of app owns), where `{{REVERSED_ID}}` is the app's id with
+    /// its parts turned round, as Google asks. Never an address on the web: the answer would go to whoever
+    /// runs that site.
+    static func checkedRedirect(_ redirect: String?) -> String? {
+        guard let redirect, !redirect.isEmpty, redirect != "app" else { return "app" }
+        if redirect == "loopback" { return redirect }
+        guard redirect.count <= 200 else { return nil }
+        if matches(redirect, #"^http://127\.0\.0\.1(:[0-9]{4,5})?(/[A-Za-z0-9._~/-]{0,80})?$"#) {
+            let port = URLComponents(string: redirect)?.port
+            return port == nil || (1024...65535).contains(port!) ? redirect : nil
+        }
+        let plain = redirect.replacingOccurrences(of: "{{REVERSED_ID}}", with: "com.example.app")
+        return matches(plain, #"^[a-z][a-z0-9+-]*(\.[a-z0-9+-]+)+:/{1,2}[A-Za-z0-9._~/-]{0,80}$"#) ? redirect : nil
+    }
+
+    /// The redirect as it's typed into the service's registration form, or nothing when it can't be known
+    /// yet (it is made from the id the service hasn't given) or the service signs in with a code.
+    static func redirectToRegister(_ service: Service) -> String? {
+        guard service.deviceURL.isEmpty, !service.authorizeURL.isEmpty, !service.redirect.contains("{{REVERSED_ID}}") else { return nil }
+        switch service.redirect {
+        case "", "app": return appRedirect
+        case "loopback": return "http://127.0.0.1/oauth"
+        default: return service.redirect
+        }
     }
 
     private static func matches(_ text: String, _ pattern: String) -> Bool {
@@ -215,7 +286,8 @@ enum Connections {
     static func page(_ address: String) -> String? {
         let parts = address.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
         guard !parts[0].contains("{"), !parts[0].contains("}"),
-              secure(address.replacingOccurrences(of: "{{NAME}}", with: "name")) != nil else { return nil }
+              secure(address.replacingOccurrences(of: "{{NAME}}", with: "name").replacingOccurrences(of: "{{REDIRECT}}", with: "redirect")) != nil
+        else { return nil }
         return address
     }
 
@@ -243,7 +315,8 @@ enum Connections {
         }
         for entry in declared where !known.contains(where: { $0.id == entry.id }) {
             services.append(Service(id: entry.id, name: entry.name ?? "", clientID: entry.clientID ?? "", deviceURL: entry.deviceURL ?? "",
-                                    tokenURL: entry.tokenURL ?? "", hosts: entry.hosts ?? [], accountURL: entry.accountURL ?? "",
+                                    tokenURL: entry.tokenURL ?? "", authorizeURL: entry.authorizeURL ?? "", redirect: entry.redirect ?? "",
+                                    parameters: entry.parameters ?? [:], hosts: entry.hosts ?? [], accountURL: entry.accountURL ?? "",
                                     accountField: entry.accountField ?? "",
                                     scopes: (entry.scopes ?? [:]).sorted { $0.key < $1.key }.map { ($0.key, $0.value) },
                                     basic: "", icon: "", register: entry.register))
@@ -306,6 +379,9 @@ enum Connections {
         guard matches(clientID, #"^[A-Za-z0-9._~-]{4,200}$"#) else {
             return .refused("That doesn't look like an id from \(service.name). Copy it again from the page.")
         }
+        // A service signed in to in the browser has nothing to ask without the person there: the id is kept
+        // as it is, and the service's own page says so if it's wrong.
+        guard !service.deviceURL.isEmpty else { return .good }
         guard let url = URL(string: service.deviceURL) else { return .unreachable }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -343,6 +419,8 @@ enum Connections {
                 static let \(service.id) = LampService(
                     id: \(literal(service.id)), name: \(literal(service.name)), clientID: \(literal(service.clientID)),
                     deviceURL: \(literal(service.deviceURL)), tokenURL: \(literal(service.tokenURL)),
+                    authorizeURL: \(literal(service.authorizeURL)), redirect: \(literal(service.redirect)),
+                    parameters: [\(service.parameters.isEmpty ? ":" : service.parameters.sorted { $0.key < $1.key }.map { "\(literal($0.key)): \(literal($0.value))" }.joined(separator: ", "))],
                     hosts: [\(service.hosts.map(literal).joined(separator: ", "))],
                     accountURL: \(literal(service.accountURL)), accountField: \(literal(service.accountField)),
                     wording: [\(wording.isEmpty ? ":" : wording)], basicWording: \(literal(service.basic)),

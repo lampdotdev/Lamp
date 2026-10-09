@@ -384,7 +384,9 @@ enum Agent {
             and a place to paste the id, and keeps the id with the app, so anyone it's shared with only presses \
             Connect. So never explain registering, ask for an id or write one into the code: say only that \
             the card in the chat has a step for them. A service not in the list can be added when it signs \
-            apps in by OAuth's device flow with no client secret: declare it in capabilities.json at the app's root, \
+            apps in by OAuth with no client secret, in one of two ways: the device flow (the person enters a code \
+            on the service's site), or the authorization code flow with PKCE (the person signs in on the service's \
+            page in a sign-in window). Declare it in capabilities.json at the app's root, \
             `{"connections": [{"id": "acme", "name": "Acme", "deviceURL": "https://acme.com/oauth/device/code", \
             "tokenURL": "https://acme.com/oauth/token", "hosts": ["api.acme.com"], "accountURL": \
             "https://api.acme.com/me", "accountField": "name", "scopes": {"read": "See your projects"}, "register": \
@@ -397,9 +399,22 @@ enum Agent {
             them, write `register.url` with them as documented and `{{NAME}}` where the app's name goes \
             (`https://acme.com/developers/apps/new?name={{NAME}}&homepage=https://lamp.dev`). When it doesn't, give \
             the plain page: never make parameters up, since you can't open the page to see them work. List \
-            `values` either way: the card shows them for a form that opens empty. A service that wants \
-            a client secret, or only signs in through a browser redirect (Notion, Slack and Google are like \
-            that), can't be connected yet: say so plainly, and never put a secret, key or token in the app.
+            `values` either way: the card shows them for a form that opens empty. For a service with no device \
+            flow, give `"authorizeURL"` (its sign-in page) in place of `"deviceURL"`, and `"redirect"`: where its \
+            documentation lets an app with no secret be sent back to. `"app"` is a private address of Lamp's \
+            (`dev.lamp.connect:/oauth`), for a service that takes custom schemes, and works on Mac and iPhone; \
+            `"loopback"` is `http://127.0.0.1` on any port, for a service that takes only that or https, and \
+            works in Mac apps only; a service that dictates the form gets it written out (`http://127.0.0.1:8080/callback`, \
+            or `{{REVERSED_ID}}:/oauth2redirect` where the app's id goes with its parts turned round). Prefer \
+            `"app"` when the documentation allows it. `"parameters"` holds anything else the sign-in page's \
+            address needs (`{"token_access_type": "offline"}` to be given a way to renew), and `{{REDIRECT}}` in \
+            `register` stands for the redirect the person has to enter there. The helper is used the same way \
+            for both. Before you decide a service can't be connected, read its current OAuth documentation on the \
+            web for a device flow or for PKCE without a client secret: don't decide from memory, services change. \
+            When it has neither (it wants a client secret at the token step, or only takes an https redirect to \
+            a website), it can't be connected yet, and the limit is Lamp's: say "Lamp can't connect to … yet", \
+            never that the service doesn't let apps sign in, then offer another way to get what the person \
+            asked for. Never put a secret, key or token in the app.
 
             """
         }

@@ -949,6 +949,7 @@ enum Template {
     import UniformTypeIdentifiers
     import UserNotifications
     import Security
+    import AuthenticationServices
     @preconcurrency import Vision
     #if os(macOS)
     import AppKit
@@ -4569,8 +4570,17 @@ enum Template {
         /// As the person knows it: "GitHub".
         let name: String
         fileprivate let clientID: String
+        /// Where an app asks for a code to show (the device flow), or empty for a service signed in to in the
+        /// browser, which has `authorizeURL`.
         fileprivate let deviceURL: String
         fileprivate let tokenURL: String
+        /// The service's own sign-in page, for the browser way in.
+        fileprivate let authorizeURL: String
+        /// Where the service sends the person back after that page: "app" for Lamp's private address,
+        /// "loopback" for this Mac's own, or the exact form the service wants.
+        fileprivate let redirect: String
+        /// What else the sign-in page's address has to carry.
+        fileprivate let parameters: [String: String]
         /// The service's own API: the only place the sign-in is ever sent.
         fileprivate let hosts: [String]
         /// Where to ask who signed in, for "GitHub: octocat": an address answering JSON, and the field in it.
@@ -4585,6 +4595,22 @@ enum Template {
 
         static func == (a: LampService, b: LampService) -> Bool { a.id == b.id }
         func hash(into hasher: inout Hasher) { hasher.combine(id) }
+
+        /// Signed in to in the browser, not with a code.
+        fileprivate var signsInOnTheWeb: Bool { deviceURL.isEmpty && !authorizeURL.isEmpty }
+
+        /// The service sends the person back to this Mac's own address, where only a Mac app can listen.
+        fileprivate var returnsToThisMac: Bool { signsInOnTheWeb && (redirect == "loopback" || redirect.hasPrefix("http://127.0.0.1")) }
+
+        /// The address the service sends the person back to, as the service was told it when the app was
+        /// registered. A port nobody named is filled in when the app starts listening.
+        fileprivate var redirectURI: String {
+            switch redirect {
+            case "", "app": return "dev.lamp.connect:/oauth"
+            case "loopback": return "http://127.0.0.1/oauth"
+            default: return redirect.replacingOccurrences(of: "{{REVERSED_ID}}", with: clientID.split(separator: ".").reversed().joined(separator: "."))
+            }
+        }
 
         /// What the person is agreeing to, one line for each thing asked for that Lamp has words for.
         fileprivate func lines(for scopes: [String]) -> [String] {
@@ -4747,6 +4773,101 @@ enum Template {
             return reply[service.accountField] as? String
         }
 
+        // MARK: Signing in through the browser
+
+        /// The other way in, for a service with no device flow: the person signs in on the service's own page
+        /// and the service sends them back with a code (OAuth's authorization code flow with PKCE). Nothing
+        /// secret is in the app: what proves the code is this app's is a value made for this one sign-in.
+        /// Where the service sends them back is the entry's `redirect`: a private address only the sign-in
+        /// window answers (the system's own web sign-in session, on Mac and iPhone), or this Mac's own address
+        /// (`http://127.0.0.1`), where the app listens for the moment it takes.
+        fileprivate static func signInOnTheWeb(_ service: LampService, scopes: [String]) async throws -> LampConnectionToken {
+            guard !service.clientID.isEmpty else { throw Failure(message: "This app isn't registered with \(service.name) yet.") }
+            guard var address = URLComponents(string: service.authorizeURL) else { throw Failure(message: "\(service.name)'s sign-in page isn't set up.") }
+            let unreserved = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+            let verifier = String((0..<64).map { _ in unreserved.randomElement()! })
+            let state = String((0..<32).map { _ in unreserved.randomElement()! })
+            let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+
+            var redirect = service.redirectURI
+            #if os(macOS)
+            var listener: LampConnectionLoopback?
+            if service.returnsToThisMac, standIn == nil {
+                let waiting = try LampConnectionLoopback(port: URLComponents(string: redirect)?.port)
+                let port = try await waiting.start()
+                var parts = URLComponents(string: redirect)
+                parts?.port = Int(port)
+                redirect = parts?.string ?? redirect
+                listener = waiting
+            }
+            #else
+            guard !service.returnsToThisMac || standIn != nil else { throw Failure(message: "\(service.name) can only be connected from a Mac app for now.") }
+            #endif
+
+            var query = service.parameters.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
+            query += [URLQueryItem(name: "response_type", value: "code"), URLQueryItem(name: "client_id", value: service.clientID),
+                      URLQueryItem(name: "redirect_uri", value: redirect), URLQueryItem(name: "state", value: state),
+                      URLQueryItem(name: "code_challenge", value: challenge), URLQueryItem(name: "code_challenge_method", value: "S256")]
+            if !scopes.isEmpty { query.append(URLQueryItem(name: "scope", value: scopes.joined(separator: " "))) }
+            address.queryItems = (address.queryItems ?? []) + query
+            guard let page = address.url, page.scheme == "https" || standIn != nil else { throw Failure(message: "\(service.name)'s sign-in page isn't set up.") }
+
+            let back: URL
+            if standIn != nil {
+                back = try await standInRedirect(page)
+            } else {
+                #if os(macOS)
+                if let listener {
+                    await MainActor.run { _ = NSWorkspace.shared.open(page) }
+                    back = try await listener.callback(app: appName)
+                    await MainActor.run { NSApp.activate(ignoringOtherApps: true) }
+                } else {
+                    back = try await LampConnectionWebSession.run(page, scheme: URLComponents(string: redirect)?.scheme ?? "")
+                }
+                #else
+                back = try await LampConnectionWebSession.run(page, scheme: URLComponents(string: redirect)?.scheme ?? "")
+                #endif
+            }
+
+            let answer = Dictionary((URLComponents(url: back, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") }) { first, _ in first }
+            if let error = answer["error"] {
+                throw Failure(message: error == "access_denied" ? "The request was turned down on \(service.name)."
+                              : (answer["error_description"] ?? "\(service.name) didn't finish the sign-in."))
+            }
+            // An answer that isn't to this sign-in is somebody else's, or nobody's.
+            guard answer["state"] == state, let code = answer["code"], !code.isEmpty else {
+                throw Failure(message: "\(service.name) didn't finish the sign-in.")
+            }
+            let reply = try await post(service.tokenURL, ["client_id": service.clientID, "grant_type": "authorization_code", "code": code,
+                                                          "redirect_uri": redirect, "code_verifier": verifier], on: service).reply
+            guard var token = LampConnectionToken(reply, scopes: scopes) else {
+                throw Failure(message: (reply["error_description"] as? String) ?? "\(service.name) didn't finish the sign-in.")
+            }
+            token.account = await account(for: token, on: service)
+            return token
+        }
+
+        private static var appName: String {
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
+        }
+
+        /// With a stand-in for the service (`standIn`), nobody is there to sign in: the page is asked for and
+        /// where it sends the person back is read off its answer.
+        private static func standInRedirect(_ page: URL) async throws -> URL {
+            final class Stay: NSObject, URLSessionTaskDelegate {
+                func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                                newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+                    completionHandler(nil)
+                }
+            }
+            let (_, response) = try await session.data(for: URLRequest(url: placed(page)), delegate: Stay())
+            guard let location = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Location"), let back = URL(string: location) else {
+                throw Failure(message: "The stand-in didn't send the sign-in back.")
+            }
+            return back
+        }
+
         // MARK: Renewing
 
         /// One renewal at a time for a service: a service that hands out a new renewal code each time takes the
@@ -4844,6 +4965,137 @@ enum Template {
             return ((response as? HTTPURLResponse)?.statusCode ?? 0, reply)
         }
     }
+
+    /// The system's own window for signing in on a website, which hands the app the address the service
+    /// sends the person back to. Used when that address is a private one (`dev.lamp.connect:/oauth`): only
+    /// this window answers it, so no other app can take the answer.
+    @MainActor
+    fileprivate final class LampConnectionWebSession: NSObject, ASWebAuthenticationPresentationContextProviding {
+        private var session: ASWebAuthenticationSession?
+
+        static func run(_ page: URL, scheme: String) async throws -> URL {
+            let holder = LampConnectionWebSession()
+            return try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+                    let session = ASWebAuthenticationSession(url: page, callbackURLScheme: scheme) { url, error in
+                        if let url {
+                            continuation.resume(returning: url)
+                        } else if (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin {
+                            continuation.resume(throwing: CancellationError())
+                        } else {
+                            continuation.resume(throwing: error ?? CancellationError())
+                        }
+                    }
+                    session.presentationContextProvider = holder
+                    holder.session = session
+                    if !session.start() { continuation.resume(throwing: LampConnection.Failure(message: "The sign-in window couldn't open.")) }
+                }
+            } onCancel: {
+                Task { @MainActor in holder.session?.cancel() }
+            }
+        }
+
+        func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+            #if os(macOS)
+            return NSApp.keyWindow ?? NSApp.windows.first ?? ASPresentationAnchor()
+            #else
+            return UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first ?? ASPresentationAnchor()
+            #endif
+        }
+    }
+
+    #if os(macOS)
+    /// For a service that sends the person back to this Mac's own address: the app listens there, on a port
+    /// the entry names or any free one, for the one request that carries the answer, and tells the browser
+    /// the person can go back to the app. It answers this Mac only and is gone as soon as it has.
+    fileprivate final class LampConnectionLoopback: @unchecked Sendable {
+        private let listener: NWListener
+        private let queue = DispatchQueue(label: "lamp.connection.loopback")
+        private var waiting: CheckedContinuation<URL, Error>?
+        private var arrived: Result<URL, Error>?
+        private var page = ""
+
+        init(port: Int?) throws {
+            let parameters = NWParameters.tcp
+            let wanted = port.flatMap { NWEndpoint.Port(rawValue: UInt16(clamping: $0)) } ?? .any
+            parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: wanted)
+            parameters.allowLocalEndpointReuse = true
+            listener = try NWListener(using: parameters)
+        }
+
+        /// The port it answers on, once it does.
+        func start() async throws -> UInt16 {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UInt16, Error>) in
+                var said = false
+                listener.stateUpdateHandler = { [listener] state in
+                    guard !said else { return }
+                    switch state {
+                    case .ready:
+                        said = true
+                        continuation.resume(returning: listener.port?.rawValue ?? 0)
+                    case .failed(let error), .waiting(let error):
+                        said = true
+                        listener.cancel()
+                        continuation.resume(throwing: LampConnection.Failure(message: "This Mac couldn't take the sign-in back (\(error.localizedDescription))."))
+                    default: break
+                    }
+                }
+                listener.newConnectionHandler = { [weak self] connection in
+                    guard let self else { return }
+                    connection.start(queue: self.queue)
+                    self.read(connection, Data())
+                }
+                listener.start(queue: queue)
+            }
+        }
+
+        /// The address the service sent the person back to. Gives up after ten minutes, or when the sign-in is cancelled.
+        func callback(app: String) async throws -> URL {
+            queue.sync { page = "<!doctype html><meta charset=\"utf-8\"><title>\(app)</title><body style=\"font: -apple-system-body; margin: 3em; text-align: center\"><p>You can close this window and go back to \(app).</p>" }
+            defer { listener.cancel() }
+            return try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+                    queue.async {
+                        if let arrived = self.arrived { return continuation.resume(with: arrived) }
+                        self.waiting = continuation
+                        self.queue.asyncAfter(deadline: .now() + 600) {
+                            self.finish(.failure(LampConnection.Failure(message: "The sign-in wasn't finished in the browser. Connect again when you're ready.")))
+                        }
+                    }
+                }
+            } onCancel: {
+                queue.async { self.finish(.failure(CancellationError())) }
+            }
+        }
+
+        private func finish(_ result: Result<URL, Error>) {
+            guard arrived == nil else { return }
+            arrived = result
+            waiting?.resume(with: result)
+            waiting = nil
+        }
+
+        private func read(_ connection: NWConnection, _ soFar: Data) {
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self] data, _, done, error in
+                guard let self else { return }
+                let all = soFar + (data ?? Data())
+                guard let end = all.range(of: Data("\r\n".utf8)) else {
+                    if done || error != nil || all.count > 16_384 { connection.cancel() } else { self.read(connection, all) }
+                    return
+                }
+                // "GET /oauth?code=…&state=… HTTP/1.1": the middle part is all there is to take.
+                let parts = String(decoding: all[..<end.lowerBound], as: UTF8.self).split(separator: " ")
+                let url = parts.count >= 2 && parts[0] == "GET" ? URL(string: "http://127.0.0.1" + parts[1]) : nil
+                // The browser also asks for the page's icon; only the request with an answer in it ends the wait.
+                let answers = url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems }?.contains { $0.name == "code" || $0.name == "error" } ?? false
+                let body = answers ? self.page : ""
+                let head = "HTTP/1.1 \(answers ? "200 OK" : "404 Not Found")\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n"
+                connection.send(content: Data((head + body).utf8), completion: .contentProcessed { _ in connection.cancel() })
+                if answers, let url { self.finish(.success(url)) }
+            }
+        }
+    }
+    #endif
 
     /// A sign-in as the app keeps it. Only ever in the Keychain and in memory.
     fileprivate struct LampConnectionToken: Codable, Equatable {
@@ -4968,7 +5220,7 @@ enum Template {
         @Published private(set) var isPassing = false
 
         fileprivate enum Step: Equatable {
-            case resting, starting, waiting(LampConnection.Code), failed(String)
+            case resting, starting, waiting(LampConnection.Code), browser, failed(String)
         }
         @Published fileprivate private(set) var step = Step.resting
         fileprivate let scopes: [String]
@@ -5006,10 +5258,16 @@ enum Template {
             let service = service, scopes = scopes
             signIn = Task { @MainActor [weak self] in
                 do {
-                    let code = try await LampConnection.begin(service, scopes: scopes)
-                    try Task.checkCancellation()
-                    self?.step = .waiting(code)
-                    let token = try await LampConnection.finish(code, on: service)
+                    let token: LampConnectionToken
+                    if service.signsInOnTheWeb {
+                        self?.step = .browser
+                        token = try await LampConnection.signInOnTheWeb(service, scopes: scopes)
+                    } else {
+                        let code = try await LampConnection.begin(service, scopes: scopes)
+                        try Task.checkCancellation()
+                        self?.step = .waiting(code)
+                        token = try await LampConnection.finish(code, on: service)
+                    }
                     try Task.checkCancellation()
                     // Approved on the service is not connected until the sign-in is kept: said here, where the
                     // person is looking, when it can't be.
@@ -5018,6 +5276,9 @@ enum Template {
                     }
                     self?.check()
                     self?.step = .resting
+                } catch is CancellationError {
+                    // The person closed the sign-in window: back to where they were, with nothing to explain.
+                    if !Task.isCancelled { self?.step = .resting }
                 } catch {
                     guard !Task.isCancelled else { return }
                     print("LampConnection: \(service.name) didn't connect: \(error.localizedDescription)")
@@ -5218,6 +5479,8 @@ enum Template {
                     .accessibilityHidden(true)
                 if case .waiting(let code) = state.step {
                     entering(code)
+                } else if state.step == .browser {
+                    signingIn
                 } else {
                     asking
                 }
@@ -5258,6 +5521,11 @@ enum Template {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+            } else if cantSignInHere {
+                Text("\(name) can only be connected from a Mac app for now.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             } else {
                 Button("Connect to \(name)") { state.connect() }
                     .buttonStyle(.borderedProminent)
@@ -5274,6 +5542,29 @@ enum Template {
                     .multilineTextAlignment(.center)
             }
             if let notNow { Button("Not Now", action: notNow) }
+        }
+
+        /// A service that sends the person back to a Mac's own address has nowhere to send them on a phone.
+        private var cantSignInHere: Bool {
+            #if os(macOS)
+            return false
+            #else
+            return state.service.returnsToThisMac && LampConnection.standIn == nil
+            #endif
+        }
+
+        /// While the person is on the service's own page, in the sign-in window or their browser.
+        @ViewBuilder private var signingIn: some View {
+            Text("Sign In to \(name)")
+                .font(.title3.weight(.semibold))
+                .multilineTextAlignment(.center)
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Waiting for you to finish in the sign-in window.")
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            Button("Cancel") { state.cancel() }
         }
 
         @ViewBuilder private func entering(_ code: LampConnection.Code) -> some View {

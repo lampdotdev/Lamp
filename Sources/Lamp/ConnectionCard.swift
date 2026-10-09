@@ -49,14 +49,31 @@ enum ConnectionCard {
     /// The entry's words with the app's name in.
     static func filled(_ text: String, app: String) -> String { text.replacingOccurrences(of: "{{NAME}}", with: app) }
 
+    /// What goes in the service's form: the entry's values, with the app's name and the address the service
+    /// is to send the person back to. A service signed in to in the browser has to be told that address,
+    /// so it's listed even when the entry forgot it.
+    static func values(_ service: Connections.Service, app: String) -> [Connections.Register.Value] {
+        let redirect = Connections.redirectToRegister(service)
+        var values = (service.register?.values ?? []).compactMap { value -> Connections.Register.Value? in
+            guard value.value.contains("{{REDIRECT}}") else { return .init(label: value.label, value: filled(value.value, app: app)) }
+            return redirect.map { .init(label: value.label, value: filled(value.value, app: app).replacingOccurrences(of: "{{REDIRECT}}", with: $0)) }
+        }
+        if let redirect, !values.contains(where: { $0.value.contains(redirect) }) {
+            values.append(.init(label: "Redirect URI", value: redirect))
+        }
+        return values
+    }
+
     /// The page to open, with the app's name in it where the service takes one in the address.
     static func page(_ service: Connections.Service, app: String) -> URL? {
         guard let register = service.register else { return nil }
         var allowed = CharacterSet.alphanumerics
         allowed.insert(charactersIn: "-._~")
         let name = app.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+        let redirect = (Connections.redirectToRegister(service) ?? "").addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
         guard Connections.page(register.url) != nil,
-              let url = URL(string: register.url.replacingOccurrences(of: "{{NAME}}", with: name)), url.scheme == "https" else { return nil }
+              let url = URL(string: register.url.replacingOccurrences(of: "{{NAME}}", with: name).replacingOccurrences(of: "{{REDIRECT}}", with: redirect)),
+              url.scheme == "https" else { return nil }
         return url
     }
 }
@@ -129,7 +146,7 @@ struct ConnectionCardView: View {
     @ViewBuilder
     private func steps(_ entry: Connections.Service, for project: LampProject) -> some View {
         let label = ConnectionCard.idLabel(entry)
-        let values = entry.register?.values ?? []
+        let values = ConnectionCard.values(entry, app: project.name)
         if let page = ConnectionCard.page(entry, app: project.name) {
             OptionRow(symbol: opened ? "checkmark.circle" : "1.circle", title: "Register \(project.name) on \(entry.name)",
                       detail: ConnectionCard.instructions(entry, app: project.name)) {
@@ -159,7 +176,7 @@ struct ConnectionCardView: View {
                 Text("If the form there is empty, these go in it:").foregroundStyle(.secondary)
                 Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 3) {
                     ForEach(values, id: \.label) { value in
-                        let text = ConnectionCard.filled(value.value, app: project.name)
+                        let text = value.value
                         GridRow {
                             Text(value.label).foregroundStyle(.secondary)
                             Text(text).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
