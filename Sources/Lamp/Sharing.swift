@@ -10,19 +10,20 @@ extension UTType {
 
 /// Exporting and importing `.lampapp` files.
 ///
-/// A shared app carries only what's needed to rebuild it: Swift sources (the app's and its widget's), APP.md, icon.json, the
+/// A shared app carries only what's needed to rebuild it: Swift sources (the app's and its widget's), APP.md, icon.json, capabilities.json, the
 /// icon artwork, and the attached files the code uses. Never the sender's chat, tokens, agent sessions or git history. On import, Lamp
 /// writes its own Package.swift, build.sh and LampSupport.swift, so nothing in the file runs at
 /// build time; the code only runs when the app is opened, after the recipient agrees.
 enum Sharing {
     /// The newest kind of file this Lamp opens. 2: the app's own files travel in Assets/ (1 bundled the chat's
-    /// attachments the code named). 3: the file also carries a widget's code, in Widget/.
-    static let formatVersion = 3
+    /// attachments the code named). 3: the file also carries a widget's code, in Widget/. 4: it also carries
+    /// what the app declares in capabilities.json.
+    static let formatVersion = 4
 
     /// What a file says it is: the oldest number a Lamp must know to open it whole. Only a file with a widget
-    /// is a 3, so an app without one still opens in a Lamp from before widgets, and a Lamp that would build
-    /// the app without its widget says to update instead.
-    static func format(withWidget: Bool) -> Int { withWidget ? 3 : 2 }
+    /// is a 3 and only one that declares capabilities a 4, so an app with neither still opens in an older
+    /// Lamp, and a Lamp that would build the app without its widget or its capabilities says to update instead.
+    static func format(withWidget: Bool, capabilities: Bool = false) -> Int { capabilities ? 4 : withWidget ? 3 : 2 }
 
     @MainActor private static var picker: NSSharingServicePicker?
     @MainActor private static var shareRequest = UUID()
@@ -77,8 +78,6 @@ enum Sharing {
         /// What the app is, in its sender's words (`AppDescription`). Files from an app that
         /// has none, or from before apps had one, carry none.
         var description: String?
-        /// What the app opens from Finder (`AppDescription.opens`). Checked again by whoever reads it.
-        var opens: [String]?
     }
 
     /// Which app a shared file is, so a Mac that already has it can take the new one as an update rather
@@ -178,15 +177,21 @@ enum Sharing {
         for name in ["APP.md", "icon.json"] where fm.fileExists(atPath: project.dir.appendingPathComponent(name).path) {
             try fm.copyItem(at: project.dir.appendingPathComponent(name), to: stage.appendingPathComponent(name))
         }
+        // What the app declares, as Lamp reads it: only what passed each check, never the file as it is.
+        let capabilities = Template.Capabilities.load(project).checked
+        if !capabilities.isEmpty {
+            let plain = JSONEncoder()
+            plain.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try plain.encode(capabilities).write(to: stage.appendingPathComponent(Template.Capabilities.file))
+        }
         if let spec = Icons.load(project), fm.fileExists(atPath: Icons.artURL(project, spec: spec).path) {
             try fm.copyItem(at: Icons.artURL(project, spec: spec), to: stage.appendingPathComponent("icon-art.png"))
         }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(Manifest(format: format(withWidget: !widgetCode.isEmpty), name: project.name, exportedAt: Date(),
-                                    app: identity(of: project), description: AppDescription.description(of: project),
-                                    opens: { $0.isEmpty ? nil : $0 }(AppDescription.opens(of: project))))
+        try encoder.encode(Manifest(format: format(withWidget: !widgetCode.isEmpty, capabilities: !capabilities.isEmpty), name: project.name, exportedAt: Date(),
+                                    app: identity(of: project), description: AppDescription.description(of: project)))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
         // Everything staged, counted and measured the way the importer's listing does (files and folders,
@@ -232,7 +237,8 @@ enum Sharing {
         let name: String
         var identity: String? = nil   // Manifest.app; nil in files from before apps said who they are
         var description: String? = nil   // Manifest.description, the sender's words; shown as text, never trusted
-        var opens: [String] = []   // Manifest.opens, checked (AppDescription.valid): plain names only
+        /// What the sender's capabilities.json declares, through the checks the agent's own goes through.
+        var capabilities = Template.Capabilities()
         let folder: URL          // unpacked, temporary
         /// All the code in the file, and the only code there is: the app's (Sources/) and its widget's
         /// (Widget/), .swift files only. The review reads this list and the install writes from this list,
@@ -299,7 +305,8 @@ enum Sharing {
             + filesUnder(folder.appendingPathComponent(Attachments.folder))
         return Package(name: name(from: manifest.name), identity: identity(from: manifest.app),
                        description: manifest.description.flatMap(AppDescription.valid),
-                       opens: AppDescription.valid(opens: manifest.opens ?? []), folder: folder, sources: sources,
+                       capabilities: Template.Capabilities.load(folder.appendingPathComponent(Template.Capabilities.file)).checked,
+                       folder: folder, sources: sources,
                        attachments: attachments, fileCount: all)
     }
 
@@ -355,7 +362,10 @@ enum Sharing {
         // The description comes with the app, so the copy says the same when it's shared on. An app being
         // updated takes the file's too, none included: the words go with the code they describe. Lamp writes
         // the file itself from what it read, so nothing else a sender put there arrives.
-        try AppDescription.write(package.description, opens: package.opens, for: project)
+        try AppDescription.write(package.description, for: project)
+        // Its capabilities too, written by Lamp from what passed the checks; a file that declares none takes
+        // away what an app being updated declared.
+        try package.capabilities.save(for: project)
         if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
            let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
             Icons.save(spec, for: project)

@@ -198,20 +198,25 @@ app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_
 string: after editing it, extract and type-check it (`swiftc -typecheck`), and bump anything that detects
 an outdated app (`Store.open` rebuilds apps built by an older Lamp).
 
-A Mac app says what Finder may hand it in `about.json` at its root, beside its description: `"opens":
-["folder", "png", "public.image"]` (`AppDescription.opens`: "folder", "file", extensions, type identifiers).
-Every list goes through one check (`AppDescription.valid(opens:)`: plain names only), whether the agent wrote
-it or a shared file brought it. After each build Lamp writes it into the app's Info.plist as
-`CFBundleDocumentTypes` (`writeDocumentTypes`, beside the build stamp, never through build.sh), always as an
-alternative, so an app is offered for a kind of file and never becomes what opens it by default. A change to
-the list needs a build (`Runtime.fingerprint`); a change to the description doesn't. A shared app carries the
-list in its manifest (`Sharing.Manifest.opens`) and the copy's about.json is written from what passed the
-check. Without a declaration macOS hands the app nothing: Finder takes no drop on its icon and doesn't list
-it in Open With, and the agent's confined `open -a App file` is refused with -10820. With one, that command
-works, and `look_at_app` gives the agent the exact line (`Store.handingHint`): the installed copy's path,
-since the copy in build/ or the bundle id starts a second copy beside the one Lamp opened.
-`Agent.sandboxNote` says which failures are the sandbox's and not the app's; keep it true when the profile
-changes. iPhone capabilities stay in `capabilities.json`.
+`capabilities.json` at an app's root is where the agent declares what the app needs beyond its code
+(`Template.Capabilities`): for an iPhone app the entitlements and background work described above, for a Mac
+app what Finder may hand it, `{"opens": ["folder", "png", "public.image"]}` ("folder", "file", extensions,
+type identifiers). Each field has its own check and only what passes is used (`Capabilities.checked`),
+whoever wrote the file. A new capability is a field there, its check, and where it lands: `apply(to:)` for a
+Mac app's Info.plist (called in `Store.deploy`, as `finishSimulatorBundle` does for the simulator's bundle),
+`lists` and `entitlementsPlist` for an iPhone app. A shared app carries the file as Lamp read it, checked,
+and the copy's is written from what passed the same checks on the way in (`Sharing.Package.capabilities`);
+such a file says it is format 4, so an older Lamp asks to be updated instead of dropping it.
+
+`opens` becomes `CFBundleDocumentTypes`, one entry for each kind (macOS ignores a type's extensions once it
+names content types), always as an alternative, so an app is offered for a kind of file and never takes it
+from the app that opens it by default; a kind nothing else opens (a made-up extension) macOS gives to the
+app. Without a declaration macOS hands the app nothing: Finder takes no drop on its
+icon and doesn't list it in Open With, and the agent's confined `open -a App file` is refused with -10820.
+With one, that command works, and `look_at_app` gives the agent the exact line (`Store.handingHint`): the
+installed copy's path, since the copy in build/ or the bundle id starts a second copy beside the one Lamp
+opened. `Agent.sandboxNote` says which failures are the sandbox's and not the app's; keep it true when the
+profile changes.
 
 ### Widgets
 

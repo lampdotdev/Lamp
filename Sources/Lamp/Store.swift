@@ -2698,7 +2698,6 @@ final class Store: ObservableObject {
         guard status != 0 else {
             Runtime.markBuilt(project, from: fingerprint)
             BuildStamp.write(to: project.builtURL)   // deploy signs the app afterwards
-            if project.platform != .iphone { AppDescription.writeDocumentTypes(of: project, to: project.builtURL) }
             return nil
         }
         let tail = output.suffix(40).joined(separator: "\n")
@@ -3070,6 +3069,8 @@ final class Store: ObservableObject {
                 try fm.copyItem(at: attachments, to: resources.appendingPathComponent(Attachments.folder))
             }
         }
+        // What the agent declared in capabilities.json, as the simulator's bundle gets its own (finishSimulatorBundle).
+        Template.Capabilities.load(project).apply(to: project.builtURL)
         // Signed from Lamp's own keychain, which the script unlocks, so nobody is asked for keychain access.
         // Files copied into the bundle (attachments, icon artwork, an edited Info.plist) can carry Finder
         // metadata and resource forks. codesign accepts those for an ad hoc signature but refuses them for a
@@ -4048,12 +4049,12 @@ final class Store: ObservableObject {
         return (200, ["text": text, "screenshots": Privacy.sharesPictures ? screenshots.map(\.path) : []])
     }
 
-    /// For an app that declares what it opens (`opens` in about.json): the command that hands this
+    /// For an app that declares what it opens (`opens` in capabilities.json): the command that hands this
     /// copy a file, said with each look because the path is the installed one, which the agent's confined
     /// shell can open with but can't see, and which moves when the app is renamed. Given the copy in build/
     /// or the bundle id instead, macOS starts that copy beside the one Lamp opened.
     nonisolated static func handingHint(for project: LampProject) -> String {
-        guard project.platform != .iphone, !AppDescription.opens(of: project).isEmpty else { return "" }
+        guard project.platform != .iphone, !Template.Capabilities.load(project).kinds.isEmpty else { return "" }
         return "\n\nTo hand it a file or folder as Finder would, run `open -g -a \(Sandbox.quoted(project.installedURL.path)) <path>`, " +
             "then `use_app` with a wait to see the result. Use that path, not the copy in build/ or the bundle id: those start a second copy."
     }

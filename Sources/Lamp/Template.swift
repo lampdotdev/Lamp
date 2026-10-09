@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 /// The scaffold every generated app starts from.
 enum Template {
@@ -250,9 +251,15 @@ enum Template {
             .joined(separator: "\n")
     }
 
-    /// What the agent declares in capabilities.json at the app's root when the app needs more than a usage
-    /// description: entitlements Xcode must put in the signing profile, and the kinds of background work.
-    struct Capabilities: Codable {
+    /// What the agent declares in capabilities.json at the app's root when the app needs more than its code
+    /// says: for an iPhone app, entitlements Xcode must put in the signing profile and the kinds of
+    /// background work; for a Mac app, what Finder may hand it. Every field has a check of its own, and only
+    /// what passes is used, whoever wrote the file: the agent here, or the sender of a shared app (`checked`).
+    /// A new capability is a field here, its check in `checked`, and where it lands: `apply(to:)` for a
+    /// Mac app's Info.plist, `lists` and `entitlementsPlist` for an iPhone app.
+    struct Capabilities: Codable, Equatable {
+        static let file = "capabilities.json"
+
         var healthkit: Bool?
         var nfc: Bool?
         var siri: Bool?
@@ -261,10 +268,37 @@ enum Template {
         var bonjourServices: [String]?
         /// BGTaskScheduler identifiers for background processing and refresh tasks.
         var backgroundTasks: [String]?
-        static func load(_ project: LampProject) -> Capabilities {
-            let url = project.dir.appendingPathComponent("capabilities.json")
+        /// Mac apps: what the app opens when Finder hands it something. "folder", "file" for any file, a
+        /// file extension ("png"), or a type identifier ("public.image").
+        var opens: [String]?
+
+        static func load(_ project: LampProject) -> Capabilities { load(project.dir.appendingPathComponent(file)) }
+
+        static func load(_ url: URL) -> Capabilities {
             guard let data = try? Data(contentsOf: url), let caps = try? JSONDecoder().decode(Capabilities.self, from: data) else { return Capabilities() }
             return caps
+        }
+
+        /// Only what passes each field's check, and nothing where nothing does. What Lamp declares for an
+        /// app is always this, and it is what a shared app carries and what its copy is given.
+        var checked: Capabilities {
+            func some(_ names: [String]) -> [String]? { names.isEmpty ? nil : names }
+            return Capabilities(healthkit: healthkit == true ? true : nil, nfc: nfc == true ? true : nil, siri: siri == true ? true : nil,
+                                backgroundModes: some(modes), bonjourServices: some(services), backgroundTasks: some(tasks), opens: some(kinds))
+        }
+
+        var isEmpty: Bool { checked == Capabilities() }
+
+        /// Gives an app these capabilities, checked, as its capabilities.json; none takes the file away.
+        func save(for project: LampProject) throws {
+            let url = project.dir.appendingPathComponent(Self.file)
+            guard !isEmpty else {
+                try? FileManager.default.removeItem(at: url)
+                return
+            }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(checked).write(to: url)
         }
 
         /// The background modes iOS knows, kept to those: a typo would make the app unlaunchable.
@@ -298,11 +332,69 @@ enum Template {
         var lists: [String: [String]] {
             var lists: [String: [String]] = [:]
             if !modes.isEmpty { lists["UIBackgroundModes"] = modes }
-            let services = (bonjourServices ?? []).filter { $0.range(of: #"^_[A-Za-z0-9-]{1,15}\._(tcp|udp)$"#, options: .regularExpression) != nil }
             if !services.isEmpty { lists["NSBonjourServices"] = services }
-            let tasks = (backgroundTasks ?? []).filter { $0.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil }
             if !tasks.isEmpty { lists["BGTaskSchedulerPermittedIdentifiers"] = tasks }
             return lists
+        }
+
+        /// Bonjour service types, kept to the _name._tcp/_udp shape.
+        var services: [String] {
+            (bonjourServices ?? []).filter { $0.range(of: #"^_[A-Za-z0-9-]{1,15}\._(tcp|udp)$"#, options: .regularExpression) != nil }
+        }
+
+        /// Background task identifiers, kept to plain identifiers.
+        var tasks: [String] {
+            (backgroundTasks ?? []).filter { $0.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil }
+        }
+
+        /// What the app opens, kept to plain names in lower case, each once and forty at most: letters,
+        /// digits, dots and dashes, so nothing else can reach the app's Info.plist.
+        var kinds: [String] {
+            var kept: [String] = []
+            for entry in opens ?? [] {
+                var name = entry.trimmingCharacters(in: .whitespaces).lowercased()
+                if name.hasPrefix("."), name.count > 1 { name.removeFirst() }
+                let plain = name.range(of: #"^[a-z0-9]{1,16}$"#, options: .regularExpression) != nil
+                let identifier = name.contains(".") && name.range(of: #"^[a-z0-9][a-z0-9.-]{2,80}$"#, options: .regularExpression) != nil
+                if plain || identifier, !kept.contains(name), kept.count < 40 { kept.append(name) }
+            }
+            return kept
+        }
+
+        /// What `opens` comes to in a Mac app's Info.plist: one document type for each kind, since macOS
+        /// ignores a document type's extensions once it names content types. An extension macOS knows is
+        /// declared as its type; one it doesn't, as the extension. Until an app declares a kind of file,
+        /// macOS hands it none: Finder won't take a drop on its icon or list it in Open With, and a confined
+        /// program (the agent's shell, Sandbox) asking to open a file with it is refused with error -10820.
+        /// The app is only ever an alternative, so declaring folders or pictures never takes them from the
+        /// app that opens them on a double-click. A kind nothing else on the Mac opens (a made-up extension)
+        /// has no such app, and macOS then opens it with this one.
+        var documentTypes: [[String: Any]] {
+            var seen: Set<String> = []
+            return kinds.compactMap { name -> [String: Any]? in
+                var type: [String: Any] = ["CFBundleTypeName": "Document", "CFBundleTypeRole": "Viewer", "LSHandlerRank": "Alternate"]
+                let identifier: String? = name == "folder" ? "public.folder" : name == "file" ? "public.data"
+                    : name.contains(".") ? name
+                    : UTType(filenameExtension: name).flatMap { $0.isDynamic ? nil : $0.identifier }
+                if let identifier { type["LSItemContentTypes"] = [identifier] } else { type["CFBundleTypeExtensions"] = [name] }
+                return seen.insert(identifier ?? "." + name).inserted ? type : nil
+            }
+        }
+
+        /// The Info.plist keys a Mac app's capabilities own, each with its value or nil when nothing is declared.
+        var macInfo: [String: Any?] {
+            ["CFBundleDocumentTypes": documentTypes.isEmpty ? nil : documentTypes]
+        }
+
+        /// Declares a Mac app's capabilities in its Info.plist, before it's signed (Store.deploy): written by
+        /// Lamp from checked values, never by the build script, and taken back when no longer declared.
+        func apply(to app: URL) {
+            let url = app.appendingPathComponent("Contents/Info.plist")
+            guard let info = NSMutableDictionary(contentsOf: url) else { return }
+            for (key, value) in macInfo {
+                if let value { info[key] = value } else { info.removeObject(forKey: key) }
+            }
+            info.write(to: url, atomically: true)
         }
 
         /// Those lists as Info.plist lines, or nothing.

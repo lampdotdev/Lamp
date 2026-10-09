@@ -34,9 +34,6 @@ enum Runtime {
                 hasher.update(data: data)
             }
         }
-        // What the app opens goes into its Info.plist, so a change needs a build; the description beside it
-        // in about.json is only shown, and the agent writes it after its last look.
-        hasher.update(data: Data(("opens:" + AppDescription.opens(of: project).joined(separator: ",")).utf8))
         // The app's own files can be big (pictures, data files): name, size and date stand in for their contents.
         for file in Sharing.assetFiles(of: project).sorted(by: { $0.path < $1.path }) {
             let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
