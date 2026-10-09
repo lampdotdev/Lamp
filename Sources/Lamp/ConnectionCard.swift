@@ -5,6 +5,8 @@ import SwiftUI
 /// and a place to paste the id the service gives. The id is kept with the app, so anyone the app is shared
 /// with only presses Connect. Built like the setup card (a tile, a headline and a line, then rows); what the
 /// rows say comes from the service's entry, Lamp's or the one the agent declared, and their wording is Lamp's.
+/// It is two steps, and as little to read as they allow: this is the one place a person leaves Lamp for
+/// someone else's form, so the card says where to go, what to press there and what to bring back.
 enum ConnectionCard {
     /// One card for each service in a chat, however many builds the app has.
     static func isNeeded(_ service: String, after lines: [LogLine]) -> Bool {
@@ -14,7 +16,18 @@ enum ConnectionCard {
     static func title(_ app: String, _ service: String) -> String { "Let \(app) connect to \(service)" }
 
     static func reason(_ app: String, _ service: String) -> String {
-        "\(service) wants each app registered with it once, by whoever makes the app. After that, anyone using \(app) only presses Connect to \(service)."
+        "\(service) asks for this once for each app, and it takes about a minute. After that, anyone using \(app) only presses Connect to \(service)."
+    }
+
+    /// What to do on the service's page, from its entry, in one line.
+    static func instructions(_ service: Connections.Service, app: String) -> String {
+        let notes = (service.register?.notes ?? []).map { filled($0, app: app) }
+        return notes.isEmpty ? "Fill in the form there and register the app." : notes.joined(separator: " ")
+    }
+
+    /// An id as it comes off the clipboard: its first line with anything on it, without the space around it.
+    static func pasted(_ text: String?) -> String {
+        (text ?? "").split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
     }
 
     static func done(_ app: String, _ service: String) -> String { "All set. \(app) now has its Connect to \(service) button." }
@@ -45,6 +58,8 @@ struct ConnectionCardView: View {
     @State private var checking = false
     @State private var problem: String?
     @State private var revision = 0
+    /// Whether the service's page has been opened from here, which ticks the first step.
+    @State private var opened = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -94,39 +109,49 @@ struct ConnectionCardView: View {
         .animation(.easeInOut(duration: 0.35), value: done)
     }
 
+    /// Two steps: register the app on the service's page, then bring back the id it gives. What goes in the
+    /// page's form is listed small under the first, for when the page doesn't open with it filled in: an
+    /// address can only fill a form where the service takes that, and GitHub doesn't promise to.
     @ViewBuilder
     private func steps(_ entry: Connections.Service, for project: LampProject) -> some View {
         let label = ConnectionCard.idLabel(entry)
-        if let page = ConnectionCard.page(entry, app: project.name) {
-            OptionRow(symbol: "1.circle", title: "Open \(entry.name)'s page for registering an app",
-                      detail: "It's free, and you sign in there as yourself.") {
-                Button("Open…") { NSWorkspace.shared.open(page) }
-            }
-        }
         let values = entry.register?.values ?? []
-        let notes = (entry.register?.notes ?? []).map { ConnectionCard.filled($0, app: project.name) }
-        if !values.isEmpty || !notes.isEmpty {
-            OptionRow(symbol: "2.circle", title: "Fill in the page",
-                      detail: notes.isEmpty ? "Use these, and leave the rest as it is." : notes.joined(separator: " ")) { EmptyView() }
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(values, id: \.label) { value in
-                    let text = ConnectionCard.filled(value.value, app: project.name)
-                    HStack(spacing: 8) {
-                        Text(value.label).foregroundStyle(.secondary)
-                        Text(text).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
-                        Button("Copy") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(text, forType: .string)
-                        }
-                        .controlSize(.small)
-                        .accessibilityLabel("Copy \(value.label)")
-                    }
-                    .font(.callout)
+        if let page = ConnectionCard.page(entry, app: project.name) {
+            OptionRow(symbol: opened ? "checkmark.circle" : "1.circle", title: "Register \(project.name) on \(entry.name)",
+                      detail: ConnectionCard.instructions(entry, app: project.name)) {
+                Button("Open \(entry.name)…") {
+                    NSWorkspace.shared.open(page)
+                    opened = true
+                    focused = true
                 }
             }
+        }
+        if !values.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("If the form there is empty, these go in it:").foregroundStyle(.secondary)
+                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 3) {
+                    ForEach(values, id: \.label) { value in
+                        let text = ConnectionCard.filled(value.value, app: project.name)
+                        GridRow {
+                            Text(value.label).foregroundStyle(.secondary)
+                            Text(text).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(text, forType: .string)
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Copy")
+                            .accessibilityLabel("Copy \(value.label)")
+                        }
+                    }
+                }
+            }
+            .font(.caption)
             .padding(.leading, CardColumn.indent(compact: false))
         }
-        OptionRow(symbol: values.isEmpty && notes.isEmpty ? "2.circle" : "3.circle", title: "Paste the \(label) it gives you",
+        OptionRow(symbol: "2.circle", title: "Paste the \(label) \(entry.name) shows next",
                   detail: "It isn't a password. It only tells \(entry.name) which app is asking.") {
             HStack(spacing: 6) {
                 TextField(label, text: $id)
@@ -138,8 +163,11 @@ struct ConnectionCardView: View {
                 if checking {
                     ProgressView().controlSize(.small)
                 } else {
-                    Button("Save") { save(entry, for: project) }
-                        .disabled(id.trimmed.isEmpty)
+                    // With nothing typed, one press takes the id from the clipboard and saves it.
+                    Button(id.trimmed.isEmpty ? "Paste" : "Save") {
+                        if id.trimmed.isEmpty { id = ConnectionCard.pasted(NSPasteboard.general.string(forType: .string)) }
+                        if id.trimmed.isEmpty { focused = true } else { save(entry, for: project) }
+                    }
                 }
             }
         }

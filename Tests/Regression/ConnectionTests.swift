@@ -78,6 +78,17 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(page.absoluteString.contains("oauth_application%5Bname%5D=Repo%20Radar%20%26%20Co&"), page.absoluteString)
         XCTAssertEqual(ConnectionCard.filled("{{NAME}}", app: "Repo Radar"), "Repo Radar")
         XCTAssertEqual(ConnectionCard.idLabel(Connections.github), "Client ID")
+        XCTAssertEqual(ConnectionCard.instructions(Connections.github, app: "Repo Radar"), "Tick Enable Device Flow, then press Register application.")
+        var bare = Connections.github
+        bare.register?.notes = nil
+        XCTAssertEqual(ConnectionCard.instructions(bare, app: "Repo Radar"), "Fill in the form there and register the app.")
+    }
+
+    func testOnePressTakesTheIdFromTheClipboard() {
+        XCTAssertEqual(ConnectionCard.pasted("  Ov23liTESTtestTEST00 \n"), "Ov23liTESTtestTEST00")
+        XCTAssertEqual(ConnectionCard.pasted("\n\nOv23liTESTtestTEST00\nsomething else"), "Ov23liTESTtestTEST00")
+        XCTAssertEqual(ConnectionCard.pasted(nil), "")
+        XCTAssertEqual(ConnectionCard.pasted(" \n "), "")
     }
 
     func testTheIdTravelsWithASharedApp() throws {
