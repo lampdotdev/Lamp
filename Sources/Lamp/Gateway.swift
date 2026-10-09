@@ -344,13 +344,15 @@ enum AppAI {
         return defaultRoute
     }
 
-    struct Failure: Error {
+    struct Failure: LocalizedError {
         let message: String
         /// What was billed before the failure (both JSON attempts, say), so the app's usage still counts it.
         var cost: Double = 0
         /// Set when the failure is that nothing is set up to answer: the gateway tells the app, and Lamp
         /// offers the person a way to set it up in the app's chat.
         var needs: Capability? = nil
+        /// Whoever shows this as any other error shows the message, not "The operation couldn't be completed".
+        var errorDescription: String? { message }
     }
 
     /// Whether apps' text AI can answer: some route can, the same test the pickers and `resolve` use.
@@ -665,7 +667,7 @@ enum AppAI {
                 let error = obj["error"] as? [String: Any]
                 let detail = error?["message"] as? String ?? obj["detail"].map { "\($0)" } ?? "HTTP \(status)"
                 throw Failure(message: status == 422 ? "The decision request was invalid: \(detail)"
-                                                     : Provider.friendlyError("\(status) \(detail)", from: Provider.keyProvider(choice.provider)?.name ?? choice.provider))
+                                                     : Provider.friendlyError(status: status, reply: obj, from: Provider.keyProvider(choice.provider)?.name ?? choice.provider))
             }
             let usage = obj["usage"] as? [String: Any] ?? [:]
             // Jev charges per input token ($0.042 per million); OpenRouter may report the exact cost.
@@ -734,8 +736,7 @@ enum AppAI {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         guard status == 200, let given = obj["answers"] as? [[String: Any]] else {
-            let detail = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-            throw Failure(message: Provider.friendlyError("\(status) \(detail)", from: "OpenAI"))
+            throw Failure(message: Provider.friendlyError(status: status, reply: obj, from: "OpenAI"))
         }
         // Each answer is checked against its question: the API can refuse one (type "refusal", in a 200),
         // and an app must never be handed a choice outside the options it gave, so anything that doesn't
@@ -1050,8 +1051,7 @@ enum AppAI {
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else {
-            let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-            throw Failure(message: Provider.friendlyError("\(status) \(message)", from: Provider.openRouter))
+            throw Failure(message: Provider.friendlyError(status: status, reply: obj, from: Provider.openRouter))
         }
         guard let base64 = (obj["data"] as? [[String: Any]])?.first?["b64_json"] as? String,
               let decoded = Data(base64Encoded: base64), NSImage(data: decoded) != nil else {
@@ -1148,8 +1148,7 @@ enum AppAI {
             let choice = (obj["choices"] as? [[String: Any]])?.first
             cost += (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0
             guard status == 200, let choice else {
-                let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-                throw Failure(message: Provider.friendlyError("\(status) \(message)", from: Provider.openRouter))
+                throw Failure(message: Provider.friendlyError(status: status, reply: obj, from: Provider.openRouter))
             }
             let text = (choice["message"] as? [String: Any])?["content"] as? String ?? ""
             if choice["finish_reason"] as? String == "content_filter" {
