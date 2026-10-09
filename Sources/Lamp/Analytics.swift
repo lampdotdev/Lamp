@@ -39,7 +39,7 @@ enum Analytics {
 
     /// The release's PostHog project. A project key only lets events in, so it belongs in the app.
     /// Empty: nothing is sent.
-    static let projectKey = ""
+    static let projectKey = "phc_myM5viZtYmsj8K9kPJzzmh7uvSpUtGcjYiDVJyVYZUaN"
     static let endpoint = URL(string: "https://us.i.posthog.com/i/v0/e/")!
 
     private static var sends: Bool { !Edition.isDev && !projectKey.isEmpty }
