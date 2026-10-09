@@ -171,6 +171,9 @@ final class ComputerOverlay {
     /// Glides Lamp's cursor to a point and returns when it's there. The first move of a task starts from the
     /// middle of the window in use, so the cursor never seems to come from nowhere.
     func move(to point: CGPoint, app icon: NSImage?, owner: ObjectIdentifier) async {
+        // The window, its Stop and the cursor are one task's at a time, taken by `focus`: a task that has
+        // been superseded since doesn't move the cursor over another task's window, or take its controls.
+        guard self.owner == nil || self.owner == owner else { return }
         cancelHide()
         self.owner = owner
         let (window, layer) = ensureCursor(icon: icon)
@@ -212,7 +215,8 @@ final class ComputerOverlay {
     }
 
     /// The cursor's press: it dips, and a ring of light spreads from the spot with a few sparks.
-    func click(at point: CGPoint) {
+    func click(at point: CGPoint, owner: ObjectIdentifier) {
+        guard owner == self.owner else { return }   // see `move`
         cancelHide()
         guard let window = cursorWindow, let root = window.contentView?.layer else { return }
         let center = window.convertPoint(fromScreen: Self.cocoa(point))

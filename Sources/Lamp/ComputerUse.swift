@@ -459,7 +459,7 @@ enum ComputerUse {
                 }
                 if let halt { throw halt }   // it may have been turned off during the dialog
                 if let spot, ["click", "double_click", "right_click"].contains(name) {
-                    await ComputerOverlay.shared.click(at: spot)
+                    await ComputerOverlay.shared.click(at: spot, owner: ObjectIdentifier(self))
                 }
             }
             if name == "get_window_state", arguments["max_image_dimension"] == nil { arguments["max_image_dimension"] = 1024 }
