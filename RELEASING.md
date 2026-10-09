@@ -156,6 +156,12 @@ button goes to `https://updates.lamp.dev/download/latest`, so a new release need
 - The section under the hero that helps a visitor find a first app asks a model through OpenRouter and counts
   what people pick: its setup, model, limits and counts are in [site/FIRST_IDEA.md](site/FIRST_IDEA.md). Under
   `npm run dev` it asks the model with a key from `site/.env.local`.
+- Analytics go to PostHog (`site/src/lib/analytics.ts`): page views, clicks, `download_clicked` with where the
+  button sits, and the first-idea section's counts as `first_idea_<event>`. No cookies or storage, so no
+  consent banner. Set `PUBLIC_POSTHOG_KEY` (the project key, which isn't secret) and, for PostHog's EU cloud,
+  `PUBLIC_POSTHOG_HOST` in the Vercel project for Production only; it's read at build time, so redeploy after
+  setting it. Without it the page loads no PostHog code at all. In the PostHog project, turn on **Discard
+  client IP data**.
 - The pictures are real windows taken from Lamp Dev with made-up data (⌘⇧4 then Space, which keeps the
   shadow): `site/src/assets/lamp.png` is Lamp under the headline, and `site/src/assets/apps/` holds the apps
   the carousel cycles through, each centred on a canvas of the same size so the slides line up. Retake them

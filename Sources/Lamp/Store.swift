@@ -673,7 +673,7 @@ final class Store: ObservableObject {
 
     /// New App: an untitled app, straight into its chat. Its first message names it and designs its icon.
     /// A Mac app until the intro says otherwise (`setKind`).
-    func create() {
+    func create(fromWelcome: Bool = false) {
         // A draft: its scaffold waits for the first build (`materialize`), so the intro can still change its kind.
         let project: LampProject
         do {
@@ -685,6 +685,7 @@ final class Store: ObservableObject {
         reload()
         selection = project.id
         chatFocusRequest += 1
+        Analytics.capture(.appCreated, ["source": fromWelcome ? "welcome" : "new_app"])
     }
 
     /// Writes a draft's scaffold and makes its first version, before anything builds it. Nil, after saying so,
@@ -1373,6 +1374,11 @@ final class Store: ObservableObject {
         // Only the first message names the app (bootstrap). A later one, after the agent only asked questions,
         // finds it untitled if that naming failed, and mustn't show a naming that isn't happening.
         progress[project.id]?.naming = first && project.untitled
+        let kind = Analytics.kind(AppKind(project))
+        if newApp && first {
+            Analytics.capture(.appFirstRequest, ["kind": kind, "has_attachments": messages.contains { !$0.attachments.isEmpty }])
+        }
+        let started = Date()
         Task {
             var project = project
             let saved = post(messages, to: project)
@@ -1391,6 +1397,14 @@ final class Store: ObservableObject {
             defer {
                 // A new app's card stays, showing the result; a later turn's activity line goes away. So does a
                 // new app's card when the agent only asked questions: nothing was built, and the answers bring it back.
+                if newApp {
+                    let seconds = Int(Date().timeIntervalSince(started))
+                    switch result.end {
+                    case .changed: Analytics.capture(.appFirstRun, ["kind": kind, "seconds": seconds])
+                    case .replied: Analytics.capture(.appFirstReplied, ["kind": kind, "seconds": seconds])
+                    default: Analytics.capture(.appFirstFailed, ["kind": kind, "seconds": seconds, "stopped": owner.stopped])
+                    }
+                }
                 if newApp && result.end != .replied {
                     progress[project.id]?.finish(worked: worked && turns[project.id]?.phoneReady != false)
                 } else {

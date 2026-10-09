@@ -225,7 +225,7 @@ const description = `${pitch} ${noCode}`;
         </h1>
         <p class="mt-5 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">{together(pitch)}<br />{together(noCode)}</p>
       </div>
-      <div class="hero-button relative z-10 mt-9"><DownloadButton /></div>
+      <div class="hero-button relative z-10 mt-9"><DownloadButton place="hero" /></div>
       <!-- As wide as the card allows, but no taller than leaves the whole card in the window: the words above
            take about 530px with the space under them, and the render is 2.98 times as wide as it is tall. -->
       <Image
@@ -341,7 +341,7 @@ const description = `${pitch} ${noCode}`;
       <div class="mx-auto max-w-6xl px-4 py-24 text-center sm:px-6 sm:py-28">
       <Image src={icon} alt="" width={96} height={96} densities={[1, 2]} class="mx-auto size-24 drop-shadow-[0_12px_24px_rgba(217,122,6,0.25)]" />
       <h2 class="mt-6 font-display text-4xl font-bold tracking-tight sm:text-5xl">Let your genie out.</h2>
-      <div class="mt-9"><DownloadButton /></div>
+      <div class="mt-9"><DownloadButton place="footer" /></div>
       </div>
     </section>
   </main>
