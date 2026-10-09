@@ -4665,7 +4665,8 @@ enum Template {
             }
             if response.statusCode == 401 {
                 // The service no longer takes this sign-in (ended there, or run out with nothing to renew it).
-                LampConnectionVault.keep(nil, for: service)
+                // Only this one is forgotten: the person may have connected again while the call was out.
+                LampConnectionVault.keep(nil, for: service, replacing: token)
                 throw notConnected(service)
             }
             return (data, response)
@@ -4696,7 +4697,7 @@ enum Template {
         fileprivate static func begin(_ service: LampService, scopes: [String]) async throws -> Code {
             guard !service.clientID.isEmpty else { throw Failure(message: "This app isn't registered with \(service.name) yet.") }
             let reply = try await post(service.deviceURL, ["client_id": service.clientID, "scope": scopes.joined(separator: " ")],
-                                       on: service)
+                                       on: service).reply
             guard let secret = reply["device_code"] as? String, let shown = reply["user_code"] as? String,
                   let page = ((reply["verification_uri"] ?? reply["verification_url"]) as? String).flatMap({ URL(string: $0) }),
                   page.scheme == "https" || standIn != nil else {
@@ -4715,7 +4716,7 @@ enum Template {
                 let reply: [String: Any]
                 do {
                     reply = try await post(service.tokenURL, ["client_id": service.clientID, "device_code": code.secret,
-                                                              "grant_type": "urn:ietf:params:oauth:grant-type:device_code"], on: service)
+                                                              "grant_type": "urn:ietf:params:oauth:grant-type:device_code"], on: service).reply
                 } catch {
                     // Off the network for a moment (a phone that went to its browser): the code is still good.
                     try Task.checkCancellation()
@@ -4766,16 +4767,27 @@ enum Template {
             // Another call got there first.
             if let now = LampConnectionVault.token(for: service), now.access != old.access { return now }
             guard let refresh = old.refresh else { throw notConnected(service) }
-            let reply = try await post(service.tokenURL, ["client_id": service.clientID, "grant_type": "refresh_token",
-                                                          "refresh_token": refresh], on: service)
+            let (status, reply) = try await post(service.tokenURL, ["client_id": service.clientID, "grant_type": "refresh_token",
+                                                                    "refresh_token": refresh], on: service)
             guard var token = LampConnectionToken(reply, scopes: old.scopes) else {
+                // A service that is busy or having trouble says nothing about the sign-in: it's kept, and
+                // the call can be made again.
+                let trouble = ["temporarily_unavailable", "server_error", "slow_down"].contains(reply["error"] as? String ?? "")
+                if status == 429 || status >= 500 || trouble {
+                    throw Failure(message: "\(service.name) couldn't renew your sign-in just now. Try again in a moment.")
+                }
                 // The service answered and wouldn't renew it: only signing in again helps.
-                LampConnectionVault.keep(nil, for: service)
+                LampConnectionVault.keep(nil, for: service, replacing: old)
                 throw notConnected(service)
             }
             if token.refresh == nil { token.refresh = refresh }
             token.account = old.account
-            LampConnectionVault.keep(token, for: service)
+            // The answer took a while, and the person may have disconnected, or connected again, meanwhile:
+            // it only takes the place of the sign-in it renewed.
+            guard LampConnectionVault.keep(token, for: service, replacing: old) else {
+                if let now = LampConnectionVault.token(for: service), now.access != old.access { return now }
+                throw notConnected(service)
+            }
             return token
         }
 
@@ -4811,7 +4823,8 @@ enum Template {
             return (data, response)
         }
 
-        private static func post(_ address: String, _ fields: [String: String], on service: LampService) async throws -> [String: Any] {
+        private static func post(_ address: String, _ fields: [String: String],
+                                 on service: LampService) async throws -> (status: Int, reply: [String: Any]) {
             guard let url = URL(string: address) else { throw Failure(message: "Connecting to \(service.name) isn't set up yet.") }
             var allowed = CharacterSet.alphanumerics
             allowed.insert(charactersIn: "-._~")
@@ -4823,11 +4836,11 @@ enum Template {
             request.httpBody = Data(fields.sorted { $0.key < $1.key }.map { field in
                 field.key + "=" + (field.value.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")
             }.joined(separator: "&").utf8)
-            let (data, _) = try await session.data(for: request)
+            let (data, response) = try await session.data(for: request)
             guard let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 throw Failure(message: "\(service.name) gave an answer that couldn't be read.")
             }
-            return reply
+            return ((response as? HTTPURLResponse)?.statusCode ?? 0, reply)
         }
     }
 
@@ -4870,6 +4883,11 @@ enum Template {
         static func token(for service: LampService) -> LampConnectionToken? {
             lock.lock()
             defer { lock.unlock() }
+            return held(service)
+        }
+
+        /// What is kept now. For whoever holds the lock.
+        private static func held(_ service: LampService) -> LampConnectionToken? {
             if let token = known[service.id] { return token }
             var query = entry(for: service)
             query[kSecReturnData as String] = true
@@ -4882,8 +4900,16 @@ enum Template {
             return token
         }
 
-        static func keep(_ token: LampConnectionToken?, for service: LampService) {
+        /// Keeps the sign-in, or forgets it when there is none to keep, and says whether that was done. With
+        /// `replacing`, only while what is kept is still that sign-in: an answer that comes back late (a
+        /// renewal, a refused call) must not undo a Disconnect or a newer sign-in made meanwhile.
+        @discardableResult
+        static func keep(_ token: LampConnectionToken?, for service: LampService, replacing old: LampConnectionToken? = nil) -> Bool {
             lock.lock()
+            if let old, held(service)?.access != old.access {
+                lock.unlock()
+                return false
+            }
             let query = entry(for: service)
             SecItemDelete(query as CFDictionary)
             var kept = false
@@ -4917,6 +4943,7 @@ enum Template {
             lock.unlock()
             print("LampConnection: \(service.name) is \(kept ? "connected" : "not connected")")
             DispatchQueue.main.async { NotificationCenter.default.post(name: changed, object: service.id) }
+            return kept == (token != nil)
         }
 
         private static func entry(for service: LampService) -> [String: Any] {
@@ -4983,7 +5010,11 @@ enum Template {
                     self?.step = .waiting(code)
                     let token = try await LampConnection.finish(code, on: service)
                     try Task.checkCancellation()
-                    LampConnectionVault.keep(token, for: service)
+                    // Approved on the service is not connected until the sign-in is kept: said here, where the
+                    // person is looking, when it can't be.
+                    guard LampConnectionVault.keep(token, for: service) else {
+                        throw LampConnection.Failure(message: "\(service.name) approved it, but the sign-in couldn't be saved on this device, so you're not connected.")
+                    }
                     self?.check()
                     self?.step = .resting
                 } catch {

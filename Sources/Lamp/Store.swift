@@ -302,6 +302,24 @@ final class Store: ObservableObject {
     private var turns: [String: Turn] = [:]
 
     /// Takes the app for a span of work. Nil when something else has it.
+    /// Apps to build once more when whatever has them is done: something a build puts into the app was
+    /// saved while a turn or a build had it (a service's id from its card, `ConnectionCard`).
+    private var pendingRebuilds: Set<String> = []
+
+    /// Builds the app again so it has what was just saved for it. When something has the app, the build
+    /// waits for that to end; a build that starts meanwhile carries it already and takes this one's place.
+    func rebuild(_ project: LampProject) async {
+        guard turns[project.id] != nil else { return await run(project) }
+        pendingRebuilds.insert(project.id)
+    }
+
+    /// The build that was waiting for the app, now it's free and nothing queued took it.
+    private func rebuildIfPending(_ project: LampProject) {
+        guard pendingRebuilds.contains(project.id), turns[project.id] == nil else { return }
+        pendingRebuilds.remove(project.id)
+        Task { await run(project) }
+    }
+
     private func begin(_ project: LampProject) -> Turn? {
         guard turns[project.id] == nil else { return nil }
         let turn = Turn()
@@ -1491,6 +1509,7 @@ final class Store: ObservableObject {
                 release(project)
                 offerHeldDrawing(project)
                 startQueued(project)
+                rebuildIfPending(project)
                 installHeldIcons(for: [project.id])
             }
             return
@@ -1498,6 +1517,7 @@ final class Store: ObservableObject {
         release(project)
         offerHeldDrawing(project)
         startQueued(project)
+        rebuildIfPending(project)
         // An icon that was waiting for the app to close, when the app closed while this had it: the moment
         // it closed came and went with the app taken, so it's looked at again now the app is free.
         installHeldIcons(for: [project.id])
@@ -2705,6 +2725,8 @@ final class Store: ObservableObject {
     private func build(_ project: LampProject) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         log(project, .status, "Building…")
+        // Whatever was waiting for a build is in this one: the files below are written from what's saved now.
+        pendingRebuilds.remove(project.id)
         // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
         do {
             try Template.writeOwnedFiles(for: project)

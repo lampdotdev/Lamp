@@ -178,8 +178,8 @@ struct ConnectionCardView: View {
                 do {
                     try Connections.keep(pasted, for: entry.id, in: project)
                     revision += 1
-                    // The app is built again so it has the id; a turn in progress builds it at its end.
-                    await store.run(project)
+                    // The app is built again so it has the id: now, or once whatever has the app is done.
+                    await store.rebuild(project)
                 } catch {
                     problem = "Lamp couldn't keep the id with the app: \(error.localizedDescription)"
                 }

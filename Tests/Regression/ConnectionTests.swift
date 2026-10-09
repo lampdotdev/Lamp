@@ -271,6 +271,12 @@ final class ConnectionTests: XCTestCase {
                     }
                     print("five \(answers.filter { $0.hasPrefix("call 200") }.count)")
                 case "wait": try? await Task.sleep(nanoseconds: 1_500_000_000)
+                case "leave-during-call":
+                    // The person disconnects while a call is out renewing the sign-in.
+                    async let answer = call("https://api.github.com/user", service)
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    LampConnection.disconnect(service)
+                    print(await answer)
                 case "disconnect": LampConnection.disconnect(service)
                 default: print("unknown step \(step)")
                 }
@@ -416,6 +422,33 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(try drive("has"), ["has false"])
     }
 
+    func testAServiceTooBusyToRenewKeepsTheSignIn() throws {
+        try start { $0.lifetime = 3600 }
+        XCTAssertEqual(try drive("connect").last, "connected as octocat")
+        let server = try XCTUnwrap(self.server)
+        server.endAccess()
+        server.busyRenewals = 2
+        // Busy in the way of an error page with a status, then in the words of OAuth: neither says anything
+        // about the sign-in, so it's kept and the call can be made again.
+        XCTAssertEqual(try drive("call", "has", "call", "has"),
+                       ["refused: GitHub couldn't renew your sign-in just now. Try again in a moment. notConnected=false", "has true",
+                        "refused: GitHub couldn't renew your sign-in just now. Try again in a moment. notConnected=false", "has true"])
+        XCTAssertEqual(try drive("call", "has"), [#"call 200 {"login":"octocat"}"#, "has true"])
+        XCTAssertEqual(server.renewals.map { $0.fields["refresh_token"] }, ["refresh-1", "refresh-1", "refresh-1"])
+    }
+
+    func testARenewalThatComesBackLateDoesNotUndoDisconnect() throws {
+        try start { $0.lifetime = 3600 }
+        XCTAssertEqual(try drive("connect").last, "connected as octocat")
+        let server = try XCTUnwrap(self.server)
+        server.endAccess()
+        server.renewalDelay = 1.5
+        XCTAssertEqual(try drive("leave-during-call", "has"), ["refused: Connect to GitHub first. notConnected=true", "has false"])
+        XCTAssertEqual(server.renewals.count, 1)
+        // Nor was it put back in the Keychain for the next time the app opens.
+        XCTAssertEqual(try drive("has"), ["has false"])
+    }
+
     func testASignInThatEndedWithNothingToRenewItDisconnects() throws {
         try start()
         XCTAssertEqual(try drive("connect").last, "connected as octocat")
@@ -455,6 +488,10 @@ private final class StandIn {
     /// Seconds a sign-in lasts. Nil is GitHub's own kind: it doesn't run out and comes with nothing to renew it.
     var lifetime: Int?
     var refusesRenewal = false
+    /// How many renewals are answered as a service that is busy: first with a 503, then in OAuth's own words.
+    var busyRenewals = 0
+    /// Seconds a renewal's answer takes.
+    var renewalDelay = 0.0
 
     private let listener: NWListener
     private let queue = DispatchQueue(label: "lamp.connection.stand-in")
@@ -498,7 +535,10 @@ private final class StandIn {
             if let request = Self.parse(all) {
                 let (status, body) = self.answer(request)
                 let head = "HTTP/1.1 \(status) OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n"
-                connection.send(content: Data((head + body).utf8), completion: .contentProcessed { _ in connection.cancel() })
+                let late = request.fields["grant_type"] == "refresh_token" ? self.lock.withLock { self.renewalDelay } : 0
+                self.queue.asyncAfter(deadline: .now() + late) {
+                    connection.send(content: Data((head + body).utf8), completion: .contentProcessed { _ in connection.cancel() })
+                }
             } else if done || error != nil {
                 connection.cancel()
             } else {
@@ -539,6 +579,9 @@ private final class StandIn {
             return (404, #"{"error":"Not Found"}"#)
         case ("POST", "/login/device/code"):
             return (200, #"{"device_code":"device-1","user_code":"WDJB-MJHT","verification_uri":"http://127.0.0.1:\#(port)/login/device","expires_in":900,"interval":1}"#)
+        case ("POST", "/login/oauth/access_token") where request.fields["grant_type"] == "refresh_token" && busyRenewals > 0:
+            busyRenewals -= 1
+            return busyRenewals % 2 == 1 ? (503, #"{"message":"Service unavailable"}"#) : (200, #"{"error":"temporarily_unavailable"}"#)
         case ("POST", "/login/oauth/access_token") where request.fields["grant_type"] == "refresh_token":
             guard !refusesRenewal, request.fields["refresh_token"] == "refresh-\(issued)" else {
                 return (200, #"{"error":"bad_refresh_token","error_description":"The refresh token passed is incorrect or expired."}"#)
