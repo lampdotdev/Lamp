@@ -369,10 +369,8 @@ struct ImageModelRow: View {
                     case .choose(let id): selection = id
                     }
                 })) {
-                    ForEach(ids, id: \.self) { id in
-                        // By hand is another kind of thing from the models, and None is the way out of it.
-                        if id == Icons.byHand && id != ids.first || id == Icons.noChoice && id != ids.first { Divider() }
-                        Text(label(id)).tag(id)
+                    ForEach(Array(Icons.menuGroups(ids).enumerated()), id: \.offset) { _, group in
+                        Section { ForEach(group, id: \.self) { id in Text(label(id)).tag(id) } }
                     }
                     Divider()
                     Text("Configure providers…").tag(Icons.configureProviders)

@@ -73,6 +73,15 @@ final class IconsByHandTests: XCTestCase {
         XCTAssertFalse([Icons.byHand, Icons.noChoice, Icons.localArt].contains(Icons.configureProviders))
     }
 
+    func testALineSeparatesGroupsOfEntriesAndIsNeverOneOfThem() {
+        // A line drawn with the Image Playground entry was what the closed menu showed once a key had put
+        // models above it: a blank where the choice's name belongs.
+        XCTAssertEqual(Icons.menuGroups(models + [Icons.byHand]), [models, [Icons.byHand]])
+        XCTAssertEqual(Icons.menuGroups([Icons.byHand, Icons.noChoice]), [[Icons.byHand], [Icons.noChoice]])
+        XCTAssertEqual(Icons.menuGroups([Icons.noChoice, Icons.byHand]), [[Icons.noChoice], [Icons.byHand]])
+        XCTAssertEqual(Icons.menuGroups(models), [models])
+    }
+
     private func setting(models: [String], selection: String = "", drawer: String? = nil, byHandAvailable: Bool,
                          byHandChosen: Bool) -> Icons.ArtMenu {
         Icons.artMenu(models: models, selection: selection, drawer: drawer, byHandAvailable: byHandAvailable,

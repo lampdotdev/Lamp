@@ -139,6 +139,15 @@ enum Icons {
                      selected: chosen ? byHand : drawing.contains(selection) ? selection : drawing[0])
     }
 
+    /// The menu's entries in the groups a line separates: by hand is another kind of thing from the models,
+    /// and None is the way out of it. The line is drawn between groups, never beside an entry: a line that
+    /// shares an entry's place in the list is what the closed menu shows for it, in place of its name.
+    static func menuGroups(_ ids: [String]) -> [[String]] {
+        ids.reduce(into: []) { groups, id in
+            if groups.isEmpty || id == byHand || id == noChoice { groups.append([id]) } else { groups[groups.count - 1].append(id) }
+        }
+    }
+
     /// What picking an entry of the Image generation menu does. The menu ends in "Configure providers…",
     /// as the Text generation one does: it's where a key or a download is added, whatever the menu holds.
     enum MenuPick: Equatable { case providers, clear, choose(String) }
