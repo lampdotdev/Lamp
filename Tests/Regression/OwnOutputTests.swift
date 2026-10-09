@@ -71,6 +71,30 @@ final class OwnOutputTests: XCTestCase {
         XCTAssertTrue(Privacy.isOwnOutput(tool: "read", path: viaLink, session: session, project: project, home: home))
     }
 
+    /// The folder that doesn't ask is the one where Claude Code keeps it, not wherever a link there leads.
+    func testARedirectedOutputFolderIsntTrusted() throws {
+        let (home, project, results) = try setUp()
+        let fm = FileManager.default
+        let elsewhere = home.appendingPathComponent("Documents")
+        try fm.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        try "private".write(to: elsewhere.appendingPathComponent("taxes.txt"), atomically: true, encoding: .utf8)
+        let session = results.deletingLastPathComponent()
+        let slug = session.deletingLastPathComponent()
+        // tool-results, the session's folder and the app's folder each linked elsewhere in turn.
+        for link in [results, session, slug] {
+            let moved = link.deletingLastPathComponent().appendingPathComponent(".moved-\(UUID().uuidString)")
+            try fm.moveItem(at: link, to: moved)
+            try fm.createSymbolicLink(at: link, withDestinationURL: elsewhere)
+            let through = results.appendingPathComponent("taxes.txt").path
+            XCTAssertFalse(Privacy.isOwnOutput(tool: "read", path: through, session: self.session, project: project, home: home),
+                           link.lastPathComponent)
+            try fm.removeItem(at: link)
+            try fm.moveItem(at: moved, to: link)
+        }
+        XCTAssertTrue(Privacy.isOwnOutput(tool: "read", path: results.appendingPathComponent("toolu_01.txt").path,
+                                          session: self.session, project: project, home: home))
+    }
+
     /// Claude Code replaces every character but ASCII letters and digits, one per UTF-16 unit.
     func testFoldersNamedWithMoreThanASCII() throws {
         let (home, project, _) = try setUp("Café Board")

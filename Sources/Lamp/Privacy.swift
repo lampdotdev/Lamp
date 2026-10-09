@@ -64,8 +64,12 @@ enum Privacy {
         guard readers.contains(tool), !session.isEmpty,
               session.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "-") })
         else { return false }
+        // What's never opened stays closed, wherever Claude Code's folder leads.
+        if case .deny = verdict(tool: tool, path: raw, project: project) { return false }
         let path = resolved(raw, in: project.dir)
-        let projects = home.appendingPathComponent(".claude/projects")
+        // Claude Code's own folder may be a link (to someone's dotfiles, say), so it's worked out; nothing
+        // below it may be: a link there would make wherever it leads the folder that doesn't ask.
+        let projects = resolved(home.appendingPathComponent(".claude/projects").path, in: project.dir)
         // Claude Code names the folder after the working directory, every character but ASCII letters and
         // digits made "-" (per UTF-16 unit, as JavaScript counts them). A name past 200 gets a hash Lamp
         // can't work out, so such an app's output asks like any other file.
@@ -75,8 +79,8 @@ enum Privacy {
                 switch unit { case 0x30...0x39, 0x41...0x5A, 0x61...0x7A: unit; default: 0x2D }
             }, as: UTF16.self)
             guard slug.utf16.count <= 200 else { return false }
-            let results = resolved(projects.appendingPathComponent(slug).appendingPathComponent(session)
-                .appendingPathComponent("tool-results").path, in: project.dir)
+            let results = projects + "/" + slug + "/" + session + "/tool-results"
+            guard resolved(results, in: project.dir) == results else { return false }
             return path == results || path.hasPrefix(results + "/")
         }
     }
