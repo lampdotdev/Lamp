@@ -351,9 +351,6 @@ enum AppAI {
         /// Set when the failure is that nothing is set up to answer: the gateway tells the app, and Lamp
         /// offers the person a way to set it up in the app's chat.
         var needs: Capability? = nil
-        /// Set when the picture model itself turned the request away (too busy, or down for now) though the
-        /// key and the account are fine: another model can draw meanwhile (`Icons.standIn`).
-        var busy = false
         /// Whoever shows this as any other error shows the message, not "The operation couldn't be completed".
         var errorDescription: String? { message }
     }
@@ -1057,7 +1054,7 @@ enum AppAI {
         guard status == 200 else {
             // The model's own provider being out of room says "quota" too, which reads like the person's
             // account being empty (that one is a 402): it's the model that's busy, and theirs is fine.
-            if busyStatuses.contains(status) { throw Failure(message: imageModelBusy(imageModel), busy: true) }
+            if status == 429 { throw Failure(message: imageModelBusy(imageModel)) }
             let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
             throw Failure(message: Provider.friendlyError("\(status) \(message)", from: Provider.openRouter))
         }
@@ -1068,12 +1065,11 @@ enum AppAI {
         return (decoded, (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0)
     }
 
-    /// What a picture model answers when it can't take the request now: too many at once, or it's down.
-    static let busyStatuses: Set<Int> = [429, 502, 503]
-
-    /// What the person is told then, with the model as the menus name it (less the note in brackets).
+    /// What the person is told when a picture model has no room for the request, with the model as the
+    /// menus name it (less the note in brackets).
     static func imageModelBusy(_ model: String) -> String {
-        let name = Icons.artModels.contains { $0.id == model } ? Icons.modelName(model) : "The picture model"
+        let label = Icons.artModels.first { $0.id == model }?.label ?? "The picture model"
+        let name = label.components(separatedBy: " (")[0]
         return "\(name) is busy right now. Try again in a minute, or pick another picture model in Lamp → Settings (⌘,)."
     }
 
