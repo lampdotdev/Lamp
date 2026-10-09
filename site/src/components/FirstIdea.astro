@@ -11,7 +11,9 @@ import { together } from "../lib/text";
   lamp's light as a card to change, copy and take to Lamp. Made to be enjoyed rather than rushed through; all
   of its motion stops for people who've asked for less (global.css).
 -->
-<section id="first-idea" class="px-2 pt-20 sm:px-3 sm:pt-24">
+<!-- ph-no-capture: the model's questions and answers can repeat what the visitor wrote, so PostHog's autocapture
+     skips this section; its steps are counted by `count`, with fixed words only. -->
+<section id="first-idea" class="ph-no-capture px-2 pt-20 sm:px-3 sm:pt-24">
   <div data-sky class="wish-night relative isolate mx-auto max-w-6xl overflow-hidden rounded-[28px] px-5 pt-16 pb-14 text-white sm:px-10 sm:pt-20 sm:pb-20">
     <!-- Dawn: the sky warms when the wish appears. -->
     <div data-dawn aria-hidden="true" class="wish-dawn"></div>

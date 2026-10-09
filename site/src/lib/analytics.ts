@@ -2,8 +2,9 @@ import type { PostHog } from "posthog-js";
 
 // PostHog for the site: page views, clicks, the Download buttons and the first-idea section's steps. No
 // cookies or local storage (persistence: "memory"), so a visit is counted from page load to leaving and
-// there's nothing to ask consent for. Nothing typed is sent: autocapture never reads form fields, and the
-// first-idea section's events carry only what /api/idea-event already counts.
+// there's nothing to ask consent for. Nothing typed is sent: autocapture never reads form fields, it skips the
+// first-idea section (`ph-no-capture`), whose buttons repeat a model's words about what the visitor wrote, and
+// that section's own events carry only what /api/idea-event already counts.
 // Without PUBLIC_POSTHOG_KEY (local dev, preview builds) nothing loads and `track` does nothing. With it, the
 // library loads after the page, so it never holds up the first paint.
 const key = import.meta.env.PUBLIC_POSTHOG_KEY;

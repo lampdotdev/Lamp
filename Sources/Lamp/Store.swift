@@ -264,6 +264,12 @@ final class Store: ObservableObject {
         var agent: Process?                 // the engine, while it runs
         var build: Process?                 // the app's build.sh, while it runs
         var stopped = false                 // the user pressed Stop (or deleted the app, or quit Lamp)
+        /// Stop was pressed at some point in this turn. `stopped` is cleared once the agent has stopped, so the
+        /// turn can go on; this stays, for what the turn's end reports (`Analytics`).
+        var wasStopped = false
+        /// The Mac app built but the last install couldn't put it in place or open it: logged, not a crash, so
+        /// the turn still counts as a change. Kept so a new app's first run isn't counted when it never opened.
+        var didNotOpen = false
         /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
         var phoneReady: Bool?
         var allowAll = false                // "Allow all for this turn"
@@ -283,6 +289,7 @@ final class Store: ObservableObject {
         /// Stops what's running. Returns the processes signaled, for a caller that waits for them (quit).
         @discardableResult func cancel() -> [pid_t] {
             stopped = true
+            wasStopped = true
             allowAll = false
             var pids: [pid_t] = []
             if let agent { pids += Subprocess.terminateTree(agent) }
@@ -1400,9 +1407,11 @@ final class Store: ObservableObject {
                 if newApp {
                     let seconds = Int(Date().timeIntervalSince(started))
                     switch result.end {
-                    case .changed: Analytics.capture(.appFirstRun, ["kind": kind, "seconds": seconds])
+                    case .changed where !owner.didNotOpen: Analytics.capture(.appFirstRun, ["kind": kind, "seconds": seconds])
                     case .replied: Analytics.capture(.appFirstReplied, ["kind": kind, "seconds": seconds])
-                    default: Analytics.capture(.appFirstFailed, ["kind": kind, "seconds": seconds, "stopped": owner.stopped])
+                    default:
+                        Analytics.capture(.appFirstFailed, ["kind": kind, "seconds": seconds, "stopped": owner.wasStopped,
+                                                            "did_not_open": owner.didNotOpen])
                     }
                 }
                 if newApp && result.end != .replied {
@@ -2743,12 +2752,14 @@ final class Store: ObservableObject {
         }
         await quit(project)
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
+        owner?.didNotOpen = false
         do {
             WidgetCard.forget(project)
             try await deploy(project)
             heldInstalls.installed(project.id)
         } catch {
             log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
+            owner?.didNotOpen = true
             return nil
         }
         // An app with a widget gets its card, once: the widget is built, and adding it is the person's to do.
@@ -2780,6 +2791,7 @@ final class Store: ObservableObject {
             }
         } catch {
             log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
+            owner?.didNotOpen = true
         }
         upgradeIconArt(project)
         refreshOpenApps()
