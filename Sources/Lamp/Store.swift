@@ -273,6 +273,7 @@ final class Store: ObservableObject {
         var pendingName: String?            // a name the agent gave the version this request makes
         var artCost = 0.0                   // what make_art's pictures cost, for the turn's summary
         var request: String?                // the user's words, for the command classifiers
+        var claudeSession: String?          // Claude Code's conversation, as its own output says (Privacy.isOwnOutput)
         var writing: (line: UUID, unshown: String)?   // the message the agent is writing right now
         var showingWritten = false
         /// The agent's token for this turn (Store.agentTokens): the only way to its routes.
@@ -1800,6 +1801,7 @@ final class Store: ObservableObject {
                 case .failed(let text): failure = text
                 case .raw(let text): log(project, .detail, text)
                 case .session(let id):
+                    if engine == .claude { turn.claudeSession = id }
                     if engine != .pi {
                         try? id.write(to: sessionFile, atomically: true, encoding: .utf8)
                         Memory.delivered(to: project, session: id)
@@ -3619,7 +3621,10 @@ final class Store: ObservableObject {
                 let names = ["Read": "read", "Edit": "edit", "Write": "write", "Glob": "find", "Grep": "grep"]
                 let path = input["file_path"] as? String ?? input["path"] as? String ?? project.dir.path
                 var (allowed, reason) = (false, nil as String?)
-                if tool == "Glob" || tool == "Grep", Privacy.wouldUncover(root: path, project: project) {
+                if let session = turns[project.id]?.claudeSession,
+                   Privacy.isOwnOutput(tool: names[tool] ?? "write", path: path, session: session, project: project) {
+                    allowed = true
+                } else if tool == "Glob" || tool == "Grep", Privacy.wouldUncover(root: path, project: project) {
                     reason = "That search would pass over Lamp's own files, which aren't yours to open. Search a narrower folder."
                 } else {
                     (allowed, reason) = await fileAccess(tool: names[tool] ?? "read", path: path, for: project)
