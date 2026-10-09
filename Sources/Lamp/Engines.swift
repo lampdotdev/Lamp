@@ -288,7 +288,7 @@ extension Agent {
     /// that first builds it, and an app made before descriptions existed from the next request of any kind.
     static func undescribed(_ project: LampProject) -> String {
         project.description == nil
-            ? "\n\n---\nThis app has no description yet (from Lamp, not part of the request above): once your work is done, call `describe_app`."
+            ? "\n\n---\nThis app has no description yet (from Lamp, not part of the request above): once your work is done, call `describe_app` with one short sentence saying what the app is."
             : ""
     }
 

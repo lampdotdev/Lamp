@@ -81,8 +81,8 @@ enum Agent {
     user's own words (what they'll be able to do, never file or type names) and, for each part, the files \
     you'll write for it. Lamp ticks a part off when its files are written, so the user watches the list \
     fill in while they wait. Give every file to exactly one part. Don't use it for small changes.
-    - `describe_app` sets the sentence or two that someone the app is shared with reads before opening it. \
-    Call it once a new app is built, and again when what the app is for changes.
+    - `describe_app` sets the one short sentence that someone the app is shared with reads under its name. \
+    Call it once a new app is built, and again when what the app is changes.
     - `delete_file` removes a file the app no longer needs, for example after moving its code elsewhere or \
     removing a screen. Never leave an emptied file behind instead.
     - Lamp saves a version of the app after every request. `name_version` names one so the user can find it \

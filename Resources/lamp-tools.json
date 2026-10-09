@@ -131,12 +131,12 @@
   {
     "name": "describe_app",
     "label": "Describe app",
-    "description": "Sets the app's description: one or two plain sentences saying what the app is for, written for someone who has never seen it. Lamp shows it under the app's name to anyone the app is shared with, before they open it. Everyday words only: nothing from the code, no lists, no formatting. Call it once a new app is built, and again when what the app is for changes; each call replaces the description.",
+    "description": "Sets the app's description: one short, plain sentence saying what the app is, like the line under an app's name in a store (\"A counter that goes up every ten seconds.\"). Lamp shows it under the app's name to anyone the app is shared with, before they open it. Not a list of features and not how it works: what it is, in everyday words, with nothing from the code. At most 80 characters; a longer one is refused. Call it once a new app is built, and again when what the app is changes; each call replaces the description.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "description": {
-          "description": "One or two sentences, e.g. \"Counts up by one every ten seconds while its window is open, with a button to start over.\"",
+          "description": "One short sentence, at most 80 characters, e.g. \"A timer for brewing tea.\"",
           "type": "string"
         }
       },
