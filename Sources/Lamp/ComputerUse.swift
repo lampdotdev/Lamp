@@ -150,6 +150,12 @@ enum ComputerUse {
         let details: String
         /// The model's own description. Shown second: it can be wrong, or steered by what's on screen.
         let intent: String?
+        /// The app's process, for its icon, when the step names one.
+        var pid: pid_t? = nil
+        /// Where it happens, in screen points from the top left of the main display: the spot it clicks or
+        /// types into, and the window it's in. Known for CuaDriver's steps, not for Codex's.
+        var point: CGPoint? = nil
+        var window: CGRect? = nil
     }
 
     /// Describes an action from its real arguments. `labels` maps element tokens to what the person sees.
@@ -157,7 +163,9 @@ enum ComputerUse {
         let pid = (arguments["pid"] as? Int) ?? (arguments["pid"] as? NSNumber)?.intValue
         let app = pid.flatMap { NSRunningApplication(processIdentifier: pid_t($0))?.localizedName }
         let bundle = arguments["bundle_id"] as? String
-        let target = app ?? (arguments["name"] as? String) ?? bundle ?? "an app"
+        let bundleName = bundle.flatMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
+            .map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") }
+        let target = app ?? (arguments["name"] as? String) ?? bundleName ?? bundle ?? "an app"
         let element: String? = (arguments["element_token"] as? String).map { labels[$0] ?? "an unnamed item" }
         let spot = element ?? "a spot in the window"
         func quoted(_ text: String) -> String {
@@ -194,7 +202,7 @@ enum ComputerUse {
         default:
             details = tool.replacingOccurrences(of: "_", with: " ")
         }
-        return Action(tool: tool, target: target, details: details, intent: nil)
+        return Action(tool: tool, target: target, details: details, intent: nil, pid: pid.map { pid_t($0) })
     }
 
     /// "the “Send” button": what a person would call an element from the last window read.
@@ -223,6 +231,8 @@ enum ComputerUse {
 
     /// Turning the setting off stops a task that's already running, before its next step.
     static let stopped = Failure(message: "Using other apps was turned off, so Lamp stopped the task.")
+    /// The person pressed Stop Task.
+    static let stoppedByPerson = Failure(message: "You stopped the task before it finished.")
 
     /// One task in progress (not Swift's Task): the connection to the driver, the tools the model may use, what the person has
     /// to approve, and the names of what's on screen. Whichever model drives the task (OpenRouter, a local
@@ -242,6 +252,31 @@ enum ComputerUse {
         let tools: [MCPClient.Tool]
         let systemPrompt: String
         private var labels: [String: String] = [:]   // element tokens from the windows read so far
+        /// Where each element read so far is on screen, by token, for Lamp's cursor.
+        private var frames: [String: CGRect] = [:]
+        /// Each window read so far: where it was and how much its picture was scaled, to place a click the
+        /// model gave in the picture's pixels.
+        private var windows: [Int: (bounds: CGRect, pixelsPerPoint: CGFloat)] = [:]
+        /// The window last brought forward, so it's brought forward once, not before every step.
+        private var fronted: Int?
+        private var showing = false
+        /// Set by Stop Task: nothing more happens, whatever is driving the task.
+        private(set) var isStopped = false
+        /// The coding agent driving the task, when one is, so Stop Task can end it.
+        var engineProcess: Process?
+
+        /// Why the task can't go on, or nil: turned off in Settings, or stopped by the person.
+        var halt: Failure? { isStopped ? ComputerUse.stoppedByPerson : enabled ? nil : ComputerUse.stopped }
+
+        /// Stop Task: ends the agent driving the task and the driver, so no step runs after this.
+        func stop() {
+            guard !isStopped else { return }
+            isStopped = true
+            engineProcess?.terminate()
+            close()
+            let id = ObjectIdentifier(self)
+            Task { @MainActor in ApprovalPanel.dismiss(owner: id) }
+        }
 
         init(_ taskText: String, appName: String, allowActions: Bool, approve: @escaping (Action) async -> Bool) async throws {
             self.taskText = taskText
@@ -285,6 +320,8 @@ enum ComputerUse {
                 throw error
             }
             allowed = allowActions ? readTools.union(actTools) : readTools
+            // Lamp draws its own cursor (ComputerOverlay); CuaDriver's would be a second one.
+            _ = try? await client.call("set_agent_cursor_enabled", arguments: ["enabled": false])
             let allowed = allowed
             tools = try await client.listTools().filter { allowed.contains($0.name) }.map { tool in
                 var schema = tool.inputSchema
@@ -316,16 +353,50 @@ enum ComputerUse {
             """
         }
 
-        func close() { client.close() }
+        /// Glows around the window a step uses, and before the first action in a window brings it forward,
+        /// so the person can watch it happen. Reading leaves windows where they are.
+        private func show(window id: Int, pid: Int?, acting: Bool) async {
+            if acting, fronted != id, let pid {
+                fronted = id
+                _ = try? await client.call("bring_to_front", arguments: ["pid": pid, "window_id": id])
+            }
+            showing = true
+            let target = pid.flatMap { NSRunningApplication(processIdentifier: pid_t($0))?.localizedName }
+            let label = target.map { "\(appName) is using \($0)" } ?? "\(appName) is using your apps"
+            await ComputerOverlay.shared.focus(window: CGWindowID(id), label: label, owner: ObjectIdentifier(self)) { [weak self] in self?.stop() }
+        }
+
+        /// Where a step happens on screen: the middle of the element it names, or its pixel in the window's
+        /// picture turned back into points.
+        private func point(for arguments: [String: Any], in windowID: Int?) -> CGPoint? {
+            if let token = arguments["element_token"] as? String, let frame = frames[token] {
+                return CGPoint(x: frame.midX, y: frame.midY)
+            }
+            guard let x = (arguments["x"] as? NSNumber)?.doubleValue, let y = (arguments["y"] as? NSNumber)?.doubleValue,
+                  let windowID, let window = windows[windowID], window.pixelsPerPoint > 0 else { return nil }
+            return CGPoint(x: window.bounds.minX + x / window.pixelsPerPoint, y: window.bounds.minY + y / window.pixelsPerPoint)
+        }
+
+        private static func rect(_ values: [String: Any], w: String, h: String) -> CGRect? {
+            guard let x = (values["x"] as? NSNumber)?.doubleValue, let y = (values["y"] as? NSNumber)?.doubleValue,
+                  let width = (values[w] as? NSNumber)?.doubleValue, let height = (values[h] as? NSNumber)?.doubleValue else { return nil }
+            return CGRect(x: x, y: y, width: width, height: height)
+        }
+
+        func close() {
+            client.close()
+            engineProcess = nil
+            if showing { Task { @MainActor [id = ObjectIdentifier(self)] in ComputerOverlay.shared.end(owner: id) } }
+        }
 
         /// Codex's question before a step: reads go ahead, actions only when the task may act and the person
         /// allows this one (or allowed all for the task). The same dialog as CuaDriver's actions get.
         private func decide(_ elicitation: MCPClient.Elicitation) async -> Bool {
-            guard enabled else { return false }
+            guard halt == nil else { return false }
             if CodexComputerUse.read(elicitation) { return true }
             guard allowActions else { return false }
             let allowed = await approve(CodexComputerUse.action(elicitation, intent: currentIntent))
-            return allowed && enabled   // it may have been turned off during the dialog
+            return allowed && halt == nil   // it may have been turned off or stopped during the dialog
         }
 
         /// What the model said the current `js` step is for, shown with each approval it raises.
@@ -351,7 +422,7 @@ enum ComputerUse {
         func call(_ name: String, _ arguments: [String: Any]) async throws -> (text: String, pictures: [(mimeType: String, data: String)]) {
             var arguments = arguments
             let intent = arguments.removeValue(forKey: "intent") as? String
-            guard enabled else { throw stopped }
+            if let halt { throw halt }
             if BrowserTabs.handles(name) { return (await BrowserTabs.call(name, arguments), []) }
             guard allowed.contains(name) else { return ("That tool isn't available for this task.", []) }
             if driver == .codex {
@@ -365,25 +436,47 @@ enum ComputerUse {
                     return ("Error: \(error.localizedDescription)", [])
                 }
             }
+            let windowID = (arguments["window_id"] as? Int) ?? (arguments["window_id"] as? NSNumber)?.intValue
+            let pid = (arguments["pid"] as? Int) ?? (arguments["pid"] as? NSNumber)?.intValue
+            let spot = point(for: arguments, in: windowID)
+            if let windowID, name == "get_window_state" || actTools.contains(name) || name == "scroll" {
+                await show(window: windowID, pid: pid, acting: actTools.contains(name))
+            }
             if actTools.contains(name) {
                 let described = ComputerUse.describe(name, arguments, labels: labels)
-                let action = Action(tool: name, target: described.target, details: described.details, intent: intent)
+                let icon = pid.flatMap { NSRunningApplication(processIdentifier: pid_t($0))?.icon }
+                if let spot {
+                    showing = true
+                    await ComputerOverlay.shared.move(to: spot, app: icon, owner: ObjectIdentifier(self))
+                }
+                if let halt { throw halt }   // stopped while the cursor was on its way: nothing to ask
+                var action = Action(tool: name, target: described.target, details: described.details, intent: intent, pid: described.pid)
+                action.point = spot
+                action.window = windowID.flatMap { ComputerOverlay.frame(of: CGWindowID($0)) }
                 guard await approve(action) else {
+                    if let halt { throw halt }
                     return ("The person declined this action. Don't try it another way; finish with what you have, or say what you needed.", [])
                 }
-                guard enabled else { throw stopped }   // it may have been turned off during the dialog
+                if let halt { throw halt }   // it may have been turned off during the dialog
+                if let spot, ["click", "double_click", "right_click"].contains(name) {
+                    await ComputerOverlay.shared.click(at: spot, owner: ObjectIdentifier(self))
+                }
             }
             if name == "get_window_state", arguments["max_image_dimension"] == nil { arguments["max_image_dimension"] = 1024 }
             do {
                 let result = try await client.call(name, arguments: arguments)
                 var text = result.text.isEmpty ? "Done." : String(result.text.prefix(60_000))
                 if name == "list_windows", let windows = visibleWindows(result.structured) { text = windows }
-                if name == "get_window_state",
-                   let elements = (result.structured as? [String: Any])?["elements"] as? [[String: Any]] {
-                    for element in elements {
-                        if let token = element["element_token"] as? String, let label = ComputerUse.label(of: element) {
-                            labels[token] = label
-                        }
+                if name == "get_window_state", let state = result.structured as? [String: Any] {
+                    for element in state["elements"] as? [[String: Any]] ?? [] {
+                        guard let token = element["element_token"] as? String else { continue }
+                        if let label = ComputerUse.label(of: element) { labels[token] = label }
+                        if let frame = element["frame"] as? [String: Any], let rect = Self.rect(frame, w: "w", h: "h") { frames[token] = rect }
+                    }
+                    if let id = (state["window_id"] as? Int) ?? windowID,
+                       let bounds = (state["window_bounds"] as? [String: Any]).flatMap({ Self.rect($0, w: "width", h: "height") }),
+                       let pixels = (state["screenshot_width"] as? NSNumber)?.doubleValue, bounds.width > 0 {
+                        windows[id] = (bounds, CGFloat(pixels) / bounds.width)
                     }
                 }
                 return (text, result.images.map { (mimeType: "image/jpeg", data: compactJPEG($0.data, mimeType: $0.mimeType)) })
@@ -428,9 +521,10 @@ enum ComputerUse {
         var messages: [[String: Any]] = [["role": "system", "content": task.systemPrompt], ["role": "user", "content": task.taskText]]
         var cost = 0.0
         for _ in 0..<40 {
-            guard enabled else { throw stopped }
+            if let halt = task.halt { throw halt }
             let (message, stepCost) = try await complete(endpoint: endpoint, messages: messages, tools: tools, model: model, key: key)
             cost += stepCost
+            if let halt = task.halt { throw halt }   // stopped while the model was answering
             messages.append(message)
             let calls = message["tool_calls"] as? [[String: Any]] ?? []
             if calls.isEmpty {
@@ -545,7 +639,7 @@ enum ComputerUse {
         var failure: String?
         var notice: String?   // the agent's own last word about what went wrong, when it didn't answer
         var lastLine = ""
-        let status = await Shell.run(command, cwd: folder, env: env) { line in
+        let status = await Shell.run(command, cwd: folder, env: env, started: { task.engineProcess = $0 }) { line in
             lastLine = line
             for event in Agent.parse(line, engine: engine) {
                 switch event {
@@ -557,7 +651,7 @@ enum ComputerUse {
                 }
             }
         }
-        guard enabled else { throw stopped }
+        if let halt = task.halt { throw halt }
         if let failure { throw Failure(message: Provider.friendlyError(failure, from: source)) }
         guard status == 0 || !text.isEmpty else {
             let why = notice ?? (lastLine.hasPrefix("{") ? "" : lastLine.trimmed)
