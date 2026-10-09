@@ -3844,8 +3844,8 @@ final class Store: ObservableObject {
             return (503, ["error": "Using other apps is turned off. Turn on “Let apps use your other apps” in Lamp → Settings → Apps, then try again."])
         }
         if let problem = ComputerUse.check() { return (502, ["error": problem.message]) }
-        // The task goes along the app's text route, like its other AI.
-        let chosen = AppAI.route(for: AppModels.load(project).text)
+        // The task goes along the route chosen for the app's text; with none chosen, the one that's good at this.
+        let chosen = AppAI.computerRoute(for: AppModels.load(project).text)
         var allowAll = false
         // Weak: the job keeps this closure, so a strong reference back would keep every finished job alive.
         weak var job: ComputerUse.Job?
@@ -3874,10 +3874,14 @@ final class Store: ObservableObject {
         do {
             let (text, cost) = try await ComputerUse.answer(work, route: chosen, token: token)
             record(project, cost: cost)
+            print("Computer task for \(project.name) through \(chosen.label): \(work.steps) steps, answered.")
             // Stopped while the last answer was on its way: the person said not to finish, so it isn't one.
             if work.isStopped { return (409, ["error": ComputerUse.stoppedByPerson.message]) }
             return (200, ["text": text])
         } catch {
+            // What the steps so far cost was spent whether or not the task got to an answer.
+            if let spent = (error as? ComputerUse.Failure)?.cost, spent > 0 { record(project, cost: spent) }
+            print("Computer task for \(project.name) through \(chosen.label): \(work.steps) steps, ended: \(error.localizedDescription)")
             // However the agent ended once stopped (killed, or failing on its next step), the app is told why.
             if work.isStopped { return (409, ["error": ComputerUse.stoppedByPerson.message]) }
             return (502, ["error": error.localizedDescription])
