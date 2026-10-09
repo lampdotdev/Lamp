@@ -53,6 +53,34 @@ enum Privacy {
         return .ask
     }
 
+    /// Claude Code keeps a command's output too long to show the model in a file of the conversation's own,
+    /// `~/.claude/projects/<the app's folder>/<session>/tool-results/`, and reads it back with its Read tool.
+    /// That's the agent's own output, so reading it doesn't ask: only reading, only this app's folder and only
+    /// the conversation Lamp is running (`session`, from Claude Code's own output, not from the hook's request),
+    /// with links worked out so one there can't lead anywhere else. pi's and Codex's equivalents need nothing:
+    /// pi writes its to the temporary folder (`pi-bash-….log`), and Codex keeps none for the model to read.
+    static func isOwnOutput(tool: String, path raw: String, session: String, project: LampProject,
+                            home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Bool {
+        guard readers.contains(tool), !session.isEmpty,
+              session.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "-") })
+        else { return false }
+        let path = resolved(raw, in: project.dir)
+        let projects = home.appendingPathComponent(".claude/projects")
+        // Claude Code names the folder after the working directory, every character but ASCII letters and
+        // digits made "-" (per UTF-16 unit, as JavaScript counts them). A name past 200 gets a hash Lamp
+        // can't work out, so such an app's output asks like any other file.
+        let folders = Set([project.dir.standardizedFileURL.path, resolved(project.dir.path, in: project.dir)])
+        return folders.contains { folder in
+            let slug = String(decoding: folder.utf16.map { unit -> UInt16 in
+                switch unit { case 0x30...0x39, 0x41...0x5A, 0x61...0x7A: unit; default: 0x2D }
+            }, as: UTF16.self)
+            guard slug.utf16.count <= 200 else { return false }
+            let results = resolved(projects.appendingPathComponent(slug).appendingPathComponent(session)
+                .appendingPathComponent("tool-results").path, in: project.dir)
+            return path == results || path.hasPrefix(results + "/")
+        }
+    }
+
     /// Whether a search of everything under `root` would pass over something the rule above never opens:
     /// Lamp's own folder. Lamp's file tools skip such places as they go (`hides`); a search the agent's own
     /// tool runs can't, so it isn't allowed to start above them.
