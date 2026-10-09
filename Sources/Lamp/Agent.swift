@@ -503,7 +503,9 @@ enum Agent {
         """
 
         static let appMd = """
-        - Keep APP.md current: what the app does and how the code is organized.
+        - Keep APP.md current. Under its title it opens with a sentence or two saying what the app is for, in \
+        everyday words with nothing from the code: Lamp shows them to anyone the app is shared with. The rest is \
+        your own notes: what the app does and how the code is organized.
         """
 
         static let audience = """

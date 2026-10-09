@@ -15,36 +15,47 @@ final class SharedAppAboutTests: XCTestCase {
         return Sharing.Package(name: "Tally", folder: folder, sources: [], attachments: [], fileCount: files.count)
     }
 
-    func testDescriptionIsWhatTheAppSaysItDoes() {
+    /// The description is the sentence or two the file opens with, written for people. What follows is the
+    /// agent's notes on the code, which read like this however they're laid out, and none of it is shown.
+    func testDescriptionIsTheOpeningAndNeverTheNotes() {
         let about = """
-        # Tally
+        # Ticker
 
-        A macOS SwiftUI app built and live-edited with Lamp.
-
-        ## What it does
-        Counts things with **plus** and `minus` buttons,
-        and remembers the count.
+        Counts up by one every ten seconds while its window is open,
+        with a **Reset** button and a desktop widget showing the same number.
 
         A second paragraph of detail.
+
+        ## What it does
+        - The window shows the count in big digits and a "next tick" countdown; toolbar Reset (asks first).
+        - Each change is shared with the widget (`LampWidget.share(TickerSummary, as: "summary")`).
 
         ## Structure
         - `Sources/App.swift`: entry point and window.
         """
-        XCTAssertEqual(Sharing.description(fromAbout: about), "Counts things with plus and minus buttons, and remembers the count.")
+        XCTAssertEqual(Sharing.description(fromAbout: about),
+                       "Counts up by one every ten seconds while its window is open, with a Reset button and a desktop widget showing the same number.")
     }
 
-    func testDescriptionFallsBackToTheOpeningLine() {
+    /// Notes with no opening above them describe the app to the agent, not to a person: nothing is shown.
+    func testNotesAloneAreNoDescription() {
+        XCTAssertNil(Sharing.description(fromAbout: "# Ticker\n\n## What it does\n- The count is saved (`LampStore`).\n"))
+        XCTAssertNil(Sharing.description(fromAbout: "## What it does\nCounts things.\n"))
+    }
+
+    func testOpeningNeedsNoSections() {
         XCTAssertEqual(Sharing.description(fromAbout: "# Tally\n\nA counter with plus and minus buttons.\n"), "A counter with plus and minus buttons.")
     }
 
     /// An app nobody described yet says nothing, rather than Lamp's own words for a new app.
     func testNewAppHasNoDescription() {
         XCTAssertNil(Sharing.description(fromAbout: Template.appMd.replacingOccurrences(of: "{{NAME}}", with: "Tally")))
+        XCTAssertNil(Sharing.description(fromAbout: Template.iPhoneAppMd.replacingOccurrences(of: "{{NAME}}", with: "Tally")))
         XCTAssertNil(Sharing.description(fromAbout: ""))
     }
 
     func testLongDescriptionIsCut() {
-        let text = Sharing.description(fromAbout: "## What it does\n" + String(repeating: "word ", count: 200))
+        let text = Sharing.description(fromAbout: "# Tally\n\n" + String(repeating: "word ", count: 200))
         XCTAssertEqual(text?.count, 280)
         XCTAssertEqual(text?.last, "…")
     }

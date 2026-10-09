@@ -310,10 +310,12 @@ enum Template {
         }
     }
 
+    static let iPhoneOpening = "A SwiftUI app for iPhone and iPad, built and live-edited with Lamp. It runs in the iOS Simulator on this Mac."
+
     static let iPhoneAppMd = """
     # {{NAME}}
 
-    A SwiftUI app for iPhone and iPad, built and live-edited with Lamp. It runs in the iOS Simulator on this Mac.
+    \(iPhoneOpening)
 
     ## What it does
     Nothing yet: fresh scaffold.
@@ -4579,10 +4581,15 @@ enum Template {
 
     """
 
+    /// What a new app's APP.md opens with until the agent says what the app is for (`Agent.Rules.appMd`).
+    /// Those opening sentences are the app's description to whoever it's shared with, and these aren't one
+    /// (`Sharing.description`).
+    static let opening = "A macOS SwiftUI app built and live-edited with Lamp."
+
     static let appMd = """
     # {{NAME}}
 
-    A macOS SwiftUI app built and live-edited with Lamp.
+    \(opening)
 
     ## What it does
     Nothing yet: fresh scaffold.

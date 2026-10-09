@@ -476,37 +476,28 @@ extension Sharing {
     /// not getting and that opening doesn't depend on it; it isn't a problem to fix first.
     static let aiNotSetUp = "Lamp can also have AI read a shared app's code before you open it. That's available once AI is set up in Lamp → Settings; you don't need it to open this app."
 
-    /// The app in its sender's words, for the top of the review: what APP.md says it does, as plain text.
-    /// Nil when the file has none, or only what Lamp wrote into a new app.
+    /// The app in its sender's words, for the top of the review: the sentence or two APP.md opens with, which
+    /// the agent writes for people (`Agent.Rules.appMd`), as plain text. The rest of the file is the agent's
+    /// own notes on the code and is never shown. Nil when the file has no opening, or only what Lamp wrote
+    /// into a new app.
     static func description(of package: Package) -> String? {
         guard let about = try? String(contentsOf: package.folder.appendingPathComponent("APP.md"), encoding: .utf8) else { return nil }
         return description(fromAbout: about)
     }
 
     static func description(fromAbout about: String) -> String? {
-        // Paragraphs by section: "" is what comes before the first "## " heading.
-        var sections: [String: [String]] = [:]
-        var heading = ""
+        // The first paragraph under the title, before any "## " section.
         var paragraph: [String] = []
-        func close() {
-            if !paragraph.isEmpty { sections[heading, default: []].append(paragraph.joined(separator: " ")) }
-            paragraph = []
-        }
         for line in about.components(separatedBy: .newlines).map(\.trimmed) {
-            if line.hasPrefix("##") {
-                close()
-                heading = line.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces).lowercased()
-            } else if line.isEmpty || line.hasPrefix("#") {
-                close()
+            if line.hasPrefix("##") { break }
+            if line.isEmpty || line.hasPrefix("#") {
+                if !paragraph.isEmpty { break }
             } else {
                 paragraph.append(line)
             }
         }
-        close()
-        // What a new app's APP.md says before anyone has described it (Template.appMd).
-        let scaffold = ["Nothing yet: fresh scaffold.", "A macOS SwiftUI app built and live-edited with Lamp."]
-        let candidates = (sections["what it does"] ?? []).prefix(1) + (sections[""] ?? []).prefix(1)
-        guard let found = candidates.first(where: { !scaffold.contains($0) }) else { return nil }
+        let found = paragraph.joined(separator: " ")
+        guard !found.isEmpty, ![Template.opening, Template.iPhoneOpening].contains(found) else { return nil }
         // Shown as written, never as formatting or links: the commonest marks are dropped, the rest is text.
         let plain = found.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
         return plain.count > 280 ? String(plain.prefix(279)).trimmed + "…" : plain
