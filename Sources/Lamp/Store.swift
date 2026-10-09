@@ -3730,14 +3730,20 @@ final class Store: ObservableObject {
         // The task goes along the app's text route, like its other AI.
         let chosen = AppAI.route(for: AppModels.load(project).text)
         var allowAll = false
+        var job: ComputerUse.Job?
         do {
             let work = try await ComputerUse.Job(task, appName: project.name, allowActions: allowActions) { [weak self] action in
                 guard let self, ComputerUse.enabled else { return false }
                 if allowAll { return true }
-                let answer = await self.confirm(action, for: project)
-                if answer == .allowAll { allowAll = true }
-                return answer != .deny
+                let answer = await self.confirm(action, for: project, owner: job.map(ObjectIdentifier.init))
+                switch answer {
+                case .allow: return true
+                case .allowAll: allowAll = true; return true
+                case .deny: return false
+                case .stop: job?.stop(); return false
+                }
             }
+            job = work
             defer { work.close() }
             let token = UUID().uuidString + UUID().uuidString
             computerTasks[token] = work
@@ -3746,6 +3752,8 @@ final class Store: ObservableObject {
             record(project, cost: cost)
             return (200, ["text": text])
         } catch {
+            // However the agent ended once stopped (killed, or failing on its next step), the app is told why.
+            if job?.isStopped == true { return (409, ["error": ComputerUse.stoppedByPerson.message]) }
             return (502, ["error": error.localizedDescription])
         }
     }
@@ -3795,24 +3803,20 @@ final class Store: ObservableObject {
         }
     }
 
-    private enum ActionAnswer { case allow, allowAll, deny }
+    private typealias ActionAnswer = ApprovalPanel.Answer
 
-    /// Asks the person before an app clicks, types or presses keys in another app.
-    private func confirm(_ action: ComputerUse.Action, for project: LampProject) async -> ActionAnswer {
-        NSApp.activate()
-        let alert = NSAlert()
-        alert.messageText = "\(project.name) wants to use \(action.target)"
-        alert.informativeText = action.details
-            + (action.intent.map { "\n\nThe AI says it's doing this to: \($0)" } ?? "")
-        alert.icon = NSWorkspace.shared.icon(forFile: project.installedURL.path)
-        alert.addButton(withTitle: "Allow")
-        alert.addButton(withTitle: "Allow All for This Task")
-        alert.addButton(withTitle: "Don't Allow")
-        switch await present(alert) {
-        case .alertFirstButtonReturn: return .allow
-        case .alertSecondButtonReturn: return .allowAll
-        default: return .deny
-        }
+    /// Asks the person before an app clicks, types or presses keys in another app, beside where it happens.
+    private func confirm(_ action: ComputerUse.Action, for project: LampProject, owner: ObjectIdentifier?) async -> ActionAnswer {
+        await ApprovalPanel.ask(.init(
+            asker: project.name,
+            askerIcon: NSWorkspace.shared.icon(forFile: project.installedURL.path),
+            target: action.target,
+            targetIcon: action.pid.flatMap { NSRunningApplication(processIdentifier: $0)?.icon },
+            details: action.details,
+            intent: action.intent,
+            point: action.point,
+            window: action.window,
+            owner: owner))
     }
 
     /// Shows an alert without stopping everything else: as a sheet on Lamp's window when there is one, so
