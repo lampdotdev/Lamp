@@ -562,22 +562,50 @@ enum ComputerUse {
     /// tools, and each tool call goes to the driver until it answers. What the steps cost goes with a
     /// failure too.
     private static func loop(_ task: Job, endpoint: String, key: String?, model: String) async throws -> (String, Double) {
-        var cost = 0.0
+        let tally = Tally()
         do {
-            return (try await turns(task, endpoint: endpoint, key: key, model: model, cost: &cost), cost)
+            // The turns check the limits between steps; a model or driver call still in flight when the
+            // time runs out is cut off here, driver included, since its calls can't be cancelled.
+            let text = try await within({ task.overrun }, cut: { task.close() }) {
+                try await turns(task, endpoint: endpoint, key: key, model: model, tally: tally)
+            }
+            return (text, tally.cost)
         } catch {
-            throw Failure(message: error.localizedDescription, cost: cost)
+            // A call cut off at a limit fails as cancelled or as a stopped driver: the reason is the limit.
+            throw Failure(message: (task.halt ?? error).localizedDescription, cost: tally.cost)
+        }
+    }
+
+    /// What a task's turns have cost so far, kept where a failure can still read it.
+    final class Tally: @unchecked Sendable {
+        var cost = 0.0
+    }
+
+    /// Runs `work` until it ends or `overrun` names a limit the task has passed, looked at every `interval`.
+    /// At a limit `cut` is called, `work` is cancelled, and the limit is the error.
+    static func within<T: Sendable>(_ overrun: @escaping () -> Failure?, every interval: Duration = .seconds(1),
+                                    cut: @escaping () -> Void = {}, _ work: @escaping () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T?.self) { group in
+            group.addTask { try await work() }
+            group.addTask {
+                while overrun() == nil { try await Task.sleep(for: interval) }
+                return nil
+            }
+            defer { group.cancelAll() }
+            if let first = try await group.next(), let result = first { return result }
+            cut()
+            throw overrun() ?? tookTooLong
         }
     }
 
     /// The model's turns, until one is an answer or the task is halted (stopped, or past its limits).
-    private static func turns(_ task: Job, endpoint: String, key: String?, model: String, cost: inout Double) async throws -> String {
+    private static func turns(_ task: Job, endpoint: String, key: String?, model: String, tally: Tally) async throws -> String {
         let tools = task.openAITools
         var messages: [[String: Any]] = [["role": "system", "content": task.systemPrompt], ["role": "user", "content": task.taskText]]
         while true {
             if let halt = task.halt { throw halt }
             let (message, stepCost) = try await complete(endpoint: endpoint, messages: messages, tools: tools, model: model, key: key)
-            cost += stepCost
+            tally.cost += stepCost
             if let halt = task.halt { throw halt }   // stopped while the model was answering
             messages.append(message)
             let calls = message["tool_calls"] as? [[String: Any]] ?? []

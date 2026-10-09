@@ -46,4 +46,27 @@ final class ComputerUseRouteTests: XCTestCase {
         let own = route("engine:pi", .engine(.pi, model: "x"))
         XCTAssertEqual(AppAI.computerDefault(among: routes() + [own], builder: .pi, textDefault: own, hasKey: false).id, "engine:pi")
     }
+
+    /// A call still in flight when the task passes its limit is cut off there, not waited for.
+    func testWorkInFlightAtTheLimitIsCutOff() async {
+        let began = Date()
+        var cut = false
+        do {
+            _ = try await ComputerUse.within({ Date().timeIntervalSince(began) > 0.2 ? ComputerUse.tookTooLong : nil },
+                                             every: .milliseconds(50), cut: { cut = true }) {
+                try await Task.sleep(for: .seconds(30))
+                return "late"
+            }
+            XCTFail("The work should not have finished.")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, ComputerUse.tookTooLong.message)
+        }
+        XCTAssertTrue(cut)
+        XCTAssertLessThan(Date().timeIntervalSince(began), 5)
+    }
+
+    func testWorkThatFinishesInTimeIsItsOwnAnswer() async throws {
+        let answer = try await ComputerUse.within({ nil }, every: .milliseconds(50)) { "done" }
+        XCTAssertEqual(answer, "done")
+    }
 }
