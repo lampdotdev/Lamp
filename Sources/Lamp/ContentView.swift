@@ -1375,7 +1375,10 @@ struct ImportReviewView: View {
                     .frame(width: 56, height: 56)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Open “\(pending.package.name)”?").font(.title2.bold())
+                    // The name is the sender's: shown as written, never as formatting, and on one line whose
+                    // end (the closing quote and the question mark) stays in view however long it is.
+                    Text(verbatim: "Open “\(pending.package.name)”?").font(.title2.bold())
+                        .lineLimit(1).truncationMode(.middle)
                     if pending.waited {
                         Text("You opened this during setup.").font(.callout).foregroundStyle(.secondary)
                     }
@@ -1452,7 +1455,7 @@ struct ImportReviewView: View {
             if let existing = pending.existing {
                 // The buttons say what each does; this is what someone would worry about before choosing Update.
                 Label {
-                    Text("You already have this app\(existing.name == pending.package.name ? "" : ", as “\(existing.name)”"). Updating keeps your data, and you can go back if you change your mind.")
+                    Text(verbatim: "You already have this app\(existing.name == pending.package.name ? "" : ", as “\(existing.name)”"). Updating keeps your data, and you can go back if you change your mind.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {
@@ -1591,6 +1594,7 @@ struct ImportReviewView: View {
         let (text, color, icon): (String, Color, String) = switch review.verdict {
         case .risky: ("Looks risky. Don't open unless you trust the sender", .red, "xmark.octagon.fill")
         case .sensitive: ("Does sensitive things. Open only if you expected that", .red, "exclamationmark.octagon.fill")
+        case .partlyChecked: ("Only partly checked. Open only if you trust the sender", .yellow, "exclamationmark.circle.fill")
         case .powerful: ("Powerful, check it's what you expect", .yellow, "exclamationmark.circle.fill")
         case .safe: ("Looks safe", .green, "checkmark.seal.fill")
         case .checkedOnThisMac: ("Nothing worrying found, but not by a check Lamp can vouch for", .secondary, "questionmark.circle")
