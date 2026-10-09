@@ -315,7 +315,7 @@ import { together } from "../lib/text";
     const lower = (t: string) => t.replace(/^\w/, (c) => c.toLowerCase());
     const request = shape
       ? SCRIPT[shape][2](lower(turns[turns.length - 1]?.a ?? ""))
-      : `${picked!.words} Do that part for me, and ask me before changing anything.`;
+      : `A Mac app that helps with this: ${picked!.words} It asks me before changing anything.`;
     count("request", "script");
     await wait(700);
     showDraft("", request);

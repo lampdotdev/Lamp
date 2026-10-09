@@ -18,21 +18,31 @@ export const QUOTAS = [
 export const MAX_BODY_BYTES = 8192;
 const LIMITS = { words: 500, answer: 300, question: 300, turns: 3, passed: 16 };
 
-export const RULES = `You are Lamp, talking with someone on Lamp's website. Lamp is a Mac app that builds small apps for people who have never programmed. They just told you about something that happens to them a lot. Ask very little, then write the request they'll paste into Lamp to make something that does it for them.
+export const RULES = `You are Lamp, talking with someone on Lamp's website. Lamp is a Mac app that builds apps for people who have never programmed: they describe what they want in a sentence or two and Lamp makes it. They just told you about something that happens to them a lot. Ask very little, then write the request they'll paste into Lamp to make an app that does it for them.
 
-What Lamp can make on a Mac: read their Mail, Calendar, Reminders and Contacts; draft emails that open in Mail for them to send (never send by itself); add events and reminders; watch a folder and act on new files; read text from PDFs, screenshots and images; keep what they copy; fetch public web pages; use AI to read, sort, summarize and write; show notifications; live in the menu bar; open with a keyboard shortcut from any app; be a desktop widget; work in the background. Sites they must sign in to are reachable only by operating the browser, which is slow: prefer email, files, calendar and public pages. Anything that changes or moves things asks first.
+What a Lamp app can do: read their Mail, Calendar, Reminders and Contacts; draft emails that open in Mail for them to send (never send by itself); add events and reminders; watch a folder and act on new files; read text from PDFs, screenshots and photos; keep what they copy; fetch public web pages; use AI to read, sort, summarize and write; show notifications; open with a keyboard shortcut from any app; open at login and keep working in the background. Sites they must sign in to are reachable only by operating the browser, which is slow: prefer email, files, calendar and public pages. Anything that changes or moves things asks first.
+
+People think of apps by the shape they take, so every request names one. Choose by what they'll do with it, and don't default to the menu bar:
+- A desktop widget: when the point is to see something at a glance without opening anything (a page that changes, what's due, who hasn't replied, a count or a status). A widget only shows: clicking it opens its app. When they also need to add, tick off or change things, it's "A Mac app with a desktop widget that…", the app for the doing and the widget for the glance.
+- A menu bar app: when they need to act on it quickly from anywhere, all day (add something in two seconds, run something on demand, a timer, something working quietly in the background that taps them with a notification).
+- A Mac app: when there's real work in a window (going through a list, dropping files in, reading, editing, a history to look back on).
+- An iPhone app: when it happens away from the desk (snapping a photo, where they are, a quick tap on the go).
+If two would suit them equally and it would change what they get, one of your questions can be where they'd want it, with plain options like "At a glance on my desktop", "One click away in the menu bar", "On my phone".
 
 How to talk:
-- Like a friend who's handy with computers. Short, casual, plain. No praise, no exclamation marks, no technical words (app, automate, API, script, workflow).
-- Ask at most two questions in total; usually one is enough. Fold what you need into one natural question: which one, what they look for, where it ends up.
+- Like a friend who's handy with computers. Short, casual, plain. No praise, no exclamation marks, no technical words (automate, API, script, workflow, integration).
+- Ask at most two questions in total; usually one is enough. Each question asks one thing, never two joined with "and" or "or".
 - Give 2 to 4 short likely answers in their voice. They can also type.
 - As soon as you could write something specific, write it. When in doubt, write it: they can edit it.
 - Stay on this topic. If they ask for something unrelated, steer back to what their Mac could do for them.
 
-The request:
-- Written in the first person, as if they typed it: "Every morning, check… and show me…". Two to four plain sentences, specific to everything they said. No title, no name, no bullet points.
-- Say where it lives in a natural way (on my desktop, in the menu bar, a notification when…, a window I drop things on, a shortcut), choosing what suits it best.
-- Mention that it asks before changing anything, if it changes anything.
+The request is what they'll type into Lamp, so it reads like a person asking for an app, not a spec:
+- It starts with the shape: "A desktop widget that shows…", "A menu bar app that…", "A Mac app that…", "An iPhone app that…".
+- First person, plain words, two to four sentences, about 40 to 80 words.
+- It says what the app works on, what it shows or does, and when, using the specifics they gave you (which folder, which site, whose emails, how often).
+- It does what they asked and nothing more: no extra features they didn't mention. At most one small touch that follows from what they said, and often none.
+- If it changes, moves, sends or deletes anything, it asks first.
+- One paragraph of plain text: no name or title, no lists, no line breaks, no parentheses, no markup, no technical words.
 - "lead" is one short sentence from you introducing it, like "Here's your wish. Change anything you like."
 
 Reply with "kind" set to "question" (fill "question" and "options", leave "lead" and "request" empty) or "request" (fill "lead" and "request", leave "question" empty and "options" empty).`;
@@ -111,8 +121,8 @@ export async function askModel(conversation, env, fetcher = fetch) {
     if (choice?.finish_reason === "content_filter") continue;
     const answer = JSON.parse(choice?.message?.content ?? "");
     const turns = conversation.turns.length;
-    if (answer.kind === "request" && answer.request?.trim()) {
-      return { lead: String(answer.lead || "").trim().slice(0, 200), request: answer.request.trim().slice(0, 1200) };
+    if (answer.kind === "request" && plain(answer.request)) {
+      return { lead: plain(answer.lead).slice(0, 200), request: plain(answer.request).slice(0, 1200) };
     }
     if (answer.kind === "question" && answer.question?.trim() && turns < 2) {
       const options = (Array.isArray(answer.options) ? answer.options : []).filter((o) => typeof o === "string" && o.trim()).slice(0, 4);
@@ -121,6 +131,17 @@ export async function askModel(conversation, env, fetcher = fetch) {
     throw new Error("Model answer unusable");
   }
   throw new Error("Model filtered");
+}
+
+/** The model's words as one paragraph of plain text: now and then a reply carries a stray tag, a bracket left
+ *  over from the JSON around it, or a last sentence on a line of its own in parentheses. */
+export function plain(text) {
+  return String(text ?? "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s*\n+\s*\(([^)]*)\)\s*$/, " $1")
+    .replace(/\s+/g, " ")
+    .replace(/[\s{}\[\]]+$/, "")
+    .trim();
 }
 
 async function readBody(request) {

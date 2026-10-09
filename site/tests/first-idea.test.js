@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createIdeaHandler, readConversation, buildPrompt, DEFAULT_MODEL, RULES, QUOTAS, MAX_BODY_BYTES } from "../lib/first-idea.js";
+import { createIdeaHandler, readConversation, buildPrompt, plain, DEFAULT_MODEL, RULES, QUOTAS, MAX_BODY_BYTES } from "../lib/first-idea.js";
 import { createEventHandler, fieldFor, EVENTS } from "../lib/idea-events.js";
 import { SITUATIONS, ROUNDS, SCRIPT, SHAPES } from "../lib/situations.js";
 
@@ -80,6 +80,13 @@ test("after two answers the model is told to write, and a third question is neve
   const written = stand({ answer: { kind: "request", question: "", options: [], lead: "Here it is.", request: "Every morning, check my kid's school page…" } });
   const ok = await createIdeaHandler({ env: ENV, fetcher: written.fetcher })(post({ words: "I check the school portal daily", turns }));
   assert.deepEqual(await ok.json(), { lead: "Here it is.", request: "Every morning, check my kid's school page…" });
+});
+
+test("a wish comes back as one paragraph of plain text", () => {
+  assert.equal(plain("Nothing changes.</br>"), "Nothing changes.");
+  assert.equal(plain("Read it over.}"), "Read it over.");
+  assert.equal(plain("A notification lets me know.\n\n(Nothing gets sent until I say so.)"), "A notification lets me know. Nothing gets sent until I say so.");
+  assert.equal(plain("A widget\nthat  shows (a count) here."), "A widget that shows (a count) here.");
 });
 
 test("a filtered reply is asked once more; a failed or unusable one is a 502", async () => {

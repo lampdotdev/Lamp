@@ -32,6 +32,14 @@ situation and writes the request from the answer.
 `OPENROUTER_API_KEY=…` (and `FIRST_IDEA_MODEL=…` to try a model) in `site/.env.local`, which git ignores, and
 restart the dev server. Without a key it falls back to the built-in questions.
 
+To see what a change to the model's instructions (`RULES` in `lib/first-idea.js`) does to its questions and
+wishes, run ten made-up visitors through it, or only some of them by number:
+
+```bash
+node --env-file=.env.local scripts/try-first-idea.js
+node --env-file=.env.local scripts/try-first-idea.js 1 5 9
+```
+
 ## Limits and privacy
 
 - `QUOTAS` in `lib/first-idea.js`: 30 calls an hour per visitor (a conversation is two or three), 1,500 an hour
