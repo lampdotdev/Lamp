@@ -15,49 +15,65 @@ final class SharedAppAboutTests: XCTestCase {
         return Sharing.Package(name: "Tally", folder: folder, sources: [], attachments: [], fileCount: files.count)
     }
 
-    /// The description is the sentence or two the file opens with, written for people. What follows is the
-    /// agent's notes on the code, which read like this however they're laid out, and none of it is shown.
-    func testDescriptionIsTheOpeningAndNeverTheNotes() {
-        let about = """
-        # Ticker
-
-        Counts up by one every ten seconds while its window is open,
-        with a **Reset** button and a desktop widget showing the same number.
-
-        A second paragraph of detail.
-
-        ## What it does
-        - The window shows the count in big digits and a "next tick" countdown; toolbar Reset (asks first).
-        - Each change is shared with the widget (`LampWidget.share(TickerSummary, as: "summary")`).
-
-        ## Structure
-        - `Sources/App.swift`: entry point and window.
-        """
-        XCTAssertEqual(Sharing.description(fromAbout: about),
-                       "Counts up by one every ten seconds while its window is open, with a Reset button and a desktop widget showing the same number.")
+    /// A made-up app with code, as Lamp keeps one, in a folder of its own.
+    private func app(description: String?) throws -> LampProject {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("lamp-about-\(UUID().uuidString)")
+        folder = root
+        var project = LampProject(id: "ticker", name: "Ticker", exe: "Ticker", dir: root.appendingPathComponent("ticker"))
+        project.description = description
+        try fm.createDirectory(at: project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: project.dir.appendingPathComponent("Sources"), withIntermediateDirectories: true)
+        try Data("import SwiftUI\n".utf8).write(to: project.dir.appendingPathComponent("Sources/App.swift"))
+        // The agent's notes, which read like this and are never what a person is shown.
+        try Data("# Ticker\n\n## What it does\n- Each change is shared with the widget (`LampWidget.share(TickerSummary, as: \"summary\")`).\n".utf8)
+            .write(to: project.dir.appendingPathComponent("APP.md"))
+        try Template.saveMeta(project)
+        return project
     }
 
-    /// Notes with no opening above them describe the app to the agent, not to a person: nothing is shown.
-    func testNotesAloneAreNoDescription() {
-        XCTAssertNil(Sharing.description(fromAbout: "# Ticker\n\n## What it does\n- The count is saved (`LampStore`).\n"))
-        XCTAssertNil(Sharing.description(fromAbout: "## What it does\nCounts things.\n"))
+    private let words = "Counts up by one every ten seconds while its window is open, with a button to start over."
+
+    /// The description is a field of the app: it goes into the shared file as it is and comes out the same.
+    func testDescriptionTravelsWithTheSharedApp() throws {
+        let file = try Sharing.export(try app(description: words))
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let package = try Sharing.open(file)
+        defer { try? FileManager.default.removeItem(at: package.folder) }
+        XCTAssertEqual(package.description, words)
     }
 
-    func testOpeningNeedsNoSections() {
-        XCTAssertEqual(Sharing.description(fromAbout: "# Tally\n\nA counter with plus and minus buttons.\n"), "A counter with plus and minus buttons.")
+    /// An app nobody described says nothing, whatever its notes hold.
+    func testAppWithoutADescriptionSharesNone() throws {
+        let file = try Sharing.export(try app(description: nil))
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let package = try Sharing.open(file)
+        defer { try? FileManager.default.removeItem(at: package.folder) }
+        XCTAssertNil(package.description)
     }
 
-    /// An app nobody described yet says nothing, rather than Lamp's own words for a new app.
-    func testNewAppHasNoDescription() {
-        XCTAssertNil(Sharing.description(fromAbout: Template.appMd.replacingOccurrences(of: "{{NAME}}", with: "Tally")))
-        XCTAssertNil(Sharing.description(fromAbout: Template.iPhoneAppMd.replacingOccurrences(of: "{{NAME}}", with: "Tally")))
-        XCTAssertNil(Sharing.description(fromAbout: ""))
+    /// The copy made by opening a shared app keeps the description, so it's there when the copy is shared on.
+    func testOpenedCopyKeepsTheDescription() throws {
+        let copy = try app(description: nil)
+        let unpacked = copy.dir.deletingLastPathComponent().appendingPathComponent("unpacked")
+        try FileManager.default.createDirectory(at: unpacked, withIntermediateDirectories: true)
+        let shared = Sharing.Package(name: "Ticker", description: words, folder: unpacked, sources: [], attachments: [], fileCount: 0)
+        try Sharing.install(shared, into: copy)
+        let meta = try JSONDecoder().decode(ProjectMeta.self, from: Data(contentsOf: copy.dir.appendingPathComponent(".lamp/meta.json")))
+        XCTAssertEqual(meta.description, words)
+        XCTAssertEqual(meta.name, "Ticker")
     }
 
-    func testLongDescriptionIsCut() {
-        let text = Sharing.description(fromAbout: "# Tally\n\n" + String(repeating: "word ", count: 200))
-        XCTAssertEqual(text?.count, 280)
-        XCTAssertEqual(text?.last, "…")
+    /// Every engine is given the tool that sets it, and an app without one is told so with the request.
+    func testAgentIsGivenTheToolAndToldWhenThereIsNoDescription() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/lamp-tools.json")
+        let tools = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [[String: Any]])
+        XCTAssertTrue(tools.contains { $0["name"] as? String == "describe_app" })
+        XCTAssertTrue(Agent.tryRules.contains("`describe_app`"))
+        XCTAssertTrue(Agent.undescribed(try app(description: nil)).contains("describe_app"))
+        XCTAssertEqual(Agent.undescribed(try app(description: words)), "")
+        XCTAssertEqual(ToolCall("describe_app").action, .describe)
     }
 
     func testIconIsDrawnFromTheFile() async throws {

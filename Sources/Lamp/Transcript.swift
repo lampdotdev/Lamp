@@ -3,7 +3,7 @@ import SwiftUI
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, remember, offer, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, remember, offer, describe, other }
 
     let name: String
     let argument: String
@@ -35,7 +35,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
-        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "save_notes": .remember, "offer_setup": .offer,
+        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "save_notes": .remember, "offer_setup": .offer, "describe_app": .describe,
     ]
 
     var icon: String {
@@ -55,6 +55,7 @@ struct ToolCall {
         case .recall: "note.text"
         case .remember: "square.and.pencil"
         case .offer: "sparkles"
+        case .describe: "text.quote"
         case .other: "wrench.adjustable"
         }
     }
@@ -76,6 +77,7 @@ struct ToolCall {
         case .recall: "Read its notes"
         case .remember: "Updated its notes"
         case .offer: "Suggested a setup"
+        case .describe: "Described the app"
         case .other: name
         }
     }
@@ -99,6 +101,7 @@ struct ToolCall {
         case .recall: "read its notes"
         case .remember: "updated its notes"
         case .offer: "suggested a setup"
+        case .describe: "described the app"
         case .other: n("step", "steps")
         }
     }

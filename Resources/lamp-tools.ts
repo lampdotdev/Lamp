@@ -7,6 +7,8 @@
  * - `use_app`: clicks, types and presses keys in the open app's front window, at points in its latest picture.
  *   Lamp passes the actions to the app, which performs them on itself (LampDriver in LampSupport), so no
  *   Accessibility permission is needed. The reply is what happened and a fresh picture.
+ * - `describe_app`: sets the app's description, the sentence or two Lamp shows to someone the app is shared
+ *   with. Lamp keeps it beside the app's name.
  * - `delete_file`: pi's own tools can write and edit files but not remove one. This deletes a single file
  *   inside the app's folder, leaving alone the files Lamp owns. The app's git history can bring it back
  *   (Undo).
@@ -208,6 +210,23 @@ async function checkFile(tool: string, given: string, signal?: AbortSignal): Pro
 	}
 }
 
+const describeApp = defineTool({
+	...spec("describe_app"),
+	async execute(_toolCallId, params, signal) {
+		const url = process.env.LAMP_DESCRIBE_URL;
+		if (!url) throw new Error("Lamp isn't available to keep the description.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
+		});
+		const reply = (await response.json()) as { text?: string; error?: string };
+		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+	},
+});
+
 /** Files and folders Lamp generates or depends on: never the agent's to delete. */
 const protectedPaths = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift"];
 
@@ -376,6 +395,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(lookAtApp);
 	pi.registerTool(useApp);
 	pi.registerTool(plan);
+	pi.registerTool(describeApp);
 	pi.registerTool(deleteFile);
 	pi.registerTool(listVersions);
 	pi.registerTool(nameVersion);

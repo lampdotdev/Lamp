@@ -68,6 +68,9 @@ enum Sharing {
         /// Which app this is, the same in every file shared from it (`identity`). Files from before it
         /// existed have none and open as a new app, as they always did.
         var app: String?
+        /// What the app is for, in its sender's words (`LampProject.description`). Files from an app that
+        /// has none, or from before apps had one, carry none.
+        var description: String?
     }
 
     /// Which app a shared file is, so a Mac that already has it can take the new one as an update rather
@@ -164,7 +167,8 @@ enum Sharing {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(Manifest(format: formatVersion, name: project.name, exportedAt: Date(), app: identity(of: project)))
+        try encoder.encode(Manifest(format: formatVersion, name: project.name, exportedAt: Date(), app: identity(of: project),
+                                    description: project.description))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
         // Everything staged, counted and measured the way the importer's listing does (files and folders,
@@ -209,6 +213,7 @@ enum Sharing {
     struct Package {
         let name: String
         var identity: String? = nil   // Manifest.app; nil in files from before apps said who they are
+        var description: String? = nil   // Manifest.description, the sender's words; shown as text, never trusted
         let folder: URL          // unpacked, temporary
         let sources: [URL]       // .swift files only
         let attachments: [URL]   // the app's own files (Assets/, or Attachments/ from an older Lamp); bundled as data, never run by Lamp
@@ -262,7 +267,8 @@ enum Sharing {
         // Assets/, or Attachments/ from a Lamp that bundled the chat's files: either way the app's own now.
         let attachments = filesUnder(folder.appendingPathComponent(Assets.folder))
             + filesUnder(folder.appendingPathComponent(Attachments.folder))
-        return Package(name: manifest.name, identity: identity(from: manifest.app), folder: folder, sources: sources,
+        return Package(name: manifest.name, identity: identity(from: manifest.app), description: manifest.description?.trimmed.nilIfEmpty,
+                       folder: folder, sources: sources,
                        attachments: attachments, fileCount: all)
     }
 
@@ -304,6 +310,12 @@ enum Sharing {
         if fm.fileExists(atPath: appMd.path) {
             try? fm.removeItem(at: project.dir.appendingPathComponent("APP.md"))
             try fm.copyItem(at: appMd, to: project.dir.appendingPathComponent("APP.md"))
+        }
+        // The description comes with the app, so the copy says the same when it's shared on.
+        if let description = package.description {
+            var described = project
+            described.description = description
+            try Template.saveMeta(described)
         }
         if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
            let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
@@ -475,33 +487,6 @@ extension Sharing {
     /// Said under the checklist when Lamp has no AI to read the code with. It tells the reader what they're
     /// not getting and that opening doesn't depend on it; it isn't a problem to fix first.
     static let aiNotSetUp = "Lamp can also have AI read a shared app's code before you open it. That's available once AI is set up in Lamp → Settings; you don't need it to open this app."
-
-    /// The app in its sender's words, for the top of the review: the sentence or two APP.md opens with, which
-    /// the agent writes for people (`Agent.Rules.appMd`), as plain text. The rest of the file is the agent's
-    /// own notes on the code and is never shown. Nil when the file has no opening, or only what Lamp wrote
-    /// into a new app.
-    static func description(of package: Package) -> String? {
-        guard let about = try? String(contentsOf: package.folder.appendingPathComponent("APP.md"), encoding: .utf8) else { return nil }
-        return description(fromAbout: about)
-    }
-
-    static func description(fromAbout about: String) -> String? {
-        // The first paragraph under the title, before any "## " section.
-        var paragraph: [String] = []
-        for line in about.components(separatedBy: .newlines).map(\.trimmed) {
-            if line.hasPrefix("##") { break }
-            if line.isEmpty || line.hasPrefix("#") {
-                if !paragraph.isEmpty { break }
-            } else {
-                paragraph.append(line)
-            }
-        }
-        let found = paragraph.joined(separator: " ")
-        guard !found.isEmpty, ![Template.opening, Template.iPhoneOpening].contains(found) else { return nil }
-        // Shown as written, never as formatting or links: the commonest marks are dropped, the rest is text.
-        let plain = found.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
-        return plain.count > 280 ? String(plain.prefix(279)).trimmed + "…" : plain
-    }
 
     /// The app's own icon, drawn from the icon.json and artwork in the file the way Lamp will draw it once
     /// built. Nil when the file has no icon. Nothing of the sender's runs: the artwork is read as a picture,

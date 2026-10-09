@@ -1353,7 +1353,6 @@ struct ImportReviewView: View {
     /// The app's own icon, once drawn from the file; the plain app icon until then, and for a file without one.
     @State private var icon: NSImage?
     /// What the app says it does, in its sender's words, when the file has that.
-    @State private var description: String?
     /// How tall the sheet may be where it hangs: from its top down to the bottom of the screen's usable area
     /// (above the Dock). Unlimited until the sheet is on screen.
     @State private var room = CGFloat.infinity
@@ -1381,12 +1380,12 @@ struct ImportReviewView: View {
                         Text("You opened this during setup.").font(.callout).foregroundStyle(.secondary)
                     }
                     // The sender's words, so the line under them says whose they are.
-                    if let description {
+                    if let description = pending.package.description {
                         Text(verbatim: description).font(.callout).lineLimit(4)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.bottom, 2)
                     }
-                    Text(description == nil
+                    Text(pending.package.description == nil
                          ? "Someone shared this app with you. Lamp builds it and opens it here, where it can do anything an app you run can do."
                          : "Someone shared this app with you, and the description above is theirs. Lamp builds it and opens it here, where it can do anything an app you run can do.")
                         .font(.callout).foregroundStyle(.secondary)
@@ -1394,7 +1393,6 @@ struct ImportReviewView: View {
                 }
             }
             .task {
-                description = Sharing.description(of: pending.package)
                 icon = await Sharing.icon(of: pending.package)
             }
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.name] = $0 }
