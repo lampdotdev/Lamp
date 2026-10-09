@@ -153,6 +153,9 @@ button goes to `https://updates.lamp.dev/download/latest`, so a new release need
   exactly what gets deployed (the dev server can miss styles from a page added while it's running).
 - `site/vercel.json` sets the framework, caches the fingerprinted files under `/_astro/` for a year, and adds
   a few security headers. `public/og.jpg` is the 1200×630 card shown where the link is shared.
+- The section under the hero that helps a visitor find a first app asks a model through OpenRouter and counts
+  what people pick: its setup, model, limits and counts are in [site/FIRST_IDEA.md](site/FIRST_IDEA.md). Under
+  `npm run dev` it asks the model with a key from `site/.env.local`.
 - The pictures are real windows taken from Lamp Dev with made-up data (⌘⇧4 then Space, which keeps the
   shadow): `site/src/assets/lamp.png` is Lamp under the headline, and `site/src/assets/apps/` holds the apps
   the carousel cycles through, each centred on a canvas of the same size so the slides line up. Retake them

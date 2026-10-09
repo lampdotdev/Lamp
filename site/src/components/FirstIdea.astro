@@ -1,0 +1,455 @@
+---
+import DownloadButton from "./DownloadButton.astro";
+import { together } from "../lib/text";
+---
+
+<!--
+  Finding a first wish before the download: people rarely know what they'd ask a computer to do, but they
+  recognise themselves in an everyday moment. Under a night sky, a heading and one button; pressing it starts a
+  short conversation: four situations at a time (each round as different from the last as it can be), one or
+  two questions from a model about the one they pick, then the request in their own words, rising out of the
+  lamp's light as a card to change, copy and take to Lamp. Made to be enjoyed rather than rushed through; all
+  of its motion stops for people who've asked for less (global.css).
+-->
+<section id="first-idea" class="px-2 pt-20 sm:px-3 sm:pt-24">
+  <div data-sky class="wish-night relative isolate mx-auto max-w-6xl overflow-hidden rounded-[28px] px-5 pt-16 pb-14 text-white sm:px-10 sm:pt-20 sm:pb-20">
+    <!-- Dawn: the sky warms when the wish appears. -->
+    <div data-dawn aria-hidden="true" class="wish-dawn"></div>
+    <div class="relative z-10">
+      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Not sure what to wish&nbsp;for?</h2>
+      <p class="mx-auto mt-4 max-w-[40rem] text-center text-xl leading-[1.4] font-semibold text-white/70">
+        {together("Everyone has something to solve.")} <span class="whitespace-nowrap">Let's find yours together.</span>
+      </p>
+
+      <div data-begin class="mt-9 flex justify-center">
+        <!-- Sparkles glint around and over the button, each popping up in turn, flashing and turning, then gone;
+             now and then a sweep of light crosses the button itself. -->
+        <div class="relative">
+        {[
+          { x: "-4%", y: "8%", size: "18px", time: "3.2s", delay: "0s" },
+          { x: "96%", y: "-6%", size: "14px", time: "3.6s", delay: "0.9s" },
+          { x: "104%", y: "78%", size: "11px", time: "3.4s", delay: "1.7s" },
+          { x: "30%", y: "-14%", size: "10px", time: "4s", delay: "2.4s" },
+          { x: "8%", y: "96%", size: "12px", time: "3.8s", delay: "1.2s" },
+          { x: "68%", y: "104%", size: "15px", time: "3.3s", delay: "2.9s" },
+          { x: "78%", y: "22%", size: "9px", time: "4.4s", delay: "0.5s" },
+        ].map((s) => (
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            class="wish-sparkle z-20"
+            style={`--x: ${s.x}; --y: ${s.y}; --size: ${s.size}; --time: ${s.time}; --delay: ${s.delay}`}
+          ><path d="M12 0C12.9 7.2 16.8 11.1 24 12C16.8 12.9 12.9 16.8 12 24C11.1 16.8 7.2 12.9 0 12C7.2 11.1 11.1 7.2 12 0Z" /></svg>
+        ))}
+        <button
+          type="button"
+          class="wish-beckon relative z-10 inline-flex overflow-hidden h-[52px] items-center gap-2 rounded-full bg-linear-to-b from-[#ffe2a3] to-[#ffb45c] px-8 text-[17px] font-semibold text-[#3a2600] ring-1 ring-white/40 ring-inset transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-[1.04] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#ffcf7a] active:scale-[0.98]"
+        >
+          <span aria-hidden="true" class="wish-glint"></span>
+          <span aria-hidden="true" class="relative">✦</span> <span class="relative">Find my wish</span>
+        </button>
+        </div>
+      </div>
+
+      <div data-convo hidden class="mx-auto mt-12 max-w-2xl">
+        <div data-thread class="flex flex-col gap-4" aria-live="polite"></div>
+
+        <!-- Typing is offered only once the cards haven't fit ("None of these") or a question is waiting. -->
+        <div data-typing hidden class="wish-float">
+        <form data-composer class="mt-6 flex gap-2">
+          <label for="first-idea-box" class="sr-only">Your reply</label>
+          <input
+            id="first-idea-box"
+            data-box
+            type="text"
+            maxlength="500"
+            autocomplete="off"
+            placeholder="Or tell us in your own words…"
+            class="min-w-0 flex-1 rounded-full bg-white/10 px-4 py-2 text-[15px] text-white ring-1 ring-white/20 placeholder:text-white/45 focus:ring-2 focus:ring-[#ffcf7a]/60 focus:outline-none"
+          />
+          <button type="submit" class="rounded-full bg-white/10 px-4 py-2 text-[15px] font-medium text-white ring-1 ring-white/20 transition hover:bg-white/20">Send</button>
+        </form>
+        <p class="mt-6 text-center text-xs text-white/45">What you type goes to an AI model to help write your wish. It's anonymous.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- The site's own Download button, copied into the wish card at the end of the conversation. -->
+  <template data-download><DownloadButton /></template>
+</section>
+
+<script>
+  import { SHAPES, SITUATIONS, ROUNDS, SCRIPT } from "../../lib/situations.js";
+  import { shapeIcon } from "../lib/shape-icons";
+
+  const section = document.getElementById("first-idea")!;
+  const sky = section.querySelector<HTMLElement>("[data-sky]")!;
+  const thread = section.querySelector<HTMLElement>("[data-thread]")!;
+  const composer = section.querySelector<HTMLFormElement>("[data-composer]")!;
+  const typing = section.querySelector<HTMLElement>("[data-typing]")!;
+  const box = section.querySelector<HTMLInputElement>("[data-box]")!;
+  const download = section.querySelector<HTMLTemplateElement>("[data-download]")!;
+  const calm = matchMedia("(prefers-reduced-motion: reduce)");
+
+  type Turn = { q: string; a: string };
+  let rounds: { ids: string[]; pick: string | null }[] = [];
+  let picked: { situation: string | null; words: string | null } | null = null;
+  let turns: Turn[] = [];
+  let pending: string | null = null;
+  let phase: "cards" | "own" | "talk" | "draft" = "cards";
+  // Once the model can't be reached, the rest of the visit uses the built-in questions.
+  let scripted = false;
+  let busy: AbortController | null = null;
+
+  // The lamp's light at the bottom of the sky warms as the wish takes shape.
+  const glow = (level: number) => sky.style.setProperty("--glow", String(level));
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, calm.matches ? 0 : ms));
+
+  // ---------- Counting, never what anyone typed ----------
+  function count(event: string, detail = "") {
+    const body = JSON.stringify({ event, detail });
+    try {
+      if (!navigator.sendBeacon?.("/api/idea-event", body)) fetch("/api/idea-event", { method: "POST", body, keepalive: true }).catch(() => {});
+    } catch {}
+  }
+
+  // ---------- The thread ----------
+  function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string) {
+    const n = document.createElement(tag);
+    n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function add<T extends HTMLElement>(node: T): T {
+    thread.append(node);
+    const r = node.getBoundingClientRect();
+    if (r.bottom > innerHeight - 24) node.scrollIntoView({ block: "nearest", behavior: calm.matches ? "auto" : "smooth" });
+    return node;
+  }
+  /** Lamp says something, a word at a time. Resolves when the last word is in. */
+  /** Lamp says something, a word at a time, on a new line or in place of what `line` said. Resolves with the
+   *  line once the last word is in. */
+  async function lamp(t: string, line?: HTMLElement) {
+    if (line) line.replaceChildren();
+    else line = add(el("p", "text-[19px] leading-snug font-semibold tracking-tight"));
+    line.setAttribute("aria-label", t);
+    let n = 0;
+    for (const w of t.split(/(\s+)/)) {
+      if (!w.trim()) { line.append(w); continue; }
+      const span = el("span", "wish-word", w);
+      span.setAttribute("aria-hidden", "true");
+      span.style.animationDelay = `${n++ * 45}ms`;
+      line.append(span);
+    }
+    await wait(n * 45 + 250);
+    return line;
+  }
+  const me = (t: string) => add(el("div", "wish-pop self-end max-w-[85%] rounded-2xl bg-[#ffd98a] px-3.5 py-1.5 text-[15px] text-[#3a2600] shadow-[0_6px_24px_-8px_rgba(255,176,92,0.7)]", t));
+  const clearChoices = () => thread.querySelectorAll("[data-choices]").forEach((n) => n.remove());
+  function quick(options: string[], onPick: (o: string) => void) {
+    const row = add(el("div", "flex flex-wrap gap-2"));
+    row.dataset.choices = "";
+    options.forEach((o, i) => {
+      const b = el("button", "wish-float rounded-full bg-white/10 px-3.5 py-1.5 text-[15px] text-white ring-1 ring-white/20 transition hover:bg-white/20 hover:ring-[#ffcf7a]/60", o);
+      b.type = "button";
+      b.style.animationDelay = `${i * 80}ms`;
+      b.onclick = () => { row.remove(); onPick(o); };
+      row.append(b);
+    });
+  }
+  let sparkles: HTMLElement | null = null;
+  function thinking(on: boolean) {
+    sparkles?.remove(); sparkles = null;
+    if (!on) return;
+    sparkles = add(el("div", "flex gap-2 py-1 text-[#ffcf7a]"));
+    sparkles.setAttribute("aria-label", "Thinking");
+    for (let i = 0; i < 3; i++) {
+      const s = el("span", "wish-think text-sm", "✦");
+      s.style.animationDelay = `${i * 200}ms`;
+      sparkles.append(s);
+    }
+  }
+  function composerShown(show: boolean, placeholder = "") {
+    typing.hidden = !show;
+    if (placeholder) box.placeholder = placeholder;
+  }
+
+  // ---------- Situations ----------
+  const shown = () => rounds.flatMap((r) => r.ids);
+  // The cards on show, with Lamp's line above them. "None of these" swaps both in place, so the
+  // conversation only grows once something is chosen or typed.
+  let picker: { line: HTMLElement; grid: HTMLElement } | null = null;
+
+  async function showRound() {
+    if (rounds.length >= ROUNDS.length) return askOwnWords();
+    phase = "cards";
+    glow(0.3);
+    const ids = ROUNDS[rounds.length];
+    rounds.push({ ids, pick: null });
+    count("round", String(rounds.length));
+    composerShown(rounds.length > 1, "Or tell us in your own words…");
+    const text = rounds.length === 1 ? "Can you relate to any of these?" : "How about any of these?";
+    if (picker?.grid.isConnected) {
+      await lamp(text, picker.line);
+    } else {
+      const line = await lamp(text);
+      const grid = add(el("div", "grid gap-2.5 sm:grid-cols-2"));
+      grid.dataset.choices = "";
+      picker = { line, grid };
+    }
+    const grid = picker!.grid;
+    ids.forEach((id, i) => {
+      const b = el("button", "wish-float group flex gap-3 rounded-2xl bg-white/[0.07] px-4 py-3.5 text-left text-[15px] leading-snug text-white/90 ring-1 ring-white/15 backdrop-blur-sm transition duration-300 hover:-translate-y-0.5 hover:bg-white/[0.12] hover:shadow-[0_10px_30px_-10px_rgba(255,176,92,0.5)] hover:ring-[#ffcf7a]/60");
+      b.type = "button";
+      b.style.animationDelay = `${i * 90}ms`;
+      b.innerHTML = shapeIcon(SITUATIONS[id].shape);
+      b.append(el("span", "", SITUATIONS[id].text));
+      b.onclick = () => choose(id);
+      grid.append(b);
+    });
+    const none = el("button", "wish-float rounded-2xl px-4 py-2.5 text-[15px] text-white/60 ring-1 ring-white/15 transition hover:bg-white/10 hover:text-white sm:col-span-2", "None of these");
+    none.type = "button";
+    none.style.animationDelay = `${ids.length * 90}ms`;
+    none.onclick = () => choose(null);
+    grid.append(none);
+  }
+
+  /** The cards drift away before the next ones come in. */
+  async function clearCards() {
+    const grid = picker!.grid;
+    grid.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    grid.classList.add("wish-out");
+    await wait(260);
+    grid.replaceChildren();
+    grid.classList.remove("wish-out");
+  }
+
+  async function choose(id: string | null) {
+    const round = rounds[rounds.length - 1];
+    if (!id) {
+      count("none", String(rounds.length));
+      await clearCards();
+      return showRound();
+    }
+    clearChoices();
+    round.pick = id;
+    me(SITUATIONS[id].text);
+    count("pick", id);
+    start({ situation: id, words: null });
+  }
+
+  async function askOwnWords() {
+    phase = "own";
+    composerShown(true, "Every Monday I copy sign-ups from email into a list…");
+    const line = picker?.grid.isConnected ? picker.line : undefined;
+    picker?.grid.remove();
+    picker = null;
+    await lamp("None of those, then. What's something you do on your computer more often than you'd like?", line);
+    box.focus({ preventScroll: true });
+  }
+
+  function start(p: { situation: string | null; words: string | null }) {
+    picked = p; turns = []; pending = null; phase = "talk";
+    glow(0.45);
+    ask();
+  }
+
+  // ---------- The follow-up ----------
+  async function ask() {
+    composerShown(false);
+    if (scripted) return scriptedNext();
+    await wait(250);
+    thinking(true);
+    busy = new AbortController();
+    let failure = "network";
+    // A moment's pause at least, so a quick answer still feels considered.
+    const breath = wait(900);
+    try {
+      const passed = shown().filter((id) => id !== picked!.situation);
+      const response = await fetch("/api/first-idea", {
+        method: "POST", signal: busy.signal, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ situation: picked!.situation, words: picked!.words, passed, turns }),
+      });
+      failure = response.status === 429 ? "quota" : "model";
+      if (response.ok) {
+        const answer = await response.json();
+        await breath;
+        thinking(false);
+        if (typeof answer.request === "string") { count("request", "model"); return showDraft(answer.lead, answer.request); }
+        if (typeof answer.question === "string") return showQuestion(answer.question, answer.options ?? []);
+      }
+    } catch (error) {
+      if ((error as Error).name === "AbortError") return;
+    }
+    await breath;
+    thinking(false);
+    count("failed", failure);
+    scripted = true;
+    scriptedNext();
+  }
+
+  async function showQuestion(q: string, options: string[]) {
+    pending = q;
+    count("question", String(turns.length + 1));
+    composerShown(true, "Or say it your way…");
+    await lamp(q);
+    if (options.length) quick(options, (o) => { me(o); answer(o); });
+  }
+
+  function answer(a: string) {
+    if (!pending) return;
+    turns.push({ q: pending, a });
+    pending = null;
+    glow(0.55);
+    ask();
+  }
+
+  async function scriptedNext() {
+    const shape = picked!.situation ? SITUATIONS[picked!.situation].shape as keyof typeof SHAPES : null;
+    if (shape && !turns.length) {
+      await wait(700);
+      const [q, options] = SCRIPT[shape];
+      return showQuestion(q, options);
+    }
+    const lower = (t: string) => t.replace(/^\w/, (c) => c.toLowerCase());
+    const request = shape
+      ? SCRIPT[shape][2](lower(turns[turns.length - 1]?.a ?? ""))
+      : `${picked!.words} Do that part for me, and ask me before changing anything.`;
+    count("request", "script");
+    await wait(700);
+    showDraft("", request);
+  }
+
+  // ---------- The wish: a card of their own, to change and take to Lamp ----------
+  const dawn = sky.querySelector<HTMLElement>("[data-dawn]")!;
+
+  /** Genie smoke curling up from the lamp's light at the bottom of the sky to the middle of `target`. */
+  function smoke(target: HTMLElement) {
+    if (calm.matches) return;
+    const skyBox = sky.getBoundingClientRect();
+    const box = target.getBoundingClientRect();
+    const rise = Math.max(160, skyBox.bottom - (box.top + box.height / 2));
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 100 100");
+    svg.setAttribute("preserveAspectRatio", "none");
+    svg.setAttribute("aria-hidden", "true");
+    svg.classList.add("wish-smoke");
+    svg.style.height = `${rise}px`;
+    const strands = [
+      ["M50 100 C18 80 82 66 30 46 S74 18 50 0", "rgb(255 170 100 / 0.45)", "46"],
+      ["M50 100 C80 82 20 62 68 44 S26 16 50 0", "rgb(255 196 130 / 0.55)", "30"],
+      ["M50 100 C30 84 70 60 42 42 S64 14 50 0", "rgb(255 226 190 / 0.7)", "18"],
+      ["M50 100 C64 86 38 58 56 42 S40 16 50 0", "rgb(255 244 226 / 0.85)", "9"],
+      ["M50 100 C46 86 56 56 49 44 S53 16 50 0", "rgb(255 255 255 / 0.95)", "3"],
+    ];
+    strands.forEach(([d, color, width], i) => {
+      const path = document.createElementNS(ns, "path");
+      path.setAttribute("d", d);
+      path.setAttribute("pathLength", "1");
+      path.style.stroke = color;
+      path.style.strokeWidth = width;
+      path.style.animationDelay = `${i * 70}ms`;
+      svg.append(path);
+    });
+    sky.append(svg);
+    setTimeout(() => svg.remove(), 2200);
+  }
+
+  async function showDraft(lead: string, request: string) {
+    phase = "draft";
+    composerShown(false);
+    // The lamp flares, then settles warm; the night turns toward dawn.
+    glow(1);
+    dawn.classList.add("on");
+    setTimeout(() => glow(0.8), 1800);
+    await lamp(lead || "Here's your wish. Change anything you like.");
+
+    // The card waits (wish-rise holds its first frame through the delay) while the smoke reaches it.
+    const card = add(el("div", "wish-rise relative mt-2 rounded-[22px] bg-page p-5 text-ink shadow-[0_0_60px_-6px_rgba(255,176,92,0.35)] sm:p-7"));
+    const delay = calm.matches ? 0 : 750;
+    card.style.animationDelay = `${delay}ms, ${delay + 300}ms`;
+    smoke(card);
+    for (let i = 0; i < 10; i++) {
+      const angle = (Math.PI * (i + 0.5)) / 10 + Math.PI;
+      const spark = el("span", "wish-spark text-[13px]", i % 3 ? "✦" : "✧");
+      spark.setAttribute("aria-hidden", "true");
+      spark.style.setProperty("--dx", `${Math.cos(angle) * (90 + (i % 3) * 40)}px`);
+      spark.style.setProperty("--dy", `${Math.sin(angle) * (50 + (i % 4) * 18)}px`);
+      spark.style.animationDelay = `${delay + 250 + (i % 5) * 40}ms`;
+      card.append(spark);
+    }
+    const area = el("textarea", "w-full resize-none overflow-hidden rounded-xl bg-panel/70 p-3.5 text-[17px] leading-relaxed ring-1 ring-rule transition focus:bg-page focus:ring-2 focus:ring-[#cf620c]/40 focus:outline-none");
+    area.value = request;
+    area.id = "first-idea-wish";
+    const fit = () => { area.style.height = "auto"; area.style.height = `${area.scrollHeight + 2}px`; };
+    let edited = false;
+    area.addEventListener("input", () => {
+      fit();
+      if (!edited) { edited = true; count("edit"); }
+    });
+    const label = el("label", "mb-2.5 block text-[15px] font-semibold text-ink", "Here's your wish to give Lamp:");
+    label.htmlFor = area.id;
+    card.append(label, area);
+    requestAnimationFrame(fit);
+
+    // One step to finish: the site's Download button copies the wish on its way to the download.
+    const finish = el("div", "mt-6 flex flex-col items-center");
+    const parts = download.content.cloneNode(true) as DocumentFragment;
+    const go = parts.querySelector("a")!;
+    const requirement = parts.querySelector("p");
+    go.textContent = "Copy and download Lamp";
+    const row = el("div", "flex flex-wrap items-center justify-center gap-x-5 gap-y-3");
+    const over = el("button", "text-[15px] text-muted transition hover:text-ink", "Start over");
+    over.type = "button";
+    over.onclick = reset;
+    row.append(go, over);
+    finish.append(row);
+    if (requirement) finish.append(requirement);
+
+    card.append(finish);
+
+    go.addEventListener("click", () => {
+      count("copy");
+      count("download");
+      // The download leaves this page where it is, so the copy finishes and the button can say so.
+      navigator.clipboard?.writeText(area.value).then(() => {
+        go.textContent = "Copied ✓ Downloading…";
+      }, () => {});
+    });
+  }
+
+  function reset() {
+    busy?.abort();
+    rounds = []; picked = null; turns = []; pending = null; scripted = false;
+    thread.replaceChildren();
+    picker = null;
+    dawn.classList.remove("on");
+    showRound();
+  }
+
+  // ---------- The composer: their own words, at any point ----------
+  composer.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const t = box.value.trim().slice(0, 500);
+    if (!t) return;
+    box.value = "";
+    if (phase === "cards" || phase === "own") {
+      clearChoices(); me(t); count("own");
+      return start({ situation: null, words: t });
+    }
+    if (phase === "talk" && pending) { clearChoices(); me(t); answer(t); }
+  });
+
+  // The conversation starts when they ask for it.
+  const begin = section.querySelector<HTMLElement>("[data-begin]")!;
+  const convo = section.querySelector<HTMLElement>("[data-convo]")!;
+  begin.querySelector("button")!.addEventListener("click", () => {
+    count("start");
+    begin.hidden = true;
+    convo.hidden = false;
+    convo.classList.add("wish-float");
+    showRound();
+  });
+</script>
