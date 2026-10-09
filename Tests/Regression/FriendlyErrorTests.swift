@@ -52,19 +52,16 @@ final class FriendlyErrorTests: XCTestCase {
                        ErrorMessages.authenticationFailed("OpenRouter"))
     }
 
-    /// A status can stand for more than one kind: an empty account and too many requests both come back
-    /// 429 from a provider that names which in the error's code. Waiting a minute fixes only one of them.
-    func testTheProvidersOwnCodeForTheFailureComesBeforeItsStatus() {
+    /// OpenAI answers 429 for an empty account as well as for too many requests, and says which in the
+    /// error's code. Waiting a minute fixes only one of them.
+    func testAnEmptyAccountAnswering429IsNotToldToWait() {
         let empty = reply("You exceeded your current quota, please check your plan and billing details.",
                           code: "insufficient_quota", type: "insufficient_quota")
         XCTAssertEqual(Provider.friendlyError(status: 429, reply: empty, from: "OpenAI"), ErrorMessages.quotaExceeded("OpenAI"))
-        let tooFast = reply("Rate limit reached for requests", code: "rate_limit_exceeded", type: "requests")
-        XCTAssertEqual(Provider.friendlyError(status: 429, reply: tooFast, from: "OpenAI"), ErrorMessages.providerBusy)
-        // Named only by its type, and a code nobody knows leaves it to the status.
         XCTAssertEqual(Provider.friendlyError(status: 429, reply: reply("No more.", type: "insufficient_quota"), from: "OpenAI"),
                        ErrorMessages.quotaExceeded("OpenAI"))
-        XCTAssertEqual(Provider.friendlyError(status: 429, reply: reply("No more.", code: "something_new"), from: "OpenAI"),
-                       ErrorMessages.providerBusy)
+        let tooFast = reply("Rate limit reached for requests", code: "rate_limit_exceeded", type: "requests")
+        XCTAssertEqual(Provider.friendlyError(status: 429, reply: tooFast, from: "OpenAI"), ErrorMessages.providerBusy)
     }
 
     func testAReplyThatDoesNotSayLeavesItToTheWords() {

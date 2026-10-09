@@ -98,38 +98,29 @@ enum Provider {
         friendlyError(kind(of: raw), raw, from: name)
     }
 
-    /// The same for a call that came back with an HTTP status and a reply. The provider says what kind of
-    /// failure it was, so that decides: its own code for the error where the reply carries one, else the
-    /// status. The message's wording is read only when neither says. Words alone mislead both ways: a
-    /// provider with no room for the request answers 429 with words about quota, and one whose account is
-    /// empty answers 429 too.
+    /// The same for a call that came back with an HTTP status and a reply. The status is the provider saying
+    /// what kind of failure it was, so it decides; the message's wording is read only when the status doesn't
+    /// say (a provider with no room for the request answers 429 with words about quota, which isn't an empty
+    /// account).
     static func friendlyError(status: Int, reply: [String: Any], from name: String) -> String {
         let error = reply["error"] as? [String: Any]
         let message = error?["message"] as? String ?? reply["detail"].map { "\($0)" } ?? "HTTP \(status)"
         let raw = "\(status) \(message)"
-        let named = [error?["code"], error?["type"]].lazy.compactMap { ($0 as? String).flatMap(FailureKind.init(code:)) }.first
-        return friendlyError(named ?? FailureKind(status: status) ?? kind(of: raw), raw, from: name)
+        let code = error?["code"] as? String ?? error?["type"] as? String
+        return friendlyError(FailureKind(status: status, code: code) ?? kind(of: raw), raw, from: name)
     }
 
     /// What went wrong with a call, as far as the person can do something about it.
     enum FailureKind: Equatable {
         case authentication, quota, busy, unreachable, outdated, other
 
-        /// From the code a reply's error carries, in the spelling OpenAI's API set and others follow.
-        init?(code: String) {
-            switch code {
-            case "invalid_api_key": self = .authentication
-            case "insufficient_quota": self = .quota
-            case "rate_limit_exceeded": self = .busy
-            default: return nil
-            }
-        }
-
-        init?(status: Int) {
+        init?(status: Int, code: String?) {
             switch status {
             case 401: self = .authentication
             case 402: self = .quota
-            case 429: self = .busy
+            // OpenAI answers 429 for an empty account as well as for too many requests, and its error's
+            // code says which: waiting a minute fixes only one of them.
+            case 429: self = code == "insufficient_quota" ? .quota : .busy
             default: return nil
             }
         }
