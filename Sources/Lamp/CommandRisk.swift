@@ -29,12 +29,15 @@ enum CommandRisk {
     /// because the sandbox doesn't close them (Applications, Homebrew, /usr/local are open to a build).
     /// Level 3 also names what outlasts the command or the app: a setting that holds beyond this app, and
     /// something set up to run later. Written as a file, either one read as level 1, "creates a file": a
-    /// git hook, a wrapper that loads the home folder's settings, git's settings for the whole account.
+    /// git hook, a wrapper that loads the home folder's settings, git's settings for the whole account, a
+    /// file Python loads at every start. And two things that read as work on the app's own files and
+    /// aren't: a link out of the folder (the write lands where it points, and the shared places are open),
+    /// and getting an app past the check macOS makes before running it.
     static let levels = [
         "Only reads, lists, searches or measures things. It changes nothing and sends nothing.",
         "Creates, edits, converts or deletes files, or builds, runs or tests the app's own code. Nothing is installed, downloaded, sent or published, and no other app is touched.",
         "Downloads something for this project, or installs a tool for this project only.",
-        "Installs software for the whole Mac, or adds, changes or removes something in the Mac's shared places (Applications, Homebrew, /usr/local), quits or controls another app, or publishes or pushes something. Or changes a setting that holds beyond this app (the user's own settings for a tool such as git's global configuration, a shell profile, another app's preferences), sets something up to run by itself later (a git hook or hooks path, a scheduled job), or writes or runs a script that loads code or settings from the user's home folder or another place on this Mac outside `working_folder`.",
+        "Installs software for the whole Mac, or adds, changes or removes something in the Mac's shared places (Applications, Homebrew, /usr/local), quits or controls another app, or publishes or pushes something. Or changes a setting that holds beyond this app (the user's own settings for a tool such as git's global configuration, a shell profile, another app's preferences), sets something up to run by itself later (a git hook or hooks path, a scheduled job, a file that an interpreter or tool loads on its own whenever it starts, such as a Python .pth or sitecustomize file or a shell's startup file), or writes or runs a script that loads code or settings from the user's home folder or another place on this Mac outside `working_folder`. Or makes a link inside `working_folder` that points outside it, or writes through one (a link between the app's own files is ordinary). Or gets an app past a check macOS makes before running it (clears its quarantine mark, signs it again, marks the program inside it runnable) and opens it.",
         "Needs administrator rights, changes system settings or what starts by itself, sends the user's files or data somewhere, or runs code downloaded from the internet.",
     ]
 
