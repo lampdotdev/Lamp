@@ -193,20 +193,7 @@ enum Template {
     set -euo pipefail
     cd "$(dirname "$0")"
     SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
-    # The simulator gives an app its own Keychain only when the program says which app it is, in a section of
-    # the program itself, where Xcode puts it too. The signature can't say it: without a profile the app
-    # would not start. On a phone, Xcode's signing says it.
-    mkdir -p .build
-    cat > .build/simulated-entitlements.plist <<PLIST
-    <?xml version="1.0" encoding="UTF-8"?>
-    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-    <plist version="1.0"><dict>
-      <key>application-identifier</key><string>{{BUNDLE}}</string>
-      <key>keychain-access-groups</key><array><string>{{BUNDLE}}</string></array>
-    </dict></plist>
-    PLIST
-    FLAGS=(-c release --triple arm64-apple-ios17.0-simulator --sdk "$SDK" -Xswiftc -g
-           -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$PWD/.build/simulated-entitlements.plist")
+    FLAGS=(-c release --triple arm64-apple-ios17.0-simulator --sdk "$SDK" -Xswiftc -g)
     swift build "${FLAGS[@]}" 2>&1
     BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"
     APP="build/{{EXE}}.app"
@@ -4870,6 +4857,15 @@ enum Template {
         private static let lock = NSLock()
         /// What the Keychain held when last asked, so a view checking on every redraw doesn't go back to it.
         private static var known: [String: LampConnectionToken?] = [:]
+        /// The services whose sign-in is only in memory, gone when the app closes (the simulator, below).
+        private static var passing: Set<String> = []
+
+        /// Whether the sign-in lasts only until the app closes.
+        static func isPassing(_ service: LampService) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return passing.contains(service.id)
+        }
 
         static func token(for service: LampService) -> LampConnectionToken? {
             lock.lock()
@@ -4900,7 +4896,22 @@ enum Template {
                 #endif
                 let status = SecItemAdd(add as CFDictionary, nil)
                 kept = status == errSecSuccess
-                if !kept { print("LampConnection: the Keychain wouldn't keep the \(service.name) sign-in (\(status))") }
+                if kept {
+                    passing.remove(service.id)
+                } else {
+                    #if targetEnvironment(simulator)
+                    // The simulator gives an app built by Lamp no Keychain. So that the app can be tried there,
+                    // the sign-in is held for this launch, and the screen says so. Nowhere else: on a phone or
+                    // a Mac a Keychain that won't keep it is a failure, and the person is not connected.
+                    kept = true
+                    passing.insert(service.id)
+                    print("LampConnection: the simulator has no Keychain for this app, so the \(service.name) sign-in lasts until the app closes")
+                    #else
+                    print("LampConnection: the Keychain wouldn't keep the \(service.name) sign-in (\(status))")
+                    #endif
+                }
+            } else {
+                passing.remove(service.id)
             }
             known[service.id] = .some(kept ? token : nil)
             lock.unlock()
@@ -4925,6 +4936,8 @@ enum Template {
         @Published private(set) var isOn: Bool
         /// The person's name on the service, when it said.
         @Published private(set) var account: String?
+        /// Connected only until the app closes: the simulator can't keep a sign-in. Never so on a phone or a Mac.
+        @Published private(set) var isPassing = false
 
         fileprivate enum Step: Equatable {
             case resting, starting, waiting(LampConnection.Code), failed(String)
@@ -4952,8 +4965,10 @@ enum Template {
 
         private func check() {
             let on = LampConnection.has(service, scopes: scopes), name = LampConnection.account(on: service)
+            let passing = on && LampConnectionVault.isPassing(service)
             if on != isOn { isOn = on }
             if name != account { account = name }
+            if passing != isPassing { isPassing = passing }
         }
 
         /// Starts the sign-in: gets a code for the person to enter on the service's site and waits for them.
@@ -5006,9 +5021,38 @@ enum Template {
         var body: some View {
             if state.isOn {
                 content()
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        if state.isPassing { LampConnectionPassing(service: state.service).padding(8) }
+                    }
+                    .environment(\.lampConnectionSaysPassing, true)
             } else {
                 LampConnectionScreen(state: state, reason: reason)
             }
+        }
+    }
+
+    /// Whether something around a view already says the sign-in is only for this launch, so it's said once.
+    private struct LampConnectionSaysPassing: EnvironmentKey {
+        static let defaultValue = false
+    }
+
+    private extension EnvironmentValues {
+        var lampConnectionSaysPassing: Bool {
+            get { self[LampConnectionSaysPassing.self] }
+            set { self[LampConnectionSaysPassing.self] = newValue }
+        }
+    }
+
+    /// Said wherever the helper shows that the person is connected, when it's only for this launch.
+    private struct LampConnectionPassing: View {
+        let service: LampService
+
+        var body: some View {
+            Text("In the simulator, you stay connected to \(service.name) until this app closes. On an iPhone you stay connected.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -5076,6 +5120,7 @@ enum Template {
         private let scopes: [String]
         private let reason: String
         @State private var asking = false
+        @Environment(\.lampConnectionSaysPassing) private var saidAlready
 
         init(_ service: LampService, scopes: [String] = [], reason: String = "") {
             _state = StateObject(wrappedValue: LampConnectionState(service, scopes: scopes))
@@ -5086,11 +5131,14 @@ enum Template {
         var body: some View {
             Group {
                 if state.isOn {
-                    HStack(spacing: 8) {
-                        LampServiceMark(service: state.service).frame(width: 16, height: 16)
-                        Text(state.account.map { "\(state.service.name): \($0)" } ?? "Connected to \(state.service.name)")
-                            .lineLimit(1)
-                        Button("Disconnect") { state.disconnect() }
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            LampServiceMark(service: state.service).frame(width: 16, height: 16)
+                            Text(state.account.map { "\(state.service.name): \($0)" } ?? "Connected to \(state.service.name)")
+                                .lineLimit(1)
+                            Button("Disconnect") { state.disconnect() }
+                        }
+                        if state.isPassing, !saidAlready { LampConnectionPassing(service: state.service).multilineTextAlignment(.leading) }
                     }
                 } else {
                     Button { asking = true } label: {

@@ -263,9 +263,10 @@ redirect needs a flow the helper doesn't have yet.
 `LAMP_CONNECTION_SERVER=http://127.0.0.1:PORT` in an app's environment sends its sign-in and its calls to a
 stand-in on the same machine (`ConnectionTests` has one, and runs the helper as apps get it against it:
 sign-in, Keychain, renewal). It takes only that address and keeps what it's given under another Keychain
-name, so it can't carry a real sign-in anywhere. The iPhone simulator gives an app a Keychain only when the
-program says which app it is, so the simulator's build.sh links that in the way Xcode does
-(`simulated-entitlements.plist`); on a phone Xcode's signing says it.
+name, so it can't carry a real sign-in anywhere. The iPhone simulator gives an app built by Lamp no Keychain
+(Xcode's builds say which app the program is; Lamp's simulator build doesn't). So in the simulator only, a
+sign-in the Keychain refuses is held in memory for that launch, and the gate and the button say it lasts
+until the app closes. On a phone or a Mac a refused save is a failure and the person is not connected.
 
 ### Widgets
 
