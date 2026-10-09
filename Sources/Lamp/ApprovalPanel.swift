@@ -46,8 +46,9 @@ enum ApprovalPanel {
                 guard !answered else { return }
                 answered = true
                 if let owner = request.owner { waiting[owner]?[id] = nil }
+                // Letting go of the content breaks panel → view → this closure → panel, so the panel goes.
                 NSAnimationContext.runAnimationGroup({ $0.duration = 0.15; panel.animator().alphaValue = 0 },
-                                                     completionHandler: { panel.orderOut(nil) })
+                                                     completionHandler: { panel.orderOut(nil); panel.contentView = nil })
                 continuation.resume(returning: answer)
             }
             if let owner = request.owner { waiting[owner, default: [:]][id] = finish }

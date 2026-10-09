@@ -23,6 +23,9 @@ final class ComputerOverlay {
     /// The stop control riding on the glow, and what it stops.
     private var stopPill: NSPanel?
     private var onStop: (() -> Void)?
+    /// The task showing now. Two apps' tasks can run at once; the latest to show takes the overlay, and an
+    /// earlier one finishing leaves it alone.
+    private var owner: ObjectIdentifier?
     private var tracker: Timer?
     private var hideWork: DispatchWorkItem?
 
@@ -33,8 +36,9 @@ final class ComputerOverlay {
     /// Glows around a window and keeps following it, just above it in the stack: a window in front of it
     /// still covers the glow, so a window that's only being read doesn't seem to jump forward.
     /// `label` says whose task it is, on the stop control above the window; `stop` is what it does.
-    func focus(window id: CGWindowID, label: String, stop: @escaping () -> Void) {
+    func focus(window id: CGWindowID, label: String, owner: ObjectIdentifier, stop: @escaping () -> Void) {
         cancelHide()
+        self.owner = owner
         onStop = stop
         defer { showStop(label) }   // once the window is known, so it opens in its place
         guard glowTarget != id || glowWindow?.isVisible != true else { return }
@@ -166,8 +170,9 @@ final class ComputerOverlay {
 
     /// Glides Lamp's cursor to a point and returns when it's there. The first move of a task starts from the
     /// middle of the window in use, so the cursor never seems to come from nowhere.
-    func move(to point: CGPoint, app icon: NSImage?) async {
+    func move(to point: CGPoint, app icon: NSImage?, owner: ObjectIdentifier) async {
         cancelHide()
+        self.owner = owner
         let (window, layer) = ensureCursor(icon: icon)
         let target = window.convertPoint(fromScreen: Self.cocoa(point))
         guard let from = cursorPosition, !reduceMotion else {
@@ -282,7 +287,8 @@ final class ComputerOverlay {
     }
 
     /// The task is over: everything fades away shortly after, unless another task picks up.
-    func end() {
+    func end(owner: ObjectIdentifier) {
+        guard owner == self.owner else { return }
         cancelHide()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.hideNow() }
@@ -296,6 +302,7 @@ final class ComputerOverlay {
         tracker = nil
         glowTarget = nil
         onStop = nil
+        owner = nil
         if let pill = stopPill {
             NSAnimationContext.runAnimationGroup({ $0.duration = 0.3; pill.animator().alphaValue = 0 },
                                                  completionHandler: { pill.orderOut(nil) })

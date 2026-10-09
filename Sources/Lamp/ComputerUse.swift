@@ -363,7 +363,7 @@ enum ComputerUse {
             showing = true
             let target = pid.flatMap { NSRunningApplication(processIdentifier: pid_t($0))?.localizedName }
             let label = target.map { "\(appName) is using \($0)" } ?? "\(appName) is using your apps"
-            await ComputerOverlay.shared.focus(window: CGWindowID(id), label: label) { [weak self] in self?.stop() }
+            await ComputerOverlay.shared.focus(window: CGWindowID(id), label: label, owner: ObjectIdentifier(self)) { [weak self] in self?.stop() }
         }
 
         /// Where a step happens on screen: the middle of the element it names, or its pixel in the window's
@@ -386,7 +386,7 @@ enum ComputerUse {
         func close() {
             client.close()
             engineProcess = nil
-            if showing { Task { @MainActor in ComputerOverlay.shared.end() } }
+            if showing { Task { @MainActor [id = ObjectIdentifier(self)] in ComputerOverlay.shared.end(owner: id) } }
         }
 
         /// Codex's question before a step: reads go ahead, actions only when the task may act and the person
@@ -447,8 +447,9 @@ enum ComputerUse {
                 let icon = pid.flatMap { NSRunningApplication(processIdentifier: pid_t($0))?.icon }
                 if let spot {
                     showing = true
-                    await ComputerOverlay.shared.move(to: spot, app: icon)
+                    await ComputerOverlay.shared.move(to: spot, app: icon, owner: ObjectIdentifier(self))
                 }
+                if let halt { throw halt }   // stopped while the cursor was on its way: nothing to ask
                 var action = Action(tool: name, target: described.target, details: described.details, intent: intent, pid: described.pid)
                 action.point = spot
                 action.window = windowID.flatMap { ComputerOverlay.frame(of: CGWindowID($0)) }
@@ -523,6 +524,7 @@ enum ComputerUse {
             if let halt = task.halt { throw halt }
             let (message, stepCost) = try await complete(endpoint: endpoint, messages: messages, tools: tools, model: model, key: key)
             cost += stepCost
+            if let halt = task.halt { throw halt }   // stopped while the model was answering
             messages.append(message)
             let calls = message["tool_calls"] as? [[String: Any]] ?? []
             if calls.isEmpty {

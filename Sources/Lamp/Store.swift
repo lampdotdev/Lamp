@@ -3730,30 +3730,39 @@ final class Store: ObservableObject {
         // The task goes along the app's text route, like its other AI.
         let chosen = AppAI.route(for: AppModels.load(project).text)
         var allowAll = false
-        var job: ComputerUse.Job?
+        // Weak: the job keeps this closure, so a strong reference back would keep every finished job alive.
+        weak var job: ComputerUse.Job?
+        let work: ComputerUse.Job
         do {
-            let work = try await ComputerUse.Job(task, appName: project.name, allowActions: allowActions) { [weak self] action in
-                guard let self, ComputerUse.enabled else { return false }
+            work = try await ComputerUse.Job(task, appName: project.name, allowActions: allowActions) { [weak self] action in
+                // A job stopped while this step was on its way asks nothing more: its questions were closed.
+                guard let self, ComputerUse.enabled, let job, !job.isStopped else { return false }
                 if allowAll { return true }
-                let answer = await self.confirm(action, for: project, owner: job.map(ObjectIdentifier.init))
+                let answer = await self.confirm(action, for: project, owner: ObjectIdentifier(job))
                 switch answer {
                 case .allow: return true
                 case .allowAll: allowAll = true; return true
                 case .deny: return false
-                case .stop: job?.stop(); return false
+                case .stop: job.stop(); return false
                 }
             }
-            job = work
-            defer { work.close() }
-            let token = UUID().uuidString + UUID().uuidString
-            computerTasks[token] = work
-            defer { computerTasks[token] = nil }
+        } catch {
+            return (502, ["error": error.localizedDescription])
+        }
+        job = work
+        defer { work.close() }
+        let token = UUID().uuidString + UUID().uuidString
+        computerTasks[token] = work
+        defer { computerTasks[token] = nil }
+        do {
             let (text, cost) = try await ComputerUse.answer(work, route: chosen, token: token)
             record(project, cost: cost)
+            // Stopped while the last answer was on its way: the person said not to finish, so it isn't one.
+            if work.isStopped { return (409, ["error": ComputerUse.stoppedByPerson.message]) }
             return (200, ["text": text])
         } catch {
             // However the agent ended once stopped (killed, or failing on its next step), the app is told why.
-            if job?.isStopped == true { return (409, ["error": ComputerUse.stoppedByPerson.message]) }
+            if work.isStopped { return (409, ["error": ComputerUse.stoppedByPerson.message]) }
             return (502, ["error": error.localizedDescription])
         }
     }
