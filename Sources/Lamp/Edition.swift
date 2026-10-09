@@ -5,13 +5,6 @@ import Foundation
 /// entries, so running the one you're working on never touches the one you use. Everything that names
 /// Lamp on disk or on the network goes through here. Built-in choice: build.sh (FLAVOR=dev, the default)
 /// and release.sh (FLAVOR=release) set the bundle id, which this reads.
-/// Features that are in but not yet for everyone, switched on in Settings → Experimental.
-enum Experiments {
-    /// What Lamp remembers (Memory): notes about the person and about each app, kept between requests. Off,
-    /// nothing is noted and the agent has no rule, tools or word about notes.
-    static var memory: Bool { UserDefaults.standard.bool(forKey: Memory.switchKey) }
-}
-
 enum Edition {
     static let bundleID = Bundle.main.bundleIdentifier ?? "dev.lamp.host"
     static let isDev = bundleID.hasSuffix(".dev")

@@ -250,23 +250,18 @@ struct SetupView: View {
 
 struct SettingsView: View {
     @AppStorage("settingsTab") private var tab = "building"
-    @AppStorage(Memory.switchKey) private var memory = false
 
     var body: some View {
         TabView(selection: $tab) {
             BuildingSettings().tabItem { Label("Building", systemImage: "hammer") }.tag("building")
             AppsSettings().tabItem { Label("Apps", systemImage: "square.grid.2x2") }.tag("apps")
             ProvidersSettings().tabItem { Label("AI Providers", systemImage: "cpu") }.tag("providers")
-            ExperimentalSettings().tabItem { Label("Experimental", systemImage: "flask") }.tag("experimental")
-            // Only while the experiment is on (Experimental): off, there are no notes to show.
-            if memory {
-                MemorySettings().tabItem { Label("Memory", systemImage: "note.text") }.tag("memory")
-            }
+            MemorySettings().tabItem { Label("Memory", systemImage: "note.text") }.tag("memory")
         }
         .frame(width: 560)
         .onAppear {
             if tab == "local" { tab = "providers" }   // Local Models is now Native Mac AI, under Providers
-            if !(["building", "apps", "providers", "experimental"] + (memory ? ["memory"] : [])).contains(tab) { tab = "building" }
+            if !["building", "apps", "providers", "memory"].contains(tab) { tab = "building" }
         }
     }
 }
@@ -751,26 +746,6 @@ struct AppsSettings: View {
         _ = revision
         _ = local.installed
         return AppAI.decisionModels.filter { AppAI.canDecide(with: $0) }
-    }
-}
-
-/// What's in Lamp but not yet for everyone: each switch here brings a feature into the interface.
-struct ExperimentalSettings: View {
-    @AppStorage(Memory.switchKey) private var memory = false
-
-    var body: some View {
-        Form {
-            Section {
-                SettingsCheckboxes {
-                    Toggle("Remember how I like things", isOn: $memory)
-                }
-            } header: {
-                // Above the box, in a checkbox note's size and color rather than as a heading.
-                Text("Features the Lamp team is still working on. They may not be ready for prime time.")
-                    .font(.caption).fontWeight(.regular).foregroundStyle(.secondary)
-            }
-        }
-        .settingsPane()
     }
 }
 
