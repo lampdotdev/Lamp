@@ -221,6 +221,9 @@ Asking for a widget gives a widget and nothing that looks like an app. When a wi
 for, the agent makes the app one scene, `LampWidgetOnly()`, and puts everything in the widget
 (`Template.isWidgetOnly`: an app with a widget whose own code is that scene). Such an app has no window, is
 kept out of the Dock (`LSUIElement`, written by build.sh), and Lamp never opens it in front of anyone. A
+click on its widget opens the app, as macOS does for every widget, and shows nothing: the scene is a menu bar
+item that is never put in the menu bar, so SwiftUI has no window to open for the click (a Settings scene
+opened an empty Settings window), and the agent is told to give such a widget no links. A
 widget that needs something an app must fetch or keep gets a real app, in the menu bar. Either way the chat
 has one card (`WidgetCard`, a `.widget` line added at the first install with a widget): how to add the
 widget, then "On your desktop". macOS gives Lamp no way to open Edit Widgets or to place a widget, so the

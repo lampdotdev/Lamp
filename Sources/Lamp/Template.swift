@@ -4263,8 +4263,10 @@ enum Template {
             LampRuntime.start
         }
 
-        // A scene that opens nothing: an app needs one, and Settings only shows when asked for.
-        var body: some Scene { Settings { EmptyView() } }
+        // A scene that can open nothing: an app needs one, and a click on the widget opens this app, which
+        // SwiftUI answers by opening a window of whichever scene has one (an empty Settings window, when
+        // that was the scene). A menu bar item that is never put in the menu bar has no window to open.
+        var body: some Scene { MenuBarExtra("", isInserted: .constant(false)) { EmptyView() } }
     }
 
     /// Whether the person has put this app's widget on the desktop or in Notification Center, kept where Lamp

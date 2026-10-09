@@ -58,7 +58,14 @@ final class WidgetOnlyTests: XCTestCase {
         try write(Self.carrier, to: "Sources/App.swift", in: project)
         XCTAssertTrue(Template.isWidgetOnly(project))
         // Lamp's own support file, which defines the scene, doesn't make every app one.
-        XCTAssertTrue(try text("Sources/LampSupport.swift", in: project).contains("struct LampWidgetOnly: Scene"))
+        let support = try text("Sources/LampSupport.swift", in: project)
+        XCTAssertTrue(support.contains("struct LampWidgetOnly: Scene"))
+        // Its scene has no window: a click on the widget opens the app, and SwiftUI would show a window of
+        // the scene for it, which with a Settings scene was an empty Settings window.
+        let scene = try XCTUnwrap(support.range(of: "struct LampWidgetOnly: Scene")).upperBound
+        let body = support[scene...].prefix(900)
+        XCTAssertTrue(body.contains("MenuBarExtra(\"\", isInserted: .constant(false))"))
+        XCTAssertFalse(body.contains("Settings {"))
     }
 
     /// The scene only counts where it runs: named in a comment or a string, the app still has its window.
@@ -160,6 +167,7 @@ final class WidgetOnlyTests: XCTestCase {
         let mac = Agent.systemPrompt
         XCTAssertTrue(mac.contains("LampWidgetOnly()"))
         XCTAssertTrue(mac.contains("delete Sources/ContentView.swift"))
+        XCTAssertTrue(mac.contains("A click on its widget does nothing, so give the widget no `widgetURL` or `Link`"))
         XCTAssertTrue(mac.contains("two sentences at most"))
         XCTAssertTrue(mac.contains("never explain how to add it"))
         // A widget that needs the app's data still gets a real app, in the menu bar.
