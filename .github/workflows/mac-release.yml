@@ -8,6 +8,7 @@
 #   NOTARY_TEAM_ID          Apple Developer Team ID
 #   NOTARY_PASSWORD         App-specific password for that Apple ID
 #   SPARKLE_PRIVATE_KEY     Ed25519 key that signs updates (base64); its public half is SUPublicEDKey in build.sh
+#   SLACK_RELEASES_WEBHOOK_URL   Optional: a Slack incoming webhook for the channel that hears about releases
 name: Mac release
 
 on:
@@ -92,3 +93,18 @@ jobs:
           gh release create "v$VERSION" "dist/Lamp-$VERSION.dmg" dist/sparkle.json \
             --title "Lamp $VERSION" --notes-file dist/notes.md || \
           gh release upload "v$VERSION" "dist/Lamp-$VERSION.dmg" dist/sparkle.json --clobber
+
+      # The release notes as Slack reads them: each bullet on one line (the file wraps them), Slack's own
+      # bullet and link forms.
+      - name: Tell Slack
+        if: env.SLACK_RELEASES_WEBHOOK_URL != ''
+        env:
+          SLACK_RELEASES_WEBHOOK_URL: ${{ secrets.SLACK_RELEASES_WEBHOOK_URL }}
+        run: |
+          notes="$(awk 'NF == 0 { next } /^[ \t]/ { sub(/^[ \t]+/, " "); printf "%s", $0; next } NR > 1 { print "" } { printf "%s", $0 } END { print "" }' dist/notes.md \
+            | sed -E -e 's/^- /• /' -e 's/\[([^]]+)\]\(([^)]+)\)/<\2|\1>/g')"
+          jq -n --arg version "$VERSION" --arg notes "$notes" \
+            --arg url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/v$VERSION" \
+            '{text: ("*Lamp " + $version + " is out.* <" + $url + "|Download it> or wait for the update.\n\n" + $notes),
+              unfurl_links: false}' \
+            | curl -sSf -X POST -H 'Content-Type: application/json' --data-binary @- "$SLACK_RELEASES_WEBHOOK_URL"

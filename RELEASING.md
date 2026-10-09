@@ -110,6 +110,15 @@ gh secret set NOTARY_PASSWORD       --env release --repo RooCodeInc/Lamp   # the
 
 Then move `DeveloperID.p12` into 1Password and delete it from the Desktop.
 
+A published release is announced in Slack when the `release` environment also has
+`SLACK_RELEASES_WEBHOOK_URL`: an incoming webhook for the channel (in Slack, the Lamp app's Incoming
+Webhooks page, Add New Webhook to Workspace, choose the channel). Without it, the release is simply not
+announced. The message is the version, the download link and the notes section as Slack reads it.
+
+```bash
+gh secret set SLACK_RELEASES_WEBHOOK_URL --env release --repo RooCodeInc/Lamp
+```
+
 Re-run a release (e.g. to rebuild the DMG) against its tag:
 
 ```bash
