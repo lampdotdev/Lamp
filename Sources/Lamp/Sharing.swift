@@ -292,12 +292,10 @@ enum Sharing {
                        attachments: attachments, fileCount: all)
     }
 
-    /// The app's name as the review shows it and the copy gets it. A file's name is its sender's word, and a
-    /// file can be edited by hand, so it is cleaned here, before anything shows it, the way every name Lamp
-    /// keeps is. A name with nothing left is the one an app without a name gets.
+    /// A file's name on one line: a file can be edited by hand, and line breaks or runs of space in its
+    /// name would lay out the review's title as if part of it were Lamp's. Nothing else about it changes.
     static func name(from raw: String) -> String {
-        let name = Template.name(from: raw)
-        return name.isEmpty ? Template.identifier(from: name) : name
+        raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     /// Puts a shared app's code, files, description and icon into an app's folder. A new app starts from a

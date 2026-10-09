@@ -15,7 +15,7 @@ enum Template {
     /// a new app gets a fresh one.
     static func draft(name rawName: String, untitled: Bool = false, platform: Platform = .mac, family: DeviceFamily = .iphone,
                       instance: String? = nil, in root: URL) throws -> LampProject {
-        let name = Template.name(from: rawName)
+        let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
         let exe = identifier(from: name)
         let slug = freeSlug(for: exe, in: root)
         let project = LampProject(id: slug, name: name.isEmpty ? exe : name, exe: exe,
@@ -25,44 +25,6 @@ enum Template {
         try saveMeta(project)
         return project
     }
-
-    /// An app's name as Lamp keeps and shows it, from whatever it was given (typed, the agent's, or the one
-    /// in a shared file): one short line of plain text. Line breaks and runs of space become one space;
-    /// characters nobody can see (controls, direction overrides, zero-width marks) go, so a name reads the
-    /// way it is written; and so do the characters a file name, a bundle or Lamp's own quotes around a name
-    /// can't hold, so a name can't end its quotes and carry on as Lamp's words.
-    static func name(from raw: String) -> String {
-        // Unseen characters go before spaces are looked for: a zero-width space counts as both.
-        let seen = raw.unicodeScalars.compactMap { scalar -> Character? in
-            switch scalar.properties.generalCategory {
-            case .format: scalar.value == 0x200D ? Character(scalar) : nil   // kept: what joins an emoji made of several
-            case _ where CharacterSet.whitespacesAndNewlines.contains(scalar): " "
-            case .control, .lineSeparator, .paragraphSeparator, .surrogate, .privateUse, .unassigned: nil
-            default: Character(scalar)
-            }
-        }
-        let plain = String(String.UnicodeScalarView(seen.flatMap(\.unicodeScalars))).filter { !"\"\\<>&/:“”„‟«»".contains($0) }
-        let words = plain.split(separator: " ").joined(separator: " ")
-        return String(words.prefix(maxNameLength)).trimmed
-    }
-
-    /// The name an app gets beside the ones already here (`taken`, lowercased): the cleaned name, numbered
-    /// when it's taken. The number is counted in the length, so it is never what the limit cuts off: two
-    /// apps with one name would install over each other.
-    static func name(from raw: String, besides taken: Set<String>) -> String {
-        let base = name(from: raw)
-        var candidate = base
-        var n = 2
-        while taken.contains(candidate.lowercased()) {
-            let number = " \(n)"
-            candidate = String(base.prefix(maxNameLength - number.count)).trimmed + number
-            n += 1
-        }
-        return candidate
-    }
-
-    /// Long enough for any real name; a title, a sidebar row and a file name all have room for it.
-    static let maxNameLength = 60
 
     /// The folder name for an executable name, numbered when it's taken.
     static func freeSlug(for exe: String, in root: URL) -> String {

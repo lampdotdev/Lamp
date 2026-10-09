@@ -849,7 +849,7 @@ final class Store: ObservableObject {
 
     /// Renames while the app is marked busy, so nothing else starts on it meanwhile.
     private func performRename(_ project: LampProject, to rawName: String) async -> LampProject {
-        let name = Template.name(from: rawName)
+        let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
         guard !name.isEmpty, name != project.name || project.untitled,
               let current = projects.first(where: { $0.id == project.id }) else { return project }
         let unique = uniqueName(name, ignoring: current.id)
@@ -982,7 +982,15 @@ final class Store: ObservableObject {
 
     /// Display names must be unique: each app installs as "<name>.app" in the apps folder (Edition.appsFolder).
     private func uniqueName(_ name: String, ignoring id: String? = nil) -> String {
-        Template.name(from: name, besides: Set(projects.filter { $0.id != id }.map { $0.name.lowercased() }))
+        let taken = Set(projects.filter { $0.id != id }.map { $0.name.lowercased() })
+        let base = name.trimmed
+        var candidate = base
+        var n = 2
+        while taken.contains(candidate.lowercased()) {
+            candidate = "\(base) \(n)"
+            n += 1
+        }
+        return candidate
     }
 
     // MARK: - Sharing

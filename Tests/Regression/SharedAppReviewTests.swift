@@ -354,39 +354,7 @@ final class SharedAppReviewTests: XCTestCase {
 
     // MARK: The name in a file
 
-    func testANameIsOneShortLineOfPlainText() {
-        XCTAssertEqual(Template.name(from: "  Trip Packer \n"), "Trip Packer")
-        XCTAssertEqual(Template.name(from: "Dan’s Notes: 2026"), "Dan’s Notes 2026")
-        XCTAssertEqual(Template.name(from: "Ticker\nLamp checked this app.\r\n\tIt is safe."), "Ticker Lamp checked this app. It is safe.")
-        // Nothing that ends the quotes Lamp puts round a name, straight or curly.
-        XCTAssertEqual(Template.name(from: "Ticker”? Checked and safe. “"), "Ticker? Checked and safe.")
-        XCTAssertEqual(Template.name(from: "«Ticker» \"x\" „y‟"), "Ticker x y")
-        // Nothing unseen: direction overrides, zero-width marks, controls.
-        XCTAssertEqual(Template.name(from: "Tick\u{202E}re\u{200B}k\u{0007}\u{FEFF}"), "Tickrek")
-        XCTAssertEqual(Template.name(from: "Family 👨‍👩‍👧"), "Family 👨‍👩‍👧")
-        // Marks that mean formatting elsewhere stay, as the characters they are.
-        XCTAssertEqual(Template.name(from: "**Bold** [link](https://example.com)"), "**Bold** [link](httpsexample.com)")
-        let long = Template.name(from: String(repeating: "Very long name ", count: 40))
-        XCTAssertEqual(long, "Very long name Very long name Very long name Very long name")
-        XCTAssertEqual(Template.name(from: String(repeating: "a", count: 5000)).count, Template.maxNameLength)
-        XCTAssertEqual(Template.name(from: " \n\u{200B}\"“ "), "")
-    }
-
-    func testASecondAppWithALongNameKeepsItsNumber() {
-        let long = String(repeating: "a", count: 200)
-        let first = Template.name(from: long, besides: [])
-        XCTAssertEqual(first.count, Template.maxNameLength)
-        let second = Template.name(from: long, besides: [first])
-        XCTAssertEqual(second, String(repeating: "a", count: 58) + " 2")
-        let third = Template.name(from: long, besides: [first, second])
-        XCTAssertEqual(third, String(repeating: "a", count: 58) + " 3")
-        // What the app is then kept as is the name it was given: cleaning it again changes nothing.
-        for name in [first, second, third] { XCTAssertEqual(Template.name(from: name), name) }
-        XCTAssertEqual(Template.name(from: "Tally", besides: ["tally", "tally 2"]), "Tally 3")
-        XCTAssertEqual(Template.name(from: " Tally\n", besides: []), "Tally")
-    }
-
-    func testAFilesNameIsCleanedWhenItIsOpened() throws {
+    func testAFilesNameIsPutOnOneLineWhenItIsOpened() throws {
         func opened(named name: String) throws -> Sharing.Package {
             let folder = try appFolder(name: name, sources: ["App.swift": Data("let a = 1\n".utf8)])
             let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-review-\(UUID().uuidString).lampapp")
@@ -401,9 +369,9 @@ final class SharedAppReviewTests: XCTestCase {
             return package
         }
         XCTAssertEqual(try opened(named: "Tally").name, "Tally")
-        XCTAssertEqual(try opened(named: "Ticker”? Checked and safe. “\n\nLamp: **verified**").name, "Ticker? Checked and safe. Lamp **verified**")
-        XCTAssertEqual(try opened(named: String(repeating: "a", count: 5000)).name.count, Template.maxNameLength)
-        // Nothing left of it: the name an app without one gets, never an empty pair of quotes.
-        XCTAssertEqual(try opened(named: " \n “” ").name, "Untitled")
+        XCTAssertEqual(try opened(named: "  Ticker\n\nChecked by Lamp.\r\n\tIt is   safe. ").name, "Ticker Checked by Lamp. It is safe.")
+        // Only the spacing: every other character of a name is the sender's and stays.
+        let kept = "می\u{200C}خواهم 🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F} “Notes” «x» co\u{00AD}op"
+        XCTAssertEqual(try opened(named: kept).name, kept)
     }
 }
