@@ -49,7 +49,6 @@ struct LampProject: Identifiable, Hashable {
     var family: DeviceFamily = .iphone
     /// The person's own iPhone or iPad that Play puts the app on (Devices), instead of the simulator.
     var device: String?
-
     var bundleID: String { Edition.appBundlePrefix + id }
     /// On a phone the app is registered with Apple under the person's team, so the id carries the team:
     /// another team may have registered the plain one for the same app name.

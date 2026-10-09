@@ -284,6 +284,14 @@ struct AgentRun {
 }
 
 extension Agent {
+    /// Said at the end of a request while the app has no description Lamp can use, so an app gets one from
+    /// the request that first builds it, and an app made before descriptions existed from its next request.
+    static func undescribed(_ project: LampProject) -> String {
+        AppDescription.description(of: project) == nil
+            ? "\n\n---\nThis app has no description yet (from Lamp, not part of the request above): once your work is done, write it in \(AppDescription.file), one short sentence saying what the app is."
+            : ""
+    }
+
     /// The user's own pi config (logins, subscriptions, settings).
     static let userConfigDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".pi/agent").path
 
@@ -296,6 +304,7 @@ extension Agent {
         // conversation needs telling, the same for each engine.
         let prompt = prompt + Memory.brief(for: project, engine: Builder.engine, session: session)
             + AIStatus.brief(for: project, engine: Builder.engine, session: session, offered: offered)
+            + Agent.undescribed(project)
         var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt(for: project), "LAMP_DIR": project.dir.path,
                                      "PATH": ToolLocator.userPath]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }

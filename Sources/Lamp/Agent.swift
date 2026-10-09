@@ -154,7 +154,7 @@ enum Agent {
         if mac { rules.append(Rules.computer) }
         if !mac { rules.append(Rules.iPhoneHardware) }
         rules += [Rules.store, Rules.kinds(mac: mac), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
-                  Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.attachments, Rules.logs]
+                  Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
         rules += [Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
         return ((mac ? Rules.macHeader : Rules.iPhoneHeader) + "\n\nRules:\n" + rules.joined())
@@ -564,6 +564,14 @@ enum Agent {
         ready), `background` (one of \(Icons.backgrounds.map(\.name).joined(separator: ", "))) and `tint` (hex main \
         color of the object). To change the icon, edit icon.json; Lamp redraws it, which takes a while and costs the user, so only when \
         they ask for a different icon or the app has become something else. Never create icon files yourself.
+        """
+
+        static let about = """
+        - The app's description is in \(AppDescription.file) at the app's root: `{"description": "…"}`, one short, plain \
+        sentence saying what the app is, like the line under an app's name in a store ("A counter that goes up \
+        every ten seconds."). Lamp shows it under the app's name to anyone the app is shared with, before they \
+        open it. Not a list of features and not how it works: what it is, in everyday words, with nothing from \
+        the code. Write it once a new app is built, and again when what the app is changes.
         """
 
         static let attachments = """

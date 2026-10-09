@@ -106,7 +106,7 @@ final class SharingWidgetTests: XCTestCase {
         XCTAssertTrue(found.detected.contains { $0.patterns.contains("URLSession") })
         XCTAssertTrue(found.detected.contains { $0.patterns.contains("Process(") })
         // ...and the AI is given its code, named as the widget's, between the same markers.
-        let request = Sharing.reviewRequest(name: package.name, about: found.about, files: found.files, boundary: "0123456789abcdef0123456789abcdef")
+        let request = Sharing.reviewRequest(name: package.name, description: package.description, notes: found.about, files: found.files, boundary: "0123456789abcdef0123456789abcdef")
         XCTAssertTrue(request.prompt.contains("BEGIN file \"Widget/Widget.swift\"]\n\(Self.widgetCode)"))
         XCTAssertTrue(request.prompt.contains("BEGIN file \"Widget/Net.swift\"]"))
         XCTAssertTrue(request.system.contains("the files under Widget/"))
