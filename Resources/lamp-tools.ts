@@ -14,6 +14,8 @@
  *   These let the agent see them, name one, and bring one back when the user asks. Lamp does the work.
  * - `read_notes`, `save_notes`: Lamp keeps short notes about the person and about this app, and tells the agent
  *   in a line what they cover. These open them when a request needs them, and replace them.
+ * - `make_art`: asks Lamp to paint a picture for the app in its icon's style and save it in Assets/; the reply
+ *   shows it to the agent.
  * - `offer_setup`: asks Lamp to show the person a card in the chat for setting up a kind of AI the app can't
  *   use yet (a key, a download, a sign-in). Lamp decides whether to show it and says what happened.
  * - `web_fetch`: reads a web page (or any URL) as text. Reading needs no approval.
@@ -335,6 +337,21 @@ function notesTool(name: string) {
 	});
 }
 
+const makeArt = defineTool({
+	...spec("make_art"),
+	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		const url = process.env.LAMP_ART_URL;
+		if (!url) throw new Error("Lamp isn't available to make pictures.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000),
+		});
+		return pictureReply(response, ctx.model, "Lamp couldn't make the picture.");
+	},
+});
+
 const offerSetup = defineTool({
 	...spec("offer_setup"),
 	async execute(_toolCallId, params, signal) {
@@ -380,6 +397,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(listVersions);
 	pi.registerTool(nameVersion);
 	pi.registerTool(restoreVersion);
+	pi.registerTool(makeArt);
 	pi.registerTool(offerSetup);
 	for (const name of ["read_notes", "save_notes"]) pi.registerTool(notesTool(name));
 }
