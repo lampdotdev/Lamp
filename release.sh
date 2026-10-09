@@ -23,6 +23,10 @@ fi
 [[ -n "$SIGN_IDENTITY" ]] || { echo "No Developer ID Application certificate found. See RELEASING.md."; exit 1; }
 echo "Signing as: $SIGN_IDENTITY"
 
+# A release without its PostHog project key would quietly count nothing (Sources/Lamp/Analytics.swift).
+! grep -q 'static let projectKey = ""' "$HERE/Sources/Lamp/Analytics.swift" \
+  || { echo "Analytics.projectKey is empty. Set it to the PostHog project key first."; exit 1; }
+
 # 1. Build + sign the app (hardened runtime, entitlements, secure timestamp)
 rm -rf "$DIST" && mkdir -p "$DIST"
 # Builds into dist/, not build/, so a release never replaces the Lamp you run day to day.
