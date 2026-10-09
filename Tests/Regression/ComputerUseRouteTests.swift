@@ -46,11 +46,4 @@ final class ComputerUseRouteTests: XCTestCase {
         let own = route("engine:pi", .engine(.pi, model: "x"))
         XCTAssertEqual(AppAI.computerDefault(among: routes() + [own], builder: .pi, textDefault: own, hasKey: false).id, "engine:pi")
     }
-
-    /// Both drivers' instructions carry the same advice on spending steps.
-    func testInstructionsSayHowToSpendSteps() {
-        let codex = CodexComputerUse.systemPrompt(appName: "Notes", allowActions: true, instructions: "", toolDescription: "")
-        XCTAssertTrue(codex.contains(ComputerUse.pace(call: "`js` call")))
-        XCTAssertTrue(codex.contains("don't try it a third time"))
-    }
 }

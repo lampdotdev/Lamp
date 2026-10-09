@@ -231,18 +231,6 @@ enum ComputerUse {
         return nil
     }
 
-    /// How to spend steps, for the model, in both drivers' instructions. Each call is a round trip that sends
-    /// everything so far again, so a task done one action at a time is slow and dear; and a model whose click
-    /// didn't land tends to click again rather than think of the menu bar.
-    static func pace(call: String) -> String {
-        """
-        Do as much as you can in each \(call): when the next actions don't depend on what the one before shows \
-        (type the text, select it, open a menu), do them together, and read the result once at the end. \
-        If an action has changed nothing twice, don't try it a third time: do it another way (the app's menu bar, \
-        a keyboard shortcut, another control, setting the value directly).
-        """
-    }
-
     /// Turning the setting off stops a task that's already running, before its next step.
     static let stopped = Failure(message: "Using other apps was turned off, so Lamp stopped the task.")
     /// The person pressed Stop Task.
@@ -398,7 +386,7 @@ enum ComputerUse {
             Find the right window with list_windows, read it with get_window_state, and scroll to see more. A web page \
             that's open but not in front: find it with list_browser_tabs and bring it forward with show_browser_tab, \
             then read its window. Prefer the \
-            element tree to the picture when both have what you need. \(pace(call: "turn")) Keep going until you can answer, then reply \
+            element tree to the picture when both have what you need. Keep going until you can answer, then reply \
             with only the answer, in the form the task asks for. If you can't do it, say what stopped you. Use only \
             these tools: never a shell, and never files.
 

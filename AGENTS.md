@@ -102,7 +102,7 @@ A capability given to one engine must be given to all of them that can take it, 
   and Codex through `/mcp` with the task's own token (`Store.computerTasks`, never the build tools). The
   driver, approvals, element names and the task's limits (`ComputerUse.stepLimit`, `timeLimit`: every route
   ends there with a plain message, and what it spent is still recorded) live in `ComputerUse.Job` either
-  way, so a change to what a task may do is made once. Both drivers' instructions share `ComputerUse.pace`.
+  way, so a change to what a task may do is made once.
 
 Before opening a PR that touches any of this, check each engine's `case` in `Agent.run` and its parser,
 and say in the PR description which engines you tried.

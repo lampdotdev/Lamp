@@ -93,8 +93,7 @@ enum CodexComputerUse {
         Everything goes through the `js` tool: JavaScript against the `cua` object described below. Start with \
         `cua.getState()` to see the apps and browser tabs, or `cua.getApp("Name")` when you know the app; the \
         result includes the API's documentation and the app's state, which you must read before going on. \
-        Prefer the element tree to the screenshot when both have what you need. \(ComputerUse.pace(call: "`js` call")) \
-        Keep going until you can answer, \
+        Prefer the element tree to the screenshot when both have what you need. Keep going until you can answer, \
         then reply with only the answer, in the form the task asks for. If you can't do it, say what stopped you. \
         Use only this tool: never a shell, and never files.
 
