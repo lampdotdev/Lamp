@@ -43,9 +43,15 @@ enum Agent {
     static let sandboxNote = """
 
     - Your shell commands run confined to the app's folder, plus the system, developer tools, caches and \
-    temporary folders, with network access; anything else on this Mac is "Operation not permitted" to them. \
-    To read a file elsewhere, use your file tools, which ask the user. `gh` can't see its sign-in there: clone \
-    public repositories with `git clone --depth 1 https://github.com/owner/name .lamp/reference/name`.
+    temporary folders, with network access; the rest of this Mac is closed to them. What's closed doesn't \
+    always say "Operation not permitted": it can look missing or broken instead ("No such file", "File \
+    Doesn't Exist", an app that isn't found by name or bundle id). Closed to the shell: the installed \
+    copy of this app, which it can open but not look inside, and ~/Library/Services, where Finder's Quick \
+    Actions are. And `open -a App file` fails with error -10820 for an app that hasn't declared that \
+    kind of file (`opens` in capabilities.json), whatever its code does. So "not found" or a failed open \
+    there can mean "closed to you" or "not declared": never read it as a fault in the app's code. To \
+    read a file elsewhere, use your file tools, which ask the user. `gh` can't see its sign-in there: \
+    clone public repositories with `git clone --depth 1 https://github.com/owner/name .lamp/reference/name`.
     """
 
     private static let lookRules = """
@@ -149,7 +155,7 @@ enum Agent {
         var rules = [Rules.edit, Rules.ask, Rules.shell,
                      mac ? Rules.macFrameworks : Rules.iPhoneFrameworks,
                      mac ? Rules.macBlocks : Rules.iPhoneBlocks]
-        if mac { rules += [Rules.menuBar, Rules.widget, Rules.permissions] }
+        if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.permissions] }
         rules += [Rules.script, mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules.append(Rules.computer) }
         if !mac { rules.append(Rules.iPhoneHardware) }
@@ -251,6 +257,19 @@ enum Agent {
         that work in every app, opening at login, the clipboard watcher, Mail, other apps, the menu bar, the \
         permission screens): never call them. Make the most of being on a phone: the camera, photos, location, \
         haptics, and being with the person wherever they are.
+        """
+
+        static let finder = """
+        - An app that takes files or folders from Finder (dropped on its icon, Open With, a Quick Action) \
+        says what it opens in `capabilities.json` at the app's root: `{"opens": ["folder", "png", \
+        "public.image"]}`, with "folder", "file" for any file, file extensions or type identifiers. Lamp \
+        declares them for the app; without that macOS hands it nothing. It is only ever offered for a kind \
+        another app opens, never put in that app's place; a kind nothing else opens (your own extension) \
+        is the app's to open. To try it, make test files in the app's folder or a temporary folder and \
+        hand them over with the `open` command `look_at_app` then gives you, which does what Finder does. \
+        A Finder Quick Action is a workflow the app writes into ~/Library/Services, and it stores the \
+        app's full path: it stops working when the app is moved or renamed, until the app runs again and \
+        rewrites it. So have the app write it at every launch from `Bundle.main.bundlePath`, never once.
         """
 
         static let menuBar = """

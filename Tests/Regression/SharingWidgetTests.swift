@@ -74,9 +74,9 @@ final class SharingWidgetTests: XCTestCase {
         XCTAssertEqual(try format(of: Sharing.export(try project("Tally", widget: true))), 3)
         // An app without a widget is the file it always was: a Lamp from before widgets opens it.
         XCTAssertEqual(try format(of: Sharing.export(try project("Plain", widget: false))), 2)
-        XCTAssertEqual(Sharing.formatVersion, 3)
+        XCTAssertEqual(Sharing.formatVersion, 4)
         // A file from a Lamp newer than this one is still turned away.
-        XCTAssertThrowsError(try Sharing.open(try handMade(format: 4, ["Sources/App.swift": "let a = 1"])))
+        XCTAssertThrowsError(try Sharing.open(try handMade(format: 5, ["Sources/App.swift": "let a = 1"])))
     }
 
     func testAnUpdateReplacesTheWidgetOrTakesItAway() throws {
