@@ -90,7 +90,7 @@ enum NextStep {
     }
 }
 
-/// Names an app from the first thing its user asked for, says in a sentence what it is, and sketches its main parts for the build card
+/// Names an app from the first thing its user asked for, and sketches its main parts for the build card
 /// while the agent is still thinking. Fails soft: without a name the app stays untitled.
 @MainActor
 enum AppName {
@@ -98,7 +98,6 @@ enum AppName {
     /// never mentioned it, is the model repeating the prompt: the app stays untitled, the part is left out.
     static let exampleNames = ["Lucide Picker", "Build Tally", "Brew Log", "Notes", "Stopwatch", "Calendar", "Photo Booth", "Night Shift"]
     static let exampleParts = ["Your habits, ticked off daily", "A reminder in the evening"]
-    static let exampleDescription = "A place to keep the family's recipes."
 
     private static let prompt = """
     Name a small app from what its user asked for.
@@ -116,19 +115,13 @@ enum AppName {
     its user would ("\(exampleParts[0])", "\(exampleParts[1])"). No file, type or framework \
     names.
 
-    Last, describe it: one short, plain sentence saying what the app is, like the line under an app's name \
-    in a store ("\(exampleDescription)"). Not a list of features and not how it works: what it is, in \
-    everyday words.
-
-    Respond with JSON: {"named_by_user": true or false, "name": "...", "parts": ["...", "..."], "description": "..."}
+    Respond with JSON: {"named_by_user": true or false, "name": "...", "parts": ["...", "..."]}
     """
 
     struct Suggestion {
         var name: String?
         /// A guess at the app's main parts, shown until the agent gives its own plan.
         var sketch: [String]
-        /// What the app is, for someone it's shared with (`LampProject.description`).
-        var description: String?
     }
 
     static func suggest(for brief: String) async -> Suggestion? {
@@ -139,16 +132,7 @@ enum AppName {
         else { return nil }
         let sketch = (object["parts"] as? [Any] ?? []).compactMap { ($0 as? String)?.trimmed }
             .filter { !$0.isEmpty && $0.count <= 60 && !AppAI.parrots($0, examples: exampleParts, asked: brief) }.prefix(5)
-        return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [],
-                          description: description(object, asked: brief))
-    }
-
-    /// The sentence as the model gave it, on one line. None, or the prompt's own example back, is no description.
-    static func description(_ object: [String: Any], asked brief: String) -> String? {
-        guard let raw = object["description"] as? String else { return nil }
-        let words = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        guard !words.isEmpty, !AppAI.parrots(words, examples: [exampleDescription], asked: brief) else { return nil }
-        return words
+        return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [])
     }
 
     static func name(_ object: [String: Any], asked brief: String) -> String? {

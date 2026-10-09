@@ -22,12 +22,13 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,offer_setup"
+            ",bash,web_fetch,look_at_app,use_app,plan,describe_app,delete_file,list_versions,name_version,restore_version,offer_setup"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
     /// Lamp's own tools for pi (Resources/lamp-tools.ts): `look_at_app` has Lamp build and open the app
-    /// mid-turn and shows the agent the result; `plan` is the checklist on the build card; `delete_file`
+    /// mid-turn and shows the agent the result; `plan` is the checklist on the build card; `describe_app` sets
+    /// the description people the app is shared with read (LampProject.description); `delete_file`
     /// removes a file, which pi's own tools can't; the version tools list, name and restore the app's saved
     /// versions; `offer_setup` shows a setup card in the chat; `read_notes` and `save_notes` are Lamp's notes (Memory). Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
     static var lampTools: URL? {
@@ -80,6 +81,8 @@ enum Agent {
     user's own words (what they'll be able to do, never file or type names) and, for each part, the files \
     you'll write for it. Lamp ticks a part off when its files are written, so the user watches the list \
     fill in while they wait. Give every file to exactly one part. Don't use it for small changes.
+    - `describe_app` sets the one short sentence that someone the app is shared with reads under its name. \
+    Call it once a new app is built, and again when what the app is changes.
     - `delete_file` removes a file the app no longer needs, for example after moving its code elsewhere or \
     removing a screen. Never leave an emptied file behind instead.
     - Lamp saves a version of the app after every request. `name_version` names one so the user can find it \

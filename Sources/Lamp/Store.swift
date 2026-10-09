@@ -50,8 +50,7 @@ struct LampProject: Identifiable, Hashable {
     /// The person's own iPhone or iPad that Play puts the app on (Devices), instead of the simulator.
     var device: String?
     /// What the app is, in one short sentence: what a person it's
-    /// shared with reads under its name before opening it. Lamp writes it with the name, from what the
-    /// person first asked for (`AppName.suggest`); nil for an app from before that, or when that call gave none.
+    /// shared with reads under its name before opening it. The agent sets it (`describe_app`); nil until then.
     var description: String?
 
     var bundleID: String { Edition.appBundlePrefix + id }
@@ -918,11 +917,9 @@ final class Store: ObservableObject {
         try? fm.removeItem(at: old.installedURL)
         try? fm.removeItem(at: old.dir)
 
-        // The phone chosen before the first message stays chosen, and the description stays the app's.
-        if old.device != nil || old.description != nil {
+        if let device = old.device {   // the phone chosen before the first message stays chosen
             var kept = project
-            kept.device = old.device
-            kept.description = old.description
+            kept.device = device
             try? Template.saveMeta(kept)
         }
         follow(old, to: project)
@@ -1340,20 +1337,15 @@ final class Store: ObservableObject {
         line.text.isEmpty ? label(attachments: line.attachments ?? []) : line.text
     }
 
-    /// The first message bootstraps the app: it names an untitled app and says what it is, then designs
-    /// the icon while the agent builds the first version. Returns the app as it is now.
+    /// The first message bootstraps the app: it names an untitled app, then designs the icon
+    /// while the agent builds the first version. Returns the app as it is now.
     private func bootstrap(_ project: LampProject, brief: String) async -> LampProject {
         var project = project
-        // A new app the person named themselves still needs its description; an app that came with code
-        // (a shared one) doesn't get one from a request to change it.
-        if project.untitled || !project.scaffolded {
+        if project.untitled {
             let suggestion = await AppName.suggest(for: brief)
-            if project.untitled {
-                progress[project.id]?.sketch = suggestion?.sketch ?? []
-                progress[project.id]?.naming = false
-                if let name = suggestion?.name { project = await performRename(project, to: name) }
-            }
-            if let description = suggestion?.description { project = describe(project, as: description) }
+            progress[project.id]?.sketch = suggestion?.sketch ?? []
+            progress[project.id]?.naming = false
+            if let name = suggestion?.name { project = await performRename(project, to: name) }
         }
         if Icons.load(project) == nil {
             let designing = project
@@ -1370,15 +1362,6 @@ final class Store: ObservableObject {
             }
         }
         return project
-    }
-
-    /// Keeps the app's description beside its name. Returns the app as it is now.
-    private func describe(_ project: LampProject, as words: String) -> LampProject {
-        var described = project
-        described.description = words
-        guard (try? Template.saveMeta(described)) != nil else { return project }
-        if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = described }
-        return described
     }
 
     func unqueue(_ message: QueuedMessage, from project: LampProject) {
@@ -2231,6 +2214,7 @@ final class Store: ObservableObject {
                 progress[project.id]?.plan = parts
                 progress[project.id]?.tickWrittenParts()
                 (status, answer) = (200, ["text": "The user can see the plan."])
+            case "describe_app": (status, answer) = describe(project, arguments)
             case "delete_file":
                 (status, answer) = Self.deleteFile(arguments["path"] as? String ?? "", in: project)
             case "list_versions": (status, answer) = await versions("", [:], of: project)
@@ -2286,6 +2270,26 @@ final class Store: ObservableObject {
             }
             return ["content": content]
         }
+    }
+
+    /// The agent's `describe_app`: the app's description, kept beside its name. The words are the agent's
+    /// and are kept as given; only the white space around them goes.
+    private func describe(_ project: LampProject, _ arguments: [String: Any]) -> (Int, [String: Any]) {
+        // No words would count as a description: the app would stop being asked for one, and the review
+        // of a shared copy would speak of a description that isn't there.
+        guard let words = (arguments["description"] as? String)?.trimmed, !words.isEmpty else {
+            return (400, ["error": "`description` must be one short sentence saying what the app is."])
+        }
+        guard let index = projects.firstIndex(where: { $0.instance == project.instance }) else {
+            return (404, ["error": "Lamp couldn't find this app."])
+        }
+        var described = projects[index]
+        described.description = words
+        do { try Template.saveMeta(described) } catch {
+            return (500, ["error": "Lamp couldn't keep the description: \(error.localizedDescription)"])
+        }
+        projects[index] = described
+        return (200, ["text": "Kept. People this app is shared with will read it under the app's name."])
     }
 
     /// The agent's `delete_file`: one file inside the app's folder, never Lamp's own files, never through a
@@ -3445,7 +3449,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/mcp", "/pi/key"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/describe", "/mcp", "/pi/key"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -3541,6 +3545,9 @@ final class Store: ObservableObject {
         if route == "/agent/memory" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return Memory.call(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/describe" {
+            return describe(project, (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:])
         }
         if route == "/agent/setup" {
             return agentOffer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)

@@ -75,15 +75,16 @@ final class SharedAppAboutTests: XCTestCase {
         XCTAssertNil(meta.description)
     }
 
-    /// Lamp writes the description with the name, from what the person asked for. It's kept as the model
-    /// gave it, on one line; none, or the prompt's own example handed back, is no description.
-    @MainActor func testDescriptionComesWithTheName() {
-        let asked = "a counter that goes up every ten seconds"
-        XCTAssertEqual(AppName.description(["description": words], asked: asked), words)
-        XCTAssertEqual(AppName.description(["description": " A counter that\ngoes up. "], asked: asked), "A counter that goes up.")
-        XCTAssertNil(AppName.description(["name": "Ticker"], asked: asked))
-        XCTAssertNil(AppName.description(["description": "  "], asked: asked))
-        XCTAssertNil(AppName.description(["description": AppName.exampleDescription], asked: asked))
+    /// Every engine is given the tool that sets it, and an app without one is told so with the request.
+    func testAgentIsGivenTheToolAndToldWhenThereIsNoDescription() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/lamp-tools.json")
+        let tools = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [[String: Any]])
+        XCTAssertTrue(tools.contains { $0["name"] as? String == "describe_app" })
+        XCTAssertTrue(Agent.tryRules.contains("`describe_app`"))
+        XCTAssertTrue(Agent.undescribed(try app(description: nil)).contains("describe_app"))
+        XCTAssertEqual(Agent.undescribed(try app(description: words)), "")
+        XCTAssertEqual(ToolCall("describe_app").action, .describe)
     }
 
     func testIconIsDrawnFromTheFile() async throws {
