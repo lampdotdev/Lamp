@@ -19,10 +19,22 @@ enum ConnectionCard {
         "\(service) asks for this once for each app, and it takes about a minute. After that, anyone using \(app) only presses Connect to \(service)."
     }
 
-    /// What to do on the service's page, from its entry, in one line.
+    /// Where the button goes and what to do there, in one line: the site by its own name, so the person
+    /// sees where an entry sends them, whoever wrote it, then the entry's own words.
     static func instructions(_ service: Connections.Service, app: String) -> String {
-        let notes = (service.register?.notes ?? []).map { filled($0, app: app) }
-        return notes.isEmpty ? "Fill in the form there and register the app." : notes.joined(separator: " ")
+        let notes = notes(service, app: app)
+        let site = page(service, app: app)?.host.map { "Opens \($0)." } ?? ""
+        switch notes.count {
+        case 0: return [site, "Fill in the form there and register the app."].filter { !$0.isEmpty }.joined(separator: " ")
+        case 1: return [site, notes[0]].filter { !$0.isEmpty }.joined(separator: " ")
+        // Several things to do read as a list under the step, not as a paragraph beside the button.
+        default: return site
+        }
+    }
+
+    /// What the entry says to do on the page, a line each.
+    static func notes(_ service: Connections.Service, app: String) -> [String] {
+        (service.register?.notes ?? []).map { filled($0, app: app) }
     }
 
     /// An id as it comes off the clipboard: its first line with anything on it, without the space around it.
@@ -43,7 +55,8 @@ enum ConnectionCard {
         var allowed = CharacterSet.alphanumerics
         allowed.insert(charactersIn: "-._~")
         let name = app.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
-        guard let url = URL(string: register.url.replacingOccurrences(of: "{{NAME}}", with: name)), url.scheme == "https" else { return nil }
+        guard Connections.page(register.url) != nil,
+              let url = URL(string: register.url.replacingOccurrences(of: "{{NAME}}", with: name)), url.scheme == "https" else { return nil }
         return url
     }
 }
@@ -110,8 +123,9 @@ struct ConnectionCardView: View {
     }
 
     /// Two steps: register the app on the service's page, then bring back the id it gives. What goes in the
-    /// page's form is listed small under the first, for when the page doesn't open with it filled in: an
-    /// address can only fill a form where the service takes that, and GitHub doesn't promise to.
+    /// page's form is listed small under the first, for when the page doesn't open with it filled in: some
+    /// services take a form's values from the address and some don't, and the card can't see which happened.
+    /// So it is the same card for every service, with a fill-in link or without.
     @ViewBuilder
     private func steps(_ entry: Connections.Service, for project: LampProject) -> some View {
         let label = ConnectionCard.idLabel(entry)
@@ -125,6 +139,20 @@ struct ConnectionCardView: View {
                     focused = true
                 }
             }
+        }
+        let notes = ConnectionCard.notes(entry, app: project.name)
+        if notes.count > 1 {
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("•")
+                        Text(note).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.leading, CardColumn.indent(compact: false))
         }
         if !values.isEmpty {
             VStack(alignment: .leading, spacing: 4) {

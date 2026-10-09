@@ -48,7 +48,12 @@ enum Connections {
     }
 
     /// Registering an app with a service: the page to open, what to enter there, and what the id is called.
-    /// `{{NAME}}` in any of it is the app's name.
+    /// `{{NAME}}` in any of it is the app's name. The page's address may carry the form's values, for a
+    /// service whose form takes them from there (a fill-in link): `…/apps/new?name={{NAME}}&url=…`. That is
+    /// the same for every service, Lamp's or one an app declares, and so is what guards it: the address is
+    /// https with nobody's name or password in it, the app's name is the only thing Lamp puts into it, and
+    /// only after the `?`, so an app can't steer the host or the path with its name. The card says which
+    /// site the button opens, and always lists the values too, for a form that opens empty.
     struct Register: Codable, Equatable {
         struct Value: Codable, Equatable {
             var label: String
@@ -88,8 +93,8 @@ enum Connections {
         basic: "See what's public on your profile",
         icon: "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",
         register: Register(
-            // GitHub's form has taken its values from the address, though nothing GitHub documents says it
-            // will; the card lists them too, for when it doesn't.
+            // A fill-in link. GitHub's form takes its values from the address (seen working 2026-10-09),
+            // though GitHub only documents that for GitHub Apps.
             url: "https://github.com/settings/applications/new?oauth_application%5Bname%5D={{NAME}}&oauth_application%5Burl%5D=https%3A%2F%2Flamp.dev&oauth_application%5Bcallback_url%5D=https%3A%2F%2Flamp.dev",
             values: [.init(label: "Application name", value: "{{NAME}}"),
                      .init(label: "Homepage URL", value: "https://lamp.dev"),
@@ -173,7 +178,7 @@ enum Connections {
                 if matches(scope, #"^[\x21-\x7E]{1,100}$"#), let says = line(says, limit: 80) { scopes[scope] = says }
             }
             var register: Register?
-            if let asked = entry.register, let url = secure(asked.url) {
+            if let asked = entry.register, let url = page(asked.url) {
                 let values = (asked.values ?? []).prefix(8).compactMap { value -> Register.Value? in
                     guard let label = line(value.label, limit: 40), let text = line(value.value, limit: 200) else { return nil }
                     return Register.Value(label: label, value: text)
@@ -201,6 +206,15 @@ enum Connections {
                                                            || $0.properties.generalCategory == .lineSeparator
                                                            || $0.properties.generalCategory == .paragraphSeparator }) else { return nil }
         return trimmed
+    }
+
+    /// A registration page's address, or nothing: an https address like any other here, where the app's name
+    /// may be asked for (`{{NAME}}`) only among the values after the `?`.
+    static func page(_ address: String) -> String? {
+        let parts = address.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        guard !parts[0].contains("{"), !parts[0].contains("}"),
+              secure(address.replacingOccurrences(of: "{{NAME}}", with: "name")) != nil else { return nil }
+        return address
     }
 
     /// An https address with a host and nobody's name or password in it, or nothing.
@@ -282,7 +296,10 @@ enum Connections {
     }
 
     /// Asks the service to start a sign-in with the id, which is all an app would do with it. Nothing comes
-    /// of the code it hands back: nobody is shown it, so it runs out unused.
+    /// of the code it hands back: nobody is shown it, so it runs out unused. Only an answer that is about
+    /// the id refuses it (OAuth's words for an app it doesn't know or that may not sign in this way, and
+    /// GitHub's own). Any other complaint, about scopes or the request, is no reason to turn the id away:
+    /// services differ in what they want asked, and the app's connect screen says what the service says.
     static func verify(_ clientID: String, for service: Service, session: URLSession = URLSession(configuration: .ephemeral)) async -> Verdict {
         guard matches(clientID, #"^[A-Za-z0-9._~-]{4,200}$"#) else {
             return .refused("That doesn't look like an id from \(service.name). Copy it again from the page.")
@@ -293,17 +310,25 @@ enum Connections {
         request.timeoutInterval = 15
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = Data("client_id=\(clientID)".utf8)
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        // With the scopes the entry names, since some services start no sign-in without any.
+        let scope = service.scopes.map(\.name).joined(separator: " ").addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+        request.httpBody = Data(("client_id=\(clientID)" + (scope.isEmpty ? "" : "&scope=\(scope)")).utf8)
         guard let (data, response) = try? await session.data(for: request), let status = (response as? HTTPURLResponse)?.statusCode else {
             return .unreachable
         }
         let reply = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         if reply["device_code"] is String { return .good }
-        if reply["error"] as? String == "device_flow_disabled" {
+        guard status < 500, status != 429 else { return .unreachable }
+        switch reply["error"] as? String ?? "" {
+        case "device_flow_disabled", "unauthorized_client":
             return .refused("\(service.name) knows this app, but its device flow is off. Turn that on in the app's page there, then save again.")
+        case "invalid_client", "Not Found":
+            return .refused("\(service.name) doesn't know that id. Copy it again from the app's page there.")
+        default:
+            return status == 404 ? .refused("\(service.name) doesn't know that id. Copy it again from the app's page there.") : .good
         }
-        guard status < 500 else { return .unreachable }
-        return .refused("\(service.name) doesn't know that id. Copy it again from the app's page there.")
     }
 
     // MARK: - What apps and the agent are given

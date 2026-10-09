@@ -4696,8 +4696,9 @@ enum Template {
         /// Asks the service for a code to show. Nothing secret is sent: the app has none.
         fileprivate static func begin(_ service: LampService, scopes: [String]) async throws -> Code {
             guard !service.clientID.isEmpty else { throw Failure(message: "This app isn't registered with \(service.name) yet.") }
-            let reply = try await post(service.deviceURL, ["client_id": service.clientID, "scope": scopes.joined(separator: " ")],
-                                       on: service).reply
+            var fields = ["client_id": service.clientID]
+            if !scopes.isEmpty { fields["scope"] = scopes.joined(separator: " ") }
+            let reply = try await post(service.deviceURL, fields, on: service).reply
             guard let secret = reply["device_code"] as? String, let shown = reply["user_code"] as? String,
                   let page = ((reply["verification_uri"] ?? reply["verification_url"]) as? String).flatMap({ URL(string: $0) }),
                   page.scheme == "https" || standIn != nil else {

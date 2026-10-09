@@ -78,10 +78,14 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(page.absoluteString.contains("oauth_application%5Bname%5D=Repo%20Radar%20%26%20Co&"), page.absoluteString)
         XCTAssertEqual(ConnectionCard.filled("{{NAME}}", app: "Repo Radar"), "Repo Radar")
         XCTAssertEqual(ConnectionCard.idLabel(Connections.github), "Client ID")
-        XCTAssertEqual(ConnectionCard.instructions(Connections.github, app: "Repo Radar"), "Tick Enable Device Flow, then press Register application.")
+        XCTAssertEqual(ConnectionCard.instructions(Connections.github, app: "Repo Radar"), "Opens github.com. Tick Enable Device Flow, then press Register application.")
         var bare = Connections.github
         bare.register?.notes = nil
-        XCTAssertEqual(ConnectionCard.instructions(bare, app: "Repo Radar"), "Fill in the form there and register the app.")
+        XCTAssertEqual(ConnectionCard.instructions(bare, app: "Repo Radar"), "Opens github.com. Fill in the form there and register the app.")
+        // Several things to do are a list under the step; the line beside the button only says where it goes.
+        bare.register?.notes = ["Choose New registration for {{NAME}}.", "Turn on public client flows."]
+        XCTAssertEqual(ConnectionCard.instructions(bare, app: "Repo Radar"), "Opens github.com.")
+        XCTAssertEqual(ConnectionCard.notes(bare, app: "Repo Radar"), ["Choose New registration for Repo Radar.", "Turn on public client flows."])
     }
 
     func testOnePressTakesTheIdFromTheClipboard() {
@@ -120,6 +124,30 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(Connections.waiting(in: project).map(\.id), ["acme"])
         XCTAssertTrue(Template.supportSwift(for: project).contains("static let acme = LampService("))
         XCTAssertEqual(ConnectionCard.page(acme, app: "Repo Radar")?.absoluteString, "https://acme.example/apps/new")
+    }
+
+    func testAServiceAnAppDescribesCanCarryAFillInLink() throws {
+        func declared(_ url: String) -> Connections.Declared {
+            Connections.Declared(id: "acme", name: "Acme", deviceURL: "https://acme.example/device", tokenURL: "https://acme.example/token",
+                                 hosts: ["api.acme.example"],
+                                 register: .init(url: url, values: [.init(label: "App name", value: "{{NAME}}")], notes: nil, idLabel: nil))
+        }
+        // The same kind of link as Lamp's own entry for GitHub has, and the card treats it the same way.
+        let link = "https://acme.example/apps/new?name={{NAME}}&homepage=https://lamp.dev"
+        let acme = try XCTUnwrap(Connections.services(declared: [declared(link)]).first { $0.id == "acme" })
+        XCTAssertEqual(acme.register?.url, link)
+        XCTAssertEqual(ConnectionCard.page(acme, app: "Trip & Planner")?.absoluteString,
+                       "https://acme.example/apps/new?name=Trip%20%26%20Planner&homepage=https://lamp.dev")
+        XCTAssertEqual(ConnectionCard.instructions(acme, app: "Trip Planner"), "Opens acme.example. Fill in the form there and register the app.")
+        XCTAssertNotNil(Connections.page(Connections.github.register?.url ?? ""))
+
+        // The app's name goes among the form's values and nowhere else: never into the site or the path.
+        for bad in ["https://{{NAME}}.acme.example/apps/new", "https://acme.example/{{NAME}}/new?x=1", "http://acme.example/apps/new?name={{NAME}}",
+                    "https://someone:secret@acme.example/apps/new?name={{NAME}}", "acme.example/apps/new?name={{NAME}}"] {
+            let kept = try XCTUnwrap(Connections.checked([declared(bad)]).first, bad)
+            XCTAssertNil(kept.register, bad)
+            XCTAssertNil(ConnectionCard.page(Connections.services(declared: [declared(bad)]).last!, app: "Trip Planner"), bad)
+        }
     }
 
     func testOnlyAWholeAndPlainServiceIsTaken() {
@@ -175,6 +203,14 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(off, .refused("GitHub knows this app, but its device flow is off. Turn that on in the app's page there, then save again."))
         let unknown = await Connections.verify("somebody-else", for: service)
         XCTAssertEqual(unknown, .refused("GitHub doesn't know that id. Copy it again from the app's page there."))
+        // "This app may not sign in this way", in OAuth's own words, is the same trouble as GitHub's.
+        let barred = await Connections.verify("no-device-grant", for: service)
+        XCTAssertEqual(barred, .refused("GitHub knows this app, but its device flow is off. Turn that on in the app's page there, then save again."))
+        // A complaint that isn't about the id is no reason to turn the id away.
+        let fussy = await Connections.verify("scope-fussy", for: service)
+        XCTAssertEqual(fussy, .good)
+        // And the service is asked with the scopes its entry names, since some start no sign-in without any.
+        XCTAssertEqual(try XCTUnwrap(server).requests.last?.fields["scope"], Connections.github.scopes.map(\.name).joined(separator: " "))
         let pasted = await Connections.verify("the whole page, pasted", for: service)
         XCTAssertEqual(pasted, .refused("That doesn't look like an id from GitHub. Copy it again from the page."))
         service.deviceURL = "http://127.0.0.1:9/login/device/code"
@@ -205,6 +241,9 @@ final class ConnectionTests: XCTestCase {
             XCTAssertTrue(prompt.contains("Never ask the person for a token, key or password"))
             XCTAssertTrue(prompt.contains("Lamp puts a card in the chat"))
             XCTAssertTrue(prompt.contains("never put a secret, key or token in the app"))
+            // A link that fills the service's form in is the agent's to look up, not to guess.
+            XCTAssertTrue(prompt.contains("read the service's documentation on registering an app for URL or query parameters"))
+            XCTAssertTrue(prompt.contains("never make parameters up"))
         }
         // Lamp's services are named whether or not there is an id yet: registering is the card's job.
         XCTAssertTrue(Agent.systemPrompt.contains("GitHub (`.github`"))
@@ -586,6 +625,10 @@ private final class StandIn {
         switch (request.method, request.path) {
         case ("POST", "/login/device/code") where request.fields["client_id"] == "flow-off-client":
             return (400, #"{"error":"device_flow_disabled","error_description":"Device Flow must be explicitly enabled for this App"}"#)
+        case ("POST", "/login/device/code") where request.fields["client_id"] == "no-device-grant":
+            return (400, #"{"error":"unauthorized_client"}"#)
+        case ("POST", "/login/device/code") where request.fields["client_id"] == "scope-fussy":
+            return (400, #"{"error":"invalid_scope"}"#)
         case ("POST", "/login/device/code") where request.fields["client_id"] != "lamp-test-client":
             return (404, #"{"error":"Not Found"}"#)
         case ("POST", "/login/device/code"):

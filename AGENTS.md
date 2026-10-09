@@ -255,6 +255,16 @@ to open, what to enter, and a field for the id, which `Connections.verify` tries
 screen says it isn't registered, with no button. No engine has a tool for this: the agent only names the
 service, or declares one, and is told to leave registering to the card.
 
+The card is the same for every service. An entry's page may be a fill-in link, an address that carries the
+form's values for a service whose form takes them from there (`Connections.Register`): Lamp's GitHub entry
+has one, and a service an app declares can too. The agent is told to use one only when the service's
+documentation describes it, and never to guess, since it can't open the page. Because the card can't see
+whether a form opened filled in, it always lists the values as well. A link in an app someone else made is
+checked like the rest of a declared service (`Connections.page`): https, nobody's name or password in it,
+and the app's name, the one thing Lamp puts into it, only among the values after the `?`. The card says
+which site the button opens. The id's check (`Connections.verify`) turns an id away only for an answer
+about the id; services differ in what else they want asked.
+
 Only a sign-in that needs no secret can be an entry, because everything in one ships readable in every app:
 GitHub's device flow is that. A service that wants a client secret (Notion, Slack, Google's device sign-in)
 can't be connected, and there is deliberately nowhere to put one; one that only signs in through a browser

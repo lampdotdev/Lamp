@@ -391,7 +391,13 @@ enum Agent {
             {"url": "https://acme.com/developers/apps/new", "values": [{"label": "App name", "value": "{{NAME}}"}], \
             "notes": ["Turn on device sign-in."], "idLabel": "Client ID"}}]}`, then name it `.acme`. Take every \
             address from the service's own documentation, never from memory, and give `register` the page and \
-            values someone registering this app there needs; Lamp writes the card from it. A service that wants \
+            values someone registering this app there needs; Lamp writes the card from it. Some services fill \
+            their registration form in from the page's address, which saves the person the typing. To find out, \
+            read the service's documentation on registering an app for URL or query parameters; when it describes \
+            them, write `register.url` with them as documented and `{{NAME}}` where the app's name goes \
+            (`https://acme.com/developers/apps/new?name={{NAME}}&homepage=https://lamp.dev`). When it doesn't, give \
+            the plain page: never make parameters up, since you can't open the page to see them work. List \
+            `values` either way: the card shows them for a form that opens empty. A service that wants \
             a client secret, or only signs in through a browser redirect (Notion, Slack and Google are like \
             that), can't be connected yet: say so plainly, and never put a secret, key or token in the app.
 
