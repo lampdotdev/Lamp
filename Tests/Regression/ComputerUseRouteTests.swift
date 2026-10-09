@@ -65,6 +65,24 @@ final class ComputerUseRouteTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(began), 5)
     }
 
+    /// Some of what a task waits on can't be cancelled (a browser's AppleScript): the limit doesn't wait for it.
+    func testTheLimitDoesNotWaitForWorkThatCannotBeCancelled() async {
+        let began = Date()
+        do {
+            _ = try await ComputerUse.within({ Date().timeIntervalSince(began) > 0.2 ? ComputerUse.tookTooLong : nil },
+                                             every: .milliseconds(50)) {
+                await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 4) { done.resume() }
+                }
+                return "late"
+            }
+            XCTFail("The work should not have been waited for.")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, ComputerUse.tookTooLong.message)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(began), 2)
+    }
+
     func testWorkThatFinishesInTimeIsItsOwnAnswer() async throws {
         let answer = try await ComputerUse.within({ nil }, every: .milliseconds(50)) { "done" }
         XCTAssertEqual(answer, "done")

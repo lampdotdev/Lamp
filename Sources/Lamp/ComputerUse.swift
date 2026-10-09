@@ -582,19 +582,40 @@ enum ComputerUse {
     }
 
     /// Runs `work` until it ends or `overrun` names a limit the task has passed, looked at every `interval`.
-    /// At a limit `cut` is called, `work` is cancelled, and the limit is the error.
+    /// At a limit `cut` is called, `work` is cancelled, and the limit is the error at once: some of what
+    /// `work` waits on can't be cancelled (a browser's AppleScript, a call to the driver), and the app
+    /// shouldn't wait out their own timeouts for an answer that is already decided.
     static func within<T: Sendable>(_ overrun: @escaping () -> Failure?, every interval: Duration = .seconds(1),
                                     cut: @escaping () -> Void = {}, _ work: @escaping () async throws -> T) async throws -> T {
-        try await withThrowingTaskGroup(of: T?.self) { group in
-            group.addTask { try await work() }
-            group.addTask {
-                while overrun() == nil { try await Task.sleep(for: interval) }
-                return nil
+        let race = Race<T>()
+        let working = Task { await race.end(Result { try await work() }) }
+        let clock = Task {
+            while overrun() == nil {
+                guard (try? await Task.sleep(for: interval)) != nil else { return }   // the work ended first
             }
-            defer { group.cancelAll() }
-            if let first = try await group.next(), let result = first { return result }
             cut()
-            throw overrun() ?? tookTooLong
+            working.cancel()
+            await race.end(.failure(overrun() ?? tookTooLong))
+        }
+        defer { clock.cancel() }
+        return try await race.result()
+    }
+
+    /// The first of two endings wins; the other is dropped.
+    private actor Race<T: Sendable> {
+        private var ended: Result<T, Error>?
+        private var waiting: CheckedContinuation<T, Error>?
+
+        func end(_ result: Result<T, Error>) {
+            guard ended == nil else { return }
+            ended = result
+            waiting?.resume(with: result)
+            waiting = nil
+        }
+
+        func result() async throws -> T {
+            if let ended { return try ended.get() }
+            return try await withCheckedThrowingContinuation { waiting = $0 }
         }
     }
 
