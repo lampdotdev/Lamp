@@ -36,5 +36,14 @@ const imageURL = image && new URL(image, Astro.site).href;
   </head>
   <body class="font-sans">
     <slot />
+    <script>
+      import { startAnalytics, track } from "../lib/analytics";
+      startAnalytics();
+      // Every Download button says where it sits, including ones added to the page later.
+      document.addEventListener("click", (event) => {
+        const link = (event.target as Element | null)?.closest?.("a[data-download-place]");
+        if (link) track("download_clicked", { place: link.getAttribute("data-download-place") ?? "" });
+      });
+    </script>
   </body>
 </html>

@@ -12,6 +12,8 @@ enum Onboarding {
     static let stepKey = "welcomeStep"
     /// What the first app is made as, kept with the idea.
     static let kindKey = "welcomeKind"
+    /// When the welcome was first shown, for how long it took (`Analytics`).
+    static let startedKey = "welcomeStarted"
 
     /// People who used Lamp before the welcome existed have apps already: they skip it.
     static func settle(hasApps: Bool) {
@@ -99,6 +101,12 @@ struct OnboardingView: View {
         .tint(Palette.accent)
         .background(WindowReader { window = $0 })
         .onChange(of: window) { if let window { Chrome.hide(window) } }
+        .onAppear {
+            if UserDefaults.standard.object(forKey: Onboarding.startedKey) == nil {
+                UserDefaults.standard.set(Date(), forKey: Onboarding.startedKey)
+            }
+            Analytics.capture(.welcomeStep, ["step": "\(step)"])
+        }
         // Menus can be rebuilt at any moment, so keep Settings switched off for as long as the welcome is up.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUpdateNotification)) { _ in
             SettingsMenu.enable(false)
@@ -108,6 +116,7 @@ struct OnboardingView: View {
     private func go(to next: Step) {
         forward = next.rawValue > step.rawValue
         UserDefaults.standard.set(next.rawValue, forKey: Onboarding.stepKey)
+        Analytics.capture(.welcomeStep, ["step": "\(next)", "back": !forward])
         withAnimation(.spring(response: 0.6, dampingFraction: 0.88)) { step = next }
     }
 
@@ -119,10 +128,18 @@ struct OnboardingView: View {
             let idea = prompt.trimmed
             let kind = kind
             let window = window
+            let started = UserDefaults.standard.object(forKey: Onboarding.startedKey) as? Date
+            Analytics.capture(.welcomeDone, [
+                "agent": Builder.Choice.current(engine: Builder.engine.rawValue, piProvider: Builder.piProvider, ready: true)
+                    .map(Analytics.agent) ?? "none",
+                "kind": Analytics.kind(kind), "has_idea": !idea.isEmpty,
+                "seconds": started.map { Int(Date().timeIntervalSince($0)) } ?? -1,
+            ])
             // The welcome is over: nothing to come back to.
             UserDefaults.standard.removeObject(forKey: Onboarding.ideaKey)
             UserDefaults.standard.removeObject(forKey: Onboarding.stepKey)
             UserDefaults.standard.removeObject(forKey: Onboarding.kindKey)
+            UserDefaults.standard.removeObject(forKey: Onboarding.startedKey)
             withAnimation(.easeOut(duration: 0.4)) {
                 onboarded = true
                 store.welcomeFinished = true
@@ -133,7 +150,7 @@ struct OnboardingView: View {
             if let window { Chrome.restore(window, to: Onboarding.appSize) }
             store.openWaitingImport()
             guard !idea.isEmpty else { return }
-            store.create()
+            store.create(fromWelcome: true)
             guard let project = store.selected else { return }
             store.setKind(project, kind)
             // An iPhone or iPad app needs Xcode and a simulator first, checked as the chat's Send does, and the
@@ -204,6 +221,9 @@ private struct IdeaStep: View {
     @State private var chosen: String?
     @State private var flip = 0
     @FocusState private var focused: Bool
+    /// What the idea came from, for `Analytics`: the tile last picked (even if then changed), and dictation.
+    @State private var picked = false
+    @State private var dictated = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -218,6 +238,7 @@ private struct IdeaStep: View {
                 // An idea picked for the other kind goes with it; anything typed stays.
                 if chosen != nil { prompt = ""; chosen = nil }
                 deck.show(kind)
+                Analytics.capture(.welcomeKind, ["kind": Analytics.kind(kind)])
             }
 
             HStack(alignment: .top, spacing: 10) {
@@ -253,7 +274,10 @@ private struct IdeaStep: View {
             HStack {
                 Text("Need an idea?").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
                 Spacer()
-                Button(action: deck.more) {
+                Button {
+                    deck.more()
+                    Analytics.capture(.welcomeMoreIdeas, ["kind": Analytics.kind(kind)])
+                } label: {
                     HStack(spacing: 5) {
                         Image(systemName: IdeaDeck.moreSymbol)
                         Text("Show me others")
@@ -282,10 +306,19 @@ private struct IdeaStep: View {
         .frame(maxWidth: .infinity)
         .overlay(alignment: .bottom) {
             Footer(back: back) {
-                BigButton(title: "Continue", action: next).disabled(prompt.trimmed.isEmpty)
+                BigButton(title: "Continue") {
+                    let source = chosen != nil ? "picked" : picked ? "edited" : "typed"
+                    Analytics.capture(.welcomeIdeaDone, ["kind": Analytics.kind(kind), "source": source, "dictated": dictated])
+                    next()
+                }
+                .disabled(prompt.trimmed.isEmpty)
             } aside: {
                 if prompt.trimmed.isEmpty {
-                    Button("Skip", action: next).buttonStyle(.plain).foregroundStyle(.secondary)
+                    Button("Skip") {
+                        Analytics.capture(.welcomeIdeaSkipped, ["kind": Analytics.kind(kind)])
+                        next()
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
                 }
             }
         }
@@ -301,6 +334,8 @@ private struct IdeaStep: View {
     private func choose(_ idea: Idea) {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { chosen = idea.id }
         prompt = idea.prompt
+        picked = true
+        Analytics.capture(.welcomeIdeaPicked, ["kind": Analytics.kind(kind), "idea": Analytics.idea(idea, kind: kind)])
         focused = true
     }
 
@@ -308,6 +343,8 @@ private struct IdeaStep: View {
         if dictation.isListening { return dictation.stop() }
         let typed = prompt.trimmed
         let separator = typed.isEmpty ? "" : " "
+        dictated = true
+        Analytics.capture(.welcomeDictation)
         Task { await dictation.start { prompt = typed + separator + $0 } }
     }
 }
@@ -388,10 +425,17 @@ private struct SetupStep: View {
             }
         }
         .onAppear {
-            if !store.setup.hasBuildTools && !store.setup.installRequested { store.requestBuildTools() }
+            if store.setup.hasBuildTools { Analytics.capture(.welcomeToolsReady, ["already_installed": true]) }
+            if !store.setup.hasBuildTools && !store.setup.installRequested {
+                store.requestBuildTools()
+                Analytics.capture(.welcomeToolsInstall, ["by": "automatic"])
+            }
             choice = Builder.Choice.current(engine: engine, piProvider: piProvider, ready: store.setup.hasBuilder)
         }
         .task { await refreshSignIns() }
+        .onChange(of: store.setup.hasBuildTools) { _, has in
+            if has { Analytics.capture(.welcomeToolsReady, ["already_installed": false]) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             // Back from installing Claude or ChatGPT, or signing in.
             Task {
@@ -494,7 +538,10 @@ private struct ToolsCard: View {
                             .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Palette.accentDeep)
                     }
                 } else {
-                    Button("Install") { store.requestBuildTools() }
+                    Button("Install") {
+                        store.requestBuildTools()
+                        Analytics.capture(.welcomeToolsInstall, ["by": "button"])
+                    }
                 }
             }
         }
@@ -559,6 +606,12 @@ private struct BuilderCard: View {
     /// missing (the app, or a sign-in) is asked for underneath.
     private func pick(_ new: Builder.Choice) {
         problem = nil
+        if choice != new {
+            var properties: [String: Any] = ["agent": Analytics.agent(new)]
+            if new == .claude { properties["installed"] = ToolLocator.path(for: .claude) != nil }
+            if new == .chatGPT { properties["installed"] = ToolLocator.path(for: .codex) != nil }
+            Analytics.capture(.welcomeAgent, properties)
+        }
         choice = new
         let which: Engine? = new == .claude ? .claude : new == .chatGPT ? .codex : nil
         guard let which else { return }
@@ -585,6 +638,10 @@ private struct BuilderCard: View {
                 Spacer()
                 Link("Get \(app)", destination: URL(string: download)!)
                     .font(.system(size: 13, weight: .medium))
+                    .environment(\.openURL, OpenURLAction { _ in
+                        Analytics.capture(.welcomeAgentDownload, ["agent": Analytics.agent(which)])
+                        return .systemAction
+                    })
             } else if signedIn[which] == true {
                 Done()
                 Text("\(name) will make your apps.").font(.system(size: 13, weight: .medium))
@@ -611,7 +668,9 @@ private struct BuilderCard: View {
         problem = nil
         Task {
             signingIn = which
+            Analytics.capture(.welcomeSignIn, ["agent": Analytics.agent(which)])
             let ok = await EngineSignIn.signIn(which)
+            Analytics.capture(.welcomeSignedIn, ["agent": Analytics.agent(which), "success": ok])
             signingIn = nil
             NSApp.activate()
             signedIn[which] = ok
@@ -738,9 +797,11 @@ private struct LampAgentOptions: View {
         Task {
             defer { checkingKey = false }
             if let found = await SetupView.checkOpenRouterKey(candidate) {
+                Analytics.capture(.welcomeKey, ["valid": false])
                 problem = found
                 return
             }
+            Analytics.capture(.welcomeKey, ["valid": true])
             KeyStore.setOpenRouterKey(candidate)
             key = ""
             use(provider: "openrouter", model: nil)
@@ -885,7 +946,10 @@ private struct LampAgentOptions: View {
                     ProgressView(value: progress).frame(width: 100)
                     Button("Cancel") { local.cancel(spec.id) }
                 } else {
-                    Button("Download") { local.download(spec) }
+                    Button("Download") {
+                        local.download(spec)
+                        Analytics.capture(.welcomeModelDownload, ["model": spec.id])
+                    }
                 }
             }
             if let error = local.errors[spec.id] {
