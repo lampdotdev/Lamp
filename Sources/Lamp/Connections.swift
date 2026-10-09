@@ -183,7 +183,9 @@ enum Connections {
                     guard let label = line(value.label, limit: 40), let text = line(value.value, limit: 200) else { return nil }
                     return Register.Value(label: label, value: text)
                 }
-                let notes = (asked.notes ?? []).prefix(4).compactMap { line($0, limit: 120) }
+                // Room for a real instruction: an agent's own run to about 150 characters, and a note that is cut
+                // is a step the person never sees.
+                let notes = (asked.notes ?? []).prefix(5).compactMap { line($0, limit: 240) }
                 register = Register(url: url, values: values.isEmpty ? nil : Array(values), notes: notes.isEmpty ? nil : Array(notes),
                                     idLabel: asked.idLabel.flatMap { line($0, limit: 30) })
             }

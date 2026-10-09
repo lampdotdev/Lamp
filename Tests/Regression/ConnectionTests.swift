@@ -150,6 +150,17 @@ final class ConnectionTests: XCTestCase {
         }
     }
 
+    func testAnInstructionAsLongAsAnAgentWritesIsKept() throws {
+        // Written by the agent for Dropbox in a real turn: 142 characters, and a step the person needs.
+        let real = "On the Settings tab, add the redirect URI under OAuth 2 and leave \"Allow public clients (Implicit Grant & PKCE)\" set to Allow."
+        XCTAssertGreaterThan(real.count, 120)
+        let entry = Connections.Declared(id: "acme", name: "Acme", deviceURL: "https://acme.example/device", tokenURL: "https://acme.example/token",
+                                         hosts: ["api.acme.example"],
+                                         register: .init(url: "https://acme.example/apps/new", values: nil,
+                                                         notes: [real, String(repeating: "x", count: 241), "Copy the App key."], idLabel: nil))
+        XCTAssertEqual(try XCTUnwrap(Connections.checked([entry]).first).register?.notes, [real, "Copy the App key."])
+    }
+
     func testOnlyAWholeAndPlainServiceIsTaken() {
         func kept(_ change: (inout Connections.Declared) -> Void) -> [String] {
             var entry = Connections.Declared(id: "acme", name: "Acme", deviceURL: "https://acme.example/device", tokenURL: "https://acme.example/token",
