@@ -49,7 +49,7 @@ struct LampProject: Identifiable, Hashable {
     var family: DeviceFamily = .iphone
     /// The person's own iPhone or iPad that Play puts the app on (Devices), instead of the simulator.
     var device: String?
-    /// What the app is, in one short sentence (`Store.descriptionLimit`): what a person it's
+    /// What the app is, in one short sentence: what a person it's
     /// shared with reads under its name before opening it. The agent sets it (`describe_app`); nil until then.
     var description: String?
 
@@ -2272,24 +2272,14 @@ final class Store: ObservableObject {
         }
     }
 
-    /// How long a description may be: a line under the app's name, not a paragraph. `describe_app` says the
-    /// same number to the agent (lamp-tools.json).
-    nonisolated static let descriptionLimit = 80
-
-    /// Why a description isn't kept, in words the agent can act on, or nil when it is. One that runs long is
-    /// handed back to be written shorter, never cut: a cut ends mid-thought, and the words are the agent's.
-    nonisolated static func descriptionRefusal(_ words: String) -> String? {
-        if words.isEmpty { return "`description` must be one short sentence saying what the app is." }
-        if words.contains(where: \.isNewline) { return "The description is one sentence on one line. Write it again without line breaks." }
-        guard words.count > descriptionLimit else { return nil }
-        return "That is \(words.count) characters and the description holds \(descriptionLimit). Nothing was kept. Write one shorter sentence saying only what the app is, without its features or how it works, and call describe_app again."
-    }
-
     /// The agent's `describe_app`: the app's description, kept beside its name. The words are the agent's
     /// and are kept as given; only the white space around them goes.
     private func describe(_ project: LampProject, _ arguments: [String: Any]) -> (Int, [String: Any]) {
-        let words = (arguments["description"] as? String ?? "").trimmed
-        if let refusal = Self.descriptionRefusal(words) { return (400, ["error": refusal]) }
+        // No words would count as a description: the app would stop being asked for one, and the review
+        // of a shared copy would speak of a description that isn't there.
+        guard let words = (arguments["description"] as? String)?.trimmed, !words.isEmpty else {
+            return (400, ["error": "`description` must be one short sentence saying what the app is."])
+        }
         guard let index = projects.firstIndex(where: { $0.instance == project.instance }) else {
             return (404, ["error": "Lamp couldn't find this app."])
         }

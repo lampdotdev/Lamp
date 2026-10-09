@@ -75,24 +75,6 @@ final class SharedAppAboutTests: XCTestCase {
         XCTAssertNil(meta.description)
     }
 
-    /// A description is a line under the app's name. One that runs long is refused with the reason, for the
-    /// agent to write again, and never cut short.
-    func testALongDescriptionIsRefusedNotCut() throws {
-        XCTAssertNil(Store.descriptionRefusal(words))
-        XCTAssertNil(Store.descriptionRefusal(String(repeating: "a", count: Store.descriptionLimit)))
-        let long = "A simple counter that goes up by one every ten seconds while its window is open, and picks up where it left off next time."
-        let refusal = try XCTUnwrap(Store.descriptionRefusal(long))
-        XCTAssertTrue(refusal.contains("\(long.count)") && refusal.contains("\(Store.descriptionLimit)"))
-        XCTAssertNotNil(Store.descriptionRefusal(""))
-        XCTAssertNotNil(Store.descriptionRefusal("A counter.\nIt counts."))
-        // The tool tells the agent the same limit Lamp holds it to.
-        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Resources/lamp-tools.json")
-        let tools = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [[String: Any]])
-        let tool = try XCTUnwrap(tools.first { $0["name"] as? String == "describe_app" })
-        XCTAssertTrue((tool["description"] as? String ?? "").contains("At most \(Store.descriptionLimit) characters"))
-    }
-
     /// Every engine is given the tool that sets it, and an app without one is told so with the request.
     func testAgentIsGivenTheToolAndToldWhenThereIsNoDescription() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
