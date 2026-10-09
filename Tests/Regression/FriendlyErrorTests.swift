@@ -34,22 +34,44 @@ final class FriendlyErrorTests: XCTestCase {
                        ErrorMessages.authenticationFailed(Engine.claude.title))
     }
 
+    private func reply(_ message: String, code: Any? = nil, type: String? = nil) -> [String: Any] {
+        var error: [String: Any] = ["message": message]
+        error["code"] = code
+        error["type"] = type
+        return ["error": error]
+    }
+
     /// A picture model with no room answered 429 "You exceeded your current quota…": the status says busy,
     /// and the person, whose account was fine, was about to be told to top it up.
     func testAStatusSaysWhatKindOfFailureItWasWhateverTheWordsSay() {
-        let busy = Provider.friendlyError(status: 429, "You exceeded your current quota, please check your plan and billing details.",
-                                          from: Provider.openRouter)
-        XCTAssertEqual(busy, ErrorMessages.providerBusy)
-        XCTAssertEqual(Provider.friendlyError(status: 402, "Insufficient credits", from: Provider.openRouter),
+        let noRoom = reply("You exceeded your current quota, please check your plan and billing details.", code: 429)
+        XCTAssertEqual(Provider.friendlyError(status: 429, reply: noRoom, from: Provider.openRouter), ErrorMessages.providerBusy)
+        XCTAssertEqual(Provider.friendlyError(status: 402, reply: reply("Insufficient credits", code: 402), from: Provider.openRouter),
                        ErrorMessages.quotaExceeded("OpenRouter"))
-        XCTAssertEqual(Provider.friendlyError(status: 401, "No auth credentials found", from: Provider.openRouter),
+        XCTAssertEqual(Provider.friendlyError(status: 401, reply: reply("No auth credentials found", code: 401), from: Provider.openRouter),
                        ErrorMessages.authenticationFailed("OpenRouter"))
     }
 
-    func testAStatusThatDoesNotSayLeavesItToTheWords() {
-        XCTAssertEqual(Provider.friendlyError(status: 400, "Rate limit reached", from: Provider.openRouter), ErrorMessages.providerBusy)
-        XCTAssertEqual(Provider.friendlyError(status: 500, "Internal error", from: Provider.openRouter),
+    /// A status can stand for more than one kind: an empty account and too many requests both come back
+    /// 429 from a provider that names which in the error's code. Waiting a minute fixes only one of them.
+    func testTheProvidersOwnCodeForTheFailureComesBeforeItsStatus() {
+        let empty = reply("You exceeded your current quota, please check your plan and billing details.",
+                          code: "insufficient_quota", type: "insufficient_quota")
+        XCTAssertEqual(Provider.friendlyError(status: 429, reply: empty, from: "OpenAI"), ErrorMessages.quotaExceeded("OpenAI"))
+        let tooFast = reply("Rate limit reached for requests", code: "rate_limit_exceeded", type: "requests")
+        XCTAssertEqual(Provider.friendlyError(status: 429, reply: tooFast, from: "OpenAI"), ErrorMessages.providerBusy)
+        // Named only by its type, and a code nobody knows leaves it to the status.
+        XCTAssertEqual(Provider.friendlyError(status: 429, reply: reply("No more.", type: "insufficient_quota"), from: "OpenAI"),
+                       ErrorMessages.quotaExceeded("OpenAI"))
+        XCTAssertEqual(Provider.friendlyError(status: 429, reply: reply("No more.", code: "something_new"), from: "OpenAI"),
+                       ErrorMessages.providerBusy)
+    }
+
+    func testAReplyThatDoesNotSayLeavesItToTheWords() {
+        XCTAssertEqual(Provider.friendlyError(status: 400, reply: reply("Rate limit reached"), from: Provider.openRouter), ErrorMessages.providerBusy)
+        XCTAssertEqual(Provider.friendlyError(status: 500, reply: reply("Internal error"), from: Provider.openRouter),
                        ErrorMessages.aiFailed("500 Internal error"))
+        XCTAssertEqual(Provider.friendlyError(status: 503, reply: [:], from: Provider.openRouter), ErrorMessages.aiFailed("503 HTTP 503"))
     }
 
     /// It was shown as "The operation couldn't be completed. (Lamp.AppAI.Failure error 1.)" wherever a

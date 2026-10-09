@@ -98,17 +98,32 @@ enum Provider {
         friendlyError(kind(of: raw), raw, from: name)
     }
 
-    /// The same for a call that came back with an HTTP status. The status is the provider saying what kind
-    /// of failure it was, so it decides; the message's wording is read only when the status doesn't say (a
-    /// provider with no room for the request answers 429 with words about quota, which isn't an empty account).
-    static func friendlyError(status: Int, _ message: String, from name: String) -> String {
+    /// The same for a call that came back with an HTTP status and a reply. The provider says what kind of
+    /// failure it was, so that decides: its own code for the error where the reply carries one, else the
+    /// status. The message's wording is read only when neither says. Words alone mislead both ways: a
+    /// provider with no room for the request answers 429 with words about quota, and one whose account is
+    /// empty answers 429 too.
+    static func friendlyError(status: Int, reply: [String: Any], from name: String) -> String {
+        let error = reply["error"] as? [String: Any]
+        let message = error?["message"] as? String ?? reply["detail"].map { "\($0)" } ?? "HTTP \(status)"
         let raw = "\(status) \(message)"
-        return friendlyError(FailureKind(status: status) ?? kind(of: raw), raw, from: name)
+        let named = [error?["code"], error?["type"]].lazy.compactMap { ($0 as? String).flatMap(FailureKind.init(code:)) }.first
+        return friendlyError(named ?? FailureKind(status: status) ?? kind(of: raw), raw, from: name)
     }
 
     /// What went wrong with a call, as far as the person can do something about it.
     enum FailureKind: Equatable {
         case authentication, quota, busy, unreachable, outdated, other
+
+        /// From the code a reply's error carries, in the spelling OpenAI's API set and others follow.
+        init?(code: String) {
+            switch code {
+            case "invalid_api_key": self = .authentication
+            case "insufficient_quota": self = .quota
+            case "rate_limit_exceeded": self = .busy
+            default: return nil
+            }
+        }
 
         init?(status: Int) {
             switch status {
