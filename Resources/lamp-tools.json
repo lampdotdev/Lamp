@@ -129,24 +129,6 @@
     }
   },
   {
-    "name": "describe_app",
-    "label": "Describe app",
-    "description": "Sets the app's description: one short, plain sentence saying what the app is, like the line under an app's name in a store (\"A counter that goes up every ten seconds.\"). Lamp shows it under the app's name to anyone the app is shared with, before they open it. Not a list of features and not how it works: what it is, in everyday words, with nothing from the code. Call it once a new app is built, and again when what the app is changes; each call replaces the description.",
-    "inputSchema": {
-      "additionalProperties": false,
-      "properties": {
-        "description": {
-          "description": "One short sentence, e.g. \"A timer for brewing tea.\"",
-          "type": "string"
-        }
-      },
-      "required": [
-        "description"
-      ],
-      "type": "object"
-    }
-  },
-  {
     "name": "delete_file",
     "label": "Delete file",
     "description": "Deletes one file in the app's folder that is no longer needed, such as a source file whose code moved elsewhere or a view that was removed. Use it instead of leaving an emptied file behind. It can't delete folders, files outside the app's folder, or the files Lamp generates.",

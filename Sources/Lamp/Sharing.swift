@@ -74,7 +74,7 @@ enum Sharing {
         /// Which app this is, the same in every file shared from it (`identity`). Files from before it
         /// existed have none and open as a new app, as they always did.
         var app: String?
-        /// What the app is for, in its sender's words (`LampProject.description`). Files from an app that
+        /// What the app is, in its sender's words (`AppDescription`). Files from an app that
         /// has none, or from before apps had one, carry none.
         var description: String?
     }
@@ -183,7 +183,7 @@ enum Sharing {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(Manifest(format: format(withWidget: !widgetCode.isEmpty), name: project.name, exportedAt: Date(),
-                                    app: identity(of: project), description: project.description))
+                                    app: identity(of: project), description: AppDescription.description(of: project)))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
         // Everything staged, counted and measured the way the importer's listing does (files and folders,
@@ -293,7 +293,7 @@ enum Sharing {
         // Assets/, or Attachments/ from a Lamp that bundled the chat's files: either way the app's own now.
         let attachments = filesUnder(folder.appendingPathComponent(Assets.folder))
             + filesUnder(folder.appendingPathComponent(Attachments.folder))
-        return Package(name: manifest.name, identity: identity(from: manifest.app), description: manifest.description?.trimmed.nilIfEmpty,
+        return Package(name: manifest.name, identity: identity(from: manifest.app), description: manifest.description.flatMap(AppDescription.valid),
                        folder: folder, sources: sources,
                        attachments: attachments, fileCount: all)
     }
@@ -341,11 +341,10 @@ enum Sharing {
             try? fm.removeItem(at: project.dir.appendingPathComponent("APP.md"))
             try fm.copyItem(at: appMd, to: project.dir.appendingPathComponent("APP.md"))
         }
-        // The description comes with the app, so the copy says the same when it's shared on.
-        // An app being updated takes the file's too, none included: the words go with the code they describe.
-        var described = project
-        described.description = package.description
-        try Template.saveMeta(described)
+        // The description comes with the app, so the copy says the same when it's shared on. An app being
+        // updated takes the file's too, none included: the words go with the code they describe. Lamp writes
+        // the file itself from what it read, so nothing else a sender put there arrives.
+        try AppDescription.write(package.description, for: project)
         if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
            let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
             Icons.save(spec, for: project)

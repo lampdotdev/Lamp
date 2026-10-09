@@ -15,13 +15,13 @@ final class SharedAppAboutTests: XCTestCase {
         return Sharing.Package(name: "Tally", folder: folder, sources: [], attachments: [], fileCount: files.count)
     }
 
-    /// A made-up app with code, as Lamp keeps one, in a folder of its own.
-    private func app(description: String?) throws -> LampProject {
+    /// A made-up app with code, as Lamp keeps one, in a folder of its own. `about` is its about.json as the
+    /// agent left it, if it wrote one.
+    private func app(about: String?) throws -> LampProject {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("lamp-about-\(UUID().uuidString)")
         folder = root
-        var project = LampProject(id: "ticker", name: "Ticker", exe: "Ticker", dir: root.appendingPathComponent("ticker"))
-        project.description = description
+        let project = LampProject(id: "ticker", name: "Ticker", exe: "Ticker", dir: root.appendingPathComponent("ticker"))
         try fm.createDirectory(at: project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
         try fm.createDirectory(at: project.dir.appendingPathComponent("Sources"), withIntermediateDirectories: true)
         try Data("import SwiftUI\n".utf8).write(to: project.dir.appendingPathComponent("Sources/App.swift"))
@@ -29,14 +29,16 @@ final class SharedAppAboutTests: XCTestCase {
         try Data("# Ticker\n\n## What it does\n- Each change is shared with the widget (`LampWidget.share(TickerSummary, as: \"summary\")`).\n".utf8)
             .write(to: project.dir.appendingPathComponent("APP.md"))
         try Template.saveMeta(project)
+        if let about { try Data(about.utf8).write(to: project.dir.appendingPathComponent(AppDescription.file)) }
         return project
     }
 
     private let words = "A counter that goes up every ten seconds."
+    private var written: String { #"{"description": "A counter that goes up every ten seconds."}"# }
 
-    /// The description is a field of the app: it goes into the shared file as it is and comes out the same.
+    /// The description is a field the agent writes: it goes into the shared file as it is and comes out the same.
     func testDescriptionTravelsWithTheSharedApp() throws {
-        let file = try Sharing.export(try app(description: words))
+        let file = try Sharing.export(try app(about: written))
         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         let package = try Sharing.open(file)
         defer { try? FileManager.default.removeItem(at: package.folder) }
@@ -45,7 +47,7 @@ final class SharedAppAboutTests: XCTestCase {
 
     /// An app nobody described says nothing, whatever its notes hold.
     func testAppWithoutADescriptionSharesNone() throws {
-        let file = try Sharing.export(try app(description: nil))
+        let file = try Sharing.export(try app(about: nil))
         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         let package = try Sharing.open(file)
         defer { try? FileManager.default.removeItem(at: package.folder) }
@@ -54,37 +56,70 @@ final class SharedAppAboutTests: XCTestCase {
 
     /// The copy made by opening a shared app keeps the description, so it's there when the copy is shared on.
     func testOpenedCopyKeepsTheDescription() throws {
-        let copy = try app(description: nil)
+        let copy = try app(about: nil)
         let unpacked = copy.dir.deletingLastPathComponent().appendingPathComponent("unpacked")
         try FileManager.default.createDirectory(at: unpacked, withIntermediateDirectories: true)
         let shared = Sharing.Package(name: "Ticker", description: words, folder: unpacked, sources: [], attachments: [], fileCount: 0)
         try Sharing.install(shared, into: copy)
-        let meta = try JSONDecoder().decode(ProjectMeta.self, from: Data(contentsOf: copy.dir.appendingPathComponent(".lamp/meta.json")))
-        XCTAssertEqual(meta.description, words)
-        XCTAssertEqual(meta.name, "Ticker")
+        XCTAssertEqual(AppDescription.description(of: copy), words)
     }
 
     /// An update from a file with no description leaves none: the old words were about the old code.
     func testUpdateFromAFileWithoutADescriptionClearsIt() throws {
-        let copy = try app(description: words)
+        let copy = try app(about: written)
         let unpacked = copy.dir.deletingLastPathComponent().appendingPathComponent("unpacked")
         try FileManager.default.createDirectory(at: unpacked, withIntermediateDirectories: true)
         let shared = Sharing.Package(name: "Ticker", folder: unpacked, sources: [], attachments: [], fileCount: 0)
         try Sharing.install(shared, into: copy, replacing: true)
-        let meta = try JSONDecoder().decode(ProjectMeta.self, from: Data(contentsOf: copy.dir.appendingPathComponent(".lamp/meta.json")))
-        XCTAssertNil(meta.description)
+        XCTAssertNil(AppDescription.description(of: copy))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.dir.appendingPathComponent(AppDescription.file).path))
     }
 
-    /// Every engine is given the tool that sets it, and an app without one is told so with the request.
-    func testAgentIsGivenTheToolAndToldWhenThereIsNoDescription() throws {
-        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Resources/lamp-tools.json")
-        let tools = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [[String: Any]])
-        XCTAssertTrue(tools.contains { $0["name"] as? String == "describe_app" })
-        XCTAssertTrue(Agent.tryRules.contains("`describe_app`"))
-        XCTAssertTrue(Agent.undescribed(try app(description: nil)).contains("describe_app"))
-        XCTAssertEqual(Agent.undescribed(try app(description: words)), "")
-        XCTAssertEqual(ToolCall("describe_app").action, .describe)
+    /// What the agent wrote is read as data. Anything but one plain line of text under "description" is an
+    /// app with no description: never an error, and never the file's own text.
+    func testOnlyAPlainLineIsADescription() throws {
+        XCTAssertEqual(AppDescription.description(of: try app(about: written)), words)
+        XCTAssertEqual(AppDescription.description(of: try app(about: #"{"description": "  A counter.  ", "other": 1}"#)), "A counter.")
+        for broken in [
+            "", "A counter that goes up.", "# Ticker\n\n- The count is saved (`LampStore`).", #"{"description": "A counter""#,
+            #"{"description": ""}"#, #"{"description": "   "}"#, #"{"description": "A counter.\nIt counts."}"#,
+            #"{"description": 7}"#, #"{"description": ["A counter."]}"#, #"{"description": null}"#, #"{"name": "Ticker"}"#,
+            #"["A counter."]"#, #""A counter.""#,
+        ] {
+            XCTAssertNil(AppDescription.description(of: try app(about: broken)), broken)
+        }
+        XCTAssertNil(AppDescription.description(of: try app(about: nil)))
+    }
+
+    /// A shared file's own word for its description is held to the same test.
+    func testSharedFileWithAnOddDescriptionHasNone() throws {
+        let file = try Sharing.export(try app(about: written))
+        let work = file.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: work) }
+        let manifest = work.appendingPathComponent("app/lamp-app.json")
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: manifest)) as? [String: Any])
+        for odd: Any in ["Ticker\nChecked by Lamp: safe.", "  ", 7] {
+            object["description"] = odd
+            try JSONSerialization.data(withJSONObject: object).write(to: manifest)
+            let packed = work.appendingPathComponent("odd-\(UUID().uuidString).lampapp")
+            let zip = Process()
+            zip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+            zip.arguments = ["-c", "-k", "--norsrc", work.appendingPathComponent("app").path, packed.path]
+            try zip.run()
+            zip.waitUntilExit()
+            // A description that isn't text at all makes the file one Lamp doesn't know; the others open with none.
+            guard let package = try? Sharing.open(packed) else { continue }
+            defer { try? FileManager.default.removeItem(at: package.folder) }
+            XCTAssertNil(package.description)
+        }
+    }
+
+    /// The agent is told where the description goes, and an app without one is told so with the request.
+    func testAgentIsToldWhereTheDescriptionGoes() throws {
+        XCTAssertTrue(Agent.Rules.about.contains(AppDescription.file))
+        XCTAssertTrue(Agent.undescribed(try app(about: nil)).contains(AppDescription.file))
+        XCTAssertTrue(Agent.undescribed(try app(about: "not json")).contains(AppDescription.file))
+        XCTAssertEqual(Agent.undescribed(try app(about: written)), "")
     }
 
     func testIconIsDrawnFromTheFile() async throws {

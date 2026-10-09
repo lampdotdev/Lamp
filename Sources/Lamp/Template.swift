@@ -40,8 +40,7 @@ enum Template {
     static func saveMeta(_ project: LampProject) throws {
         try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
                                              platform: project.platform, family: project.platform == .iphone ? project.family : nil,
-                                             device: project.device, instance: project.instance.isEmpty ? nil : project.instance,
-                                             description: project.description))
+                                             device: project.device, instance: project.instance.isEmpty ? nil : project.instance))
             .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
     }
 

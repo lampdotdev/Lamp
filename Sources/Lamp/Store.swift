@@ -49,10 +49,6 @@ struct LampProject: Identifiable, Hashable {
     var family: DeviceFamily = .iphone
     /// The person's own iPhone or iPad that Play puts the app on (Devices), instead of the simulator.
     var device: String?
-    /// What the app is, in one short sentence: what a person it's
-    /// shared with reads under its name before opening it. The agent sets it (`describe_app`); nil until then.
-    var description: String?
-
     var bundleID: String { Edition.appBundlePrefix + id }
     /// On a phone the app is registered with Apple under the person's team, so the id carries the team:
     /// another team may have registered the plain one for the same app name.
@@ -72,7 +68,6 @@ struct ProjectMeta: Codable {
     var family: DeviceFamily?  // iOS apps: which simulator they open on; nil means iPhone
     var device: String?        // iOS apps: the person's own phone (its udid) that Play puts the app on, if any
     var instance: String?      // LampProject.instance
-    var description: String?   // LampProject.description
 }
 
 struct AppUsage: Codable {
@@ -461,7 +456,7 @@ final class Store: ObservableObject {
             return LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
                                 instance: meta.instance ?? dir.lastPathComponent,
                                 untitled: meta.untitled ?? false, platform: meta.platform ?? .mac, family: meta.family ?? .iphone,
-                                device: meta.device, description: meta.description)
+                                device: meta.device)
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
@@ -866,8 +861,7 @@ final class Store: ObservableObject {
 
         let fm = FileManager.default
         let renamed = LampProject(id: current.id, name: unique, exe: current.exe, dir: current.dir, instance: current.instance,
-                                  platform: current.platform, family: current.family, device: current.device,
-                                  description: current.description)
+                                  platform: current.platform, family: current.family, device: current.device)
         try? Template.saveMeta(renamed)
         if fm.fileExists(atPath: current.installedURL.path) {
             try? fm.moveItem(at: current.installedURL, to: renamed.installedURL)
@@ -931,7 +925,7 @@ final class Store: ObservableObject {
         let exe = Template.identifier(from: name)
         let slug = exe.lowercased() == old.id ? old.id : Template.freeSlug(for: exe, in: root)
         let project = LampProject(id: slug, name: name, exe: exe, dir: root.appendingPathComponent(slug), instance: old.instance,
-                                  platform: old.platform, family: old.family, device: old.device, description: old.description)
+                                  platform: old.platform, family: old.family, device: old.device)
         do {
             if slug != old.id { try FileManager.default.moveItem(at: old.dir, to: project.dir) }
             try Template.saveMeta(project)
@@ -1188,10 +1182,7 @@ final class Store: ObservableObject {
                 }
             }
             /// False when the icon's pictures couldn't be returned; the ones there are then left alone.
-            @MainActor func putBack() async -> Bool {
-                // The description isn't in the app's versions (it's Lamp's, like the name), so it's put back by hand.
-                try? Template.saveMeta(project)
-                reload()
+            func putBack() async -> Bool {
                 _ = await Versions.git("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
                 guard hadArt else {
                     try? fm.removeItem(at: art)
@@ -1212,7 +1203,6 @@ final class Store: ObservableObject {
             let newArtwork: Bool
             do {
                 newArtwork = try Sharing.install(package, into: project, replacing: true)
-                reload()   // the file's description is the app's now
             } catch {
                 let iconBack = await putBack()
                 print("Update \(project.name) from a shared file failed: \(error)")
@@ -2214,7 +2204,6 @@ final class Store: ObservableObject {
                 progress[project.id]?.plan = parts
                 progress[project.id]?.tickWrittenParts()
                 (status, answer) = (200, ["text": "The user can see the plan."])
-            case "describe_app": (status, answer) = describe(project, arguments)
             case "delete_file":
                 (status, answer) = Self.deleteFile(arguments["path"] as? String ?? "", in: project)
             case "list_versions": (status, answer) = await versions("", [:], of: project)
@@ -2270,26 +2259,6 @@ final class Store: ObservableObject {
             }
             return ["content": content]
         }
-    }
-
-    /// The agent's `describe_app`: the app's description, kept beside its name. The words are the agent's
-    /// and are kept as given; only the white space around them goes.
-    private func describe(_ project: LampProject, _ arguments: [String: Any]) -> (Int, [String: Any]) {
-        // No words would count as a description: the app would stop being asked for one, and the review
-        // of a shared copy would speak of a description that isn't there.
-        guard let words = (arguments["description"] as? String)?.trimmed, !words.isEmpty else {
-            return (400, ["error": "`description` must be one short sentence saying what the app is."])
-        }
-        guard let index = projects.firstIndex(where: { $0.instance == project.instance }) else {
-            return (404, ["error": "Lamp couldn't find this app."])
-        }
-        var described = projects[index]
-        described.description = words
-        do { try Template.saveMeta(described) } catch {
-            return (500, ["error": "Lamp couldn't keep the description: \(error.localizedDescription)"])
-        }
-        projects[index] = described
-        return (200, ["text": "Kept. People this app is shared with will read it under the app's name."])
     }
 
     /// The agent's `delete_file`: one file inside the app's folder, never Lamp's own files, never through a
@@ -3449,7 +3418,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/describe", "/mcp", "/pi/key"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/mcp", "/pi/key"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -3545,9 +3514,6 @@ final class Store: ObservableObject {
         if route == "/agent/memory" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             return Memory.call(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
-        }
-        if route == "/agent/describe" {
-            return describe(project, (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:])
         }
         if route == "/agent/setup" {
             return agentOffer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
