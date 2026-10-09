@@ -288,8 +288,14 @@ enum Sharing {
         // Assets/, or Attachments/ from a Lamp that bundled the chat's files: either way the app's own now.
         let attachments = filesUnder(folder.appendingPathComponent(Assets.folder))
             + filesUnder(folder.appendingPathComponent(Attachments.folder))
-        return Package(name: manifest.name, identity: identity(from: manifest.app), folder: folder, sources: sources,
+        return Package(name: name(from: manifest.name), identity: identity(from: manifest.app), folder: folder, sources: sources,
                        attachments: attachments, fileCount: all)
+    }
+
+    /// A file's name on one line: a file can be edited by hand, and line breaks or runs of space in its
+    /// name would lay out the review's title as if part of it were Lamp's. Nothing else about it changes.
+    static func name(from raw: String) -> String {
+        raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     /// Puts a shared app's code, files, description and icon into an app's folder. A new app starts from a
@@ -416,16 +422,24 @@ struct ImportReview {
     /// The most worrying thing the code was seen to do; nil when nothing beyond an ordinary app.
     var worst: Sharing.Capability.Level? { detected.map(\.level).max() }
     var note: String?           // e.g. why the AI check didn't run
+    /// Some of the app's code was never put before the reviewer (`Sharing.Inspection.truncated`). Whatever
+    /// was said of the rest, nobody read that part, so no rating is an all-clear for the app.
+    var partial = false
 
-    /// The rating when it comes from a reviewer whose all-clear Lamp passes on.
-    private var vouched: Risk? { reviewer?.onThisMac == false ? risk : nil }
+    /// Said among the concerns whenever code went unread, whoever was asked and whatever they answered.
+    static let tooLarge = "This app is too large for Lamp to check all of its code."
+
+    /// The rating when it comes from a reviewer whose all-clear Lamp passes on, and covers all of the code.
+    private var vouched: Risk? { reviewer?.onThisMac == false && !partial ? risk : nil }
 
     /// The one-line verdict: the AI's rating, lifted by what the code was seen to do. A warning stands
-    /// whoever gave it; "safe" takes a low rating from a reviewer Lamp vouches for.
-    enum Verdict: Equatable { case risky, sensitive, powerful, safe, checkedOnThisMac, unchecked }
+    /// whoever gave it; "safe" takes a low rating from a reviewer Lamp vouches for, given on all of the
+    /// code. A rating on part of it says so instead, unless there is something worse to say.
+    enum Verdict: Equatable { case risky, sensitive, partlyChecked, powerful, safe, checkedOnThisMac, unchecked }
     var verdict: Verdict {
         if risk == .high { return .risky }
         if worst == .sensitive { return .sensitive }
+        if partial, risk != nil { return .partlyChecked }
         if risk == .medium || worst == .powerful { return .powerful }
         if risk == .low { return vouched == .low ? .safe : .checkedOnThisMac }
         return .unchecked
@@ -433,7 +447,7 @@ struct ImportReview {
 
     /// How the app is opened from the review. Return opens it only on a rating Lamp vouches for that isn't
     /// high, with nothing sensitive seen in the code. Without one (no AI, a failed check, an unusable answer,
-    /// a model on this Mac) it takes a click, and "Open Anyway" when there's something to be wary of: a high
+    /// a model on this Mac, code the reviewer wasn't sent) it takes a click, and "Open Anyway" when there's something to be wary of: a high
     /// rating, sensitive code, or no rating where a check was tried or the fixed checks found something.
     enum Opening: Equatable { case byReturn, byClick, anyway }
     var opening: Opening {
@@ -446,6 +460,24 @@ struct ImportReview {
         guard risk != nil, let reviewer else { return nil }
         guard reviewer.onThisMac else { return "Checked by \(reviewer.name)." }
         return "Checked by \(reviewer.name), a model on this Mac. A model that size can miss things or be talked round by the code it reads, so Lamp doesn't call an app safe on its word alone."
+    }
+}
+
+// Apart from the type, so its memberwise initializer stays.
+extension ImportReview {
+    /// What Lamp knows from reading the file itself, before any AI is asked.
+    init(inspection found: Sharing.Inspection) {
+        self.init(summary: "", capabilities: [], concerns: found.truncated ? [Self.tooLarge] : [], detected: found.detected,
+                  partial: found.truncated)
+    }
+
+    /// Adds the reviewer's answer to what Lamp found itself.
+    mutating func take(_ answer: Sharing.Answer, by reviewer: Reviewer) {
+        summary = answer.summary
+        capabilities = answer.capabilities
+        concerns += answer.concerns
+        risk = answer.risk
+        self.reviewer = reviewer
     }
 }
 
@@ -706,8 +738,9 @@ extension Sharing {
     }
 
     /// The reviewer's reply, when it is exactly what was asked for: the four keys and no others, text where
-    /// text belongs, and one of the three risks spelled as given. Anything else is no answer at all (nil),
-    /// so no part of a reply that went wrong is shown. What is shown is kept to single lines of modest length.
+    /// text belongs, a summary that says something, and one of the three risks spelled as given. Anything
+    /// else is no answer at all (nil), so no part of a reply that went wrong is shown: a rating with no
+    /// account of the app is not a review of it. What is shown is kept to single lines of modest length.
     static func answer(from reply: String) -> Answer? {
         guard let object = (try? JSONSerialization.jsonObject(with: Data(reply.utf8))) as? [String: Any],
               Set(object.keys) == ["summary", "capabilities", "concerns", "risk"],
@@ -720,7 +753,10 @@ extension Sharing {
             return plain.count > limit ? String(plain.prefix(limit - 1)).trimmed + "…" : plain
         }
         func lines(_ items: [String]) -> [String] { items.map { line($0, limit: 160) }.filter { !$0.isEmpty }.prefix(8).map { $0 } }
-        return Answer(summary: line(summary, limit: 400), capabilities: lines(capabilities), concerns: lines(concerns), risk: risk)
+        let said = line(summary, limit: 400)
+        // Words, not just marks or characters nobody can see: the lists may be empty, the summary may not.
+        guard said.contains(where: { $0.isLetter || $0.isNumber }) else { return nil }
+        return Answer(summary: said, capabilities: lines(capabilities), concerns: lines(concerns), risk: risk)
     }
 
     /// What reading the file's code gives, before any AI is asked.
@@ -755,9 +791,7 @@ extension Sharing {
 
     static func review(_ package: Package) async -> ImportReview {
         let found = inspect(package)
-        let truncated = found.truncated
-        var review = ImportReview(summary: "", capabilities: [], concerns: [], detected: found.detected)
-        if truncated { review.concerns.append("This app is too large for Lamp to check all of its code.") }
+        var review = ImportReview(inspection: found)
         // No AI to ask is an ordinary state for someone who was only sent an app, not a failure: the same
         // words whether nothing can answer at all or the route apps use is OpenRouter without a key.
         // (`available` is the test `AppAI.resolve` and the pickers use.)
@@ -779,12 +813,7 @@ extension Sharing {
                 review.note = "Lamp's AI check gave an answer Lamp couldn't use, so nothing it said is shown. Look at the list above carefully."
                 return review
             }
-            review.summary = answer.summary
-            review.capabilities = answer.capabilities
-            review.concerns += answer.concerns
-            review.reviewer = reviewer(for: route)
-            // Whatever the model says of the part it saw, it didn't see all of it.
-            review.risk = truncated && answer.risk == .low ? .medium : answer.risk
+            review.take(answer, by: reviewer(for: route))
         } catch let failure as AppAI.Failure {
             review.note = "Lamp's AI check didn't run: \(failure.message)"
         } catch {
