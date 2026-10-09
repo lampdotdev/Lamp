@@ -247,11 +247,11 @@ import { together } from "../lib/text";
 
   async function askOwnWords() {
     phase = "own";
-    composerShown(true, "Every Monday I copy sign-ups from email into a list…");
+    composerShown(true, "Every month I split the bills with my flatmates…");
     const line = picker?.grid.isConnected ? picker.line : undefined;
     picker?.grid.remove();
     picker = null;
-    await lamp("None of those, then. What's something you do on your computer more often than you'd like?", line);
+    await lamp("None of those, then. What's something you keep doing by hand, at work or at home?", line);
     box.focus({ preventScroll: true });
   }
 
