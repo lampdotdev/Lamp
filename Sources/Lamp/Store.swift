@@ -84,7 +84,8 @@ struct AppUsage: Codable {
 struct LogLine: Identifiable, Codable, Equatable {
     /// `needsKey` is a setup offer from before offers named their capability: it was always about pictures.
     /// `drawIcon` offers to draw the app's icon in Image Playground; its text is the design it's for (`Icons.artKey`).
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, drawIcon }
+    /// `widget` is the card of an app that has a widget (`WidgetCard`): how to add it, then that it's there.
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, drawIcon, widget }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -195,6 +196,8 @@ final class Store: ObservableObject {
     @Published var progress: [String: TurnProgress] = [:]
     /// Apps that are open right now, however they were started, so Lamp can offer to quit them.
     @Published var openApps: Set<String> = []
+    /// The apps whose widget the person has put on the desktop (`WidgetCard`), for their chats' cards.
+    @Published var placedWidgets: Set<String> = []
     /// Which Lamp built each installed app (see BuildStamp). Missing for apps that aren't built yet.
     @Published var stamps: [String: BuildStamp] = [:]
     @Published var chatFocusRequest = 0
@@ -333,6 +336,7 @@ final class Store: ObservableObject {
     }
     private var artInProgress: Set<String> = []
     private var pendingIconArt: Set<String> = []     // artwork finished during a turn, to apply after it
+    private var heldInstalls = HeldInstalls()        // new icons waiting for their app to close
     private var heldDrawingOffers: Set<String> = []  // "Draw Icon…" wanted during a turn, to offer after it
     private var artApplied: [String: IconSpec] = [:] // the spec whose artwork the rendered icon includes
     private var iconDesigns: [String: Task<Void, Never>] = [:]   // icons designed from the first message
@@ -904,6 +908,7 @@ final class Store: ObservableObject {
         }
         await initRepo(project, message: "Scaffold")
         await quit(old)
+        await WidgetProcess.end(for: old)
         try? fm.removeItem(at: old.installedURL)
         try? fm.removeItem(at: old.dir)
 
@@ -1460,12 +1465,16 @@ final class Store: ObservableObject {
                 release(project)
                 offerHeldDrawing(project)
                 startQueued(project)
+                installHeldIcons(for: [project.id])
             }
             return
         }
         release(project)
         offerHeldDrawing(project)
         startQueued(project)
+        // An icon that was waiting for the app to close, when the app closed while this had it: the moment
+        // it closed came and went with the app taken, so it's looked at again now the app is free.
+        installHeldIcons(for: [project.id])
     }
 
     /// The offer to draw the icon that was wanted while the turn had the app, made now it's over: the last
@@ -1482,8 +1491,49 @@ final class Store: ObservableObject {
         await renderIcon(project, spec: spec)
         let executable = project.builtURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
         guard FileManager.default.isExecutableFile(atPath: executable.path) else { return }
+        log(project, .status, await installIcon(project) ? "New icon artwork is in."
+            : "New icon artwork is in. \(project.name) gets it the next time it closes.")
+    }
+
+    /// Whether the app is open on this Mac.
+    private func isRunning(_ project: LampProject) -> Bool {
+        NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == project.bundleID && !$0.isTerminated }
+    }
+
+    /// Puts the build, with the icon as it is now, in the apps folder, unless the app is open: then it waits
+    /// for the app to close (HeldInstalls says why a running app is never replaced). False when it waits.
+    @discardableResult
+    private func installIcon(_ project: LampProject) async -> Bool {
+        // An app that is only its widget is never something the person has open: when it's running, it's
+        // out of sight, waiting to say the widget was placed. It's quit like a build quits an app, gets
+        // its icon, and goes back to waiting, so nobody is told to close an app they can't see.
+        let watching = Template.isWidgetOnly(project) && isRunning(project)
+        if watching { await quit(project) }
+        guard heldInstalls.mayInstall(project.id, running: isRunning(project)) else { return false }
         try? await deploy(project)
-        log(project, .status, "New icon artwork is in. It shows in the Dock after the app restarts.")
+        if watching { await watchWidget(of: project) }
+        return true
+    }
+
+    /// Apps that are closed get the icon that was waiting for them: asked when an app closes, and again
+    /// whenever an app is given back (`finish`), since an app that closed while a turn had it couldn't be
+    /// installed then, and a turn that only replied, was stopped or failed installs nothing itself. Owning
+    /// the app meanwhile, like any install.
+    private func installHeldIcons(for candidates: Set<String>) {
+        // Only an app that's closed and has a build is taken: giving it back asks here again, so taking one
+        // with nothing to install would go round for ever.
+        let due = heldInstalls.due(amongClosed: candidates) { id in
+            guard let project = projects.first(where: { $0.id == id }) else { return false }
+            return !isRunning(project) && FileManager.default.fileExists(atPath: project.builtURL.path)
+        }
+        for project in projects where due.contains(project.id) {
+            guard begin(project) != nil else { continue }
+            Task {
+                // Installed or not, the wait ends here (`mayInstall`), so the app being given back finds nothing due.
+                await installIcon(project)
+                finish(project)
+            }
+        }
     }
 
     /// Puts the messages in the chat and their files in Attachments/. Returns the saved file names.
@@ -1622,7 +1672,7 @@ final class Store: ObservableObject {
     /// request's attachments before the agent starts.
     private func agentChangedFiles(_ project: LampProject) async -> Bool {
         var output = ""
-        let ignored = "':!Sources/LampSupport.swift' ':!icon.json' ':!\(Attachments.folder)'"
+        let ignored = "':!Sources/LampSupport.swift' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!icon.json' ':!\(Attachments.folder)'"
         _ = await Versions.git("git status --porcelain -- . \(ignored)", cwd: project.dir) {
             output += $0
         }
@@ -1810,6 +1860,9 @@ final class Store: ObservableObject {
         stop(project)
         iconDesigns.removeValue(forKey: project.id)?.cancel()
         await quit(project)
+        // Its widget's process too: in the Trash it would go on running, and answer for an app made later
+        // under the same name.
+        await WidgetProcess.end(for: project)
         let fm = FileManager.default
         if fm.fileExists(atPath: project.installedURL.path) {
             try? fm.trashItem(at: project.installedURL, resultingItemURL: nil)
@@ -2265,7 +2318,8 @@ final class Store: ObservableObject {
             ? String(target.path.dropFirst((target.path.hasPrefix(root.path + "/") ? root.path : project.dir.path).count + 1)) : ""
         guard !relative.isEmpty else { return (400, ["error": "Only files inside the app's folder can be deleted."]) }
         // Compared without regard to case: the Mac's usual file system treats "package.swift" as the same file.
-        let protected = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift"]
+        let protected = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift",
+                         Template.widgetFolder + "/" + Template.widgetSupportFile]
         let lowered = relative.lowercased()
         if protected.contains(where: { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + "/") }) {
             return (400, ["error": "\(relative) belongs to Lamp and can't be deleted."])
@@ -2640,9 +2694,23 @@ final class Store: ObservableObject {
         await quit(project)
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
         do {
+            WidgetCard.forget(project)
             try await deploy(project)
+            heldInstalls.installed(project.id)
         } catch {
             log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
+            return nil
+        }
+        // An app with a widget gets its card, once: the widget is built, and adding it is the person's to do.
+        if Template.hasWidget(project), WidgetCard.isNeeded(after: logs[project.id] ?? []) { log(project, .widget, "") }
+        // An app that is only its widget is never opened in front of anyone: there's nothing to see. It runs
+        // out of sight to tell Lamp when the widget has been placed, and quits by itself.
+        if Template.isWidgetOnly(project) {
+            await watchWidget(of: project)
+            if inFront { log(project, .status, "\(project.name) is ready") }
+            upgradeIconArt(project)
+            refreshOpenApps()
+            stamps[project.id] = BuildStamp.read(project.installedURL)
             return nil
         }
         let config = NSWorkspace.OpenConfiguration()
@@ -2971,16 +3039,23 @@ final class Store: ObservableObject {
         // certificate one ("resource fork, Finder information, or similar detritus not allowed"), which is
         // how apps silently ended up ad hoc. Strip them first.
         _ = await Shell.run("xattr -cr \"$LAMP_APP\"", cwd: project.dir, env: ["LAMP_APP": project.builtURL.path]) { _ in }
+        // A widget keeps its own signature inside the app's (AppSigning.command), with entitlements Lamp
+        // writes here rather than takes from the build folder, where anything could have changed them.
+        let widget = Template.widgetURL(in: project.builtURL, of: project)
+        let hasWidget = fm.fileExists(atPath: widget.path)
+        let entitlements = project.dir.appendingPathComponent(".lamp/widget-entitlements.plist")
+        if hasWidget { try Template.widgetEntitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8) }
+        var signingEnv = ["LAMP_APP": project.builtURL.path, "LAMP_WIDGET": widget.path, "LAMP_WIDGET_ENTITLEMENTS": entitlements.path]
         let identity = await AppSigning.identity()
         var signed = false
         if identity != "-" {
             var output: [String] = []
-            signed = await Shell.run("codesign --force --keychain \"$LAMP_KEYCHAIN\" -s \"$LAMP_IDENTITY\" \"$LAMP_APP\" 2>&1",
-                                     cwd: project.dir,
-                                     env: ["LAMP_APP": project.builtURL.path, "LAMP_IDENTITY": identity,
-                                           "LAMP_KEYCHAIN": AppSigning.keychain]) { output.append($0) } == 0
+            signingEnv["LAMP_IDENTITY"] = identity
+            signingEnv["LAMP_KEYCHAIN"] = AppSigning.keychain
+            signed = await Shell.run(AppSigning.command(adHoc: false, widget: hasWidget),
+                                     cwd: project.dir, env: signingEnv) { output.append($0) } == 0
             // Trust the result, not the exit status: check the app really carries the certificate.
-            if signed && !AppSigning.isCertificateSigned(project.builtURL) {
+            if signed && !(AppSigning.isCertificateSigned(project.builtURL) && (!hasWidget || AppSigning.isCertificateSigned(widget))) {
                 signed = false
                 output.append("codesign returned 0 but the app is not certificate-signed")
             }
@@ -2990,8 +3065,7 @@ final class Store: ObservableObject {
         if !signed {
             // Ad hoc keeps the app installable, but macOS won't remember its permissions across rebuilds and
             // won't ask for Location Services at all, so the person is told, once.
-            _ = await Shell.run("codesign --force -s - \"$LAMP_APP\"", cwd: project.dir,
-                                env: ["LAMP_APP": project.builtURL.path]) { _ in }
+            _ = await Shell.run(AppSigning.command(adHoc: true, widget: hasWidget), cwd: project.dir, env: signingEnv) { _ in }
             if AppSigning.needsAdHocNotice(after: logs[project.id] ?? []) {
                 log(project, .status, AppSigning.adHocNotice(for: project.name))
             }
@@ -3003,6 +3077,9 @@ final class Store: ObservableObject {
         try fm.createDirectory(at: Self.installDir, withIntermediateDirectories: true)
         let staging = Self.installDir.appendingPathComponent(".\(project.exe)-\(UUID().uuidString).app")
         try fm.copyItem(at: project.builtURL, to: staging)
+        // The app isn't running by now (a build quits it, an icon waits for it to close), but its widget's
+        // process may be: ended here, last thing before the swap, so no program outlives the copy it came from.
+        await WidgetProcess.end(for: project)
         if fm.fileExists(atPath: project.installedURL.path) {
             _ = try fm.replaceItemAt(project.installedURL, withItemAt: staging)
         } else {
@@ -3182,7 +3259,8 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Designs a fresh icon (different from the current one) and applies it without restarting the app.
+    /// Designs a fresh icon (different from the current one). An app that's open keeps running: it gets the
+    /// icon when it closes.
     func newIcon(_ project: LampProject) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
@@ -3190,15 +3268,17 @@ final class Store: ObservableObject {
         let spec = await Icons.design(for: project, avoiding: Icons.load(project))
         Icons.save(spec, for: project)
         await renderIcon(project, spec: spec)
+        var waits = false
         if FileManager.default.fileExists(atPath: project.builtURL.path) {
-            try? await deploy(project)
+            waits = await !installIcon(project)
         }
+        let applied = waits ? "New icon made. \(project.name) gets it the next time it closes." : "New icon applied."
         // Drawn by hand, the new design's artwork is the person's to make: the sheet opens for it now.
         guard !AppAI.iconsByHand else {
-            log(project, .status, "New icon applied.")
+            log(project, .status, applied)
             return iconFromPlayground(project)
         }
-        log(project, .status, AppAI.imageRoute != nil ? "New icon applied. Artwork is on its way." : "New icon applied.")
+        log(project, .status, AppAI.imageRoute != nil ? applied + " Artwork is on its way." : applied)
         Task { upgradeIconArt(project) }
     }
 
@@ -3263,10 +3343,39 @@ final class Store: ObservableObject {
             guard begin(project) != nil else { continue }
             await prepareIcon(project)
             if FileManager.default.fileExists(atPath: project.builtURL.path) {
-                try? await deploy(project)
+                await installIcon(project)
             }
             finish(project)
             upgradeIconArt(project)
+        }
+    }
+
+    /// Runs an app that is only its widget, out of sight (it has no window and no Dock icon), so it can say
+    /// whether the widget is placed. It quits by itself once it is, or after a while.
+    private func watchWidget(of project: LampProject) async {
+        guard FileManager.default.fileExists(atPath: project.installedURL.path), !isRunning(project) else { return }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = false
+        config.hides = true
+        config.addsToRecentItems = false
+        _ = try? await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
+    }
+
+    /// Which widgets are placed, read from what each app last said, for the cards on show. Asked every couple
+    /// of seconds: a small file per app with a card.
+    private func refreshWidgetCards() {
+        let placed = Set(projects.filter { project in
+            (logs[project.id] ?? []).contains { $0.kind == .widget } && WidgetCard.isPlaced(project)
+        }.map(\.id))
+        if placed != placedWidgets { placedWidgets = placed }
+    }
+
+    /// Back in Lamp, perhaps from adding a widget or taking one away: an app that is only its widget, and
+    /// has stopped waiting to hear, is asked again.
+    private func askAboutWidgets() {
+        for project in projects where WidgetCard.asksAgain(hasCard: (logs[project.id] ?? []).contains { $0.kind == .widget },
+                                                             widgetOnly: Template.isWidgetOnly(project), busy: busy.contains(project.id)) {
+            Task { await watchWidget(of: project) }
         }
     }
 
@@ -3281,7 +3390,13 @@ final class Store: ObservableObject {
             }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { Store.shared.refreshOpenApps() }
+            MainActor.assumeIsolated {
+                Store.shared.refreshOpenApps()
+                Store.shared.askAboutWidgets()
+            }
+        }
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+            MainActor.assumeIsolated { Store.shared.refreshWidgetCards() }
         }
     }
 
@@ -3294,7 +3409,9 @@ final class Store: ObservableObject {
         ids += simulatorApps.keys
         deviceApps = deviceApps.filter { $0.value.isRunning }
         ids += deviceApps.keys
+        let closed = openApps.subtracting(ids)
         if Set(ids) != openApps { openApps = Set(ids) }
+        if !closed.isEmpty { installHeldIcons(for: closed) }
     }
 
     /// Quits the app, for the Stop button. Asks it nicely first, then insists.

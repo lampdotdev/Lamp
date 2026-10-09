@@ -85,8 +85,9 @@ enum Template {
     static func writeOwnedFiles(for project: LampProject) throws {
         try writeSupport(for: project)
         let iphone = project.platform == .iphone
-        try write(iphone ? iPhoneBuildSh : buildSh, to: "build.sh", for: project, executable: true)
-        try write(iphone ? iPhonePackageSwift : packageSwift, to: "Package.swift", for: project)
+        let widget = hasWidget(project)
+        try write(iphone ? iPhoneBuildSh : buildSh(widget: widget, widgetOnly: isWidgetOnly(project)), to: "build.sh", for: project, executable: true)
+        try write(iphone ? iPhonePackageSwift : packageSwift(widget: widget), to: "Package.swift", for: project)
     }
 
     private static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
@@ -118,11 +119,14 @@ enum Template {
             .replacingOccurrences(of: "{{APPS}}", with: Edition.supportFolder.appendingPathComponent("Apps").path)
             .replacingOccurrences(of: "{{MACHOST}}", with: Devices.macHost)
             .replacingOccurrences(of: "{{PHONE_SECRET}}", with: project.platform == .iphone ? phoneSecret(for: project) : "")
+            .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
+            .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: project.platform == .mac ? widgetToken(for: project) : "")
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         let url = project.dir.appendingPathComponent("Sources/LampSupport.swift")
         if (try? String(contentsOf: url, encoding: .utf8)) != contents {
             try contents.write(to: url, atomically: true, encoding: .utf8)
         }
+        try writeWidgetSupport(for: project)
     }
 
     // MARK: - iPhone apps
@@ -471,6 +475,314 @@ enum Template {
 
     """
 
+    // MARK: - Widgets
+
+    /// Where a Mac app's widget is written: a folder beside Sources/, because the widget is a program of its
+    /// own (macOS runs it without the app, in a sandbox) and SwiftPM builds one program per folder.
+    static let widgetFolder = "Widget"
+
+    /// Whether the app has a widget to build: a Mac app with Swift in its Widget folder. Asked before every
+    /// build, so writing the first file there or deleting the last one is all it takes to gain or lose one.
+    /// Lamp's own file there doesn't count: it is only written for a widget that exists.
+    static func hasWidget(_ project: LampProject) -> Bool {
+        guard project.platform == .mac else { return false }
+        let folder = project.dir.appendingPathComponent(widgetFolder)
+        let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        return files.contains { $0.pathExtension == "swift" && $0.lastPathComponent != widgetSupportFile }
+    }
+
+    /// The scene a widget-only app is made of (`LampWidgetOnly` in LampSupport.swift).
+    static let widgetOnlyScene = "LampWidgetOnly("
+
+    /// Whether the app is only there to carry its widget: it has one, and its own code is that one scene.
+    /// Such an app has no window and no Dock icon, and Lamp never opens it in front of anyone.
+    static func isWidgetOnly(_ project: LampProject) -> Bool {
+        guard hasWidget(project) else { return false }
+        let sources = project.dir.appendingPathComponent("Sources")
+        let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        return files.contains { file in
+            file.pathExtension == "swift" && file.lastPathComponent != "LampSupport.swift"
+                && ((try? String(contentsOf: file, encoding: .utf8)).map { code(in: $0).contains(widgetOnlyScene) } ?? false)
+        }
+    }
+
+    /// Swift source with its comments and the insides of its strings taken out: what's left is what runs.
+    /// A scene named in a comment ("was LampWidgetOnly() before") or in a string is not the app's scene, and
+    /// must not hide the window of an app that has one. Read the way the compiler reads them: comments in
+    /// comments, strings over several lines, and raw strings, whose quotes only end at their own `#` marks.
+    static func code(in source: String) -> String {
+        let text = Array(source)
+        var out = ""
+        var i = 0
+        func starts(_ word: String, at index: Int) -> Bool {
+            let chars = Array(word)
+            return index + chars.count <= text.count && Array(text[index..<index + chars.count]) == chars
+        }
+        while i < text.count {
+            if starts("//", at: i) {
+                while i < text.count, text[i] != "\n" { i += 1 }
+            } else if starts("/*", at: i) {
+                var depth = 1
+                i += 2
+                while i < text.count, depth > 0 {
+                    if starts("/*", at: i) { depth += 1; i += 2 } else if starts("*/", at: i) { depth -= 1; i += 2 } else { i += 1 }
+                }
+                out.append(" ")
+            } else if text[i] == "\"" || (text[i] == "#" && { var j = i; while j < text.count, text[j] == "#" { j += 1 }; return j < text.count && text[j] == "\"" }()) {
+                var marks = 0
+                while text[i] == "#" { marks += 1; i += 1 }
+                let quotes = starts("\"\"\"", at: i) ? 3 : 1
+                i += quotes
+                let end = String(repeating: "\"", count: quotes) + String(repeating: "#", count: marks)
+                while i < text.count, !starts(end, at: i) {
+                    // A backslash hides the next character, quote included. In a raw string it only does
+                    // when the string's own # marks follow it.
+                    if text[i] == "\\", starts(String(repeating: "#", count: marks), at: i + 1) { i += 1 + marks }
+                    if quotes == 1, i < text.count, text[i] == "\n" { break }   // an unfinished string ends with its line
+                    i += 1
+                }
+                if starts(end, at: i) { i += end.count }
+                out.append("\"\"")
+            } else {
+                out.append(text[i])
+                i += 1
+            }
+        }
+        return out
+    }
+
+    /// The widget's bundle id. macOS only takes an extension whose id begins with its app's.
+    static func widgetBundleID(for project: LampProject) -> String { project.bundleID + ".widget" }
+
+    /// The widget inside a built or installed copy of the app.
+    static func widgetURL(in app: URL, of project: LampProject) -> URL {
+        app.appendingPathComponent("Contents/PlugIns/\(project.exe)Widget.appex")
+    }
+
+    /// What Lamp writes into a widget's folder: the widget's half of `LampWidget` in LampSupport.swift. The
+    /// widget asks the app for what it shared and keeps the answer, in its own sandbox, for when the app is closed.
+    static let widgetSupportFile = "LampWidgetSupport.swift"
+
+    static let lampWidgetSupportSwift = #"""
+    // Generated by Lamp before every build. Don't edit: changes are overwritten.
+    import Foundation
+    import Network
+    import CryptoKit
+
+    /// What the app shared for its widget, with `LampWidget.share(value, as: "summary")`.
+    ///
+    ///     LampWidget.read(Summary.self, from: "summary") { summary in … }
+    ///     let summary = await LampWidget.read(Summary.self, from: "summary")
+    ///
+    /// Gives what the app shared last: asked of the app when it's open, and otherwise the last answer, which
+    /// the widget keeps. Nil until the app has shared something under that name.
+    enum LampWidget {
+        private static let firstPort: UInt16 = {{WIDGET_PORT}}
+        private static let token = "{{WIDGET_TOKEN}}"
+
+        static func read<T: Decodable>(_ type: T.Type, from name: String = "data", then completion: @escaping (T?) -> Void) {
+            ask(name, offset: 0) { answer in
+                let key = "LampWidget." + name
+                if let answer, !answer.isEmpty { UserDefaults.standard.set(answer, forKey: key) }
+                let latest = UserDefaults.standard.string(forKey: key)
+                completion(latest.flatMap { try? JSONDecoder().decode(T.self, from: Data($0.utf8)) })
+            }
+        }
+
+        static func read<T: Decodable>(_ type: T.Type, from name: String = "data") async -> T? {
+            await withCheckedContinuation { continuation in
+                read(type, from: name) { continuation.resume(returning: $0) }
+            }
+        }
+
+        /// The app's answer for a name, or nil when the app isn't there to ask. The app listens on one of a
+        /// few ports next to each other (another program may have the first), so each is tried.
+        private static func ask(_ name: String, offset: UInt16, _ done: @escaping (String?) -> Void) {
+            guard offset < 8, let port = NWEndpoint.Port(rawValue: firstPort + offset) else { return done(nil) }
+            let queue = DispatchQueue(label: "LampWidget")
+            let connection = NWConnection(host: .ipv4(.loopback), port: port, using: .tcp)
+            var finished = false
+            var received = Data()
+            let nonce = UUID().uuidString
+            // `answer` is what this app said; nil means nobody there, or somebody else, so the next port is asked.
+            func finish(_ answer: String?) {
+                guard !finished else { return }
+                finished = true
+                connection.cancel()
+                if let answer { done(answer) } else { ask(name, offset: offset + 1, done) }
+            }
+            func receive() {
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { data, _, complete, error in
+                    if let data { received.append(data) }
+                    guard complete || error != nil else { return receive() }
+                    // Only an answer signed with the secret, over this question's nonce, is the app's: another
+                    // program listening on the port can't make one, and is passed over like an empty port.
+                    let text = String(data: received, encoding: .utf8) ?? ""
+                    guard let end = text.firstIndex(of: "\n") else { return finish(nil) }
+                    let json = String(text[text.index(after: end)...])
+                    finish(text[..<end] == "ok " + signature("answer", nonce, name, json) ? json : nil)
+                }
+            }
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    connection.send(content: Data("\(nonce) \(signature("ask", nonce, name)) \(name)\n".utf8), completion: .contentProcessed { _ in })
+                    receive()
+                case .failed, .waiting, .cancelled: finish(nil)
+                default: break
+                }
+            }
+            connection.start(queue: queue)
+            queue.asyncAfter(deadline: .now() + 1) { finish(nil) }
+        }
+
+        private static func signature(_ parts: String...) -> String {
+            let code = HMAC<SHA256>.authenticationCode(for: Data(parts.joined(separator: "\n").utf8),
+                                                       using: SymmetricKey(data: Data(token.utf8)))
+            return code.map { String(format: "%02x", $0) }.joined()
+        }
+    }
+
+    """#
+
+    /// Where the app listens for its widget: a port of its own from the range macOS leaves to programs, the
+    /// same for every build of the app, since the widget is built knowing it.
+    static func widgetPort(for project: LampProject) -> Int {
+        var hash: UInt32 = 2_166_136_261
+        for byte in project.bundleID.utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
+        return 49_152 + Int(hash % 16_000)
+    }
+
+    /// The secret an app and its widget are both built with, so the app answers its own widget and nobody else.
+    static func widgetToken(for project: LampProject) -> String {
+        let url = project.dir.appendingPathComponent(".lamp/widget-token")
+        if let token = (try? String(contentsOf: url, encoding: .utf8))?.trimmed, !token.isEmpty { return token }
+        let token = UUID().uuidString + UUID().uuidString
+        try? token.write(to: url, atomically: true, encoding: .utf8)
+        return token
+    }
+
+    /// Lamp's own file in a widget's folder, written like LampSupport.swift: before every turn and build.
+    static func writeWidgetSupport(for project: LampProject) throws {
+        guard hasWidget(project) else { return }
+        let contents = lampWidgetSupportSwift
+            .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
+            .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: widgetToken(for: project))
+        let url = project.dir.appendingPathComponent(widgetFolder).appendingPathComponent(widgetSupportFile)
+        if (try? String(contentsOf: url, encoding: .utf8)) != contents {
+            try contents.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
+    /// How a widget gets at what its app has saved, kept in one place so another way can replace it. A
+    /// widget runs sandboxed and sees none of the app's files. An app group, the usual way, is refused by
+    /// macOS for a certificate with no team ID, which is what Lamp signs with. So the widget asks the app: the
+    /// app listens on this Mac's own address (`LampWidget` in LampSupport.swift) and the widget connects to
+    /// it (`lampWidgetSupportSwift`), each proving to the other that it has the secret they were built with,
+    /// which a sandboxed program may do once its signature allows outgoing
+    /// connections; that entitlement is one every widget has anyway, to load from the web. Nothing here is
+    /// an exception to the sandbox. What it costs: the widget is only as fresh as the last time the app ran.
+    enum WidgetSharing {
+        /// Entitlement lines this way adds to the widget's signature, as plist XML. None: see above.
+        static let entitlements: [String] = []
+
+        /// What the agent is told about the app's data in a widget.
+        static let rule = """
+        It can't read what the app has saved (LampStore, files, settings), so the app hands it over: in the \
+        app, `LampWidget.share(Summary(…), as: "summary")` with any Codable value, at launch and whenever the \
+        data changes (it also redraws the widget); in the widget, `LampWidget.read(Summary.self, from: \
+        "summary") { summary in … }` in getSnapshot and getTimeline, or `await` it. That comes from \
+        Widget/LampWidgetSupport.swift, which Lamp writes: never edit it. It gives what the app shared last, \
+        also while the app is closed, and nil until the app has run once: then show a short line asking to \
+        open the app. Share a small value made for the widget, not everything, and declare its type on both sides.
+        """
+    }
+
+    /// What the widget is signed with. macOS shows no widget that isn't sandboxed, and the sandbox lets it
+    /// load from the web only when its signature says so. The app's own signature carries no entitlements,
+    /// so the two are signed separately (`AppSigning.command`).
+    static var widgetEntitlementsPlist: String {
+        let lines = ["  <key>com.apple.security.app-sandbox</key><true/>",
+                     "  <key>com.apple.security.network.client</key><true/>"] + WidgetSharing.entitlements
+        return """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+        \(lines.joined(separator: "\n"))
+        </dict></plist>
+
+        """
+    }
+
+    /// Package.swift for a Mac app. With a widget it has a second program, built from Widget/ the way Xcode
+    /// builds an extension: only what extensions may call, and started by the system's extension runner
+    /// rather than its own `main`.
+    static func packageSwift(widget: Bool) -> String {
+        guard widget else { return packageSwift }
+        return """
+        // swift-tools-version:5.9
+        import PackageDescription
+
+        let package = Package(
+            name: "{{EXE}}",
+            platforms: [.macOS(.v14)],
+            targets: [
+                .executableTarget(name: "{{EXE}}", path: "Sources"),
+                .executableTarget(name: "{{EXE}}Widget", path: "\(widgetFolder)",
+                                  swiftSettings: [.unsafeFlags(["-application-extension"])],
+                                  linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]),
+            ]
+        )
+
+        """
+    }
+
+    /// build.sh for a Mac app. With a widget, the second program goes into the app as its widget extension
+    /// before the app is signed: an extension is signed first, with its own entitlements, and the app around it.
+    static func buildSh(widget: Bool, widgetOnly: Bool = false) -> String {
+        guard widget else { return buildSh }
+        var script = buildSh.replacingOccurrences(of: appSigningLine, with: widgetBuildSteps + appSigningLine)
+        // An app that is only its widget says so to macOS in the way apps without a Dock icon do, so it
+        // never shows in the Dock or the app switcher, not even for the moment it takes to start.
+        if widgetOnly { script = script.replacingOccurrences(of: highResolutionLine, with: highResolutionLine + "\n  <key>LSUIElement</key><true/>") }
+        return script
+    }
+
+    private static let highResolutionLine = "  <key>NSHighResolutionCapable</key><true/>"
+
+    private static let appSigningLine = "codesign --force -s - \"$APP\"\necho \"Built $APP\"\n"
+
+    /// The version changes with every build so macOS reads the widget's kinds and sizes again instead of
+    /// keeping the ones it remembers for a version it has seen.
+    private static var widgetBuildSteps: String {
+        """
+        WIDGET="$APP/Contents/PlugIns/{{EXE}}Widget.appex"
+        mkdir -p "$WIDGET/Contents/MacOS"
+        cp "$(dirname "$BIN")/{{EXE}}Widget" "$WIDGET/Contents/MacOS/{{EXE}}Widget"
+        cat > "$WIDGET/Contents/Info.plist" <<PLIST
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+          <key>CFBundleExecutable</key><string>{{EXE}}Widget</string>
+          <key>CFBundleIdentifier</key><string>{{BUNDLE}}.widget</string>
+          <key>CFBundleName</key><string>{{NAME}}</string>
+          <key>CFBundleDisplayName</key><string>{{NAME}}</string>
+          <key>CFBundlePackageType</key><string>XPC!</string>
+          <key>CFBundleShortVersionString</key><string>0.1</string>
+          <key>CFBundleVersion</key><string>$(date +%s)</string>
+          <key>LSMinimumSystemVersion</key><string>14.0</string>
+          <key>NSExtension</key><dict>
+            <key>NSExtensionPointIdentifier</key><string>com.apple.widgetkit-extension</string>
+          </dict>
+        </dict></plist>
+        PLIST
+        cat > "build/{{EXE}}Widget.entitlements" <<PLIST
+        \(widgetEntitlementsPlist)PLIST
+        codesign --force -s - --entitlements "build/{{EXE}}Widget.entitlements" "$WIDGET"
+
+        """
+    }
+
     static let appSwift = """
     import SwiftUI
 
@@ -538,6 +850,8 @@ enum Template {
     #if os(macOS)
     import AppKit
     import Carbon.HIToolbox
+    import Network
+    import WidgetKit
     import CoreServices
     import ServiceManagement
     /// A picture: NSImage on the Mac, UIImage on iPhone and iPad.
@@ -948,6 +1262,7 @@ enum Template {
         init() {
             LampRuntime.start
             LampWindows.start
+            LampWidget.start
         }
 
         var body: some Commands {
@@ -1099,6 +1414,7 @@ enum Template {
             let previous = folder.appendingPathComponent("previous-log.txt")
             try? fm.removeItem(at: previous)
             try? fm.moveItem(at: log, to: previous)
+            LampWidgetPlacement.start
             guard freopen(log.path, "a", stderr) != nil else { return }
             dup2(fileno(stderr), STDOUT_FILENO)
             setvbuf(stdout, nil, _IOLBF, 0)   // so nothing is lost if the app crashes
@@ -3934,6 +4250,197 @@ enum Template {
     }
 
     #if os(macOS)
+    /// The whole app, when a widget is all the person asked for. macOS has no widget without an app to carry
+    /// it, so this is that app and nothing more: no window, no Dock icon, no menus, and nobody ever opens it.
+    ///
+    ///     @main struct MainApp: App { var body: some Scene { LampWidgetOnly() } }
+    ///
+    /// Lamp runs it out of sight for a while after a build, only to learn whether the widget has been put on
+    /// the desktop (`LampWidgetPlacement`); then it quits by itself.
+    struct LampWidgetOnly: Scene {
+        init() {
+            LampWidgetPlacement.quitsWhenDone = true
+            LampRuntime.start
+            LampWidgetLinks.start
+        }
+
+        // A scene that can open nothing: an app needs one, and a click on the widget opens this app, which
+        // SwiftUI answers by opening a window of whichever scene has one (an empty Settings window, when
+        // that was the scene). A menu bar item that is never put in the menu bar has no window to open.
+        var body: some Scene { MenuBarExtra("", isInserted: .constant(false)) { EmptyView() } }
+    }
+
+    /// A link on the widget (`widgetURL`, `Link`) is sent to the app the widget belongs to, not to the browser.
+    /// SwiftUI would hand it to a window, and an app that is only its widget has none, so the app takes the
+    /// request to open a link itself, as an AppKit app does, and passes the link on to whatever opens it. A
+    /// widget with no link sends none, and its click opens nothing.
+    final class LampWidgetLinks: NSObject {
+        private static let shared = LampWidgetLinks()
+
+        /// Runs once, at launch. The click that starts the app delivers its link while the app is still
+        /// launching, so the answer has to be in place by then.
+        static let start: Void = {
+            NotificationCenter.default.addObserver(forName: NSApplication.willFinishLaunchingNotification,
+                                                   object: nil, queue: .main) { _ in
+                NSAppleEventManager.shared().setEventHandler(
+                    shared, andSelector: #selector(open(_:reply:)),
+                    forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))
+            }
+        }()
+
+        @objc private func open(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+            guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
+                  let url = URL(string: text) else { return }
+            // Never back to this app: it has nothing to show for a link, and would only be asked again.
+            guard let opener = NSWorkspace.shared.urlForApplication(toOpen: url),
+                  opener.standardizedFileURL != Bundle.main.bundleURL.standardizedFileURL else { return }
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Whether the person has put this app's widget on the desktop or in Notification Center, kept where Lamp
+    /// reads it, so Lamp's chat can stop saying how to add a widget that's already there. Only the app a
+    /// widget belongs to may ask macOS this.
+    enum LampWidgetPlacement {
+        nonisolated(unsafe) static var quitsWhenDone = false
+        nonisolated(unsafe) private static var written: Bool?
+        private static var file: URL { LampRuntime.folder.appendingPathComponent("widget-placed") }
+
+        /// Runs once, at launch, in an app that has a widget: asks every couple of seconds at first, when the
+        /// person is likely adding it, then now and then.
+        static let start: Void = {
+            let plugIns = (try? FileManager.default.contentsOfDirectory(atPath: Bundle.main.builtInPlugInsPath ?? "")) ?? []
+            guard plugIns.contains(where: { $0.hasSuffix(".appex") }) else { return }
+            ask(times: 0)
+        }()
+
+        private static func ask(times: Int) {
+            WidgetCenter.shared.getCurrentConfigurations { result in
+                let placed = !((try? result.get()) ?? []).isEmpty
+                if written != placed, (try? (placed ? "1" : "0").write(to: file, atomically: true, encoding: .utf8)) != nil {
+                    written = placed
+                }
+                // An app that is only its widget has nothing else to stay for: once the widget is placed, or
+                // after half an hour of waiting, it goes. Lamp runs it again when it wants to know.
+                let soon = times < 900
+                DispatchQueue.main.asyncAfter(deadline: .now() + (soon ? 2 : 60)) {
+                    if quitsWhenDone && (placed || !soon) { return NSApp.terminate(nil) }
+                    ask(times: times + 1)
+                }
+            }
+        }
+    }
+
+    /// What the app hands its desktop widget. A widget is a separate, sandboxed program that sees none of the
+    /// app's files, so it asks the app instead: the app answers, on a connection only this Mac can make, with
+    /// what was shared last, and tells macOS to draw the widget again.
+    ///
+    ///     LampWidget.share(Summary(open: 3, next: "Call Ana"), as: "summary")
+    ///
+    /// Share at launch and whenever the data changes. The widget reads it with
+    /// `LampWidget.read(Summary.self, from: "summary")` and keeps the last answer for when the app is closed.
+    enum LampWidget {
+        private static let firstPort: UInt16 = {{WIDGET_PORT}}
+        private static let token = "{{WIDGET_TOKEN}}"
+        private static let queue = DispatchQueue(label: "LampWidget")
+        nonisolated(unsafe) private static var shared: [String: String] = [:]   // name to JSON
+        nonisolated(unsafe) private static var loaded = false
+        nonisolated(unsafe) private static var listener: NWListener?
+        private static var file: URL { LampStore.folder.appendingPathComponent("widget.json") }
+
+        static func share<T: Encodable>(_ value: T, as name: String = "data") {
+            guard let data = try? JSONEncoder().encode(value), let text = String(data: data, encoding: .utf8) else { return }
+            queue.async {
+                load()
+                listen()
+                guard shared[name] != text else { return }
+                shared[name] = text
+                if let all = try? JSONEncoder().encode(shared) { try? all.write(to: file, options: .atomic) }
+                WidgetCenter.shared.reloadAllTimelines()
+            }
+        }
+
+        /// Runs once, at launch: what was shared last time is there to answer with before the app shares again.
+        static let start: Void = {
+            queue.async {
+                load()
+                if !shared.isEmpty { listen() }
+            }
+        }()
+
+        private static func load() {
+            guard !loaded else { return }
+            loaded = true
+            if let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode([String: String].self, from: data) {
+                shared = saved
+            }
+        }
+
+        /// Listens on this Mac's own address only, so nothing on the network can connect. The port comes from
+        /// the app's identity; when another program has it, the next few are tried, as the widget does.
+        private static func listen(offset: UInt16 = 0) {
+            guard listener == nil, offset < 8, let port = NWEndpoint.Port(rawValue: firstPort + offset) else { return }
+            let parameters = NWParameters.tcp
+            parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: port)
+            guard let made = try? NWListener(using: parameters) else { return }
+            listener = made
+            made.newConnectionHandler = { answer($0) }
+            made.stateUpdateHandler = { state in
+                switch state {
+                case .failed, .waiting:
+                    made.cancel()
+                    if listener === made {
+                        listener = nil
+                        listen(offset: offset + 1)
+                    }
+                default: break
+                }
+            }
+            made.start(queue: queue)
+        }
+
+        /// One question, "<nonce> <signature> <name>", and one answer, "ok <signature>" with the JSON on the
+        /// next line. The secret both programs are built with never crosses the connection: each side proves
+        /// it has it by signing. A question signed without it gets nothing, so only this app's widget can
+        /// read; an answer is signed over the question's nonce, so the widget can tell this app from
+        /// another program that took the port, and an old answer can't be played back to it.
+        private static func answer(_ connection: NWConnection) {
+            connection.start(queue: queue)
+            // The question is one line, but a connection hands bytes over in whatever pieces they arrive in:
+            // it's read until the line's end, and only then judged. Nobody gets to hold the connection open
+            // or fill memory: a question longer than any real one, or not finished in a few seconds, is dropped.
+            var received = Data()
+            queue.asyncAfter(deadline: .now() + 5) { connection.cancel() }
+            func read() {
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, complete, error in
+                    if let data { received.append(data) }
+                    guard let end = received.firstIndex(of: 0x0A) else {
+                        if complete || error != nil || received.count > 4096 { return connection.cancel() }
+                        return read()
+                    }
+                    let line = String(data: received[..<end], encoding: .utf8) ?? ""
+                    let parts = line.split(separator: " ", maxSplits: 2).map(String.init)
+                    var reply = Data()
+                    if parts.count == 3, parts[1] == signature("ask", parts[0], parts[2]) {
+                        let json = shared[parts[2]] ?? ""
+                        reply = Data(("ok " + signature("answer", parts[0], parts[2], json) + "\n" + json).utf8)
+                    }
+                    connection.send(content: reply, contentContext: .finalMessage, isComplete: true,
+                                    completion: .contentProcessed { _ in connection.cancel() })
+                }
+            }
+            read()
+        }
+
+        private static func signature(_ parts: String...) -> String {
+            let code = HMAC<SHA256>.authenticationCode(for: Data(parts.joined(separator: "\n").utf8),
+                                                       using: SymmetricKey(data: Data(token.utf8)))
+            return code.map { String(format: "%02x", $0) }.joined()
+        }
+    }
+    #endif
+
+    #if os(macOS)
     // Mac only: the Privacy & Security permissions and the menu bar.
 
     /// A permission the person turns on themselves, in System Settings ▸ Privacy & Security. macOS never asks
@@ -4414,6 +4921,7 @@ enum Template {
             }
             LampRuntime.start
             LampWindows.start
+            LampWidget.start
             if !dockIcon { NSApplication.shared.setActivationPolicy(.accessory) }
             let center = NotificationCenter.default
             center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in

@@ -245,9 +245,16 @@ struct Transcript: View {
     /// Without the offers to draw an icon that have nothing left to offer: the icon was drawn or designed
     /// again, or icons are no longer drawn by hand. A line that stayed would say what's no longer so.
     @MainActor static func withoutSpentOffers(_ lines: [LogLine], dir: URL) -> [LogLine] {
-        guard lines.contains(where: { $0.kind == .drawIcon }) else { return lines }
+        guard lines.contains(where: { $0.kind == .drawIcon || $0.kind == .widget }) else { return lines }
         let project = Store.shared.projects.first { $0.dir == dir }
-        return lines.filter { line in line.kind != .drawIcon || project.map { Icons.awaitsDrawing(line.text, in: $0, byHand: AppAI.iconsByHand) } ?? false }
+        return lines.filter { line in
+            switch line.kind {
+            case .drawIcon: project.map { Icons.awaitsDrawing(line.text, in: $0, byHand: AppAI.iconsByHand) } ?? false
+            // The widget's card, likewise, while there's a widget to add.
+            case .widget: project.map { WidgetCard.isShown(for: $0) } ?? false
+            default: true
+            }
+        }
     }
 
     /// Without the step at the end that's still going ("Building…"): the progress line is saying it.
@@ -406,6 +413,8 @@ struct LogRow: View, Equatable {
             if let offer = line.setupOffer { SetupCard(offer: offer, reason: line.text, dir: dir) }
         case .drawIcon:
             if let project = Store.shared.projects.first(where: { $0.dir == dir }) { DrawIconLine(project: project) }
+        case .widget:
+            WidgetCardView(dir: dir)
         }
     }
 
