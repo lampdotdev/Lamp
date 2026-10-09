@@ -2059,8 +2059,7 @@ final class Store: ObservableObject {
     }
 
     /// The agent's `use_app` tool: hands its clicks, typing and keys to the open app, which performs them on its
-    /// own front window (LampDriver in LampSupport), then reports what happened with a fresh picture. An
-    /// `open` among them is Lamp's to do (`hand`), so the app gets the batch in the runs between them.
+    /// own front window (LampDriver in LampSupport), then reports what happened with a fresh picture.
     private func use(_ project: LampProject, request body: Data) async -> (Int, [String: Any]) {
         guard turns[project.id]?.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         guard let request = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
@@ -2068,127 +2067,15 @@ final class Store: ObservableObject {
               let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
             return (400, ["error": "use_app needs a list of actions."])
         }
-        let steps = Self.useSteps(actions)
-        if project.platform == .iphone {
-            guard !steps.contains(where: { if case .open = $0 { true } else { false } }) else {
-                return (200, ["text": "`open` hands a file or folder to a Mac app. An app in the simulator can't be given one this way."])
-            }
-            return await useOnSimulator(project, actions: actions, json: json)
-        }
-        let printed = Runtime.logSize(project)
-        var report: [String] = []
-        // Set while the last thing done was an `open`: the app hasn't photographed itself since.
-        var handed: Date?
-        for step in steps {
-            switch step {
-            case .open(let path):
-                let asked = Date()
-                let (line, done) = await hand(path, to: project)
-                report.append(line)
-                // Nothing after it is tried: the later actions were written for an app that had the file.
-                guard done else { return (200, ["text": report.joined(separator: "\n")]) }
-                handed = asked
-            case .drive(let run):
-                switch await drive(run, in: project) {
-                // The app compares its window with how it was when this run began, which is after the `open`.
-                case .report(let lines):
-                    report.append(handed == nil ? lines : lines.replacingOccurrences(
-                        of: "as it did before these actions", with: "as it did just after the `open`"))
-                case .stopped(let why): return (200, ["text": (report + [why]).joined(separator: "\n")])
-                }
-                handed = nil
-            }
-        }
-        if let handed {
-            Runtime.requestScreenshots(of: project)
-            _ = await Runtime.screenshots(of: project, since: handed, waiting: 3)
-        }
-        var text = "What happened:\n\(report.joined(separator: "\n"))"
-        // The agent may have edited the code since: what it's clicking is the app from before those edits.
-        if Runtime.sourcesChanged(project) {
-            text += "\n\nThis is the app as last built: it doesn't have the changes you've made to the code since. " +
-                "Call look_at_app to build and open them."
-        }
-        text += Privacy.sharesPictures
-            ? "\n\nPictures of its windows follow, frontmost first. Points for the next use_app are pixels in the first picture."
-            : "\n\n" + Privacy.picturesOff
-        if !Privacy.sharesLog { text += " " + Privacy.logOff }
-        if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
-        return (200, ["text": text, "screenshots": Privacy.sharesPictures ? Runtime.pictures(of: project).map(\.path) : []])
-    }
-
-    /// A `use_app` batch in the order it was given: each `open` by itself, and the actions between them
-    /// together, since the app performs a run of them in one go.
-    enum UseStep {
-        case open(String)
-        case drive([[String: Any]])
-    }
-
-    nonisolated static func useSteps(_ actions: [[String: Any]]) -> [UseStep] {
-        var steps: [UseStep] = []
-        var run: [[String: Any]] = []
-        for action in actions {
-            guard action["action"] as? String == "open" else { run.append(action); continue }
-            if !run.isEmpty { steps.append(.drive(run)); run = [] }
-            steps.append(.open(action["path"] as? String ?? ""))
-        }
-        if !run.isEmpty { steps.append(.drive(run)) }
-        return steps
-    }
-
-    /// One `open` of a `use_app` batch: gives the app a file or folder the way Finder does when it's dropped
-    /// on the app's icon, chosen in Open With, or sent by a Quick Action. Lamp does it because the agent's
-    /// shell can't: confined (Sandbox), macOS refuses its `open -a` with an error that reads like a fault in
-    /// the app. What may be handed over follows the file tools' rule (Privacy): the app reads it, and what
-    /// the app then shows goes to the agent. `done` is false when the app didn't get it.
-    private func hand(_ given: String, to project: LampProject) async -> (line: String, done: Bool) {
-        guard !given.trimmed.isEmpty else { return ("open: needs `path`, the file or folder to hand the app.", false) }
-        guard FileManager.default.fileExists(atPath: project.installedURL.path) else {
-            return ("open \(given): the app isn't built yet. Call look_at_app first: it builds the app and opens it.", false)
-        }
-        // What's never opened is refused before anything is said about whether it's there.
-        if case .deny(let reason) = Privacy.verdict(tool: "open", path: given, project: project) { return ("open \(given): \(reason)", false) }
-        let path = Privacy.resolved(given, in: project.dir)
-        guard FileManager.default.fileExists(atPath: path) else {
-            return ("open \(given): there's nothing there. Make it first, in the app's folder or a temporary folder.", false)
-        }
-        let (allowed, reason) = await fileAccess(tool: "open", path: given, for: project)
-        guard allowed else { return ("open \(given): \(reason ?? "Lamp couldn't do that.")", false) }
-        let wasRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).isEmpty
-        let config = NSWorkspace.OpenConfiguration()
-        config.activates = false   // as for a look: not in front of the user mid-turn
-        do {
-            let app = try await NSWorkspace.shared.open([URL(fileURLWithPath: path)], withApplicationAt: project.installedURL,
-                                                        configuration: config)
-            if wasRunning {
-                try? await Task.sleep(for: .seconds(1))   // time for the app to act on it before its picture
-            } else if await Runtime.diedOnLaunch(app) {
-                return ("open \(given): the app started and quit right away.\n\n" + (await Runtime.launchReport(project)), false)
-            }
-            refreshOpenApps()
-            return ("open \(given): handed to the app, as Finder would" + (wasRunning ? "" : " (the app wasn't running, so this started it)"), true)
-        } catch {
-            return ("open \(given): macOS couldn't hand it to the app (\(error.localizedDescription)).", false)
-        }
-    }
-
-    private enum Driven {
-        case report(String)
-        case stopped(String)   // why nothing more of the batch can be done
-    }
-
-    /// A run of actions the open app performs on itself.
-    private func drive(_ actions: [[String: Any]], in project: LampProject) async -> Driven {
-        guard let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
-            return .stopped("use_app needs a list of actions.")
-        }
+        if project.platform == .iphone { return await useOnSimulator(project, actions: actions, json: json) }
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first else {
-            return .stopped("The app isn't open. Call look_at_app first: it builds the app and opens it.")
+            return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
         guard Self.binary(of: project, contains: "lampUseAppSignature") else {
-            return .stopped("The open app was built before use_app could do this. Call look_at_app to rebuild it, then try again.")
+            return (200, ["text": "The open app was built before use_app could do this. Call look_at_app to rebuild it, then try again."])
         }
         let id = UUID().uuidString
+        let printed = Runtime.logSize(project)
         // Signed with the app's token rather than carrying it: distributed notifications reach every process.
         let key = SymmetricKey(data: Data(Template.token(for: project).utf8))
         let signature = HMAC<SHA256>.authenticationCode(for: Data("\(id)\n\(json)".utf8), using: key)
@@ -2200,11 +2087,22 @@ final class Store: ObservableObject {
         let wait = Double(actions.count) * 0.4 + waits + 5
         guard let report = await Runtime.useReport(of: project, id: id, waiting: wait, while: { !app.isTerminated }) else {
             guard app.isTerminated else {
-                return .stopped("The app didn't answer. It may have no window open, or it may be stuck.")
+                return (200, ["text": "The app didn't answer. It may have no window open, or it may be stuck."])
             }
-            return .stopped("The app quit or crashed while doing that.\n\n" + (await Runtime.launchReport(project)))
+            return (200, ["text": "The app quit or crashed while doing that.\n\n" + (await Runtime.launchReport(project))])
         }
-        return .report(report)
+        var text = "What happened:\n\(report)"
+        // The agent may have edited the code since: what it's clicking is the app from before those edits.
+        if Runtime.sourcesChanged(project) {
+            text += "\n\nThis is the app as last built: it doesn't have the changes you've made to the code since. " +
+                "Call look_at_app to build and open them."
+        }
+        text += Privacy.sharesPictures
+            ? "\n\nPictures of its windows follow, frontmost first. Points for the next use_app are pixels in the first picture."
+            : "\n\n" + Privacy.picturesOff
+        if !Privacy.sharesLog { text += " " + Privacy.logOff }
+        if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
+        return (200, ["text": text, "screenshots": Privacy.sharesPictures ? Runtime.pictures(of: project).map(\.path) : []])
     }
 
     /// `use_app` for an iPhone app: Lamp drives the simulator through the Mac's accessibility system
@@ -2800,6 +2698,7 @@ final class Store: ObservableObject {
         guard status != 0 else {
             Runtime.markBuilt(project, from: fingerprint)
             BuildStamp.write(to: project.builtURL)   // deploy signs the app afterwards
+            if project.platform != .iphone { Template.Capabilities.load(project).writeDocumentTypes(to: project.builtURL) }
             return nil
         }
         let tail = output.suffix(40).joined(separator: "\n")
@@ -4144,8 +4043,19 @@ final class Store: ObservableObject {
             ? "It has no window open, so there's no picture. If it lives in the menu bar, use_app's bar_icon opens its panel."
             : Privacy.sharesPictures ? "Pictures of its windows follow, frontmost first." : Privacy.picturesOff)
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
+        text += Self.handingHint(for: project)
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
         return (200, ["text": text, "screenshots": Privacy.sharesPictures ? screenshots.map(\.path) : []])
+    }
+
+    /// For an app that declares what it opens (`opens` in capabilities.json): the command that hands this
+    /// copy a file, said with each look because the path is the installed one, which the agent's confined
+    /// shell can open with but can't see, and which moves when the app is renamed. Given the copy in build/
+    /// or the bundle id instead, macOS starts that copy beside the one Lamp opened.
+    nonisolated static func handingHint(for project: LampProject) -> String {
+        guard project.platform != .iphone, !Template.Capabilities.load(project).documentTypes.isEmpty else { return "" }
+        return "\n\nTo hand it a file or folder as Finder would, run `open -g -a \(Sandbox.quoted(project.installedURL.path)) <path>`, " +
+            "then `use_app` with a wait to see the result. Use that path, not the copy in build/ or the bundle id: those start a second copy."
     }
 
     private func record(_ project: LampProject, cost: Double) {

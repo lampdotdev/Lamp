@@ -22,11 +22,6 @@ A capability given to one engine must be given to all of them that can take it, 
   (`FileTools`, listed when the URL carries `files=1`): they mirror pi's built-in ones, and each call is
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
-  `use_app`'s `open` hands the app a file or folder as Finder does (`Store.hand`, an `NSWorkspace` open from
-  Lamp itself, with the path held to `Privacy.verdict`). It is there because the confined shell can't: macOS
-  refuses a sandboxed program's `open -a App file` with -10820 when the app declares no file types, and the
-  apps' Info.plist, which Lamp writes, declares none. `open -a App` alone works there. `Agent.sandboxNote`
-  tells the agent which failures are the sandbox's and not the app's; keep it true when the profile changes.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
   engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
@@ -202,6 +197,17 @@ into them, with no card, can run. Shared apps never carry them: import writes it
 app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_app`). It is a Swift
 string: after editing it, extract and type-check it (`swiftc -typecheck`), and bump anything that detects
 an outdated app (`Store.open` rebuilds apps built by an older Lamp).
+
+A Mac app says what Finder may hand it in `capabilities.json` at its root: `{"opens": ["folder", "png",
+"public.image"]}` (`Template.Capabilities.opens`: "folder", "file", extensions, type identifiers). After each
+build Lamp writes that into the app's Info.plist as `CFBundleDocumentTypes` (`writeDocumentTypes`, beside the
+build stamp, from checked values and never through build.sh), always as an alternative, so an app is offered
+for a kind of file and never becomes what opens it by default. Without a declaration macOS hands the app
+nothing: Finder takes no drop on its icon and doesn't list it in Open With, and the agent's confined
+`open -a App file` is refused with -10820. With one, that command works, and `look_at_app` gives the agent
+the exact line (`Store.handingHint`): the installed copy's path, since the copy in build/ or the bundle id
+starts a second copy beside the one Lamp opened. `Agent.sandboxNote` says which failures are the sandbox's
+and not the app's; keep it true when the profile changes. A shared app doesn't carry `capabilities.json` yet.
 
 ### Widgets
 

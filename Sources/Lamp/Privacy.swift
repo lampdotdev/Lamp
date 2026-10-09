@@ -113,12 +113,6 @@ enum Privacy {
     /// What the approval card says for a file request.
     static func explanation(tool: String, path raw: String, project: LampProject) -> (command: String, explanation: Store.CommandExplanation) {
         let shown = (resolved(raw, in: project.dir) as NSString).abbreviatingWithTildeInPath
-        // `use_app` handing the app something of the person's: the app is the one that touches it.
-        if tool == "open" {
-            return ("open \(shown)", Store.CommandExplanation(
-                summary: "Open \(shown) in \(project.name)", risk: "high",
-                why: "It's outside this app's folder. The app can read and change it, and what it shows goes to the AI model."))
-        }
         let reads = readers.contains(tool)
         let verb: String
         switch tool {
