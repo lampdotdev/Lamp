@@ -93,12 +93,16 @@ A capability given to one engine must be given to all of them that can take it, 
   model writes JavaScript against `cua`; the server asks before each step through MCP elicitation, which
   `MCPClient` answers from `Job.decide`: reads go ahead, actions through the person's approval). It isn't a
   documented interface, so when it's missing, off (Settings → Apps), or won't start, CuaDriver's tools are used
-  as before. With an OpenRouter key, Lamp runs the tool loop itself against
-  OpenRouter. Without one, the task is one turn of the builder: pi gets the driver's tools through its
+  as before. A task goes along the route chosen for the app's text, when one was chosen; with none, along
+  `AppAI.computerDefault`, which is not the text default: a Claude Code or Codex sign-in first, then one
+  OpenRouter model (`AppAI.computerOpenRouterModel`), each picked by timing the same task, so change them by
+  measuring again, not by taste. Through OpenRouter, Lamp runs the tool loop itself. Otherwise the task is one
+  turn of a coding agent: pi gets the driver's tools through its
   extension (a tools file and `LAMP_COMPUTER_URL`, which posts each call to `/agent/computer`), Claude Code
   and Codex through `/mcp` with the task's own token (`Store.computerTasks`, never the build tools). The
-  driver, approvals and element names live in `ComputerUse.Job` either way, so a change to what a task may
-  do is made once.
+  driver, approvals, element names and the task's limits (`ComputerUse.stepLimit`, `timeLimit`: every route
+  ends there with a plain message, and what it spent is still recorded) live in `ComputerUse.Job` either
+  way, so a change to what a task may do is made once. Both drivers' instructions share `ComputerUse.pace`.
 
 Before opening a PR that touches any of this, check each engine's `case` in `Agent.run` and its parser,
 and say in the PR description which engines you tried.

@@ -32,6 +32,8 @@ enum ComputerUse {
 
     struct Failure: LocalizedError {
         let message: String
+        /// What the task's steps had cost when it failed, so the app's usage still counts it.
+        var cost: Double = 0
         var errorDescription: String? { message }
     }
 
@@ -229,10 +231,30 @@ enum ComputerUse {
         return nil
     }
 
+    /// How to spend steps, for the model, in both drivers' instructions. Each call is a round trip that sends
+    /// everything so far again, so a task done one action at a time is slow and dear; and a model whose click
+    /// didn't land tends to click again rather than think of the menu bar.
+    static func pace(call: String) -> String {
+        """
+        Do as much as you can in each \(call): when the next actions don't depend on what the one before shows \
+        (type the text, select it, open a menu), do them together, and read the result once at the end. \
+        If an action has changed nothing twice, don't try it a third time: do it another way (the app's menu bar, \
+        a keyboard shortcut, another control, setting the value directly).
+        """
+    }
+
     /// Turning the setting off stops a task that's already running, before its next step.
     static let stopped = Failure(message: "Using other apps was turned off, so Lamp stopped the task.")
     /// The person pressed Stop Task.
     static let stoppedByPerson = Failure(message: "You stopped the task before it finished.")
+
+    /// How far a task may go before Lamp ends it, whatever is driving it. A model that isn't getting anywhere
+    /// doesn't stop by itself: it keeps looking and clicking on the person's desktop, at their cost (seven
+    /// minutes once, measured, with no end in sight). The tasks that came out right took a quarter of either.
+    static let stepLimit = 40
+    static let timeLimit: TimeInterval = 300
+    static let tooManySteps = Failure(message: "The task took too many steps, so Lamp stopped it.")
+    static let tookTooLong = Failure(message: "The task took too long, so Lamp stopped it.")
 
     /// One task in progress (not Swift's Task): the connection to the driver, the tools the model may use, what the person has
     /// to approve, and the names of what's on screen. Whichever model drives the task (OpenRouter, a local
@@ -265,8 +287,40 @@ enum ComputerUse {
         /// The coding agent driving the task, when one is, so Stop Task can end it.
         var engineProcess: Process?
 
-        /// Why the task can't go on, or nil: turned off in Settings, or stopped by the person.
-        var halt: Failure? { isStopped ? ComputerUse.stoppedByPerson : enabled ? nil : ComputerUse.stopped }
+        /// Why the task can't go on, or nil: stopped by the person, turned off in Settings, or gone on too long.
+        var halt: Failure? { isStopped ? ComputerUse.stoppedByPerson : enabled ? overrun : ComputerUse.stopped }
+
+        /// The steps asked for so far, reads and actions alike.
+        private(set) var steps = 0
+        private let began = Date()
+        /// Time spent waiting for the person's answer about a step, which isn't the task's own.
+        private var waited: TimeInterval = 0
+        private var asking = 0
+        private var askingSince = Date()
+
+        /// The limit the task has passed, or nil.
+        var overrun: Failure? {
+            if steps > stepLimit { return tooManySteps }
+            let worked = Date().timeIntervalSince(began) - waited - (asking > 0 ? Date().timeIntervalSince(askingSince) : 0)
+            return worked > timeLimit ? tookTooLong : nil
+        }
+
+        /// The person's answer about a step, with the wait kept off the task's clock.
+        private func ask(_ action: Action) async -> Bool {
+            if asking == 0 { askingSince = Date() }
+            asking += 1
+            defer {
+                asking -= 1
+                if asking == 0 { waited += Date().timeIntervalSince(askingSince) }
+            }
+            return await approve(action)
+        }
+
+        /// Ends the coding agent driving the task once it has passed a limit: refusing its steps isn't
+        /// enough, it would go on asking, or thinking.
+        func endIfOverrun() {
+            if overrun != nil { engineProcess?.terminate() }
+        }
 
         /// Stop Task: ends the agent driving the task and the driver, so no step runs after this.
         func stop() {
@@ -344,7 +398,7 @@ enum ComputerUse {
             Find the right window with list_windows, read it with get_window_state, and scroll to see more. A web page \
             that's open but not in front: find it with list_browser_tabs and bring it forward with show_browser_tab, \
             then read its window. Prefer the \
-            element tree to the picture when both have what you need. Keep going until you can answer, then reply \
+            element tree to the picture when both have what you need. \(pace(call: "turn")) Keep going until you can answer, then reply \
             with only the answer, in the form the task asks for. If you can't do it, say what stopped you. Use only \
             these tools: never a shell, and never files.
 
@@ -395,7 +449,7 @@ enum ComputerUse {
             guard halt == nil else { return false }
             if CodexComputerUse.read(elicitation) { return true }
             guard allowActions else { return false }
-            let allowed = await approve(CodexComputerUse.action(elicitation, intent: currentIntent))
+            let allowed = await ask(CodexComputerUse.action(elicitation, intent: currentIntent))
             return allowed && halt == nil   // it may have been turned off or stopped during the dialog
         }
 
@@ -422,6 +476,8 @@ enum ComputerUse {
         func call(_ name: String, _ arguments: [String: Any]) async throws -> (text: String, pictures: [(mimeType: String, data: String)]) {
             var arguments = arguments
             let intent = arguments.removeValue(forKey: "intent") as? String
+            steps += 1
+            endIfOverrun()
             if let halt { throw halt }
             if BrowserTabs.handles(name) { return (await BrowserTabs.call(name, arguments), []) }
             guard allowed.contains(name) else { return ("That tool isn't available for this task.", []) }
@@ -453,7 +509,7 @@ enum ComputerUse {
                 var action = Action(tool: name, target: described.target, details: described.details, intent: intent, pid: described.pid)
                 action.point = spot
                 action.window = windowID.flatMap { ComputerOverlay.frame(of: CGWindowID($0)) }
-                guard await approve(action) else {
+                guard await ask(action) else {
                     if let halt { throw halt }
                     return ("The person declined this action. Don't try it another way; finish with what you have, or say what you needed.", [])
                 }
@@ -515,12 +571,22 @@ enum ComputerUse {
     }
 
     /// The loop for OpenRouter's chat-completions API with tool calling: the model gets the task and the
-    /// tools, and each tool call goes to the driver until it answers.
+    /// tools, and each tool call goes to the driver until it answers. What the steps cost goes with a
+    /// failure too.
     private static func loop(_ task: Job, endpoint: String, key: String?, model: String) async throws -> (String, Double) {
+        var cost = 0.0
+        do {
+            return (try await turns(task, endpoint: endpoint, key: key, model: model, cost: &cost), cost)
+        } catch {
+            throw Failure(message: error.localizedDescription, cost: cost)
+        }
+    }
+
+    /// The model's turns, until one is an answer or the task is halted (stopped, or past its limits).
+    private static func turns(_ task: Job, endpoint: String, key: String?, model: String, cost: inout Double) async throws -> String {
         let tools = task.openAITools
         var messages: [[String: Any]] = [["role": "system", "content": task.systemPrompt], ["role": "user", "content": task.taskText]]
-        var cost = 0.0
-        for _ in 0..<40 {
+        while true {
             if let halt = task.halt { throw halt }
             let (message, stepCost) = try await complete(endpoint: endpoint, messages: messages, tools: tools, model: model, key: key)
             cost += stepCost
@@ -528,7 +594,7 @@ enum ComputerUse {
             messages.append(message)
             let calls = message["tool_calls"] as? [[String: Any]] ?? []
             if calls.isEmpty {
-                return ((message["content"] as? String ?? "").trimmed, cost)
+                return (message["content"] as? String ?? "").trimmed
             }
             var pictures: [[String: Any]] = []
             for call in calls {
@@ -553,7 +619,6 @@ enum ComputerUse {
                 if seen > 1 { messages[index]["content"] = "(An earlier picture, removed to save space.)" }
             }
         }
-        throw Failure(message: "The task took too many steps, so Lamp stopped it.")
     }
 
     /// The task as one turn of a coding agent, with the driver's tools: pi through its extension (which
@@ -639,6 +704,15 @@ enum ComputerUse {
         var failure: String?
         var notice: String?   // the agent's own last word about what went wrong, when it didn't answer
         var lastLine = ""
+        // The agent may sit thinking past the time limit without asking for a step, so the clock is watched
+        // from here as well as at each step.
+        let watch = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                task.endIfOverrun()
+            }
+        }
+        defer { watch.cancel() }
         let status = await Shell.run(command, cwd: folder, env: env, started: { task.engineProcess = $0 }) { line in
             lastLine = line
             for event in Agent.parse(line, engine: engine) {
@@ -651,14 +725,14 @@ enum ComputerUse {
                 }
             }
         }
-        if let halt = task.halt { throw halt }
-        if let failure { throw Failure(message: Provider.friendlyError(failure, from: source)) }
+        if let halt = task.halt { throw Failure(message: halt.message, cost: cost) }
+        if let failure { throw Failure(message: Provider.friendlyError(failure, from: source), cost: cost) }
         guard status == 0 || !text.isEmpty else {
             let why = notice ?? (lastLine.hasPrefix("{") ? "" : lastLine.trimmed)
             // 137 is a kill: the agent was stopped from outside, before it said anything.
             let stoppedEarly = status == 137 && text.isEmpty && why.isEmpty
             throw Failure(message: stoppedEarly ? "\(engine.title) stopped before it could answer. Try again."
-                          : "The AI didn't answer." + (why.isEmpty ? "" : " " + Provider.friendlyError(why, from: source)))
+                          : "The AI didn't answer." + (why.isEmpty ? "" : " " + Provider.friendlyError(why, from: source)), cost: cost)
         }
         return (text.trimmed, cost)
     }
@@ -691,9 +765,11 @@ enum ComputerUse {
         if let key { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Lamp", forHTTPHeaderField: "X-Title")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": model, "messages": messages, "tools": tools, "usage": ["include": true],
-        ] as [String: Any])
+        var body: [String: Any] = ["model": model, "messages": messages, "tools": tools, "usage": ["include": true]]
+        // Every turn sends the whole task so far again. Anthropic's models bill that at full price unless
+        // asked to keep it (a tenth to read back); the others keep it without being asked.
+        if model.hasPrefix("anthropic/") { body["cache_control"] = ["type": "ephemeral"] }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         // A dropped connection mid-upload is worth one more try.
         var reply: (Data, URLResponse)?
         for attempt in 0..<2 {
