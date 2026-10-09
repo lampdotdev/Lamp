@@ -77,6 +77,8 @@ enum Sharing {
         /// What the app is, in its sender's words (`AppDescription`). Files from an app that
         /// has none, or from before apps had one, carry none.
         var description: String?
+        /// What the app opens from Finder (`AppDescription.opens`). Checked again by whoever reads it.
+        var opens: [String]?
     }
 
     /// Which app a shared file is, so a Mac that already has it can take the new one as an update rather
@@ -183,7 +185,8 @@ enum Sharing {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(Manifest(format: format(withWidget: !widgetCode.isEmpty), name: project.name, exportedAt: Date(),
-                                    app: identity(of: project), description: AppDescription.description(of: project)))
+                                    app: identity(of: project), description: AppDescription.description(of: project),
+                                    opens: { $0.isEmpty ? nil : $0 }(AppDescription.opens(of: project))))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
         // Everything staged, counted and measured the way the importer's listing does (files and folders,
@@ -229,6 +232,7 @@ enum Sharing {
         let name: String
         var identity: String? = nil   // Manifest.app; nil in files from before apps said who they are
         var description: String? = nil   // Manifest.description, the sender's words; shown as text, never trusted
+        var opens: [String] = []   // Manifest.opens, checked (AppDescription.valid): plain names only
         let folder: URL          // unpacked, temporary
         /// All the code in the file, and the only code there is: the app's (Sources/) and its widget's
         /// (Widget/), .swift files only. The review reads this list and the install writes from this list,
@@ -294,7 +298,8 @@ enum Sharing {
         let attachments = filesUnder(folder.appendingPathComponent(Assets.folder))
             + filesUnder(folder.appendingPathComponent(Attachments.folder))
         return Package(name: name(from: manifest.name), identity: identity(from: manifest.app),
-                       description: manifest.description.flatMap(AppDescription.valid), folder: folder, sources: sources,
+                       description: manifest.description.flatMap(AppDescription.valid),
+                       opens: AppDescription.valid(opens: manifest.opens ?? []), folder: folder, sources: sources,
                        attachments: attachments, fileCount: all)
     }
 
@@ -350,7 +355,7 @@ enum Sharing {
         // The description comes with the app, so the copy says the same when it's shared on. An app being
         // updated takes the file's too, none included: the words go with the code they describe. Lamp writes
         // the file itself from what it read, so nothing else a sender put there arrives.
-        try AppDescription.write(package.description, for: project)
+        try AppDescription.write(package.description, opens: package.opens, for: project)
         if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
            let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
             Icons.save(spec, for: project)

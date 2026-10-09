@@ -198,16 +198,20 @@ app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_
 string: after editing it, extract and type-check it (`swiftc -typecheck`), and bump anything that detects
 an outdated app (`Store.open` rebuilds apps built by an older Lamp).
 
-A Mac app says what Finder may hand it in `capabilities.json` at its root: `{"opens": ["folder", "png",
-"public.image"]}` (`Template.Capabilities.opens`: "folder", "file", extensions, type identifiers). After each
-build Lamp writes that into the app's Info.plist as `CFBundleDocumentTypes` (`writeDocumentTypes`, beside the
-build stamp, from checked values and never through build.sh), always as an alternative, so an app is offered
-for a kind of file and never becomes what opens it by default. Without a declaration macOS hands the app
-nothing: Finder takes no drop on its icon and doesn't list it in Open With, and the agent's confined
-`open -a App file` is refused with -10820. With one, that command works, and `look_at_app` gives the agent
-the exact line (`Store.handingHint`): the installed copy's path, since the copy in build/ or the bundle id
-starts a second copy beside the one Lamp opened. `Agent.sandboxNote` says which failures are the sandbox's
-and not the app's; keep it true when the profile changes. A shared app doesn't carry `capabilities.json` yet.
+A Mac app says what Finder may hand it in `about.json` at its root, beside its description: `"opens":
+["folder", "png", "public.image"]` (`AppDescription.opens`: "folder", "file", extensions, type identifiers).
+Every list goes through one check (`AppDescription.valid(opens:)`: plain names only), whether the agent wrote
+it or a shared file brought it. After each build Lamp writes it into the app's Info.plist as
+`CFBundleDocumentTypes` (`writeDocumentTypes`, beside the build stamp, never through build.sh), always as an
+alternative, so an app is offered for a kind of file and never becomes what opens it by default. A change to
+the list needs a build (`Runtime.fingerprint`); a change to the description doesn't. A shared app carries the
+list in its manifest (`Sharing.Manifest.opens`) and the copy's about.json is written from what passed the
+check. Without a declaration macOS hands the app nothing: Finder takes no drop on its icon and doesn't list
+it in Open With, and the agent's confined `open -a App file` is refused with -10820. With one, that command
+works, and `look_at_app` gives the agent the exact line (`Store.handingHint`): the installed copy's path,
+since the copy in build/ or the bundle id starts a second copy beside the one Lamp opened.
+`Agent.sandboxNote` says which failures are the sandbox's and not the app's; keep it true when the profile
+changes. iPhone capabilities stay in `capabilities.json`.
 
 ### Widgets
 

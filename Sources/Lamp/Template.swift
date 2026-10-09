@@ -1,5 +1,4 @@
 import Foundation
-import UniformTypeIdentifiers
 
 /// The scaffold every generated app starts from.
 enum Template {
@@ -262,10 +261,6 @@ enum Template {
         var bonjourServices: [String]?
         /// BGTaskScheduler identifiers for background processing and refresh tasks.
         var backgroundTasks: [String]?
-        /// Mac apps: what the app opens when Finder hands it something. "folder", "file" for any file, a
-        /// file extension ("png"), or a type identifier ("public.image").
-        var opens: [String]?
-
         static func load(_ project: LampProject) -> Capabilities {
             let url = project.dir.appendingPathComponent("capabilities.json")
             guard let data = try? Data(contentsOf: url), let caps = try? JSONDecoder().decode(Capabilities.self, from: data) else { return Capabilities() }
@@ -308,42 +303,6 @@ enum Template {
             let tasks = (backgroundTasks ?? []).filter { $0.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil }
             if !tasks.isEmpty { lists["BGTaskSchedulerPermittedIdentifiers"] = tasks }
             return lists
-        }
-
-        /// What `opens` comes to in a Mac app's Info.plist, or nothing. Until an app declares a kind of file,
-        /// macOS hands it none: Finder won't take a drop on its icon or list it in Open With, and a confined
-        /// program (the agent's shell, Sandbox) asking to open a file with it is refused with error -10820.
-        /// The app is only ever an alternative for them, so declaring folders or pictures never makes it
-        /// what opens them on a double-click. Each entry is kept to letters, digits, dots and dashes.
-        var documentTypes: [[String: Any]] {
-            var types: [String] = [], extensions: [String] = []
-            for entry in opens ?? [] {
-                let name = entry.trimmingCharacters(in: .whitespaces).lowercased()
-                let bare = name.hasPrefix(".") ? String(name.dropFirst()) : name
-                if name == "folder" { types.append("public.folder") }
-                else if name == "file" { types.append("public.data") }
-                else if bare.range(of: #"^[a-z0-9]{1,16}$"#, options: .regularExpression) != nil {
-                    // An extension macOS knows becomes its type; one it doesn't is declared as the extension.
-                    if let known = UTType(filenameExtension: bare), !known.isDynamic { types.append(known.identifier) } else { extensions.append(bare) }
-                } else if name.contains("."), name.range(of: #"^[a-z0-9][a-z0-9.-]{2,80}$"#, options: .regularExpression) != nil {
-                    types.append(name)
-                }
-            }
-            guard !types.isEmpty || !extensions.isEmpty else { return [] }
-            var type: [String: Any] = ["CFBundleTypeName": "Document", "CFBundleTypeRole": "Viewer", "LSHandlerRank": "Alternate"]
-            if !types.isEmpty { type["LSItemContentTypes"] = types.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } } }
-            if !extensions.isEmpty { type["CFBundleTypeExtensions"] = extensions.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } } }
-            return [type]
-        }
-
-        /// Puts what the app opens into a freshly built Mac app's Info.plist, before it's signed, the way
-        /// its stamp is (BuildStamp.write): written by Lamp from checked values, never by the build script.
-        func writeDocumentTypes(to app: URL) {
-            let url = app.appendingPathComponent("Contents/Info.plist")
-            guard let info = NSMutableDictionary(contentsOf: url) else { return }
-            let types = documentTypes
-            if types.isEmpty { info.removeObject(forKey: "CFBundleDocumentTypes") } else { info["CFBundleDocumentTypes"] = types }
-            info.write(to: url, atomically: true)
         }
 
         /// Those lists as Info.plist lines, or nothing.
