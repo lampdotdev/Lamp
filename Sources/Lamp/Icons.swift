@@ -469,20 +469,28 @@ enum Icons {
                                 log: @escaping @MainActor (String) -> Void) async throws -> NSImage {
         var candidates: [NSImage] = []
         var lastError: Error?
-        await withTaskGroup(of: Result<NSImage, Error>.self) { group in
+        var stoodIn: String?
+        let chosen = iconModel
+        await withTaskGroup(of: Result<(NSImage, String), Error>.self) { group in
             for _ in 0..<candidateCount {
                 group.addTask {
-                    do { return .success(try cutOut(try await generateArt(spec))) } catch { return .failure(error) }
+                    do {
+                        let (data, model) = try await generateArt(spec, with: chosen)
+                        return .success((try cutOut(data), model))
+                    } catch { return .failure(error) }
                 }
             }
             for await result in group {
                 switch result {
-                case .success(let image): candidates.append(image)
+                case .success(let (image, model)):
+                    candidates.append(image)
+                    if model != chosen { stoodIn = model }
                 case .failure(let error): lastError = error
                 }
             }
         }
         guard !candidates.isEmpty else { throw lastError ?? AppAI.Failure(message: "No artwork was generated.") }
+        if let stoodIn { await log("\(modelName(chosen)) was busy, so \(modelName(stoodIn)) drew this icon.") }
         guard candidates.count > 1 else { return candidates[0] }
 
         var tiles: [NSImage] = []
@@ -514,7 +522,40 @@ enum Icons {
     /// Asks the image model for the object alone on a plain background (never a whole icon), so Lamp can
     /// cut it out and compose the icon itself. Returns PNG/JPEG data.
     static func generateArt(_ spec: IconSpec) async throws -> Data {
-        try await AppAI.image(prompt: artPrompt(spec), references: [], aspectRatio: "1:1", model: iconModel).0
+        try await generateArt(spec, with: iconModel).0
+    }
+
+    /// Draws with `model` and says which model drew. When that one is too busy to answer, another draws
+    /// this once (`standIn`), so an app isn't left without artwork over a model's bad hour; when the other
+    /// can't either, the failure is the chosen model's, which is the one the person can do something about.
+    static func generateArt(_ spec: IconSpec, with model: String) async throws -> (Data, String) {
+        do {
+            return (try await AppAI.image(prompt: artPrompt(spec), references: [], aspectRatio: "1:1", model: model).0, model)
+        } catch let failure as AppAI.Failure where failure.busy {
+            guard let other = standIn(for: model),
+                  let data = try? await AppAI.image(prompt: artPrompt(spec), references: [], aspectRatio: "1:1", model: other).0
+            else { throw failure }
+            return (data, other)
+        }
+    }
+
+    /// The model that draws an icon while the chosen cloud model is busy: the one Lamp starts with, or for
+    /// someone who chose that, the cheapest. Never a pricier one than they'd pick up without asking, and
+    /// none for the Mac's own model, which has no busy hours.
+    static func standIn(for model: String) -> String? {
+        guard artModels.contains(where: { $0.id == model }) else { return nil }
+        return model == artModels[0].id ? artModels.last?.id : artModels[0].id
+    }
+
+    /// What the chat says when an icon's artwork couldn't be drawn: what went wrong and what to do about
+    /// it, in the failure's own words. The app keeps the icon it has.
+    static func artFailed(_ error: Error) -> String {
+        "Couldn't draw the icon's artwork. \(error.localizedDescription)"
+    }
+
+    /// A model as the menus name it, less the note in brackets.
+    static func modelName(_ model: String) -> String {
+        (artModels.first { $0.id == model }?.label ?? model).components(separatedBy: " (")[0]
     }
 
     /// What an image model is asked to draw for an icon.

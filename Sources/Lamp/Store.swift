@@ -3160,7 +3160,7 @@ final class Store: ObservableObject {
                 offerSetup(project, SetupOffer(capability: .pictures, icon: true),
                            because: "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) a proper icon, and your apps will be able to make pictures too.")
             } catch {
-                log(project, .detail, "Icon artwork failed: \(error.localizedDescription)")
+                log(project, .detail, Icons.artFailed(error))
             }
         }
     }
