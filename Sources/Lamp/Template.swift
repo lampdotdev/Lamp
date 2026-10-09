@@ -2127,6 +2127,21 @@ enum Template {
         /// asked to present instead.
         private static func barIcon(_ pick: String?) -> String {
             guard let item = LampMenuBar.statusItem else { return "bar_icon: the app has no icon in the menu bar" }
+            if LampMenuBar.style == .toggle, let menu = LampMenuBar.rightClickMenu {
+                let title = LampMenuBar.switchTitle
+                func state() -> String { LampMenuBar.switchBinding?.wrappedValue == true ? "on" : "off" }
+                if pick?.lowercased() == "click" {
+                    LampMenuBar.switchBinding?.wrappedValue.toggle()
+                    return "bar_icon: clicked the icon: \"\(title)\" is now \(state())"
+                }
+                fill(menu)
+                guard let pick else {
+                    return "bar_icon: a click on the icon switches \"\(title)\" (now \(state())); a right-click shows a menu with\n"
+                        + list(menu, depth: 2) + "\nNothing was opened. Use bar_icon with `item` set to \"click\" to click the icon, "
+                        + "or to a name to pick it from the menu."
+                }
+                return "bar_icon: " + self.pick(pick, in: menu)
+            }
             if let menu = item.menu {
                 fill(menu)
                 guard let pick else {
@@ -4793,19 +4808,60 @@ enum Template {
     /// Window scene) the app is in the Dock and the app switcher, so that window can't get lost behind others.
     /// `dockIcon: true` keeps the Dock icon all the time, for an app that also has a main window.
     ///
+    /// Or a menu instead of a panel, which is what most menu bar apps should have. Its items are Buttons, Toggles
+    /// (shown with a checkmark), Pickers, Menus (submenus) and Dividers; Settings… and Quit are added at the end
+    /// (`settings: false` leaves out Settings… for an app without a Settings scene):
+    ///
+    ///     LampMenuBar(menu: "Clipboard", systemImage: "list.clipboard") { Button("Clear History") { … } }
+    ///
+    /// Or, for an app whose main job is one thing it turns on and off, an icon that does it: a click flips `isOn`
+    /// and the icon shows the state; a right-click (or control-click) shows the menu, which starts with the same
+    /// switch. Keep the state in the App (`@StateObject` or `@State`), so the icon changes with it:
+    ///
+    ///     LampMenuBar("Keep Awake", isOn: $model.awake, on: "cup.and.saucer.fill", off: "cup.and.saucer") { … }
+    ///
+    /// When the icon is hidden, a menu's items open in a window as buttons and switches.
+    ///
     /// Hand the panel its model inside the braces (`{ PanelView().environmentObject(model) }`), never with a
     /// modifier on the scene: macOS shows a panel before the scene's environment has reached it, which crashes a
     /// view that reads an environment object, and the window that stands in for a hidden icon never gets it.
     struct LampMenuBar: Scene {
         private let content: () -> AnyView
         private let label: () -> AnyView
+        private let style: Style
+
+        /// What the icon opens: a panel of the app's own, a menu, or (for a switch) nothing until right-clicked.
+        enum Style { case panel, menu, toggle }
 
         init<Content: View, Icon: View>(dockIcon: Bool = false, @ViewBuilder content: @escaping () -> Content,
                                         @ViewBuilder label: @escaping () -> Icon) {
             let panel = { AnyView(content()) }
             self.content = panel
             self.label = { AnyView(label()) }
-            MainActor.assumeIsolated { Self.install(panel, dockIcon: dockIcon) }
+            style = .panel
+            MainActor.assumeIsolated { Self.install(panel, dockIcon: dockIcon, style: .panel) }
+        }
+
+        init<Items: View>(menu title: String, systemImage: String, dockIcon: Bool = false, settings: Bool = true,
+                          @ViewBuilder items: @escaping () -> Items) {
+            let menu = { AnyView(MenuItems(settings: settings) { items() }) }
+            content = menu
+            label = { AnyView(Image(systemName: systemImage).accessibilityLabel(title)) }
+            style = .menu
+            MainActor.assumeIsolated { Self.install(menu, dockIcon: dockIcon, style: .menu) }
+        }
+
+        init<Items: View>(_ title: String, isOn: Binding<Bool>, on onImage: String, off offImage: String,
+                          dockIcon: Bool = false, settings: Bool = true, @ViewBuilder menu items: @escaping () -> Items) {
+            let menu = { AnyView(MenuItems(settings: settings) { Toggle(title, isOn: isOn); items() }) }
+            content = menu
+            label = { AnyView(Image(systemName: isOn.wrappedValue ? onImage : offImage).accessibilityLabel(title)) }
+            style = .toggle
+            MainActor.assumeIsolated {
+                Self.switchTitle = title
+                Self.switchBinding = isOn
+                Self.install(menu, dockIcon: dockIcon, style: .toggle)
+            }
         }
 
         init<Content: View>(_ title: String, systemImage: String, dockIcon: Bool = false,
@@ -4813,13 +4869,33 @@ enum Template {
             self.init(dockIcon: dockIcon, content: content) { Image(systemName: systemImage).accessibilityLabel(title) }
         }
 
+        /// Scenes can't be chosen with `if`, so both are there and only the one for the style is put in the menu bar.
         var body: some Scene {
-            MenuBarExtra {
+            MenuBarExtra(isInserted: .constant(style == .panel)) {
                 content().background(SettingsOpener())
             } label: {
                 label()
             }
             .menuBarExtraStyle(.window)
+            MenuBarExtra(isInserted: .constant(style != .panel)) {
+                content()
+            } label: {
+                label()
+            }
+            .menuBarExtraStyle(.menu)
+        }
+
+        /// A menu's items with Settings… and Quit after them, so no menu bar app is left without either.
+        private struct MenuItems<Items: View>: View {
+            let settings: Bool
+            @ViewBuilder let items: () -> Items
+
+            var body: some View {
+                items()
+                Divider()
+                if settings { Button("Settings…") { LampMenuBar.openSettings() }.keyboardShortcut(",") }
+                Button("Quit \(LampMenuBar.appName)") { NSApp.terminate(nil) }.keyboardShortcut("q")
+            }
         }
 
         // MARK: From the panel
@@ -4858,6 +4934,10 @@ enum Template {
 
         /// Closes the panel under the icon.
         @MainActor static func close() {
+            if style != .panel {
+                (rightClickMenu ?? statusItem?.menu)?.cancelTracking()
+                return
+            }
             let panel = NSApp.windows.first { isPanel($0) && $0.isVisible }
             // The icon has to hear of it, or it goes on believing its panel is open and won't open it again.
             let session = Selector(("expandedInterfaceSession")), cancel = NSSelectorFromString("cancel")
@@ -4874,12 +4954,69 @@ enum Template {
         @MainActor static func show() {
             // Lamp's builder had the panel open to look at it, in a state that can't take the keyboard.
             if LampDriver.hasBarPanel { close() }
-            if iconIsVisible { openPanel() } else { showWindow() }
+            guard iconIsVisible else { return showWindow() }
+            if style == .panel { openPanel() } else { DispatchQueue.main.async { openMenu() } }
+        }
+
+        /// The switch's menu, under its icon, as a right-click shows it.
+        @MainActor static func showMenu() {
+            guard let menu = rightClickMenu, let button = statusItem?.button else { return }
+            button.highlight(true)
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.isFlipped ? button.bounds.maxY + 4 : -4), in: button)
+            button.highlight(false)
+        }
+
+        // MARK: A switch's icon
+
+        /// The menu a right-click on a switch's icon shows. SwiftUI hands the icon its menu, which would open on
+        /// every click; it's taken off the icon and kept here, so a plain click can flip the switch instead.
+        @MainActor static var rightClickMenu: NSMenu?
+        @MainActor static var switchTitle = ""
+        @MainActor static var switchBinding: Binding<Bool>?
+
+        @MainActor private static func takeOverClicks() {
+            guard style == .toggle, let item = statusItem, let button = item.button else { return }
+            if let menu = item.menu {
+                rightClickMenu = menu
+                item.menu = nil
+            }
+            guard button.action != #selector(Clicks.clicked(_:)) else { return }
+            button.target = Clicks.shared
+            button.action = #selector(Clicks.clicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            // VoiceOver can't right-click: the menu is an action of its own.
+            button.setAccessibilityCustomActions([NSAccessibilityCustomAction(name: "Show Menu") {
+                MainActor.assumeIsolated { showMenu() }
+                return true
+            }])
+        }
+
+        private final class Clicks: NSObject {
+            static let shared = Clicks()
+
+            @MainActor @objc func clicked(_ sender: Any?) {
+                let event = NSApp.currentEvent
+                if event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true {
+                    LampMenuBar.showMenu()
+                } else {
+                    LampMenuBar.switchBinding?.wrappedValue.toggle()
+                }
+            }
+        }
+
+        @MainActor private static func openMenu() {
+            NSApp.activate()
+            if style == .toggle { showMenu() } else { statusItem?.button?.performClick(nil) }
+        }
+
+        @MainActor static var appName: String {
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
         }
 
         // MARK: Internals
 
         @MainActor private static var panelContent: (() -> AnyView)?
+        @MainActor static var style = Style.panel
         @MainActor private static var keepsDockIcon = false
         @MainActor private static var settingsAction: (() -> Void)?
         @MainActor private static var window: NSWindow?
@@ -4898,7 +5035,14 @@ enum Template {
             @ObservedObject var changes: Changes
 
             var body: some View {
-                LampMenuBar.panelContent?()
+                if LampMenuBar.style == .panel {
+                    LampMenuBar.panelContent?()
+                } else {
+                    // A menu's items, as buttons and checkboxes. Not a Form: it scrolls, so a window can't size to it.
+                    VStack(alignment: .leading, spacing: 10) { LampMenuBar.panelContent?() }
+                        .padding(20)
+                        .frame(width: 280, alignment: .leading)
+                }
             }
         }
 
@@ -4911,10 +5055,11 @@ enum Template {
             }
         }
 
-        @MainActor private static func install(_ content: @escaping () -> AnyView, dockIcon: Bool) {
+        @MainActor private static func install(_ content: @escaping () -> AnyView, dockIcon: Bool, style: Style) {
             let first = panelContent == nil
             panelContent = content
             keepsDockIcon = dockIcon
+            self.style = style
             guard first else {
                 DispatchQueue.main.async { changes.objectWillChange.send() }
                 return
@@ -4938,7 +5083,10 @@ enum Template {
             for name in [NSApplication.didUpdateNotification, NSWindow.didBecomeKeyNotification,
                          NSWindow.didChangeOcclusionStateNotification] {
                 center.addObserver(forName: name, object: nil, queue: .main) { _ in
-                    MainActor.assumeIsolated { syncDockIcon() }
+                    MainActor.assumeIsolated {
+                        syncDockIcon()
+                        takeOverClicks()
+                    }
                 }
             }
             center.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { _ in
@@ -5025,7 +5173,7 @@ enum Template {
             if window == nil {
                 let made = NSWindow(contentViewController: NSHostingController(rootView: WindowContent(changes: changes)))
                 made.styleMask = [.titled, .closable, .miniaturizable]
-                made.title = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
+                made.title = appName
                 made.isReleasedWhenClosed = false
                 made.center()
                 window = made

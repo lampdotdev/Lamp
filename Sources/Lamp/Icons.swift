@@ -539,6 +539,98 @@ enum Icons {
         """
     }
 
+    /// A picture for inside an app (`make_art`), asked for in the icon's words so the two look like a set: one
+    /// object for Lamp to cut out, or a whole scene. The icon's tint keeps the colors in the same family.
+    static func appArtPrompt(subject: String, tint: String?, scene: Bool) -> String {
+        let colors = tint.map { "Calm, harmonious colors that go with \($0)." } ?? "Calm, harmonious colors."
+        if scene {
+            return """
+            \(subject), as an illustration in the style of Apple's own app icons: smooth rounded forms, subtle soft \
+            gradients, gentle light from above, simple shapes with little fine detail, clean and uncluttered. \(colors) \
+            The picture fills the whole frame. No text, no letters, no border, no frame, no rounded square tile, no \
+            app icon shape.
+            """
+        }
+        return """
+        A single \(subject), as an illustration in the style of Apple's own app icons: one tangible object with a \
+        simple, instantly recognizable silhouette, smooth rounded forms, subtle soft gradients and gentle light \
+        from above, front or slight three-quarter view. \(colors) The object alone, centered, filling about 80% of \
+        the frame, on a plain flat light gray background. No scene, no ground, no cast shadow, no background \
+        elements, no text, no letters, no border, no frame, no rounded square tile, no app icon shape.
+        """
+    }
+
+    /// Paints a picture for inside an app with the icon's model: PNG data, and what it cost. A single object
+    /// comes back cut out of its background.
+    static func generateAppArt(subject: String, tint: String?, scene: Bool, aspect: String) async throws -> (Data, Double) {
+        let (data, cost) = try await AppAI.image(prompt: appArtPrompt(subject: subject, tint: tint, scene: scene),
+                                                 references: [], aspectRatio: scene ? aspect : "1:1", model: iconModel)
+        // The picture is paid for by now, so a failure from here on carries what it cost.
+        let image: NSImage?
+        do {
+            image = scene ? NSImage(data: data) : defringe(try cutOut(data), background: backgroundColor(of: data))
+        } catch {
+            throw AppAI.Failure(message: error.localizedDescription, cost: cost)
+        }
+        guard let tiff = image?.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
+            throw AppAI.Failure(message: "The image model returned an unreadable picture.", cost: cost)
+        }
+        return (png, cost)
+    }
+
+    /// The plain background a generated picture was drawn on, from its four corners.
+    static func backgroundColor(of data: Data) -> (r: Double, g: Double, b: Double)? {
+        guard let rep = NSBitmapImageRep(data: data), rep.pixelsWide > 16, rep.pixelsHigh > 16 else { return nil }
+        let w = rep.pixelsWide, h = rep.pixelsHigh
+        var sum = (r: 0.0, g: 0.0, b: 0.0), n = 0.0
+        for (cx, cy) in [(0, 0), (w - 8, 0), (0, h - 8), (w - 8, h - 8)] {
+            for x in cx..<cx + 8 { for y in cy..<cy + 8 {
+                guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
+                sum.r += c.redComponent; sum.g += c.greenComponent; sum.b += c.blueComponent; n += 1
+            } }
+        }
+        return n > 0 ? (sum.r / n, sum.g / n, sum.b / n) : nil
+    }
+
+    /// Vision's cut-out keeps the soft edge with the background's gray mixed into it, which shows as a light halo
+    /// on a dark window. Takes the background back out of the edge pixels and pulls the edge in a little.
+    static func defringe(_ image: NSImage, background: (r: Double, g: Double, b: Double)?) -> NSImage {
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: cg.width, height: cg.height, bitsPerComponent: 8, bytesPerRow: cg.width * 4,
+                                      space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let pixels = context.data?.bindMemory(to: UInt8.self, capacity: cg.width * cg.height * 4) else { return image }
+        context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+        let g = background ?? (0.9, 0.9, 0.9)
+        let bg = [g.r, g.g, g.b]
+        let w = cg.width, h = cg.height
+        let original = (0..<w * h).map { pixels[$0 * 4 + 3] }
+        for y in 0..<h { for x in 0..<w {
+            let i = (y * w + x) * 4
+            let a = Double(original[y * w + x]) / 255
+            guard a > 0 else { continue }
+            // The outermost ring of the edge is mostly background whatever its color: each pixel takes the lowest
+            // opacity around it, which pulls the edge in by a pixel, and soft edges are tightened a little more.
+            var lowest = original[y * w + x]
+            for ny in max(0, y - 1)...min(h - 1, y + 1) { for nx in max(0, x - 1)...min(w - 1, x + 1) {
+                lowest = min(lowest, original[ny * w + nx])
+            } }
+            let out = max(0, min(1, (Double(lowest) / 255 - 0.1) / 0.9))
+            guard a < 1 || out < 1 else { continue }
+            // Stored premultiplied with the original opacity a: a·seen, where seen = a·object + (1 − a)·background.
+            // The object's color is recovered with that a, then premultiplied by the new opacity.
+            for c in 0..<3 {
+                let seen = Double(pixels[i + c]) / 255 / a
+                let object = a < 1 ? max(0, min(1, (seen - (1 - a) * bg[c]) / a)) : seen
+                pixels[i + c] = UInt8((object * out * 255).rounded())
+            }
+            pixels[i + 3] = UInt8((out * 255).rounded())
+        } }
+        guard let cleaned = context.makeImage() else { return image }
+        return NSImage(cgImage: cleaned, size: NSSize(width: cg.width, height: cg.height))
+    }
+
     /// The same request as Image Playground takes it. Its sheet boils a long request down to a few words
     /// and loses the "no …" list on the way, turns down anything naming macOS or Apple ("Try describing
     /// something different"), and draws a whole rounded tile when asked for an "app icon". So it gets the
