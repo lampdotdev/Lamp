@@ -1,6 +1,12 @@
 ---
 import { together } from "../lib/text";
 
+interface Props {
+  /** Where on the page this button sits, for the site's analytics. */
+  place: string;
+}
+const { place } = Astro.props;
+
 // The update server redirects this to the newest release's DMG.
 const download = "https://updates.lamp.dev/download/latest";
 ---
@@ -13,6 +19,7 @@ const download = "https://updates.lamp.dev/download/latest";
 <div class="flex flex-col items-center">
   <a
     href={download}
+    data-download-place={place}
     class="inline-flex h-[52px] items-center rounded-full bg-linear-to-b from-[#cf620c] to-[#b04e0a] px-9 text-[17px] font-semibold text-white shadow-[0_1px_3px_rgba(0,0,0,0.18)] ring-1 ring-white/25 ring-inset transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-[1.03] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#b04e0a] active:scale-[0.98]"
   >
     Download free

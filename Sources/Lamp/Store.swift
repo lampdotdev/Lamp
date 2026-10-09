@@ -264,6 +264,12 @@ final class Store: ObservableObject {
         var agent: Process?                 // the engine, while it runs
         var build: Process?                 // the app's build.sh, while it runs
         var stopped = false                 // the user pressed Stop (or deleted the app, or quit Lamp)
+        /// Stop was pressed at some point in this turn. `stopped` is cleared once the agent has stopped, so the
+        /// turn can go on; this stays, for what the turn's end reports (`Analytics`).
+        var wasStopped = false
+        /// The Mac app built but the last install couldn't put it in place or open it: logged, not a crash, so
+        /// the turn still counts as a change. Kept so a new app's first run isn't counted when it never opened.
+        var didNotOpen = false
         /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
         var phoneReady: Bool?
         var allowAll = false                // "Allow all for this turn"
@@ -283,6 +289,7 @@ final class Store: ObservableObject {
         /// Stops what's running. Returns the processes signaled, for a caller that waits for them (quit).
         @discardableResult func cancel() -> [pid_t] {
             stopped = true
+            wasStopped = true
             allowAll = false
             var pids: [pid_t] = []
             if let agent { pids += Subprocess.terminateTree(agent) }
@@ -673,7 +680,7 @@ final class Store: ObservableObject {
 
     /// New App: an untitled app, straight into its chat. Its first message names it and designs its icon.
     /// A Mac app until the intro says otherwise (`setKind`).
-    func create() {
+    func create(fromWelcome: Bool = false) {
         // A draft: its scaffold waits for the first build (`materialize`), so the intro can still change its kind.
         let project: LampProject
         do {
@@ -685,6 +692,7 @@ final class Store: ObservableObject {
         reload()
         selection = project.id
         chatFocusRequest += 1
+        Analytics.capture(.appCreated, ["source": fromWelcome ? "welcome" : "new_app"])
     }
 
     /// Writes a draft's scaffold and makes its first version, before anything builds it. Nil, after saying so,
@@ -1373,6 +1381,11 @@ final class Store: ObservableObject {
         // Only the first message names the app (bootstrap). A later one, after the agent only asked questions,
         // finds it untitled if that naming failed, and mustn't show a naming that isn't happening.
         progress[project.id]?.naming = first && project.untitled
+        let kind = Analytics.kind(AppKind(project))
+        if newApp && first {
+            Analytics.capture(.appFirstRequest, ["kind": kind, "has_attachments": messages.contains { !$0.attachments.isEmpty }])
+        }
+        let started = Date()
         Task {
             var project = project
             let saved = post(messages, to: project)
@@ -1391,6 +1404,16 @@ final class Store: ObservableObject {
             defer {
                 // A new app's card stays, showing the result; a later turn's activity line goes away. So does a
                 // new app's card when the agent only asked questions: nothing was built, and the answers bring it back.
+                if newApp {
+                    let seconds = Int(Date().timeIntervalSince(started))
+                    switch result.end {
+                    case .changed where !owner.didNotOpen: Analytics.capture(.appFirstRun, ["kind": kind, "seconds": seconds])
+                    case .replied: Analytics.capture(.appFirstReplied, ["kind": kind, "seconds": seconds])
+                    default:
+                        Analytics.capture(.appFirstFailed, ["kind": kind, "seconds": seconds, "stopped": owner.wasStopped,
+                                                            "did_not_open": owner.didNotOpen])
+                    }
+                }
                 if newApp && result.end != .replied {
                     progress[project.id]?.finish(worked: worked && turns[project.id]?.phoneReady != false)
                 } else {
@@ -2729,12 +2752,14 @@ final class Store: ObservableObject {
         }
         await quit(project)
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
+        owner?.didNotOpen = false
         do {
             WidgetCard.forget(project)
             try await deploy(project)
             heldInstalls.installed(project.id)
         } catch {
             log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
+            owner?.didNotOpen = true
             return nil
         }
         // An app with a widget gets its card, once: the widget is built, and adding it is the person's to do.
@@ -2766,6 +2791,7 @@ final class Store: ObservableObject {
             }
         } catch {
             log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
+            owner?.didNotOpen = true
         }
         upgradeIconArt(project)
         refreshOpenApps()
