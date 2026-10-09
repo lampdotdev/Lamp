@@ -25,6 +25,15 @@ final class CommandRiskTests: XCTestCase {
         XCTAssertEqual(CommandRisk.verdict(answers(risk: 1.6)), .unsure)
     }
 
+    /// What Jev answers for a build run by its name, whose steps are in the project's files: level 1.2 and
+    /// sure, and 0.07 on hiding what it runs. It runs. While that question asked whether what runs could be
+    /// read from the command, the same build answered 0.36: between the bars, so it got the card every time.
+    func testABuildRunByItsNameRuns() {
+        XCTAssertEqual(CommandRisk.verdict(answers(risk: 1.2, sure: 0.82, beyond: 0.10, hides: 0.07)), .run)
+        XCTAssertEqual(CommandRisk.verdict(answers(risk: 1.2, sure: 0.82, beyond: 0.10, hides: 0.36)), .unsure)
+        XCTAssertEqual(CommandRisk.verdict(answers(risk: 1.2, sure: 0.82, beyond: 0.10, hides: 0.53)), .risky)
+    }
+
     /// A download (level 2) runs when it's what the request called for, and not otherwise.
     func testADownloadRunsOnlyWhenAskedFor() {
         XCTAssertEqual(CommandRisk.verdict(answers(risk: 2.0, sure: 0.5, match: 0.93)), .run)
