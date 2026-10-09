@@ -4261,12 +4261,41 @@ enum Template {
         init() {
             LampWidgetPlacement.quitsWhenDone = true
             LampRuntime.start
+            LampWidgetLinks.start
         }
 
         // A scene that can open nothing: an app needs one, and a click on the widget opens this app, which
         // SwiftUI answers by opening a window of whichever scene has one (an empty Settings window, when
         // that was the scene). A menu bar item that is never put in the menu bar has no window to open.
         var body: some Scene { MenuBarExtra("", isInserted: .constant(false)) { EmptyView() } }
+    }
+
+    /// A link on the widget (`widgetURL`, `Link`) is sent to the app the widget belongs to, not to the browser.
+    /// SwiftUI would hand it to a window, and an app that is only its widget has none, so the app takes the
+    /// request to open a link itself, as an AppKit app does, and passes the link on to whatever opens it. A
+    /// widget with no link sends none, and its click opens nothing.
+    final class LampWidgetLinks: NSObject {
+        private static let shared = LampWidgetLinks()
+
+        /// Runs once, at launch. The click that starts the app delivers its link while the app is still
+        /// launching, so the answer has to be in place by then.
+        static let start: Void = {
+            NotificationCenter.default.addObserver(forName: NSApplication.willFinishLaunchingNotification,
+                                                   object: nil, queue: .main) { _ in
+                NSAppleEventManager.shared().setEventHandler(
+                    shared, andSelector: #selector(open(_:reply:)),
+                    forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))
+            }
+        }()
+
+        @objc private func open(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+            guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
+                  let url = URL(string: text) else { return }
+            // Never back to this app: it has nothing to show for a link, and would only be asked again.
+            guard let opener = NSWorkspace.shared.urlForApplication(toOpen: url),
+                  opener.standardizedFileURL != Bundle.main.bundleURL.standardizedFileURL else { return }
+            NSWorkspace.shared.open(url)
+        }
     }
 
     /// Whether the person has put this app's widget on the desktop or in Notification Center, kept where Lamp

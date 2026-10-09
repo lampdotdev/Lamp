@@ -272,9 +272,7 @@ enum Agent {
         no app window: make Sources/App.swift just `@main struct MainApp: App { var body: some Scene { \
         LampWidgetOnly() } }`, with no commands, delete Sources/ContentView.swift with delete_file, and put \
         everything in the widget, which works out what it shows by itself (the date, the web). Such an app has \
-        no window, no Dock icon and is never opened, so don't call `look_at_app` or `use_app` for it. A click \
-        on its widget does nothing, so give the widget no `widgetURL` or `Link`, and write nothing in the app \
-        for clicks. Only when \
+        no window, no Dock icon and is never opened, so don't call `look_at_app` or `use_app` for it. Only when \
         the widget has to show something an app must fetch or keep for it (the user's files, calendar or mail, \
         what they type in, an AI answer) does it get a real app, which shares that with `LampWidget.share` and \
         lives in the menu bar (`LampMenuBar`, with its Quit button) unless the user asked for a window too. \

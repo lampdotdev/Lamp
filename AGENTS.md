@@ -223,7 +223,10 @@ for, the agent makes the app one scene, `LampWidgetOnly()`, and puts everything 
 kept out of the Dock (`LSUIElement`, written by build.sh), and Lamp never opens it in front of anyone. A
 click on its widget opens the app, as macOS does for every widget, and shows nothing: the scene is a menu bar
 item that is never put in the menu bar, so SwiftUI has no window to open for the click (a Settings scene
-opened an empty Settings window), and the agent is told to give such a widget no links. A
+opened an empty Settings window). A link on the widget (`widgetURL`, `Link`) is sent to the app too, not
+to the browser, so the app passes it on (`LampWidgetLinks`: it answers the request to open a link itself and
+hands the link to whatever opens it, never back to itself); a widget with no link opens nothing. Whether a
+widget has a link is the agent's choice, and the rule says nothing about clicks. A
 widget that needs something an app must fetch or keep gets a real app, in the menu bar. Either way the chat
 has one card (`WidgetCard`, a `.widget` line added at the first install with a widget): how to add the
 widget, then "On your desktop". macOS gives Lamp no way to open Edit Widgets or to place a widget, so the

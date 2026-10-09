@@ -66,6 +66,9 @@ final class WidgetOnlyTests: XCTestCase {
         let body = support[scene...].prefix(900)
         XCTAssertTrue(body.contains("MenuBarExtra(\"\", isInserted: .constant(false))"))
         XCTAssertFalse(body.contains("Settings {"))
+        // A link the widget carries is passed on by the app, which has no window to take it.
+        XCTAssertTrue(body.contains("LampWidgetLinks.start"))
+        XCTAssertTrue(support.contains("forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))"))
     }
 
     /// The scene only counts where it runs: named in a comment or a string, the app still has its window.
@@ -167,7 +170,8 @@ final class WidgetOnlyTests: XCTestCase {
         let mac = Agent.systemPrompt
         XCTAssertTrue(mac.contains("LampWidgetOnly()"))
         XCTAssertTrue(mac.contains("delete Sources/ContentView.swift"))
-        XCTAssertTrue(mac.contains("A click on its widget does nothing, so give the widget no `widgetURL` or `Link`"))
+        // Whether a click on the widget opens something is the agent's to choose: the rule says nothing of it.
+        XCTAssertFalse(mac.contains("widgetURL"))
         XCTAssertTrue(mac.contains("two sentences at most"))
         XCTAssertTrue(mac.contains("never explain how to add it"))
         // A widget that needs the app's data still gets a real app, in the menu bar.
