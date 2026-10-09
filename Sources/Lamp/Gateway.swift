@@ -667,7 +667,7 @@ enum AppAI {
                 let error = obj["error"] as? [String: Any]
                 let detail = error?["message"] as? String ?? obj["detail"].map { "\($0)" } ?? "HTTP \(status)"
                 throw Failure(message: status == 422 ? "The decision request was invalid: \(detail)"
-                                                     : Provider.friendlyError("\(status) \(detail)", from: Provider.keyProvider(choice.provider)?.name ?? choice.provider))
+                                                     : Provider.friendlyError(status: status, detail, from: Provider.keyProvider(choice.provider)?.name ?? choice.provider))
             }
             let usage = obj["usage"] as? [String: Any] ?? [:]
             // Jev charges per input token ($0.042 per million); OpenRouter may report the exact cost.
@@ -737,7 +737,7 @@ enum AppAI {
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         guard status == 200, let given = obj["answers"] as? [[String: Any]] else {
             let detail = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-            throw Failure(message: Provider.friendlyError("\(status) \(detail)", from: "OpenAI"))
+            throw Failure(message: Provider.friendlyError(status: status, detail, from: "OpenAI"))
         }
         // Each answer is checked against its question: the API can refuse one (type "refusal", in a 200),
         // and an app must never be handed a choice outside the options it gave, so anything that doesn't
@@ -1052,25 +1052,14 @@ enum AppAI {
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else {
-            // The model's own provider being out of room says "quota" too, which reads like the person's
-            // account being empty (that one is a 402): it's the model that's busy, and theirs is fine.
-            if status == 429 { throw Failure(message: imageModelBusy(imageModel)) }
             let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-            throw Failure(message: Provider.friendlyError("\(status) \(message)", from: Provider.openRouter))
+            throw Failure(message: Provider.friendlyError(status: status, message, from: Provider.openRouter))
         }
         guard let base64 = (obj["data"] as? [[String: Any]])?.first?["b64_json"] as? String,
               let decoded = Data(base64Encoded: base64), NSImage(data: decoded) != nil else {
             throw Failure(message: "The image model didn't return a picture.")
         }
         return (decoded, (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0)
-    }
-
-    /// What the person is told when a picture model has no room for the request, with the model as the
-    /// menus name it (less the note in brackets).
-    static func imageModelBusy(_ model: String) -> String {
-        let label = Icons.artModels.first { $0.id == model }?.label ?? "The picture model"
-        let name = label.components(separatedBy: " (")[0]
-        return "\(name) is busy right now. Try again in a minute, or pick another picture model in Lamp → Settings (⌘,)."
     }
 
     /// Pixel sizes for the local models (multiples of 16, about a megapixel).
@@ -1162,7 +1151,7 @@ enum AppAI {
             cost += (obj["usage"] as? [String: Any])?["cost"] as? Double ?? 0
             guard status == 200, let choice else {
                 let message = (obj["error"] as? [String: Any])?["message"] as? String ?? "HTTP \(status)"
-                throw Failure(message: Provider.friendlyError("\(status) \(message)", from: Provider.openRouter))
+                throw Failure(message: Provider.friendlyError(status: status, message, from: Provider.openRouter))
             }
             let text = (choice["message"] as? [String: Any])?["content"] as? String ?? ""
             if choice["finish_reason"] as? String == "content_filter" {

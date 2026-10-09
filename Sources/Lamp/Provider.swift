@@ -95,23 +95,61 @@ enum Provider {
     /// often not what builds apps: an app's AI, its pictures, its decisions and Lamp's own quick calls each
     /// have their own route, and someone told to check a sign-in they aren't using has nowhere to look.
     static func friendlyError(_ raw: String, from name: String) -> String {
+        friendlyError(kind(of: raw), raw, from: name)
+    }
+
+    /// The same for a call that came back with an HTTP status. The status is the provider saying what kind
+    /// of failure it was, so it decides; the message's wording is read only when the status doesn't say (a
+    /// provider with no room for the request answers 429 with words about quota, which isn't an empty account).
+    static func friendlyError(status: Int, _ message: String, from name: String) -> String {
+        let raw = "\(status) \(message)"
+        return friendlyError(FailureKind(status: status) ?? kind(of: raw), raw, from: name)
+    }
+
+    /// What went wrong with a call, as far as the person can do something about it.
+    enum FailureKind: Equatable {
+        case authentication, quota, busy, unreachable, outdated, other
+
+        init?(status: Int) {
+            switch status {
+            case 401: self = .authentication
+            case 402: self = .quota
+            case 429: self = .busy
+            default: return nil
+            }
+        }
+    }
+
+    private static func friendlyError(_ kind: FailureKind, _ raw: String, from name: String) -> String {
+        switch kind {
+        case .authentication: ErrorMessages.authenticationFailed(name)
+        case .quota: ErrorMessages.quotaExceeded(name)
+        case .busy: ErrorMessages.providerBusy
+        case .unreachable: ErrorMessages.localServerUnreachable
+        case .outdated: "\(name) needs updating: \(raw.prefix(160))"
+        case .other: ErrorMessages.aiFailed(String(raw.prefix(160)))
+        }
+    }
+
+    /// The kind of failure an error with no status is (an engine's own output), going by its words.
+    static func kind(of raw: String) -> FailureKind {
         let text = raw.lowercased()
         if text.contains("401") || text.contains("authenticat") || text.contains("api key") || text.contains("unauthorized") {
-            return ErrorMessages.authenticationFailed(name)
+            return .authentication
         }
         if text.contains("402") || text.contains("credit") || text.contains("insufficient") || text.contains("quota") {
-            return ErrorMessages.quotaExceeded(name)
+            return .quota
         }
         if text.contains("429") || text.contains("rate limit") {
-            return ErrorMessages.providerBusy
+            return .busy
         }
         if text.contains("connection refused") || text.contains("econnrefused") {
-            return ErrorMessages.localServerUnreachable
+            return .unreachable
         }
         if text.contains("requires a newer version") || text.contains("upgrade") {
-            return "\(name) needs updating: \(raw.prefix(160))"
+            return .outdated
         }
-        return ErrorMessages.aiFailed(String(raw.prefix(160)))
+        return .other
     }
 }
 

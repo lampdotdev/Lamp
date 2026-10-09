@@ -526,12 +526,6 @@ enum Icons {
         try await AppAI.image(prompt: artPrompt(spec), references: [], aspectRatio: "1:1", model: iconModel).0
     }
 
-    /// What the chat says when an icon's artwork couldn't be drawn: what went wrong and what to do about
-    /// it, in the failure's own words. The app keeps the icon it has.
-    static func artFailed(_ error: Error) -> String {
-        "Couldn't draw the icon's artwork. \(error.localizedDescription)"
-    }
-
     /// What an image model is asked to draw for an icon.
     static func artPrompt(_ spec: IconSpec) -> String {
         let bg = background(named: spec.background)
