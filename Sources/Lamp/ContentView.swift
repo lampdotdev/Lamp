@@ -336,8 +336,9 @@ struct ReadyDot: View {
     }
 }
 
-/// Image Playground, opened from an app's menu to make its icon. The person picks a picture there and Lamp
-/// takes it from there; on a Mac without Image Playground there's nothing to open and no menu item for it.
+/// Image Playground, opened to make an app's icon when the person chose to draw icons themselves: by New
+/// Icon in the app's menu and by the chat's Draw Icon… buttons. The person picks a picture there and Lamp
+/// takes it from there. It has no menu item of its own: New Icon draws with whatever Settings says draws.
 struct PlaygroundIconSheet: ViewModifier {
     @EnvironmentObject private var store: Store
 
@@ -376,11 +377,6 @@ struct AppMenu: View {
             .disabled(busy)
         Button("New Icon") { Task { await store.newIcon(project) } }
             .disabled(busy || project.untitled)
-        if Icons.playgroundAvailable {
-            // The sheet opens with the icon's own description, so there has to be one.
-            Button("Icon from Image Playground…") { store.iconFromPlayground(project) }
-                .disabled(project.untitled || Icons.load(project) == nil)
-        }
         Button("Show in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
         }
