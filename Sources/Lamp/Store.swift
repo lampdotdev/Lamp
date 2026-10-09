@@ -243,6 +243,7 @@ final class Store: ObservableObject {
         var approving = false               // between the queue check and the approval card
         var look = Look()                   // what the agent's look_at_app has done
         var pendingName: String?            // a name the agent gave the version this request makes
+        var artCost = 0.0                   // what make_art's pictures cost, for the turn's summary
         var request: String?                // the user's words, for the command classifiers
         var writing: (line: UUID, unshown: String)?   // the message the agent is writing right now
         var showingWritten = false
@@ -1724,7 +1725,8 @@ final class Store: ObservableObject {
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
         showWritten(for: project)
         turn.writing = nil
-        log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost))
+        // Pictures are already in the app's building cost (recordArt); the summary shows them with the rest.
+        log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost + turn.artCost))
         recordAgent(project, cost: cost)
         if turn.stopped {
             turn.stopped = false
@@ -2285,14 +2287,21 @@ final class Store: ObservableObject {
             offerSetup(project, SetupOffer(capability: .pictures), because: because)
             return (200, ["text": unavailable])
         }
+        // Painting takes up to a minute, which can outlast the turn: a picture that arrives after Stop or after
+        // the app was deleted is dropped, so it can't land in an earlier version or bring a deleted folder back.
+        guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         do {
             let (png, cost) = try await Icons.generateAppArt(subject: subject, tint: Icons.load(project)?.tint,
                                                              scene: scene, aspect: aspect)
             recordArt(project, cost: cost)
-            let folder = project.dir.appendingPathComponent("Assets")
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let url = folder.appendingPathComponent(name)
-            try png.write(to: url)
+            owner.artCost += cost
+            guard exists(project), turns[project.id] === owner, !owner.stopped else {
+                return (409, ["error": "The request was stopped before the picture was ready, so it wasn't saved."])
+            }
+            guard let url = artDestination(name, in: project) else {
+                return (400, ["error": "Assets/\(name) can't be written: Assets or the file leads outside the app's folder."])
+            }
+            try png.write(to: url, options: .atomic)
             let size = NSBitmapImageRep(data: png).map { " (\($0.pixelsWide)×\($0.pixelsHigh) pixels)" } ?? ""
             let around = scene ? "" : ", transparent around the object"
             return (200, ["text": "Saved Assets/\(name)\(size)\(around). Show it with LampAssets.image(\"\(name)\"). It follows.",
@@ -2301,8 +2310,31 @@ final class Store: ObservableObject {
             offerSetup(project, SetupOffer(capability: .pictures), because: because)
             return (200, ["text": unavailable])
         } catch {
+            if let failure = error as? AppAI.Failure, failure.cost > 0 {   // billed even though it failed
+                recordArt(project, cost: failure.cost)
+                owner.artCost += failure.cost
+            }
             return (502, ["error": "Couldn't make the picture: \(error.localizedDescription)"])
         }
+    }
+
+    /// Where `make_art` may write a picture: Assets/ in the app's own folder, made if needed. This runs in Lamp,
+    /// outside the agent's sandbox and file checks, so neither the folder nor an existing file may be a link
+    /// that leads anywhere else; nil when either does.
+    private func artDestination(_ name: String, in project: LampProject) -> URL? {
+        let fm = FileManager.default
+        let root = project.dir.resolvingSymlinksInPath().standardizedFileURL
+        let folder = project.dir.appendingPathComponent("Assets")
+        if let type = (try? fm.attributesOfItem(atPath: folder.path))?[.type] as? FileAttributeType {
+            guard type == .typeDirectory else { return nil }
+        } else if (try? fm.createDirectory(at: folder, withIntermediateDirectories: false)) == nil {
+            return nil
+        }
+        let resolved = folder.resolvingSymlinksInPath().standardizedFileURL
+        guard resolved.path == root.appendingPathComponent("Assets").path else { return nil }
+        let url = resolved.appendingPathComponent(name)
+        if let type = (try? fm.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType, type != .typeRegular { return nil }
+        return url
     }
 
     /// The tools every engine gets, from Resources/lamp-tools.json: the one place their names, descriptions and

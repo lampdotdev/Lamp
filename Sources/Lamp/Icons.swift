@@ -487,10 +487,16 @@ enum Icons {
     static func generateAppArt(subject: String, tint: String?, scene: Bool, aspect: String) async throws -> (Data, Double) {
         let (data, cost) = try await AppAI.image(prompt: appArtPrompt(subject: subject, tint: tint, scene: scene),
                                                  references: [], aspectRatio: scene ? aspect : "1:1", model: iconModel)
-        let image = scene ? NSImage(data: data) : defringe(try cutOut(data), background: backgroundColor(of: data))
+        // The picture is paid for by now, so a failure from here on carries what it cost.
+        let image: NSImage?
+        do {
+            image = scene ? NSImage(data: data) : defringe(try cutOut(data), background: backgroundColor(of: data))
+        } catch {
+            throw AppAI.Failure(message: error.localizedDescription, cost: cost)
+        }
         guard let tiff = image?.tiffRepresentation,
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
-            throw AppAI.Failure(message: "The image model returned an unreadable picture.")
+            throw AppAI.Failure(message: "The image model returned an unreadable picture.", cost: cost)
         }
         return (png, cost)
     }
@@ -520,35 +526,29 @@ enum Icons {
         context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
         let g = background ?? (0.9, 0.9, 0.9)
         let bg = [g.r, g.g, g.b]
-        // The outermost ring of the edge is mostly background whatever its color: each pixel takes the lowest
-        // opacity around it, which pulls the edge in by a pixel.
         let w = cg.width, h = cg.height
         let original = (0..<w * h).map { pixels[$0 * 4 + 3] }
         for y in 0..<h { for x in 0..<w {
+            let i = (y * w + x) * 4
+            let a = Double(original[y * w + x]) / 255
+            guard a > 0 else { continue }
+            // The outermost ring of the edge is mostly background whatever its color: each pixel takes the lowest
+            // opacity around it, which pulls the edge in by a pixel, and soft edges are tightened a little more.
             var lowest = original[y * w + x]
-            guard lowest > 0 else { continue }
             for ny in max(0, y - 1)...min(h - 1, y + 1) { for nx in max(0, x - 1)...min(w - 1, x + 1) {
                 lowest = min(lowest, original[ny * w + nx])
             } }
-            let i = (y * w + x) * 4
-            let old = pixels[i + 3]
-            guard lowest < old else { continue }
-            // Still premultiplied: the colors scale with the opacity.
-            for c in 0..<3 { pixels[i + c] = UInt8(Int(pixels[i + c]) * Int(lowest) / Int(old)) }
-            pixels[i + 3] = lowest
-        } }
-        for i in stride(from: 0, to: cg.width * cg.height * 4, by: 4) {
-            let a = Double(pixels[i + 3]) / 255
-            guard a > 0, a < 1 else { continue }
-            // Stored premultiplied: a·seen, where seen = a·object + (1 − a)·background.
-            let tightened = max(0, min(1, (a - 0.1) / 0.9))
+            let out = max(0, min(1, (Double(lowest) / 255 - 0.1) / 0.9))
+            guard a < 1 || out < 1 else { continue }
+            // Stored premultiplied with the original opacity a: a·seen, where seen = a·object + (1 − a)·background.
+            // The object's color is recovered with that a, then premultiplied by the new opacity.
             for c in 0..<3 {
                 let seen = Double(pixels[i + c]) / 255 / a
-                let object = max(0, min(1, (seen - (1 - a) * bg[c]) / a))
-                pixels[i + c] = UInt8((object * tightened * 255).rounded())
+                let object = a < 1 ? max(0, min(1, (seen - (1 - a) * bg[c]) / a)) : seen
+                pixels[i + c] = UInt8((object * out * 255).rounded())
             }
-            pixels[i + 3] = UInt8((tightened * 255).rounded())
-        }
+            pixels[i + 3] = UInt8((out * 255).rounded())
+        } }
         guard let cleaned = context.makeImage() else { return image }
         return NSImage(cgImage: cleaned, size: NSSize(width: cg.width, height: cg.height))
     }
