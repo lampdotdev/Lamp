@@ -1642,6 +1642,9 @@ final class Store: ObservableObject {
         // Whether the agent has answered at all: the request, with any word on the notes in it, got through.
         var answered = false
         guard let turn = turns[project.id] else { return false }   // only inside a turn (startQueued)
+        // One turn can run the agent several times (fixing build errors, a crash on launch): each run's summary
+        // shows only the pictures painted during it.
+        let artBefore = turn.artCost
         turn.stopped = false
         let sessionFile = Self.sessionFile(for: project, engine: engine)
         // What the agent is told about the app's AI follows the sign-ins as they are. Checking them can take a
@@ -1726,7 +1729,7 @@ final class Store: ObservableObject {
         showWritten(for: project)
         turn.writing = nil
         // Pictures are already in the app's building cost (recordArt); the summary shows them with the rest.
-        log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost + turn.artCost))
+        log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost + turn.artCost - artBefore))
         recordAgent(project, cost: cost)
         if turn.stopped {
             turn.stopped = false
@@ -2268,6 +2271,11 @@ final class Store: ObservableObject {
     /// `make_art`: a picture for the app to show, painted in its icon's style and saved in Assets/, the folder
     /// that's bundled with the app. The reply shows it to the agent, which judges it as it would a look.
     private func makeArt(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
+        // Finding what paints and painting both wait, long enough to outlast the turn: the turn that asked is
+        // taken now, and a picture is dropped unless that same turn is still going when it arrives, so it can't
+        // land in a later request, an earlier version, or a deleted app.
+        guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        func stillAsked() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
         let subject = (arguments["subject"] as? String)?.trimmed ?? ""
         guard !subject.isEmpty else { return (400, ["error": "Say in `subject` what the picture shows."]) }
         var name = (arguments["name"] as? String)?.trimmed ?? ""
@@ -2283,19 +2291,18 @@ final class Store: ObservableObject {
         let unavailable = "Nothing on this Mac can make pictures yet, so none was made. Use SF Symbols in the app's palette " +
             "instead. Lamp has offered the user a way to set pictures up; don't mention it yourself."
         let because = "Nothing on this Mac can draw pictures yet. Set up one of the ways below and Lamp will paint \(project.name) its pictures and a proper icon."
-        guard await AppAI.imageRoute() != nil else {
+        let route = await AppAI.imageRoute()
+        guard stillAsked() else { return (409, ["error": "The request was stopped, so no picture was made."]) }
+        guard route != nil else {
             offerSetup(project, SetupOffer(capability: .pictures), because: because)
             return (200, ["text": unavailable])
         }
-        // Painting takes up to a minute, which can outlast the turn: a picture that arrives after Stop or after
-        // the app was deleted is dropped, so it can't land in an earlier version or bring a deleted folder back.
-        guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         do {
             let (png, cost) = try await Icons.generateAppArt(subject: subject, tint: Icons.load(project)?.tint,
                                                              scene: scene, aspect: aspect)
             recordArt(project, cost: cost)
             owner.artCost += cost
-            guard exists(project), turns[project.id] === owner, !owner.stopped else {
+            guard stillAsked() else {
                 return (409, ["error": "The request was stopped before the picture was ready, so it wasn't saved."])
             }
             guard let url = artDestination(name, in: project) else {
