@@ -22,6 +22,11 @@ A capability given to one engine must be given to all of them that can take it, 
   (`FileTools`, listed when the URL carries `files=1`): they mirror pi's built-in ones, and each call is
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
+  `use_app`'s `open` hands the app a file or folder as Finder does (`Store.hand`, an `NSWorkspace` open from
+  Lamp itself, with the path held to `Privacy.verdict`). It is there because the confined shell can't: macOS
+  refuses a sandboxed program's `open -a App file` with -10820 when the app declares no file types, and the
+  apps' Info.plist, which Lamp writes, declares none. `open -a App` alone works there. `Agent.sandboxNote`
+  tells the agent which failures are the sandbox's and not the app's; keep it true when the profile changes.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
   engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
