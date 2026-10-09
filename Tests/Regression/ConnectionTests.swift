@@ -30,24 +30,145 @@ final class ConnectionTests: XCTestCase {
 
     // MARK: - What Lamp writes and says
 
-    func testAServiceWithoutARegistrationIsNotOffered() {
-        var unregistered = Connections.github
-        unregistered.clientID = ""
-        XCTAssertTrue(Connections.all.contains(Connections.github))
-        XCTAssertEqual(Connections.all.filter { $0.clientID.isEmpty }.count + Connections.offered.count, Connections.all.count)
-        XCTAssertFalse(Agent.prompt(platform: .mac, device: "Mac", services: []).contains("LampConnection"))
-        XCTAssertFalse(Agent.prompt(platform: .iphone, device: "iPhone", services: []).contains("LampConnection"))
-    }
-
     func testEveryEntryCanBeWrittenAsAnApp() {
-        for service in Connections.all {
+        for service in Connections.known {
             XCTAssertNotNil(service.id.range(of: "^[a-z][A-Za-z0-9]*$", options: .regularExpression), service.id)
             for address in [service.deviceURL, service.tokenURL, service.accountURL] {
                 XCTAssertEqual(URL(string: address)?.scheme, "https", address)
             }
             XCTAssertFalse(service.hosts.isEmpty)
             XCTAssertNotNil(NSImage(data: Data(base64Encoded: service.icon) ?? Data()), "\(service.name)'s mark isn't a picture")
+            XCTAssertNotNil(ConnectionCard.page(service, app: "Repo Radar"), "\(service.name) has no page to register an app on")
         }
+    }
+
+    // MARK: - Where an app's id comes from
+
+    private func write(_ code: String, in project: LampProject) throws {
+        try code.write(to: project.dir.appendingPathComponent("Sources/ContentView.swift"), atomically: true, encoding: .utf8)
+    }
+
+    private func declare(_ json: String, in project: LampProject) throws {
+        try json.write(to: project.dir.appendingPathComponent(Template.Capabilities.file), atomically: true, encoding: .utf8)
+    }
+
+    func testAnAppThatNamesAServiceWithNoIdWaitsForOne() throws {
+        let project = try app()
+        XCTAssertEqual(Connections.waiting(in: project), [])
+        try write(#"LampConnectionGate(.github, scopes: ["repo"], reason: "") { Text("in") }"#, in: project)
+        XCTAssertEqual(Connections.waiting(in: project).map(\.id), ["github"])
+        XCTAssertTrue(Template.supportSwift(for: project).contains(#"id: "github", name: "GitHub", clientID: """#))
+
+        // The id whoever builds the app pastes into the card is kept with the app, and the app is given it.
+        try Connections.keep("Ov23liTESTtestTEST00", for: "github", in: project)
+        XCTAssertEqual(Connections.waiting(in: project), [])
+        XCTAssertTrue(Template.supportSwift(for: project).contains(#"id: "github", name: "GitHub", clientID: "Ov23liTESTtestTEST00""#))
+        XCTAssertEqual(Template.Capabilities.load(project).checked.connections, [Connections.Declared(id: "github", clientID: "Ov23liTESTtestTEST00")])
+    }
+
+    func testOneCardForEachServiceInAChat() {
+        XCTAssertTrue(ConnectionCard.isNeeded("github", after: []))
+        XCTAssertFalse(ConnectionCard.isNeeded("github", after: [LogLine(kind: .connect, text: "github")]))
+        XCTAssertTrue(ConnectionCard.isNeeded("acme", after: [LogLine(kind: .connect, text: "github")]))
+    }
+
+    func testTheCardOpensThePageWithTheAppsNameFilledIn() throws {
+        let page = try XCTUnwrap(ConnectionCard.page(Connections.github, app: "Repo Radar & Co"))
+        XCTAssertEqual(page.host, "github.com")
+        XCTAssertTrue(page.absoluteString.contains("oauth_application%5Bname%5D=Repo%20Radar%20%26%20Co&"), page.absoluteString)
+        XCTAssertEqual(ConnectionCard.filled("{{NAME}}", app: "Repo Radar"), "Repo Radar")
+        XCTAssertEqual(ConnectionCard.idLabel(Connections.github), "Client ID")
+    }
+
+    func testTheIdTravelsWithASharedApp() throws {
+        let project = try app()
+        try Connections.keep("Ov23liTESTtestTEST00", for: "github", in: project)
+        let shared = try Sharing.open(try Sharing.export(project))
+        XCTAssertEqual(shared.capabilities.connections, [Connections.Declared(id: "github", clientID: "Ov23liTESTtestTEST00")])
+        let copy = try Template.scaffold(name: "Copy", in: try XCTUnwrap(root).appendingPathComponent("copies"))
+        try Sharing.install(shared, into: copy)
+        XCTAssertEqual(Connections.services(for: copy).first { $0.id == "github" }?.clientID, "Ov23liTESTtestTEST00")
+    }
+
+    private static let acme = """
+    {"connections": [{"id": "acme", "name": "Acme", "deviceURL": "https://acme.example/oauth/device/code",
+      "tokenURL": "https://acme.example/oauth/token", "hosts": ["api.acme.example"], "accountURL": "https://api.acme.example/me",
+      "accountField": "name", "scopes": {"read": "See your projects"},
+      "register": {"url": "https://acme.example/apps/new", "values": [{"label": "App name", "value": "{{NAME}}"}],
+                   "notes": ["Turn on device sign-in."], "idLabel": "Client ID"}}]}
+    """
+
+    func testAnAppCanDescribeAServiceLampHasNoEntryFor() throws {
+        let project = try app()
+        try declare(Self.acme, in: project)
+        let acme = try XCTUnwrap(Connections.services(for: project).first { $0.id == "acme" })
+        XCTAssertEqual(acme.name, "Acme")
+        XCTAssertEqual(acme.hosts, ["api.acme.example"])
+        XCTAssertEqual(acme.register?.values, [.init(label: "App name", value: "{{NAME}}")])
+        // Declared with no id, it waits for one whatever the code says, and the app can already name it.
+        XCTAssertEqual(Connections.waiting(in: project).map(\.id), ["acme"])
+        XCTAssertTrue(Template.supportSwift(for: project).contains("static let acme = LampService("))
+        XCTAssertEqual(ConnectionCard.page(acme, app: "Repo Radar")?.absoluteString, "https://acme.example/apps/new")
+    }
+
+    func testOnlyAWholeAndPlainServiceIsTaken() {
+        func kept(_ change: (inout Connections.Declared) -> Void) -> [String] {
+            var entry = Connections.Declared(id: "acme", name: "Acme", deviceURL: "https://acme.example/device", tokenURL: "https://acme.example/token",
+                                             hosts: ["api.acme.example"])
+            change(&entry)
+            return Connections.checked([entry]).map(\.id)
+        }
+        XCTAssertEqual(kept { _ in }, ["acme"])
+        XCTAssertEqual(kept { $0.deviceURL = "http://acme.example/device" }, [])
+        XCTAssertEqual(kept { $0.tokenURL = "https://user:pass@acme.example/token" }, [])
+        XCTAssertEqual(kept { $0.tokenURL = nil }, [])
+        XCTAssertEqual(kept { $0.hosts = ["127.0.0.1", "api acme"] }, [])
+        XCTAssertEqual(kept { $0.name = "Acme\nGitHub" }, [])
+        XCTAssertEqual(kept { $0.id = "Acme; import Foundation" }, [])
+        XCTAssertEqual(kept { $0.id = "init" }, [])
+        // Not by one of Lamp's names at another address.
+        XCTAssertEqual(kept { $0.name = "github" }, [])
+
+        // One of Lamp's keeps its id and none of the rest.
+        let github = Connections.Declared(id: "github", clientID: "Ov23liTESTtestTEST00", name: "GitHub", deviceURL: "https://evil.example/device",
+                                          tokenURL: "https://evil.example/token", hosts: ["evil.example"])
+        XCTAssertEqual(Connections.checked([github]), [Connections.Declared(id: "github", clientID: "Ov23liTESTtestTEST00")])
+        XCTAssertEqual(Connections.services(declared: [github]).first?.tokenURL, Connections.github.tokenURL)
+        XCTAssertEqual(Connections.checked([Connections.Declared(id: "github", clientID: "has spaces")]), [])
+    }
+
+    func testAWrongFieldDoesNotLoseTheRestOfTheFile() throws {
+        let project = try app()
+        try declare(#"{"opens": ["png"], "connections": [{"id": "github", "clientID": 12}, {"id": "github", "clientID": "Ov23liTESTtestTEST00", "hosts": "x"}]}"#, in: project)
+        let read = Template.Capabilities.load(project).checked
+        XCTAssertEqual(read.opens, ["png"])
+        XCTAssertEqual(read.connections, [Connections.Declared(id: "github", clientID: "Ov23liTESTtestTEST00")])
+    }
+
+    func testASharedAppWithAServiceOfItsOwnSaysWhereItSignsIn() throws {
+        let project = try app()
+        try declare(Self.acme, in: project)
+        let found = Sharing.inspect(try Sharing.open(try Sharing.export(project)))
+        let line = try XCTUnwrap(found.detected.first { $0.label.contains("Acme") })
+        XCTAssertEqual(line.label, "Asks you to sign in to Acme at api.acme.example, a service Lamp doesn't know")
+        XCTAssertEqual(line.level, .sensitive)
+    }
+
+    func testAnIdIsCheckedWithTheServiceBeforeItIsKept() async throws {
+        try start()
+        var service = Connections.github
+        service.deviceURL = "http://127.0.0.1:\(try XCTUnwrap(server).port)/login/device/code"
+        let good = await Connections.verify("lamp-test-client", for: service)
+        XCTAssertEqual(good, .good)
+        let off = await Connections.verify("flow-off-client", for: service)
+        XCTAssertEqual(off, .refused("GitHub knows this app, but its device flow is off. Turn that on in the app's page there, then save again."))
+        let unknown = await Connections.verify("somebody-else", for: service)
+        XCTAssertEqual(unknown, .refused("GitHub doesn't know that id. Copy it again from the app's page there."))
+        let pasted = await Connections.verify("the whole page, pasted", for: service)
+        XCTAssertEqual(pasted, .refused("That doesn't look like an id from GitHub. Copy it again from the page."))
+        service.deviceURL = "http://127.0.0.1:9/login/device/code"
+        let away = await Connections.verify("lamp-test-client", for: service)
+        XCTAssertEqual(away, .unreachable)
     }
 
     func testAnAppGetsTheServicesAsNames() throws {
@@ -59,6 +180,8 @@ final class ConnectionTests: XCTestCase {
         // Nothing an app carries is a secret: the sign-in needs none.
         XCTAssertFalse(support.lowercased().contains("client_secret"))
         XCTAssertFalse(Template.supportSwift(for: project, services: []).contains("static let github"))
+        // By itself, an app gets Lamp's services, to name before it has an id for any of them.
+        XCTAssertTrue(Template.supportSwift(for: project).contains("static let github = LampService("))
     }
 
     func testTheAgentIsToldOnBothKindsOfApp() {
@@ -69,7 +192,12 @@ final class ConnectionTests: XCTestCase {
             XCTAssertTrue(prompt.contains(#"LampConnectionGate(.github, scopes: ["repo"]"#))
             XCTAssertTrue(prompt.contains("LampConnection.send(request, to: .github)"))
             XCTAssertTrue(prompt.contains("Never ask the person for a token, key or password"))
+            XCTAssertTrue(prompt.contains("Lamp puts a card in the chat"))
+            XCTAssertTrue(prompt.contains("never put a secret, key or token in the app"))
         }
+        // Lamp's services are named whether or not there is an id yet: registering is the card's job.
+        XCTAssertTrue(Agent.systemPrompt.contains("GitHub (`.github`"))
+        XCTAssertTrue(Agent.iPhonePrompt(for: .iphone).contains("GitHub (`.github`"))
     }
 
     func testASharedAppThatConnectsSaysSo() throws {
@@ -302,7 +430,8 @@ final class ConnectionTests: XCTestCase {
         try XCTSkipIf(sdk.status != 0 || path.isEmpty, "no iPhone simulator SDK on this Mac")
         let project = try app(platform: .iphone)
         let file = project.dir.appendingPathComponent("Sources/LampSupport.swift")
-        try Template.supportSwift(for: project, services: [Self.service]).write(to: file, atomically: true, encoding: .utf8)
+        try declare(Self.acme, in: project)
+        try Template.supportSwift(for: project).write(to: file, atomically: true, encoding: .utf8)
         let checked = try Self.run("xcrun swiftc -typecheck -parse-as-library -target arm64-apple-ios17.0-simulator -sdk '\(path)' Sources/LampSupport.swift 2>&1",
                                    in: project.dir)
         XCTAssertEqual(checked.status, 0, String(checked.output.suffix(4000)))
@@ -404,6 +533,10 @@ private final class StandIn {
         defer { lock.unlock() }
         log.append(request)
         switch (request.method, request.path) {
+        case ("POST", "/login/device/code") where request.fields["client_id"] == "flow-off-client":
+            return (400, #"{"error":"device_flow_disabled","error_description":"Device Flow must be explicitly enabled for this App"}"#)
+        case ("POST", "/login/device/code") where request.fields["client_id"] != "lamp-test-client":
+            return (404, #"{"error":"Not Found"}"#)
         case ("POST", "/login/device/code"):
             return (200, #"{"device_code":"device-1","user_code":"WDJB-MJHT","verification_uri":"http://127.0.0.1:\#(port)/login/device","expires_in":900,"interval":1}"#)
         case ("POST", "/login/oauth/access_token") where request.fields["grant_type"] == "refresh_token":

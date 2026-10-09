@@ -418,6 +418,8 @@ struct LogRow: View, Equatable {
             if let project = Store.shared.projects.first(where: { $0.dir == dir }) { DrawIconLine(project: project) }
         case .widget:
             WidgetCardView(dir: dir)
+        case .connect:
+            ConnectionCardView(service: line.text, dir: dir)
         }
     }
 

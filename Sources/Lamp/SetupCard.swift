@@ -183,7 +183,7 @@ struct UpgradeView: View {
 
 /// The card's columns: its rows' symbols sit in a column as wide as the header's tile, against its right
 /// edge, so every line of text in the card starts where the headline does.
-private enum CardColumn {
+enum CardColumn {
     static let icon: CGFloat = 44
     static let gap: CGFloat = 12
     /// Where text under a row's title starts.
@@ -191,7 +191,7 @@ private enum CardColumn {
 }
 
 /// A row of an upgrade list: a symbol, what it is and a line about it, and what to press.
-private struct OptionRow<Accessory: View>: View {
+struct OptionRow<Accessory: View>: View {
     let symbol: String
     let title: String
     let detail: String

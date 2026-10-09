@@ -233,13 +233,32 @@ closed, and nothing of it is in the app's folder, so a shared app arrives discon
 it is strongly recommended to the agent, not forced (`Agent.Rules.connections`, the same rule for both kinds
 of app). The agent names the service and its scopes and writes the API calls; the helper has no feature list.
 
-What differs between services is an entry in `Connections` (`Sources/Lamp/Connections.swift`), and an entry
-is data: the client id Lamp is registered under, the two addresses of OAuth's device flow, the API hosts, where
-to ask who signed in, the scopes with their wording, and the mark. `Template.supportSwift` writes the entries
-into LampSupport.swift as `LampService.github` and so on, and the rule names them from the same list. Only a
-sign-in that needs no secret can be an entry, because everything in one ships readable in every app: GitHub's
-device flow is that; a service that wants a client secret, or only offers a redirect, needs more than an
-entry. An entry with no client id isn't offered to apps or named to the agent.
+What differs between services is an entry (`Sources/Lamp/Connections.swift`), and an entry is data: the
+client id the app is registered under, the two addresses of OAuth's device flow, the API hosts, where to ask
+who signed in, the scopes with their wording, the mark, and how an app is registered there. Lamp has some
+(`Connections.known`: GitHub). An app has its own under `connections` in capabilities.json
+(`Connections.Declared`, checked like every field there): the id for one of Lamp's, or a whole service Lamp
+has no entry for, which the agent describes from the service's documentation. For one of Lamp's only the id
+is read, so an app can't point GitHub's name elsewhere. `Connections.services(for:)` is the one answer to
+"what can this app sign in to, and with which id": the app's id first, then Lamp's own (none has one yet). A
+service that gives ids to apps that ask would be tried between the two; none of Lamp's does.
+`Template.supportSwift` writes the result into LampSupport.swift as `LampService.github` and so on, and
+`Agent.Rules.connections` names Lamp's from the same list. Being in capabilities.json, an app's ids and
+services travel with a shared copy, which is right because none of it is secret; a service of the sender's
+own is a line in the review (`Sharing.inspect`).
+
+Registering an app with a service is done once, by whoever builds it, and Lamp leads them through it: when
+a build's code names a service that has no id for the app (`Connections.waiting`), `Store.install` puts a
+card in the chat (`ConnectionCard`, a `.connect` line holding the service's id, once per service): the page
+to open, what to enter, and a field for the id, which `Connections.verify` tries on the service before
+`Connections.keep` writes it to capabilities.json and the app is built again. Until then the app's connect
+screen says it isn't registered, with no button. No engine has a tool for this: the agent only names the
+service, or declares one, and is told to leave registering to the card.
+
+Only a sign-in that needs no secret can be an entry, because everything in one ships readable in every app:
+GitHub's device flow is that. A service that wants a client secret (Notion, Slack, Google's device sign-in)
+can't be connected, and there is deliberately nowhere to put one; one that only signs in through a browser
+redirect needs a flow the helper doesn't have yet.
 
 `LAMP_CONNECTION_SERVER=http://127.0.0.1:PORT` in an app's environment sends its sign-in and its calls to a
 stand-in on the same machine (`ConnectionTests` has one, and runs the helper as apps get it against it:

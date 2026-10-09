@@ -119,9 +119,9 @@ enum Template {
         try writeWidgetSupport(for: project)
     }
 
-    /// LampSupport.swift as this app gets it. `services` is what its apps can sign the person in to
-    /// (`Connections`): the ones Lamp is registered with, unless a test names its own.
-    static func supportSwift(for project: LampProject, services: [Connections.Service] = Connections.offered) -> String {
+    /// LampSupport.swift as this app gets it. `services` is what it can sign the person in to
+    /// (`Connections`): Lamp's and the app's own, unless a test names others.
+    static func supportSwift(for project: LampProject, services: [Connections.Service]? = nil) -> String {
         lampSupportSwift
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{TOKEN}}", with: token(for: project))
@@ -134,7 +134,7 @@ enum Template {
             .replacingOccurrences(of: "{{PHONE_SECRET}}", with: project.platform == .iphone ? phoneSecret(for: project) : "")
             .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
             .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: project.platform == .mac ? widgetToken(for: project) : "")
-            .replacingOccurrences(of: "{{SERVICES}}", with: Connections.swift(for: services))
+            .replacingOccurrences(of: "{{SERVICES}}", with: Connections.swift(for: services ?? Connections.services(for: project)))
     }
 
     // MARK: - iPhone apps
@@ -291,6 +291,9 @@ enum Template {
         /// Mac apps: what the app opens when Finder hands it something. "folder", "file" for any file, a
         /// file extension ("png"), or a type identifier ("public.image").
         var opens: [String]?
+        /// The services the app signs the person in to (`Connections`): the id it is registered under with
+        /// one of Lamp's, or a service Lamp has no entry for, described whole.
+        var connections: [Connections.Declared]?
 
         static func load(_ project: LampProject) -> Capabilities { load(project.dir.appendingPathComponent(file)) }
 
@@ -302,9 +305,10 @@ enum Template {
         /// Only what passes each field's check, and nothing where nothing does. What Lamp declares for an
         /// app is always this, and it is what a shared app carries and what its copy is given.
         var checked: Capabilities {
-            func some(_ names: [String]) -> [String]? { names.isEmpty ? nil : names }
+            func some<Element>(_ names: [Element]) -> [Element]? { names.isEmpty ? nil : names }
             return Capabilities(healthkit: healthkit == true ? true : nil, nfc: nfc == true ? true : nil, siri: siri == true ? true : nil,
-                                backgroundModes: some(modes), bonjourServices: some(services), backgroundTasks: some(tasks), opens: some(kinds))
+                                backgroundModes: some(modes), bonjourServices: some(services), backgroundTasks: some(tasks), opens: some(kinds),
+                                connections: some(Connections.checked(connections ?? [])))
         }
 
         var isEmpty: Bool { checked == Capabilities() }
@@ -4569,9 +4573,10 @@ enum Template {
     // MARK: - Signing in to other services
 
     /// A service the person can sign in to from the app. Lamp writes the list at the end of this type, so name
-    /// one from it: `.github`. An entry is only what a sign-in needs: where it happens, the name Lamp is
+    /// one from it: `.github`. An entry is only what a sign-in needs: where it happens, the id the app is
     /// registered under there, where the sign-in may be sent, and the words and picture the screen shows.
-    /// What the app does with the account is the app's own code.
+    /// What the app does with the account is the app's own code. One Lamp has no entry for is declared in
+    /// capabilities.json, and appears here by the id given there.
     struct LampService: Identifiable, Hashable {
         let id: String
         /// As the person knows it: "GitHub".
@@ -4702,7 +4707,7 @@ enum Template {
 
         /// Asks the service for a code to show. Nothing secret is sent: the app has none.
         fileprivate static func begin(_ service: LampService, scopes: [String]) async throws -> Code {
-            guard !service.clientID.isEmpty else { throw Failure(message: "Connecting to \(service.name) isn't set up yet.") }
+            guard !service.clientID.isEmpty else { throw Failure(message: "This app isn't registered with \(service.name) yet.") }
             let reply = try await post(service.deviceURL, ["client_id": service.clientID, "scope": scopes.joined(separator: " ")],
                                        on: service)
             guard let secret = reply["device_code"] as? String, let shown = reply["user_code"] as? String,
@@ -5167,11 +5172,19 @@ enum Template {
                 .padding(12)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
             }
-            Button("Connect to \(name)") { state.connect() }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .keyboardShortcut(.defaultAction)
-                .disabled(state.step == .starting)
+            if state.service.clientID.isEmpty {
+                // Whoever builds the app registers it with the service once; until then there is nothing to press.
+                Text("This app isn't registered with \(name) yet. The steps are in Lamp, in this app's chat.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            } else {
+                Button("Connect to \(name)") { state.connect() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(state.step == .starting)
+            }
             if state.step == .starting {
                 ProgressView().controlSize(.small)
             } else if case .failed(let why) = state.step {

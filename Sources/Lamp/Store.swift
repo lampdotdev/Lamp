@@ -84,7 +84,9 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// `needsKey` is a setup offer from before offers named their capability: it was always about pictures.
     /// `drawIcon` offers to draw the app's icon in Image Playground; its text is the design it's for (`Icons.artKey`).
     /// `widget` is the card of an app that has a widget (`WidgetCard`): how to add it, then that it's there.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, drawIcon, widget }
+    /// `connect` is the card for registering the app with a service it signs people in to (`ConnectionCard`);
+    /// its text is the service's id.
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, drawIcon, widget, connect }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -2736,6 +2738,10 @@ final class Store: ObservableObject {
         // and start the next one's, which must not inherit this launch.
         let owner = turns[project.id]
         await prepareIcon(project)
+        // A service the app signs people in to, with no id for this app yet, gets its card, once.
+        for service in Connections.waiting(in: project) where ConnectionCard.isNeeded(service.id, after: logs[project.id] ?? []) {
+            log(project, .connect, service.id)
+        }
         if project.platform == .iphone {
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
             // The person's own phone gets the app when they press Play or a change is finished; the agent's

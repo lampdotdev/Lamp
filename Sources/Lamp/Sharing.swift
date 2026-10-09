@@ -783,6 +783,11 @@ extension Sharing {
         if let about = found.about { everything += about }
         found.detected = checklist.filter { item in item.patterns.contains { everything.contains($0) } }
         if unreadable { found.detected.append(unreadableCode) }
+        // A service the sender describes, not one of Lamp's: the sign-in goes where the sender says.
+        for service in Connections.checked(package.capabilities.connections ?? []) where !Connections.known.contains(where: { $0.id == service.id }) {
+            found.detected.append(Capability(label: "Asks you to sign in to \(service.name ?? service.id) at \((service.hosts ?? []).joined(separator: ", ")), a service Lamp doesn't know",
+                                             icon: "person.badge.key", level: .sensitive, patterns: []))
+        }
         return found
     }
 

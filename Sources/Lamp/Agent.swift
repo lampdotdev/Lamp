@@ -150,9 +150,9 @@ enum Agent {
 
     static func iPhonePrompt(for family: DeviceFamily) -> String { prompt(platform: .iphone, device: family.name) }
 
-    /// `services` is what apps can sign the person in to: the ones Lamp is registered with, unless a test
-    /// names its own.
-    static func prompt(platform: Platform, device: String, services: [Connections.Service] = Connections.offered) -> String {
+    /// `services` is what apps can sign the person in to: the ones Lamp has an entry for, unless a test names
+    /// its own.
+    static func prompt(platform: Platform, device: String, services: [Connections.Service] = Connections.known) -> String {
         let mac = platform == .mac
         var rules = [Rules.edit, Rules.ask, Rules.shell,
                      mac ? Rules.macFrameworks : Rules.iPhoneFrameworks,
@@ -379,7 +379,21 @@ enum Agent {
             what the service answered, so check `response.statusCode`. Never ask the person for a token, key or \
             password for one of these services, and never read or store the sign-in yourself. Only the person can \
             sign in, so when you look at the app you'll see the connect screen: say plainly that what's behind it \
-            is untested, and that they connect once.
+            is untested, and that they connect once. An app is registered with a service once, by whoever builds \
+            it: when the app uses a service that has no id for it yet, Lamp puts a card in the chat with the steps \
+            and a place to paste the id, and keeps the id with the app, so anyone it's shared with only presses \
+            Connect. So never explain registering, ask for an id or write one into the code: say only that \
+            the card in the chat has a step for them. A service not in the list can be added when it signs \
+            apps in by OAuth's device flow with no client secret: declare it in capabilities.json at the app's root, \
+            `{"connections": [{"id": "acme", "name": "Acme", "deviceURL": "https://acme.com/oauth/device/code", \
+            "tokenURL": "https://acme.com/oauth/token", "hosts": ["api.acme.com"], "accountURL": \
+            "https://api.acme.com/me", "accountField": "name", "scopes": {"read": "See your projects"}, "register": \
+            {"url": "https://acme.com/developers/apps/new", "values": [{"label": "App name", "value": "{{NAME}}"}], \
+            "notes": ["Turn on device sign-in."], "idLabel": "Client ID"}}]}`, then name it `.acme`. Take every \
+            address from the service's own documentation, never from memory, and give `register` the page and \
+            values someone registering this app there needs; Lamp writes the card from it. A service that wants \
+            a client secret, or only signs in through a browser redirect (Notion, Slack and Google are like \
+            that), can't be connected yet: say so plainly, and never put a secret, key or token in the app.
 
             """
         }
