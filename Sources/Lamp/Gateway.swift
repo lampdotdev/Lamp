@@ -337,11 +337,50 @@ enum AppAI {
     /// The text route for one app: its own choice (info panel), or Settings', when it can answer; else the
     /// default.
     @MainActor static func route(for choice: String?) -> TextRoute {
+        chosenRoute(for: choice) ?? defaultRoute
+    }
+
+    /// What was chosen for an app's text, by the app or in Settings, when it can answer; nil when nobody chose.
+    @MainActor private static func chosenRoute(for choice: String?) -> TextRoute? {
         let choice = choice.map(canonicalRoute)
         if let choice, let route = allTextRoutes.first(where: { $0.id == choice }), route.available { return route }
         if let saved = UserDefaults.standard.string(forKey: "appModel").map(canonicalRoute), saved != choice,
            let route = allTextRoutes.first(where: { $0.id == saved }), route.available { return route }
-        return defaultRoute
+        return nil
+    }
+
+    /// The route for a task done with the person's other apps (`ComputerUse`): what was chosen for the app's
+    /// text, when something was; else `computerDefault`, which isn't the text default.
+    @MainActor static func computerRoute(for choice: String?) -> TextRoute {
+        chosenRoute(for: choice)
+            ?? computerDefault(among: allTextRoutes, builder: Builder.engine, textDefault: defaultRoute, hasKey: Provider.hasKey)
+    }
+
+    /// The OpenRouter model for those tasks when a key is all there is. Chosen by running one task in TextEdit
+    /// (a new document, a sentence, its font and colour) through Lamp's own loop: this one did it in 38
+    /// seconds for 5 cents, Opus in 93 seconds for 96 cents, Gemini Flash in 156 seconds for 22 cents, and
+    /// Sonnet, the text default, not at all. It isn't one of the models offered for apps' text.
+    static let computerOpenRouterModel = (id: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol")
+
+    /// The route for a task in other apps when nobody chose one. Such a task is many steps of reading a
+    /// window and acting on it, and the text default did it badly: Sonnet through OpenRouter took minutes,
+    /// finished wrong and cost dollars a run, where the sign-ins did it right in about a minute. So a
+    /// sign-in comes first (the one that builds apps, then the other; Opus through Claude Code, which did
+    /// the task where Sonnet didn't), then the OpenRouter model that did. Someone staying on this Mac's own
+    /// models stays there, and whatever else answers text is the last resort.
+    nonisolated static func computerDefault(among routes: [TextRoute], builder: Engine, textDefault: TextRoute, hasKey: Bool) -> TextRoute {
+        if case .localModel = textDefault.kind { return textDefault }
+        for engine in builder == .claude ? [Engine.claude, .codex] : [.codex, .claude] {
+            let own = routes.first { route in
+                guard route.available, case .engine(engine, let model) = route.kind else { return false }
+                return engine == .codex || model == "opus"   // Codex's are listed best first
+            }
+            if let own { return own }
+        }
+        guard hasKey else { return textDefault }
+        let model = computerOpenRouterModel
+        return TextRoute(id: "computer:openrouter", label: "\(model.name) via OpenRouter", group: "OpenRouter", name: model.name,
+                         kind: .openRouter(model: model.id), available: true)
     }
 
     struct Failure: LocalizedError {
