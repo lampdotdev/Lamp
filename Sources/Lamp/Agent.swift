@@ -150,13 +150,16 @@ enum Agent {
 
     static func iPhonePrompt(for family: DeviceFamily) -> String { prompt(platform: .iphone, device: family.name) }
 
-    private static func prompt(platform: Platform, device: String) -> String {
+    /// `services` is what apps can sign the person in to: the ones Lamp is registered with, unless a test
+    /// names its own.
+    static func prompt(platform: Platform, device: String, services: [Connections.Service] = Connections.offered) -> String {
         let mac = platform == .mac
         var rules = [Rules.edit, Rules.ask, Rules.shell,
                      mac ? Rules.macFrameworks : Rules.iPhoneFrameworks,
                      mac ? Rules.macBlocks : Rules.iPhoneBlocks]
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.permissions] }
         rules += [Rules.script, mac ? Rules.macAccounts : Rules.iPhoneAccounts]
+        if !services.isEmpty { rules.append(Rules.connections(services)) }
         if mac { rules.append(Rules.computer) }
         if !mac { rules.append(Rules.iPhoneHardware) }
         rules += [Rules.store, Rules.kinds(mac: mac), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
@@ -343,6 +346,43 @@ enum Agent {
         Lamp signs every build of the app the same way, so a permission stays on through your changes. Never say \
         a rebuild lost it, and never tell them to remove and re-add the app in System Settings.
         """
+
+        /// The same for a Mac app and an iPhone app. The services, their API hosts and their scopes come from
+        /// `Connections`, so a new entry there is named here by itself.
+        static func connections(_ services: [Connections.Service]) -> String {
+            let first = services[0]
+            let scopes = first.scopes.prefix(1).map { "\"\($0.name)\"" }.joined(separator: ", ")
+            let list = services.map { service in
+                let known = service.scopes.map(\.name).joined(separator: ", ")
+                return "\(service.name) (`.\(service.id)`; its API at \(service.hosts.map { "https://" + $0 }.joined(separator: ", "))"
+                    + (known.isEmpty ? ")" : "; scopes such as \(known))")
+            }.joined(separator: "; ")
+            return """
+            - When the app needs the person's own account on a service LampSupport.swift can sign them in to, \
+            `LampConnection` from LampSupport.swift is strongly recommended over a sign-in, token field, key or \
+            Keychain code of your own. Write your own only when you have a reason it can't meet, and say so in your \
+            reply. The services are: \(list). It gives every app the same button and screen ("Connect to \
+            \(first.name)"), signs the person in on the service's own site with nothing typed into the app, keeps \
+            the sign-in in the app's own Keychain, renews it, and works with Lamp closed. You name the service and \
+            the scopes (the service's own names; the least that do the job, the same list everywhere in the app) \
+            and write the calls to its API yourself. Wrap what needs the account: \
+            `LampConnectionGate(.\(first.id), scopes: [\(scopes)], reason: "Repo Radar lists your open pull \
+            requests.") { PullRequestsView() }` shows the contents once connected and the connect screen until \
+            then. When only one feature needs it, don't gate the whole app: check `LampConnection.has(.\(first.id))` \
+            when the feature is used and put `.lampConnectionSheet(isPresented: $asking, .\(first.id), scopes: […], \
+            reason: "…") { /* now connected */ }` on the view, a sheet with its own Not Now. In Settings, `LampConnectButton(.\(first.id), scopes: […])` connects and \
+            disconnects. `@StateObject var account = LampConnectionState(.\(first.id))` gives a live `isOn` and \
+            `account` (their name there) for your own views. Make every call with `let (data, response) = try await \
+            LampConnection.send(request, to: .\(first.id))`: an ordinary URLRequest to the service's API, which it \
+            signs and sends nowhere else. It throws a plain message when the person isn't connected (show \
+            `error.localizedDescription`; a gate goes back to the connect screen by itself) and otherwise returns \
+            what the service answered, so check `response.statusCode`. Never ask the person for a token, key or \
+            password for one of these services, and never read or store the sign-in yourself. Only the person can \
+            sign in, so when you look at the app you'll see the connect screen: say plainly that what's behind it \
+            is untested, and that they connect once.
+
+            """
+        }
 
         static let script = """
         - When the app needs behavior nobody can write in advance (what happens when two invented things meet, \

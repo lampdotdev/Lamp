@@ -549,6 +549,8 @@ extension Sharing {
         Capability(label: "Listens for keyboard shortcuts in every app", icon: "keyboard", level: .powerful, patterns: ["LampHotKey"]),
         Capability(label: "Asks for Full Disk Access, Screen Recording or Accessibility", icon: "lock.open", level: .sensitive,
                    patterns: ["LampPermission"]),
+        Capability(label: "Asks you to sign in to another service, such as GitHub, and uses your account there", icon: "person.badge.key",
+                   level: .powerful, patterns: ["LampConnect", "lampConnectionSheet"]),
         Capability(label: "Accesses the Keychain", icon: "key", level: .sensitive, patterns: ["SecItem", "kSecClass"]),
         Capability(label: "Touches sensitive files (SSH keys, browser data, keychains)", icon: "folder.badge.questionmark", level: .sensitive,
                    patterns: [".ssh", "id_rsa", "id_ed25519", "Cookies", "Library/Keychains", "Google/Chrome", "Library/Safari", "Library/Mail", "Library/Messages"]),
@@ -653,14 +655,18 @@ extension Sharing {
         from documents and pictures, on the Mac), LampCalendar, LampReminders, LampContacts and LampMail (the \
         reader's accounts, each asked for by macOS), LampNotifications, LampAssets (files sent with the app), \
         LampFolders, LampFolderWatcher, LampClipboardWatcher, LampHotKey, LampLoginItem, LampPermissions, \
-        LampMenuBar, LampDrop, LampWindows and LampWidget. Using these is normal and expected: they are Lamp's code, not the \
+        LampMenuBar, LampDrop, LampWindows, LampWidget and LampConnection (the reader signs in to a service such \
+        as GitHub on that service's own site; the sign-in is kept on the reader's Mac, never comes with a shared \
+        app, and is only ever sent to that service). Using these is normal and expected: they are Lamp's code, not the \
         sender's, not hidden, and not a concern in themselves, and Lamp lists them to the reader separately. One \
         thing about them does matter: what goes to LampAI (its prompts, data and pictures) and what LampComputer \
         reads from other apps is sent to the AI provider the reader has set up in Lamp, which may be a service on \
         the internet. So judge what the app's own code does with the blocks and beyond them: which of the reader's \
         data it hands to the AI (a mention of their own notes is ordinary; their mail, documents, passwords or \
         other people's data deserve a word), where else it sends data, what it deletes or changes, whether it \
-        does more than its description says, and whether anything is obscured.
+        does more than its description says, and whether anything is obscured. With LampConnection the app acts as \
+        the reader on that service, within what the connect screen lists: say what it reads there, and name anything \
+        it changes, deletes or posts.
 
         An app may come with a desktop widget: the files under Widget/. That is a second small program, which \
         macOS shows on the desktop and runs by itself, also while the app is closed. It is sandboxed: it can't \

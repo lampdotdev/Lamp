@@ -110,7 +110,19 @@ enum Template {
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,
     /// so existing apps pick up helper improvements automatically.
     static func writeSupport(for project: LampProject) throws {
-        let contents = lampSupportSwift
+        let contents = supportSwift(for: project)
+        // Left alone when it's already current, so its date only moves when the app needs a rebuild.
+        let url = project.dir.appendingPathComponent("Sources/LampSupport.swift")
+        if (try? String(contentsOf: url, encoding: .utf8)) != contents {
+            try contents.write(to: url, atomically: true, encoding: .utf8)
+        }
+        try writeWidgetSupport(for: project)
+    }
+
+    /// LampSupport.swift as this app gets it. `services` is what its apps can sign the person in to
+    /// (`Connections`): the ones Lamp is registered with, unless a test names its own.
+    static func supportSwift(for project: LampProject, services: [Connections.Service] = Connections.offered) -> String {
+        lampSupportSwift
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{TOKEN}}", with: token(for: project))
             .replacingOccurrences(of: "{{PORT}}", with: String(Gateway.port))
@@ -122,12 +134,7 @@ enum Template {
             .replacingOccurrences(of: "{{PHONE_SECRET}}", with: project.platform == .iphone ? phoneSecret(for: project) : "")
             .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
             .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: project.platform == .mac ? widgetToken(for: project) : "")
-        // Left alone when it's already current, so its date only moves when the app needs a rebuild.
-        let url = project.dir.appendingPathComponent("Sources/LampSupport.swift")
-        if (try? String(contentsOf: url, encoding: .utf8)) != contents {
-            try contents.write(to: url, atomically: true, encoding: .utf8)
-        }
-        try writeWidgetSupport(for: project)
+            .replacingOccurrences(of: "{{SERVICES}}", with: Connections.swift(for: services))
     }
 
     // MARK: - iPhone apps
@@ -186,7 +193,20 @@ enum Template {
     set -euo pipefail
     cd "$(dirname "$0")"
     SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
-    FLAGS=(-c release --triple arm64-apple-ios17.0-simulator --sdk "$SDK" -Xswiftc -g)
+    # The simulator gives an app its own Keychain only when the program says which app it is, in a section of
+    # the program itself, where Xcode puts it too. The signature can't say it: without a profile the app
+    # would not start. On a phone, Xcode's signing says it.
+    mkdir -p .build
+    cat > .build/simulated-entitlements.plist <<PLIST
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0"><dict>
+      <key>application-identifier</key><string>{{BUNDLE}}</string>
+      <key>keychain-access-groups</key><array><string>{{BUNDLE}}</string></array>
+    </dict></plist>
+    PLIST
+    FLAGS=(-c release --triple arm64-apple-ios17.0-simulator --sdk "$SDK" -Xswiftc -g
+           -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$PWD/.build/simulated-entitlements.plist")
     swift build "${FLAGS[@]}" 2>&1
     BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"
     APP="build/{{EXE}}.app"
@@ -937,6 +957,7 @@ enum Template {
     import PDFKit
     import UniformTypeIdentifiers
     import UserNotifications
+    import Security
     @preconcurrency import Vision
     #if os(macOS)
     import AppKit
@@ -950,7 +971,6 @@ enum Template {
     #else
     import UIKit
     import CoreMotion
-    import Security
     /// A picture: NSImage on the Mac, UIImage on iPhone and iPad.
     typealias LampImage = UIImage
     #endif
@@ -4545,6 +4565,657 @@ enum Template {
         }
     }
     #endif
+
+    // MARK: - Signing in to other services
+
+    /// A service the person can sign in to from the app. Lamp writes the list at the end of this type, so name
+    /// one from it: `.github`. An entry is only what a sign-in needs: where it happens, the name Lamp is
+    /// registered under there, where the sign-in may be sent, and the words and picture the screen shows.
+    /// What the app does with the account is the app's own code.
+    struct LampService: Identifiable, Hashable {
+        let id: String
+        /// As the person knows it: "GitHub".
+        let name: String
+        fileprivate let clientID: String
+        fileprivate let deviceURL: String
+        fileprivate let tokenURL: String
+        /// The service's own API: the only place the sign-in is ever sent.
+        fileprivate let hosts: [String]
+        /// Where to ask who signed in, for "GitHub: octocat": an address answering JSON, and the field in it.
+        fileprivate let accountURL: String
+        fileprivate let accountField: String
+        /// What each thing an app may ask for means, in the person's words, by the service's name for it.
+        fileprivate let wording: [String: String]
+        /// Said when the app asks for nothing in particular.
+        fileprivate let basicWording: String
+        /// The service's mark as a PNG in base64, drawn in the color of the text; empty for a plain symbol.
+        fileprivate let icon: String
+
+        static func == (a: LampService, b: LampService) -> Bool { a.id == b.id }
+        func hash(into hasher: inout Hasher) { hasher.combine(id) }
+
+        /// What the person is agreeing to, one line for each thing asked for that Lamp has words for.
+        fileprivate func lines(for scopes: [String]) -> [String] {
+            var lines: [String] = []
+            for line in scopes.compactMap({ wording[$0] }) where !lines.contains(line) { lines.append(line) }
+            if lines.isEmpty, !basicWording.isEmpty { lines = [basicWording] }
+            return lines
+        }
+
+    {{SERVICES}}
+    }
+
+    /// The person's account on another service (GitHub, and whatever else `LampService` lists), signed in to
+    /// from the app. Strongly recommended over a sign-in, token field or key of your own; write your own only
+    /// with a reason this can't meet. Every app asks the same way: one button, "Connect to GitHub", and the
+    /// person approves on the service's own site. Nobody types a password, key or token into the app. The
+    /// sign-in is kept in this app's own Keychain, renewed when the service wants that, and never needs Lamp
+    /// open. You name the service and what the app needs from it, and write the calls to its API yourself.
+    /// Wrap what needs the account in a gate, which shows the app's own contents once connected and the
+    /// connect screen until then:
+    ///
+    ///     LampConnectionGate(.github, scopes: ["repo"], reason: "Repo Radar lists your open pull requests.") {
+    ///         PullRequestsView()
+    ///     }
+    ///
+    /// `scopes` are the service's own names for what the app may do; ask for the least that does the job, and
+    /// use the same list everywhere in the app. When only one feature needs the account, show the same screen
+    /// in a sheet at the moment it's used, and give Settings the button, which connects and disconnects:
+    ///
+    ///     guard LampConnection.has(.github) else { askForGitHub = true; return }
+    ///     .lampConnectionSheet(isPresented: $askForGitHub, .github, scopes: ["repo"], reason: "…") { /* connected */ }
+    ///     LampConnectButton(.github, scopes: ["repo"])
+    ///
+    /// A call is an ordinary URLRequest to the service's API, which `send` signs:
+    ///
+    ///     var request = URLRequest(url: URL(string: "https://api.github.com/user/repos?sort=pushed")!)
+    ///     request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+    ///     let (data, response) = try await LampConnection.send(request, to: .github)
+    ///
+    /// It throws a plain message when the person isn't connected or the service has ended the sign-in (a gate
+    /// then shows the connect screen again by itself), and otherwise hands back whatever the service answered,
+    /// errors included: check `response.statusCode`. Lamp's builder can't sign in: only the person can, so it
+    /// sees the connect screen when it looks.
+    enum LampConnection {
+        /// Why a call or a sign-in didn't go through, in words for the person.
+        struct Failure: LocalizedError {
+            let message: String
+            /// The person isn't signed in: never was, disconnected, or the service ended it. Connecting fixes it.
+            var notConnected = false
+            var errorDescription: String? { message }
+        }
+
+        /// Whether the person is connected, with at least these scopes. Never asks, so call it anywhere.
+        static func has(_ service: LampService, scopes: [String] = []) -> Bool {
+            guard let token = LampConnectionVault.token(for: service) else { return false }
+            return Set(scopes).isSubset(of: token.scopes)
+        }
+
+        /// Who is connected, by their name on the service, when the service said.
+        static func account(on service: LampService) -> String? { LampConnectionVault.token(for: service)?.account }
+
+        /// Sends a request to the service's API as the person who connected. The request goes only to the
+        /// service itself: one to anywhere else is refused, so the sign-in can't be carried off.
+        static func send(_ request: URLRequest, to service: LampService) async throws -> (Data, HTTPURLResponse) {
+            guard let url = request.url, url.scheme == "https", let host = url.host?.lowercased(), service.hosts.contains(host) else {
+                throw Failure(message: "The \(service.name) connection only reaches \(service.hosts.joined(separator: " and ")), over https.")
+            }
+            guard var token = LampConnectionVault.token(for: service) else { throw notConnected(service) }
+            var renewed = false
+            if let expires = token.expires, expires.timeIntervalSinceNow < 60, token.refresh != nil {
+                token = try await renewals.renew(service, replacing: token)
+                renewed = true
+            }
+            var (data, response) = try await carry(request, with: token)
+            if response.statusCode == 401, token.refresh != nil, !renewed {
+                token = try await renewals.renew(service, replacing: token)
+                (data, response) = try await carry(request, with: token)
+            }
+            if response.statusCode == 401 {
+                // The service no longer takes this sign-in (ended there, or run out with nothing to renew it).
+                LampConnectionVault.keep(nil, for: service)
+                throw notConnected(service)
+            }
+            return (data, response)
+        }
+
+        /// Forgets the sign-in on this device. The person can connect again at any time.
+        static func disconnect(_ service: LampService) {
+            LampConnectionVault.keep(nil, for: service)
+        }
+
+        private static func notConnected(_ service: LampService) -> Failure {
+            Failure(message: "Connect to \(service.name) first.", notConnected: true)
+        }
+
+        // MARK: Signing in
+
+        /// The code the person enters on the service's site, and what the app holds while they do.
+        fileprivate struct Code: Equatable {
+            let shown: String
+            let page: URL
+            let secret: String
+            let interval: TimeInterval
+            let expires: Date
+            let scopes: [String]
+        }
+
+        /// Asks the service for a code to show. Nothing secret is sent: the app has none.
+        fileprivate static func begin(_ service: LampService, scopes: [String]) async throws -> Code {
+            guard !service.clientID.isEmpty else { throw Failure(message: "Connecting to \(service.name) isn't set up yet.") }
+            let reply = try await post(service.deviceURL, ["client_id": service.clientID, "scope": scopes.joined(separator: " ")],
+                                       on: service)
+            guard let secret = reply["device_code"] as? String, let shown = reply["user_code"] as? String,
+                  let page = ((reply["verification_uri"] ?? reply["verification_url"]) as? String).flatMap({ URL(string: $0) }),
+                  page.scheme == "https" || standIn != nil else {
+                throw Failure(message: (reply["error_description"] as? String) ?? "\(service.name) didn't start the sign-in.")
+            }
+            return Code(shown: shown, page: page, secret: secret, interval: (reply["interval"] as? Double) ?? 5,
+                        expires: Date().addingTimeInterval((reply["expires_in"] as? Double) ?? 900), scopes: scopes)
+        }
+
+        /// Waits for the person to approve on the service's site, asking as often as the service allows.
+        fileprivate static func finish(_ code: Code, on service: LampService) async throws -> LampConnectionToken {
+            var interval = code.interval
+            while true {
+                try await Task.sleep(nanoseconds: UInt64(max(interval, 1) * 1_000_000_000))
+                guard Date() < code.expires else { throw Failure(message: "That code ran out. Connect again for a new one.") }
+                let reply: [String: Any]
+                do {
+                    reply = try await post(service.tokenURL, ["client_id": service.clientID, "device_code": code.secret,
+                                                              "grant_type": "urn:ietf:params:oauth:grant-type:device_code"], on: service)
+                } catch {
+                    // Off the network for a moment (a phone that went to its browser): the code is still good.
+                    try Task.checkCancellation()
+                    continue
+                }
+                if let token = LampConnectionToken(reply, scopes: code.scopes) {
+                    var token = token
+                    token.account = await account(for: token, on: service)
+                    return token
+                }
+                switch reply["error"] as? String {
+                case "authorization_pending": continue
+                case "slow_down": interval = (reply["interval"] as? Double) ?? interval + 5
+                case "expired_token": throw Failure(message: "That code ran out. Connect again for a new one.")
+                case "access_denied": throw Failure(message: "The request was turned down on \(service.name).")
+                default: throw Failure(message: (reply["error_description"] as? String) ?? "\(service.name) didn't finish the sign-in.")
+                }
+            }
+        }
+
+        private static func account(for token: LampConnectionToken, on service: LampService) async -> String? {
+            guard !service.accountURL.isEmpty, let url = URL(string: service.accountURL) else { return nil }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 10
+            guard let (data, response) = try? await carry(request, with: token), response.statusCode == 200,
+                  let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+            return reply[service.accountField] as? String
+        }
+
+        // MARK: Renewing
+
+        /// One renewal at a time for a service: a service that hands out a new renewal code each time takes the
+        /// old one once, so two calls renewing at the same moment would sign the person out.
+        private actor Renewals {
+            private var running: [String: Task<LampConnectionToken, Error>] = [:]
+
+            func renew(_ service: LampService, replacing old: LampConnectionToken) async throws -> LampConnectionToken {
+                if let task = running[service.id] { return try await task.value }
+                let task = Task { try await LampConnection.renew(service, replacing: old) }
+                running[service.id] = task
+                defer { running[service.id] = nil }
+                return try await task.value
+            }
+        }
+        private static let renewals = Renewals()
+
+        private static func renew(_ service: LampService, replacing old: LampConnectionToken) async throws -> LampConnectionToken {
+            // Another call got there first.
+            if let now = LampConnectionVault.token(for: service), now.access != old.access { return now }
+            guard let refresh = old.refresh else { throw notConnected(service) }
+            let reply = try await post(service.tokenURL, ["client_id": service.clientID, "grant_type": "refresh_token",
+                                                          "refresh_token": refresh], on: service)
+            guard var token = LampConnectionToken(reply, scopes: old.scopes) else {
+                // The service answered and wouldn't renew it: only signing in again helps.
+                LampConnectionVault.keep(nil, for: service)
+                throw notConnected(service)
+            }
+            if token.refresh == nil { token.refresh = refresh }
+            token.account = old.account
+            LampConnectionVault.keep(token, for: service)
+            return token
+        }
+
+        // MARK: The network
+
+        /// Nothing these requests carry or bring back is left in a cache or a cookie.
+        private static let session = URLSession(configuration: .ephemeral)
+
+        /// For trying the sign-in where nobody can sign in: LAMP_CONNECTION_SERVER=http://127.0.0.1:PORT sends
+        /// everything (the sign-in and the app's calls) to a stand-in on this device instead of the service. It
+        /// takes only this device's own address, and keeps what it's given apart from a real sign-in, so the
+        /// setting can never send a real one anywhere.
+        fileprivate static let standIn: URL? = {
+            guard let text = ProcessInfo.processInfo.environment["LAMP_CONNECTION_SERVER"], let url = URL(string: text),
+                  url.scheme == "http", url.host == "127.0.0.1", url.port != nil else { return nil }
+            return url
+        }()
+
+        private static func placed(_ url: URL) -> URL {
+            guard let standIn, var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+            parts.scheme = standIn.scheme
+            parts.host = standIn.host
+            parts.port = standIn.port
+            return parts.url ?? url
+        }
+
+        private static func carry(_ request: URLRequest, with token: LampConnectionToken) async throws -> (Data, HTTPURLResponse) {
+            var request = request
+            if let url = request.url { request.url = placed(url) }
+            request.setValue("Bearer \(token.access)", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await session.data(for: request)
+            guard let response = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+            return (data, response)
+        }
+
+        private static func post(_ address: String, _ fields: [String: String], on service: LampService) async throws -> [String: Any] {
+            guard let url = URL(string: address) else { throw Failure(message: "Connecting to \(service.name) isn't set up yet.") }
+            var allowed = CharacterSet.alphanumerics
+            allowed.insert(charactersIn: "-._~")
+            var request = URLRequest(url: placed(url))
+            request.httpMethod = "POST"
+            request.timeoutInterval = 20
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.httpBody = Data(fields.sorted { $0.key < $1.key }.map { field in
+                field.key + "=" + (field.value.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")
+            }.joined(separator: "&").utf8)
+            let (data, _) = try await session.data(for: request)
+            guard let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw Failure(message: "\(service.name) gave an answer that couldn't be read.")
+            }
+            return reply
+        }
+    }
+
+    /// A sign-in as the app keeps it. Only ever in the Keychain and in memory.
+    fileprivate struct LampConnectionToken: Codable, Equatable {
+        var access: String
+        var refresh: String?
+        var expires: Date?
+        /// What the app asked for when the person connected.
+        var scopes: [String]
+        var account: String?
+
+        /// From the service's answer, when it is a sign-in and not a refusal.
+        init?(_ reply: [String: Any], scopes: [String]) {
+            guard let access = reply["access_token"] as? String, !access.isEmpty else { return nil }
+            self.access = access
+            refresh = reply["refresh_token"] as? String
+            expires = (reply["expires_in"] as? Double).map { Date().addingTimeInterval($0) }
+            self.scopes = scopes
+        }
+    }
+
+    /// Where sign-ins are kept: this app's own entry in the Keychain, one per service. Nothing is written to
+    /// the app's folder or its data, so a copy of the app given to someone else arrives disconnected.
+    fileprivate enum LampConnectionVault {
+        static let changed = Notification.Name("LampConnectionChanged")
+        private static let lock = NSLock()
+        /// What the Keychain held when last asked, so a view checking on every redraw doesn't go back to it.
+        private static var known: [String: LampConnectionToken?] = [:]
+
+        static func token(for service: LampService) -> LampConnectionToken? {
+            lock.lock()
+            defer { lock.unlock() }
+            if let token = known[service.id] { return token }
+            var query = entry(for: service)
+            query[kSecReturnData as String] = true
+            var item: CFTypeRef?
+            let status = SecItemCopyMatching(query as CFDictionary, &item)
+            // Anything but a plain yes or no (a locked Keychain) is asked again next time.
+            guard status == errSecSuccess || status == errSecItemNotFound else { return nil }
+            let token = (item as? Data).flatMap { try? JSONDecoder().decode(LampConnectionToken.self, from: $0) }
+            known[service.id] = .some(token)
+            return token
+        }
+
+        static func keep(_ token: LampConnectionToken?, for service: LampService) {
+            lock.lock()
+            let query = entry(for: service)
+            SecItemDelete(query as CFDictionary)
+            var kept = false
+            if let token, let data = try? JSONEncoder().encode(token) {
+                var add = query
+                add[kSecValueData as String] = data
+                #if os(iOS)
+                // Stays on this device: a backup restored to another phone starts disconnected.
+                add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+                #endif
+                let status = SecItemAdd(add as CFDictionary, nil)
+                kept = status == errSecSuccess
+                if !kept { print("LampConnection: the Keychain wouldn't keep the \(service.name) sign-in (\(status))") }
+            }
+            known[service.id] = .some(kept ? token : nil)
+            lock.unlock()
+            print("LampConnection: \(service.name) is \(kept ? "connected" : "not connected")")
+            DispatchQueue.main.async { NotificationCenter.default.post(name: changed, object: service.id) }
+        }
+
+        private static func entry(for service: LampService) -> [String: Any] {
+            [kSecClass as String: kSecClassGenericPassword,
+             kSecAttrService as String: Bundle.main.bundleIdentifier ?? "lamp",
+             kSecAttrAccount as String: "lamp-connection-" + service.id + (LampConnection.standIn == nil ? "" : "-test")]
+        }
+    }
+
+    /// Whether the person is connected, kept up to date for a view of your own (the gate, the screen and the
+    /// button below already do this):
+    ///
+    ///     @StateObject private var github = LampConnectionState(.github)
+    ///     if github.isOn { Text("Signed in as \(github.account ?? "you")") }
+    final class LampConnectionState: ObservableObject {
+        let service: LampService
+        @Published private(set) var isOn: Bool
+        /// The person's name on the service, when it said.
+        @Published private(set) var account: String?
+
+        fileprivate enum Step: Equatable {
+            case resting, starting, waiting(LampConnection.Code), failed(String)
+        }
+        @Published fileprivate private(set) var step = Step.resting
+        fileprivate let scopes: [String]
+        private var signIn: Task<Void, Never>?
+        private var observer: NSObjectProtocol?
+
+        init(_ service: LampService, scopes: [String] = []) {
+            self.service = service
+            self.scopes = scopes
+            isOn = LampConnection.has(service, scopes: scopes)
+            account = LampConnection.account(on: service)
+            observer = NotificationCenter.default.addObserver(forName: LampConnectionVault.changed, object: nil, queue: .main) { [weak self] note in
+                guard let self, note.object as? String == self.service.id else { return }
+                self.check()
+            }
+        }
+
+        deinit {
+            signIn?.cancel()
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+        }
+
+        private func check() {
+            let on = LampConnection.has(service, scopes: scopes), name = LampConnection.account(on: service)
+            if on != isOn { isOn = on }
+            if name != account { account = name }
+        }
+
+        /// Starts the sign-in: gets a code for the person to enter on the service's site and waits for them.
+        @MainActor fileprivate func connect() {
+            signIn?.cancel()
+            step = .starting
+            let service = service, scopes = scopes
+            signIn = Task { @MainActor [weak self] in
+                do {
+                    let code = try await LampConnection.begin(service, scopes: scopes)
+                    try Task.checkCancellation()
+                    self?.step = .waiting(code)
+                    let token = try await LampConnection.finish(code, on: service)
+                    try Task.checkCancellation()
+                    LampConnectionVault.keep(token, for: service)
+                    self?.check()
+                    self?.step = .resting
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    print("LampConnection: \(service.name) didn't connect: \(error.localizedDescription)")
+                    self?.step = .failed(error.localizedDescription)
+                }
+            }
+        }
+
+        @MainActor fileprivate func cancel() {
+            signIn?.cancel()
+            signIn = nil
+            step = .resting
+        }
+
+        /// Forgets the sign-in on this device.
+        func disconnect() { LampConnection.disconnect(service) }
+    }
+
+    /// Shows its contents once the person is connected, and until then the screen that connects them.
+    /// See LampConnection.
+    struct LampConnectionGate<Content: View>: View {
+        @StateObject private var state: LampConnectionState
+        private let reason: String
+        private let content: () -> Content
+
+        /// `reason` is one plain sentence on what the app does with the account, e.g. "Repo Radar lists your open pull requests."
+        init(_ service: LampService, scopes: [String] = [], reason: String, @ViewBuilder content: @escaping () -> Content) {
+            _state = StateObject(wrappedValue: LampConnectionState(service, scopes: scopes))
+            self.reason = reason
+            self.content = content
+        }
+
+        var body: some View {
+            if state.isOn {
+                content()
+            } else {
+                LampConnectionScreen(state: state, reason: reason)
+            }
+        }
+    }
+
+    /// The screen that connects the person, for a pane of your own (for a sheet, `lampConnectionSheet`).
+    /// `connected` runs when they are.
+    struct LampConnectionView: View {
+        @StateObject private var state: LampConnectionState
+        private let reason: String
+        private let connected: () -> Void
+
+        init(_ service: LampService, scopes: [String] = [], reason: String, connected: @escaping () -> Void = {}) {
+            _state = StateObject(wrappedValue: LampConnectionState(service, scopes: scopes))
+            self.reason = reason
+            self.connected = connected
+        }
+
+        var body: some View {
+            LampConnectionScreen(state: state, reason: reason)
+                .onChange(of: state.isOn) { _, on in if on { connected() } }
+        }
+    }
+
+    extension View {
+        /// The connect screen as a sheet with its own Not Now, for a feature that needs the account at the
+        /// moment it's used. It closes by itself once the person is connected, and then `connected` runs.
+        func lampConnectionSheet(isPresented: Binding<Bool>, _ service: LampService, scopes: [String] = [], reason: String,
+                                 connected: @escaping () -> Void = {}) -> some View {
+            modifier(LampConnectionSheet(isPresented: isPresented, service: service, scopes: scopes, reason: reason, connected: connected))
+        }
+    }
+
+    private struct LampConnectionSheet: ViewModifier {
+        @Binding private var isPresented: Bool
+        @StateObject private var state: LampConnectionState
+        private let reason: String
+        private let connected: () -> Void
+
+        init(isPresented: Binding<Bool>, service: LampService, scopes: [String], reason: String, connected: @escaping () -> Void) {
+            _isPresented = isPresented
+            _state = StateObject(wrappedValue: LampConnectionState(service, scopes: scopes))
+            self.reason = reason
+            self.connected = connected
+        }
+
+        func body(content: Content) -> some View {
+            content
+                .sheet(isPresented: $isPresented) {
+                    LampConnectionScreen(state: state, reason: reason, notNow: { isPresented = false })
+                        #if os(macOS)
+                        .frame(width: 420)
+                        #endif
+                }
+                .onChange(of: state.isOn) { _, on in
+                    guard on, isPresented else { return }
+                    isPresented = false
+                    connected()
+                }
+        }
+    }
+
+    /// The one button every app made with Lamp uses: "Connect to GitHub", which opens the connect screen, and
+    /// once connected the person's name there with Disconnect. For Settings, or anywhere the account is optional.
+    struct LampConnectButton: View {
+        @StateObject private var state: LampConnectionState
+        private let scopes: [String]
+        private let reason: String
+        @State private var asking = false
+
+        init(_ service: LampService, scopes: [String] = [], reason: String = "") {
+            _state = StateObject(wrappedValue: LampConnectionState(service, scopes: scopes))
+            self.scopes = scopes
+            self.reason = reason
+        }
+
+        var body: some View {
+            Group {
+                if state.isOn {
+                    HStack(spacing: 8) {
+                        LampServiceMark(service: state.service).frame(width: 16, height: 16)
+                        Text(state.account.map { "\(state.service.name): \($0)" } ?? "Connected to \(state.service.name)")
+                            .lineLimit(1)
+                        Button("Disconnect") { state.disconnect() }
+                    }
+                } else {
+                    Button { asking = true } label: {
+                        HStack(spacing: 6) {
+                            LampServiceMark(service: state.service).frame(width: 16, height: 16)
+                            Text("Connect to \(state.service.name)")
+                        }
+                    }
+                }
+            }
+            .lampConnectionSheet(isPresented: $asking, state.service, scopes: scopes, reason: reason)
+        }
+    }
+
+    private struct LampServiceMark: View {
+        let service: LampService
+
+        var body: some View {
+            if let data = Data(base64Encoded: service.icon), let picture = LampImage(data: data) {
+                #if os(macOS)
+                Image(nsImage: picture).renderingMode(.template).resizable().scaledToFit()
+                #else
+                Image(uiImage: picture).renderingMode(.template).resizable().scaledToFit()
+                #endif
+            } else {
+                Image(systemName: "person.crop.circle").resizable().scaledToFit()
+            }
+        }
+    }
+
+    private struct LampConnectionScreen: View {
+        @ObservedObject var state: LampConnectionState
+        let reason: String
+        /// A sheet's way out; nil where the screen is all there is to show.
+        var notNow: (() -> Void)?
+        /// Whether the person has been sent to the service's site with the code.
+        @State private var opened = false
+
+        private var name: String { state.service.name }
+
+        var body: some View {
+            VStack(spacing: 14) {
+                LampServiceMark(service: state.service)
+                    .frame(width: 40, height: 40)
+                    .accessibilityHidden(true)
+                if case .waiting(let code) = state.step {
+                    entering(code)
+                } else {
+                    asking
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(24)
+            .frame(maxWidth: 400)
+            // With a size it would like: left to work one out, a window whose only contents are this screen
+            // opens several times taller than the display.
+            .frame(minWidth: 320, idealWidth: 480, maxWidth: .infinity, minHeight: 300, idealHeight: 400, maxHeight: .infinity)
+            .onChange(of: state.step) { _, step in if step == .resting || step == .starting { opened = false } }
+        }
+
+        @ViewBuilder private var asking: some View {
+            Text("Use Your \(name) Account")
+                .font(.title3.weight(.semibold))
+                .multilineTextAlignment(.center)
+            if !reason.isEmpty {
+                Text(reason)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            let lines = state.service.lines(for: state.scopes)
+            if !lines.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(lines, id: \.self) { line in
+                        Label(line, systemImage: "checkmark")
+                    }
+                }
+                .font(.callout)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+            }
+            Button("Connect to \(name)") { state.connect() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .keyboardShortcut(.defaultAction)
+                .disabled(state.step == .starting)
+            if state.step == .starting {
+                ProgressView().controlSize(.small)
+            } else if case .failed(let why) = state.step {
+                Text(why)
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+            }
+            if let notNow { Button("Not Now", action: notNow) }
+        }
+
+        @ViewBuilder private func entering(_ code: LampConnection.Code) -> some View {
+            Text("Enter This Code on \(name)")
+                .font(.title3.weight(.semibold))
+                .multilineTextAlignment(.center)
+            Text(code.shown)
+                .font(.system(size: 30, weight: .semibold, design: .monospaced))
+                .textSelection(.enabled)
+                .padding(.vertical, 4)
+            Button(opened ? "Open \(name) Again" : "Copy Code and Open \(name)") {
+                #if os(macOS)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(code.shown, forType: .string)
+                NSWorkspace.shared.open(code.page)
+                #else
+                UIPasteboard.general.string = code.shown
+                UIApplication.shared.open(code.page)
+                #endif
+                opened = true
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .keyboardShortcut(.defaultAction)
+            if opened {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Waiting for you to approve it there.")
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            }
+            Button("Cancel") { state.cancel() }
+        }
+    }
 
     #if os(macOS)
     // Mac only: the Privacy & Security permissions and the menu bar.

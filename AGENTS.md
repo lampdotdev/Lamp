@@ -222,6 +222,32 @@ installed copy's path, since the copy in build/ or the bundle id starts a second
 opened. `Agent.sandboxNote` says which failures are the sandbox's and not the app's; keep it true when the
 profile changes.
 
+### Signing in to other services
+
+`LampConnection` in LampSupport.swift is how an app gets the person's account on another service, on Mac and
+iPhone: the same "Connect to GitHub" button and screen in every app (`LampConnectionGate`,
+`lampConnectionSheet`, `LampConnectButton`, `LampConnectionState`), the sign-in on the service's own site, the
+sign-in kept in the app's own Keychain, renewed when the service wants that, and `LampConnection.send`, which
+signs a request and sends it only to the service's own API. It never goes through Lamp, so it works with Lamp
+closed, and nothing of it is in the app's folder, so a shared app arrives disconnected. Like `LampPermissions`
+it is strongly recommended to the agent, not forced (`Agent.Rules.connections`, the same rule for both kinds
+of app). The agent names the service and its scopes and writes the API calls; the helper has no feature list.
+
+What differs between services is an entry in `Connections` (`Sources/Lamp/Connections.swift`), and an entry
+is data: the client id Lamp is registered under, the two addresses of OAuth's device flow, the API hosts, where
+to ask who signed in, the scopes with their wording, and the mark. `Template.supportSwift` writes the entries
+into LampSupport.swift as `LampService.github` and so on, and the rule names them from the same list. Only a
+sign-in that needs no secret can be an entry, because everything in one ships readable in every app: GitHub's
+device flow is that; a service that wants a client secret, or only offers a redirect, needs more than an
+entry. An entry with no client id isn't offered to apps or named to the agent.
+
+`LAMP_CONNECTION_SERVER=http://127.0.0.1:PORT` in an app's environment sends its sign-in and its calls to a
+stand-in on the same machine (`ConnectionTests` has one, and runs the helper as apps get it against it:
+sign-in, Keychain, renewal). It takes only that address and keeps what it's given under another Keychain
+name, so it can't carry a real sign-in anywhere. The iPhone simulator gives an app a Keychain only when the
+program says which app it is, so the simulator's build.sh links that in the way Xcode does
+(`simulated-entitlements.plist`); on a phone Xcode's signing says it.
+
 ### Widgets
 
 A Mac app can have a desktop widget. The agent writes it in `Widget/` at the app's root (`Agent.Rules.widget`,
