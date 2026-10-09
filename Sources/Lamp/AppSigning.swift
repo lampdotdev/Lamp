@@ -22,6 +22,17 @@ enum AppSigning {
         Subprocess.runBlocking("/usr/bin/codesign", ["-d", "-r-", app.path], timeout: 30).output.contains("certificate leaf")
     }
 
+    /// The shell command that signs a built app, reading `LAMP_APP` and, with a certificate, `LAMP_IDENTITY`
+    /// and `LAMP_KEYCHAIN`. An app with a widget is signed from the inside out: the widget first, with the
+    /// entitlements in `LAMP_WIDGET_ENTITLEMENTS` (macOS shows no widget that isn't sandboxed, and the app
+    /// itself must stay unsandboxed), then the app around it, whose signature seals the widget's.
+    static func command(adHoc: Bool, widget: Bool) -> String {
+        let sign = adHoc ? "codesign --force -s -" : "codesign --force --keychain \"$LAMP_KEYCHAIN\" -s \"$LAMP_IDENTITY\""
+        let app = "\(sign) \"$LAMP_APP\" 2>&1"
+        guard widget else { return app }
+        return "\(sign) --entitlements \"$LAMP_WIDGET_ENTITLEMENTS\" \"$LAMP_WIDGET\" 2>&1 && " + app
+    }
+
     /// The identity to sign with, or "-" (ad-hoc) if one can't be made.
     @MainActor
     static func identity() async -> String {

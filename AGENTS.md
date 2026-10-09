@@ -198,6 +198,62 @@ app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_
 string: after editing it, extract and type-check it (`swiftc -typecheck`), and bump anything that detects
 an outdated app (`Store.open` rebuilds apps built by an older Lamp).
 
+### Widgets
+
+A Mac app can have a desktop widget. The agent writes it in `Widget/` at the app's root (`Agent.Rules.widget`,
+Mac only; an iPhone app is still told widgets aren't possible). Swift in that folder (`Template.hasWidget`,
+asked before every build) gives the app's Package.swift a second program, built as an extension, and build.sh
+puts it in the app as `Contents/PlugIns/<Exe>Widget.appex` with the bundle id `<app's id>.widget`. It is
+signed by itself, sandboxed (`Template.widgetEntitlementsPlist`), before the app around it
+(`AppSigning.command`): macOS shows no widget that isn't sandboxed, and the app stays unsandboxed. The widget
+shares no code with `Sources/` and doesn't get `LampSupport.swift`, only its own small file (below). Nobody but the person can place a widget
+(Edit Widgets), and `look_at_app` can't see one. A rebuild in place keeps a placed widget; moving the app,
+which renaming it does, removes it.
+
+A shared app (`.lampapp`) carries its widget's code in `Widget/`, never Lamp's own file there. Such a file
+says it is format 3 (`Sharing.format(withWidget:)`; one without a widget stays 2), so a Lamp from before
+widgets asks to be updated instead of building the app without it. `Sharing.Package.sources` is all the
+code in a file, the app's and the widget's: the review reads that list and `Sharing.install` writes from it,
+so add nothing to an app's code folders from a shared file by another way. The widget is read whatever
+number the file gives itself.
+
+Asking for a widget gives a widget and nothing that looks like an app. When a widget is all that was asked
+for, the agent makes the app one scene, `LampWidgetOnly()`, and puts everything in the widget
+(`Template.isWidgetOnly`: an app with a widget whose own code is that scene). Such an app has no window, is
+kept out of the Dock (`LSUIElement`, written by build.sh), and Lamp never opens it in front of anyone. A
+click on its widget opens the app, as macOS does for every widget, and shows nothing: the scene is a menu bar
+item that is never put in the menu bar, so SwiftUI has no window to open for the click (a Settings scene
+opened an empty Settings window). A link on the widget (`widgetURL`, `Link`) is sent to the app too, not
+to the browser, so the app passes it on (`LampWidgetLinks`: it answers the request to open a link itself and
+hands the link to whatever opens it, never back to itself); a widget with no link opens nothing. Whether a
+widget has a link is the agent's choice, and the rule says nothing about clicks. A
+widget that needs something an app must fetch or keep gets a real app, in the menu bar. Either way the chat
+has one card (`WidgetCard`, a `.widget` line added at the first install with a widget): how to add the
+widget, then "On your desktop". macOS gives Lamp no way to open Edit Widgets or to place a widget, so the
+card only says how. It knows the widget is placed because the app it belongs to may ask macOS
+(`LampWidgetPlacement` in LampSupport.swift) and leaves the answer in its runtime folder; a widget-only app
+is run out of sight for that after a build and when Lamp comes back to the front, and quits by itself. The
+agent is told to say two sentences at most and never how to add the widget: that is the card's.
+
+The widget gets the app's data by asking the app (`Template.WidgetSharing` says why, and is the one place
+to change it): macOS refuses an app group to a certificate with no team ID, which is how Lamp signs, and Lamp
+doesn't use exceptions to the sandbox. `LampWidget.share(value, as:)` in LampSupport.swift keeps what the app
+shares, answers on this Mac's own address at a port worked out from the app's id (`Template.widgetPort`) to
+whoever sends the app's widget secret (`Template.widgetToken`), and reloads the widget. `LampWidget.read` in
+`Widget/LampWidgetSupport.swift`, a fourth file Lamp owns and rewrites (`Template.writeWidgetSupport`, only
+for an app with a widget), asks, and keeps the last answer in the widget's own sandbox for when the app is
+closed. So a widget is as fresh as the last time its app ran. The secret never crosses the connection: the
+widget signs its question with it and the app signs its answer over the question's nonce, so only the app's
+widget is answered and the widget passes over anything else that took the port.
+
+Lamp never replaces an app on disk while it's running (`HeldInstalls`): macOS then stops taking the running
+app for its widget's owner and refuses its redraws until it's reopened. A build quits the app first; a new
+icon or its artwork (`Store.installIcon`) waits for the app to close or for the next build. The widget's
+own process is ended just before the swap too, and before an app is deleted (`WidgetProcess`, found by its
+file inside that app or, for a copy running from elsewhere such as the Trash, by the widget's bundle id):
+left alive it no longer matches the widget installed, and macOS fails every reload and leaves the widget
+blank until that process happens to exit.
+
 ## Naming: Lamp and Lamp
 
 The app is called **Lamp**: that's the name in everything the user reads (the interface, Help, the agent's

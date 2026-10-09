@@ -64,6 +64,17 @@ final class SharedAppAboutTests: XCTestCase {
         XCTAssertEqual(meta.name, "Ticker")
     }
 
+    /// An update from a file with no description leaves none: the old words were about the old code.
+    func testUpdateFromAFileWithoutADescriptionClearsIt() throws {
+        let copy = try app(description: words)
+        let unpacked = copy.dir.deletingLastPathComponent().appendingPathComponent("unpacked")
+        try FileManager.default.createDirectory(at: unpacked, withIntermediateDirectories: true)
+        let shared = Sharing.Package(name: "Ticker", folder: unpacked, sources: [], attachments: [], fileCount: 0)
+        try Sharing.install(shared, into: copy, replacing: true)
+        let meta = try JSONDecoder().decode(ProjectMeta.self, from: Data(contentsOf: copy.dir.appendingPathComponent(".lamp/meta.json")))
+        XCTAssertNil(meta.description)
+    }
+
     /// Every engine is given the tool that sets it, and an app without one is told so with the request.
     func testAgentIsGivenTheToolAndToldWhenThereIsNoDescription() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
