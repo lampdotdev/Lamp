@@ -44,8 +44,8 @@ enum Wish {
 
     /// Looks for a wish without ever making macOS ask about the clipboard: what kinds of thing are on it can be
     /// seen without reading them, and macOS says beforehand whether a read would ask.
-    @MainActor static func look(at pasteboard: NSPasteboard = .general, canAsk: Bool = Wish.canAsk()) -> Look {
-        guard canAsk, let types = pasteboard.types, types.contains(.html), types.contains(.string) else { return .nothing }
+    @MainActor static func look(at pasteboard: NSPasteboard = .general) -> Look {
+        guard let types = pasteboard.types, types.contains(.html), types.contains(.string) else { return .nothing }
         if #available(macOS 15.4, *) {
             switch pasteboard.accessBehavior {
             case .alwaysAllow: break
@@ -57,21 +57,9 @@ enum Wish {
     }
 
     /// Whether to offer a Paste button: only where macOS stands between Lamp and a browser's copy. Reads nothing.
-    @MainActor static func offersPaste(from pasteboard: NSPasteboard = .general, canAsk: Bool = Wish.canAsk()) -> Bool {
-        guard canAsk, #available(macOS 15.4, *), let types = pasteboard.types, types.contains(.string), fromBrowser(types) else { return false }
+    @MainActor static func offersPaste(from pasteboard: NSPasteboard = .general) -> Bool {
+        guard #available(macOS 15.4, *), let types = pasteboard.types, types.contains(.string), fromBrowser(types) else { return false }
         return pasteboard.accessBehavior != .alwaysAllow && pasteboard.accessBehavior != .alwaysDeny
-    }
-
-    /// Apple's developer switch that turns the clipboard question on for an app.
-    static let questionSwitch = "EnablePasteboardPrivacyDeveloperPreview"
-
-    /// False where asking macOS whether a read would ask can't be done safely. With the developer switch on,
-    /// macOS 27.0.1 never answers that on the main thread (the welcome froze, 2026-10-09) and raises when
-    /// asked on any other, so there is no asking with a deadline: Lamp leaves the clipboard alone there and
-    /// the box starts empty. On macOS 26 the same switch answers at once, and nothing ships with it on.
-    static func canAsk(system: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion,
-                       settings: UserDefaults = .standard) -> Bool {
-        !(system.majorVersion >= 27 && settings.bool(forKey: questionSwitch))
     }
 
     /// Browsers leave a type of their own beside what they copy; other apps' rich text doesn't have one.
