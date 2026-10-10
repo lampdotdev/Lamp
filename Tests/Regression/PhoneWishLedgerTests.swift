@@ -43,4 +43,35 @@ final class PhoneWishLedgerTests: XCTestCase {
         XCTAssertThrowsError(try ledger.accept(id: UUID(), pairID: UUID(), wish: "Make a counter"))
         XCTAssertTrue(ledger.jobs.isEmpty)
     }
+
+    // Dan's added case: a reply changes the same app, even when its acknowledgement is lost.
+    func testFollowupReconnectKeepsOneConversationAndOneCopyOfTheReply() throws {
+        let file = try file(), chat = UUID(), pair = UUID(), reply = UUID()
+        var ledger = try PhoneWishLedger(file: file)
+        _ = try ledger.accept(id: chat, pairID: pair, wish: "Make a counter")
+        try ledger.record(chat, in: chat, as: .posted)
+        try ledger.update(.init(id: chat, phase: .ready))
+        _ = try ledger.reply(id: reply, to: chat, pairID: pair, text: "Add a reset button")
+        try ledger.record(reply, in: chat, as: .dispatched)
+        ledger = try PhoneWishLedger(file: file)
+        for _ in 0..<30 { _ = try ledger.reply(id: reply, to: chat, pairID: pair, text: "Add a reset button") }
+        let job = try XCTUnwrap(ledger.job(chat, for: pair))
+        XCTAssertEqual(ledger.jobs.count, 1)
+        XCTAssertEqual(job.id, chat)
+        XCTAssertEqual(job.submissions.map(\.text), ["Make a counter", "Add a reset button"])
+        XCTAssertEqual(job.submissions.last?.state, .dispatched)
+    }
+
+    func testFollowupsWhileBuildingStayInTheSameConversationInSendOrder() throws {
+        var ledger = try PhoneWishLedger(file: file())
+        let chat = UUID(), pair = UUID(), first = UUID(), second = UUID()
+        _ = try ledger.accept(id: chat, pairID: pair, wish: "Make a counter")
+        try ledger.update(.init(id: chat, phase: .building))
+        _ = try ledger.reply(id: first, to: chat, pairID: pair, text: "Add reset")
+        _ = try ledger.reply(id: second, to: chat, pairID: pair, text: "Make the number larger")
+        let job = try XCTUnwrap(ledger.job(chat, for: pair))
+        XCTAssertEqual(ledger.jobs.count, 1)
+        XCTAssertEqual(job.submissions.map(\.id), [chat, first, second])
+        XCTAssertEqual(job.status.phase, .building)
+    }
 }

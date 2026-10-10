@@ -173,6 +173,7 @@ struct QueuedMessage: Identifiable {
     var attachments: [URL] = []
     /// Files already in the app's Attachments folder: those of a request that's sent again.
     var kept: [String] = []
+    var phoneID: UUID? = nil
     /// The request this one takes the place of, when it's one sent again in other words.
     var replaces: String? = nil
     /// Every request that left the chat when this one was sent, oldest first.
@@ -509,8 +510,8 @@ final class Store: ObservableObject {
     }
 
     func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil,
-             offer: SetupOffer? = nil) {
-        logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone, offer: offer))
+             offer: SetupOffer? = nil, id: UUID = UUID()) {
+        logs[project.id, default: []].append(LogLine(id: id, kind: kind, text: text, attachments: attachments, retryPhone: retryPhone, offer: offer))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
         saveChat(project)
     }
@@ -1352,23 +1353,25 @@ final class Store: ObservableObject {
 
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
     /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
-    func send(_ prompt: String, attachments: [URL] = [], to project: LampProject) {
+    func send(_ prompt: String, attachments: [URL] = [], to project: LampProject, phoneID: UUID? = nil) {
         // Waiting for setup can outlast this run, and the files may be temporary (a pasted screenshot):
         // keep copies, so the request still has them after a relaunch.
         let files = setup.ready ? attachments : keepForLater(attachments)
-        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files))
+        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, phoneID: phoneID))
         startQueued(project)
         saveWaiting()
     }
 
     /// An authenticated phone's Send enters the same setup check, queue, agent and approval flow as
     /// Send on the Mac. The persisted request ID identifies the draft across naming and reconnects.
-    func startPhoneWish(_ job: PhoneWishLedger.Job, device: String, finished: @escaping () -> Void) {
+    func startPhoneMessage(_ message: PhoneWishLedger.Submission, in job: PhoneWishLedger.Job,
+                           device: String, finished: @escaping () -> Void) {
         let project: LampProject
         do {
             if let existing = projects.first(where: { $0.instance == job.id.uuidString }) {
                 project = existing
             } else {
+                guard message.id == job.id else { throw PhoneLink.Failure.invalid }
                 var draft = try Template.draft(name: uniqueName("Untitled"), untitled: true, platform: .iphone,
                                                instance: job.id.uuidString, in: root)
                 draft.device = device
@@ -1377,19 +1380,19 @@ final class Store: ObservableObject {
                 reload()
             }
         } catch {
-            PhoneWishes.shared.reject(job.id)
+            PhoneWishes.shared.reject(job.id, messageID: message.id)
             finished()
             return
         }
         PhoneSetup.shared.perform(for: project, in: self, cancelled: {
-            PhoneWishes.shared.reject(job.id)
+            PhoneWishes.shared.reject(job.id, messageID: message.id)
             finished()
         }) { current in
             defer { finished() }
             do {
-                try PhoneWishes.shared.mark(current, .building)
-                self.send(job.wish, to: current)
-            } catch { PhoneWishes.shared.reject(job.id) }
+                try PhoneWishes.shared.dispatch(message.id, in: current)
+                self.send(message.text, to: current, phoneID: message.id)
+            } catch { PhoneWishes.shared.reject(job.id, messageID: message.id) }
         }
     }
 
@@ -1412,7 +1415,11 @@ final class Store: ObservableObject {
 
     private func saveWaiting() {
         let waiting = setup.ready ? [:] : queued.filter { !$0.value.isEmpty }.mapValues { messages in
-            messages.map { ["text": $0.text, "attachments": $0.attachments.map(\.path)] as [String: Any] }
+            messages.map { message in
+                var saved: [String: Any] = ["text": message.text, "attachments": message.attachments.map(\.path)]
+                if let id = message.phoneID { saved["phoneID"] = id.uuidString }
+                return saved
+            }
         }
         if waiting.isEmpty {
             UserDefaults.standard.removeObject(forKey: Self.waitingKey)
@@ -1430,7 +1437,8 @@ final class Store: ObservableObject {
                 queued[id] = messages.map { message in
                     let files = (message["attachments"] as? [String] ?? []).filter { FileManager.default.fileExists(atPath: $0) }
                     kept.formUnion(files.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path })
-                    return QueuedMessage(text: message["text"] as? String ?? "", attachments: files.map(URL.init(fileURLWithPath:)))
+                    return QueuedMessage(text: message["text"] as? String ?? "", attachments: files.map(URL.init(fileURLWithPath:)),
+                                         phoneID: (message["phoneID"] as? String).flatMap(UUID.init(uuidString:)))
                 }
             }
         }
@@ -1533,6 +1541,7 @@ final class Store: ObservableObject {
                 if selection != project.id || !NSApp.isActive { unread.insert(project.id) }
                 // Messages queued meanwhile start the next turn straight away; tell the user once it's all done.
                 if !owner.stopped, !result.watched, (queued[project.id] ?? []).isEmpty { notify(project, after: result.end) }
+                PhoneWishes.shared.ended(project, replied: result.end == .replied)
                 finish(project)
             }
             // Named now, so the scaffold is written under its name. If it can't be, the turn ends here, failed.
@@ -1677,7 +1686,8 @@ final class Store: ObservableObject {
         var saved: [String] = []
         for message in messages {
             let names = message.kept + Attachments.save(message.attachments, to: project)
-            log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
+            log(project, .user, message.text, attachments: names.isEmpty ? nil : names, id: message.phoneID ?? UUID())
+            if let id = message.phoneID { PhoneWishes.shared.posted(id, in: project) }
             if message.replaces != nil || !message.tookBack.isEmpty, let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].replaced = message.replaces
                 logs[project.id]?[last].tookBack = message.tookBack.isEmpty ? nil : message.tookBack

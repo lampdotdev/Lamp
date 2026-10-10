@@ -2,8 +2,8 @@ import SwiftUI
 import Network
 import CoreImage.CIFilterBuiltins
 
-/// One paired phone, one wish in flight. The companion has no access to the gateway, project list,
-/// conversation, settings or approval decisions. All execution still belongs to Store's normal turn.
+/// One paired phone and its app's chat. The companion cannot browse other projects or reach the
+/// gateway, settings, files or approval decisions. Execution still belongs to Store's normal turn.
 @MainActor final class PhoneWishes: ObservableObject {
     static let shared = PhoneWishes()
     struct Pairing: Codable {
@@ -21,6 +21,7 @@ import CoreImage.CIFilterBuiltins
     private var starting: Set<UUID> = []
     private var retryAfter: [UUID: Date] = [:]
     private var power: NSObjectProtocol?
+    private var transfer: PhoneLink.ChatTransfer?
     private var enabled: Bool { UserDefaults.standard.bool(forKey: "phoneWishesEnabled") }
     private var keyService: String { Edition.bundleID + ".phone-wishes" }
 
@@ -37,8 +38,11 @@ import CoreImage.CIFilterBuiltins
                 var saved = try PhoneWishLedger(file: Edition.supportFolder.appendingPathComponent("PhoneWishes/jobs.json"))
                 // A process death cannot prove where an agent stopped. Keep its wish and app for the
                 // person on the Mac; never automatically run a possibly completed request twice.
-                for job in saved.jobs where [.building, .approval].contains(job.status.phase) {
+                for job in saved.jobs where [.queued, .building, .approval].contains(job.status.phase) {
                     try saved.update(.init(id: job.id, phase: .needsMac))
+                    for message in job.submissions where message.state == .queued {
+                        try saved.record(message.id, in: job.id, as: .dispatched)
+                    }
                 }
                 for job in saved.jobs where job.status.phase == .installing {
                     try saved.update(.init(id: job.id, phase: .waitingPhone))
@@ -74,6 +78,7 @@ import CoreImage.CIFilterBuiltins
         server?.stop()
         server = nil
         listening = false
+        transfer = nil
     }
 
     func owns(_ project: LampProject) -> Bool {
@@ -83,21 +88,38 @@ import CoreImage.CIFilterBuiltins
     func mark(_ project: LampProject, _ phase: PhoneLink.Status.Phase, appURL: String? = nil) throws {
         guard let id = UUID(uuidString: project.instance), owns(project) else { return }
         guard ledger != nil else { throw PhoneLink.Failure.storage }
-        try ledger?.update(.init(id: id, phase: phase, appURL: appURL))
+        let previousURL = ledger?.jobs.first { $0.id == id }?.status.appURL
+        try ledger?.update(.init(id: id, phase: phase, appURL: appURL ?? previousURL))
         updatePower()
     }
 
-    func ended(_ project: LampProject) {
+    func ended(_ project: LampProject, replied: Bool = false) {
         guard let job = ledger?.jobs.first(where: { $0.id.uuidString == project.instance }),
-              [.queued, .building, .approval, .installing].contains(job.status.phase) else { updatePower(); return }
-        do { try mark(project, .needsMac) }
+              (replied && job.status.phase != .waitingPhone) || [.queued, .building, .approval, .installing].contains(job.status.phase)
+        else { updatePower(); return }
+        do { try mark(project, replied ? (job.status.appURL == nil ? .replied : .ready) : .needsMac) }
         catch { problem = "Couldn't save wish progress. Check Lamp on Mac." }
     }
 
-    func reject(_ id: UUID) {
-        do { try ledger?.update(.init(id: id, phase: .needsMac)) }
+    func reject(_ id: UUID, messageID: UUID) {
+        do {
+            try ledger?.record(messageID, in: id, as: .dispatched)
+            try ledger?.update(.init(id: id, phase: .needsMac))
+        }
         catch { problem = "Couldn't save wish progress. Check Lamp on Mac." }
         updatePower()
+    }
+
+    func dispatch(_ messageID: UUID, in project: LampProject) throws {
+        guard let id = UUID(uuidString: project.instance), ledger != nil else { throw PhoneLink.Failure.storage }
+        try ledger?.record(messageID, in: id, as: .dispatched)
+        if !Store.shared.busy.contains(project.id) { try mark(project, .building) }
+    }
+
+    func posted(_ messageID: UUID, in project: LampProject) {
+        guard owns(project), let id = UUID(uuidString: project.instance) else { return }
+        do { try ledger?.record(messageID, in: id, as: .posted) }
+        catch { problem = "Couldn't save message progress. Check Lamp on Mac." }
     }
 
     private func updatePower() {
@@ -118,30 +140,75 @@ import CoreImage.CIFilterBuiltins
         do {
             if request.action == .hello { showCode = false; return .init() }
             guard let id = request.id else { throw PhoneLink.Failure.invalid }
+            let chatID = request.chatID ?? id
             if request.action == .submit {
                 guard let wish = request.wish else { throw PhoneLink.Failure.invalid }
-                _ = try ledger?.accept(id: id, pairID: pairID, wish: wish)
+                if request.chatID == nil {
+                    // A request UUID names a new phone app, never an existing unrelated Mac app.
+                    guard ledger?.jobs.contains(where: { $0.id == id }) == true ||
+                            !Store.shared.projects.contains(where: { $0.instance == id.uuidString }) else { throw PhoneLink.Failure.invalid }
+                    _ = try ledger?.accept(id: id, pairID: pairID, wish: wish)
+                } else {
+                    if let owned = ledger?.job(chatID, for: pairID), !owned.submissions.contains(where: { $0.id == id }),
+                       let project = Store.shared.projects.first(where: { $0.instance == chatID.uuidString }),
+                       Store.shared.logs[project.id]?.contains(where: { $0.id == id }) == true { throw PhoneLink.Failure.invalid }
+                    _ = try ledger?.reply(id: id, to: chatID, pairID: pairID, text: wish)
+                }
             }
-            guard let job = ledger?.jobs.first(where: { $0.id == id && $0.pairID == pairID }) else {
-                return .init(error: "Wish not found")
+            guard let job = ledger?.job(chatID, for: pairID) else {
+                return .init(error: "Conversation not found", refused: request.action == .submit)
             }
-            if job.status.phase == .queued, starting.insert(id).inserted {
+            for message in job.submissions where message.state == .queued && starting.insert(message.id).inserted {
                 updatePower()
-                Store.shared.startPhoneWish(job, device: pairing.device) { [weak self] in self?.starting.remove(id) }
+                Store.shared.startPhoneMessage(message, in: job, device: pairing.device) { [weak self] in self?.starting.remove(message.id) }
             }
-            let project = Store.shared.projects.first { $0.instance == id.uuidString }
+            let project = Store.shared.projects.first { $0.instance == chatID.uuidString }
             if job.status.phase == .waitingPhone, let project, !Store.shared.busy.contains(project.id),
-               (retryAfter[id] ?? .distantPast) < Date() {
-                retryAfter[id] = Date().addingTimeInterval(20)
+               !job.submissions.contains(where: { $0.state == .queued }),
+               (retryAfter[chatID] ?? .distantPast) < Date() {
+                retryAfter[chatID] = Date().addingTimeInterval(20)
                 Task { await Store.shared.retryPhone(project, udid: pairing.device) }
             }
-            var status = ledger?.jobs.first { $0.id == id }?.status ?? job.status
-            if let project, Store.shared.approvals[project.id] != nil { status.phase = .approval }
-            return .init(status: status)
+            var status = ledger?.job(chatID, for: pairID)?.status ?? job.status
+            if let project {
+                if Store.shared.busy.contains(project.id) {
+                    if status.phase.isFinished { status.phase = .building }
+                    status.activity = Store.shared.progress[project.id]?.activity
+                }
+                if Store.shared.approvals[project.id] != nil { status.phase = .approval; status.activity = nil }
+            }
+            let chunk = try transcript(request, job: job, project: project)
+            return .init(status: status, acceptedID: request.action == .submit ? id : nil, chat: chunk)
         } catch {
-            let accepted = request.id.flatMap { id in ledger?.jobs.first { $0.id == id } } != nil
-            return .init(error: error.localizedDescription, refused: !accepted)
+            let job = request.id.flatMap { ledger?.job(request.chatID ?? $0, for: pairID) }
+            let accepted = request.action == .submit && job?.submissions.contains {
+                $0.id == request.id && $0.text == request.wish
+            } == true
+            return .init(status: accepted ? job?.status : nil, error: error.localizedDescription,
+                         refused: !accepted, acceptedID: accepted ? request.id : nil)
         }
+    }
+
+    private func transcript(_ request: PhoneLink.Request, job: PhoneWishLedger.Job, project: LampProject?) throws -> PhoneLink.ChatChunk {
+        if let revision = request.revision, let transfer, transfer.chatID == job.id,
+           transfer.revision == revision, Date().timeIntervalSince(transfer.created) < 30 {
+            return try transfer.chunk(at: request.offset ?? 0)
+        }
+        let store = Store.shared
+        let raw = project.map { store.logs[$0.id] ?? [] } ?? []
+        let lines = project.map { Transcript.withoutSpentOffers(raw, dir: $0.dir) } ?? raw
+        var queued = (project.map { store.queued[$0.id] ?? [] } ?? []).map {
+            PhoneLink.ChatLine(id: $0.phoneID ?? $0.id, kind: .user, text: $0.text,
+                               attachments: $0.attachments.count + $0.kept.count, queued: true)
+        }
+        let known = Set(raw.map(\.id) + queued.map(\.id))
+        queued += job.submissions.filter { $0.state != .posted && !known.contains($0.id) }.map {
+            .init(id: $0.id, kind: .user, text: $0.text, queued: true)
+        }
+        let chat = PhoneTranscript.chat(id: job.id, title: project?.title ?? "New App", lines: lines, queued: queued)
+        let frozen = try PhoneLink.ChatTransfer(chat)
+        transfer = frozen
+        return try frozen.chunk(at: 0)
     }
 
     func install(on device: Devices.Device) {
@@ -204,7 +271,7 @@ import CoreImage.CIFilterBuiltins
     }
 
     private var ledgerJobsInFlight: Bool {
-        ledger?.jobs.contains { ![.ready, .needsMac].contains($0.status.phase) } == true
+        ledger?.jobs.contains { !$0.status.phase.isFinished } == true
     }
 
     var code: NSImage? {

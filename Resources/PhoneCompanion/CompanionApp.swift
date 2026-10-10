@@ -18,17 +18,23 @@ import AVFoundation
     struct Pending: Codable {
         let id: UUID
         let wish: String
-        var status: PhoneLink.Status
+        var status: PhoneLink.Status? // Reads the first prototype's saved wish too.
+        var chatID: UUID?
+        var refused: Bool?
+        var problem: String?
     }
     struct Saved: Codable {
         var draft = ""
         var pending: Pending?
+        var chatID: UUID?
+        var transcript: PhoneLink.Chat?
+        var status: PhoneLink.Status?
     }
     @Published var saved = Saved()
     @Published var paired = false
     @Published var message: String?
     @Published var scanning = false
-    @Published var refused = false
+    @Published var connectionProblem = false
     private var pair: PhoneLink.Pair?
     private var browser: NWBrowser?
     private var endpoint: NWEndpoint?
@@ -38,6 +44,7 @@ import AVFoundation
     private var active = false
     private var hello = true
     private var canSave = true
+    private var assembly = PhoneLink.ChatAssembly()
     private let queue = DispatchQueue(label: "lamp.companion.discovery")
     private let file = URL.applicationSupportDirectory.appendingPathComponent("wish.json")
     private var keyService: String { (Bundle.main.bundleIdentifier ?? "lamp.companion") + ".pair" }
@@ -46,12 +53,17 @@ import AVFoundation
         do {
             if FileManager.default.fileExists(atPath: file.path) {
                 saved = try JSONDecoder().decode(Saved.self, from: Data(contentsOf: file))
+                if saved.chatID == nil, let pending = saved.pending {
+                    saved.chatID = pending.id
+                    saved.status = pending.status
+                    if saved.draft == pending.wish { saved.draft = "" }
+                }
             }
             pair = try PhoneLink.loadKey(PhoneLink.Pair.self, service: keyService)
             paired = pair?.valid == true
         } catch {
             canSave = false
-            message = "Couldn't read the saved wish. Reopen Lamp."
+            message = "Couldn't read the saved conversation. Reopen Lamp."
         }
     }
 
@@ -64,38 +76,61 @@ import AVFoundation
         saved = next
     }
 
+    var canSend: Bool {
+        canSave && saved.pending == nil && !saved.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && saved.draft.count <= 4000
+    }
+    var canStartApp: Bool {
+        saved.pending == nil && saved.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && saved.chatID != nil && saved.status?.phase.isFinished == true
+    }
+
     func send() {
         let scalars = saved.draft.unicodeScalars.filter { $0 == "\n" || !CharacterSet.controlCharacters.contains($0) }
-        let wish = String(String.UnicodeScalarView(scalars)).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard saved.pending == nil, !wish.isEmpty, wish.count <= 4000 else { return }
+        let text = String(String.UnicodeScalarView(scalars)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canSend, !text.isEmpty else { return }
         let id = UUID()
         do {
-            let request = PhoneLink.Request(action: .submit, id: id, wish: wish)
+            let request = PhoneLink.Request(action: .submit, id: id, wish: text, chatID: saved.chatID)
             guard try JSONEncoder().encode(request).count <= PhoneLink.limit else {
-                message = "Wish is too long. Shorten it and try again."
+                message = "Message is too long. Shorten it and try again."
                 return
             }
-            try persist(Saved(draft: wish, pending: Pending(id: id, wish: wish, status: .init(id: id, phase: .queued))))
-            refused = false
+            var next = saved
+            next.pending = Pending(id: id, wish: text, chatID: saved.chatID)
+            next.chatID = saved.chatID ?? id
+            next.status = .init(id: next.chatID!, phase: .queued, appURL: saved.status?.appURL)
+            next.draft = ""
+            try persist(next)
+            assembly = .init()
             poll()
         } catch { message = "Couldn't save. Try again." }
     }
 
-    func newWish() {
-        do { try persist(Saved()); message = nil }
-        catch { message = "Couldn't save. Try again." }
+    func newApp() {
+        guard canStartApp else { return }
+        do {
+            try persist(Saved())
+            message = nil
+            restart()
+        } catch { message = "Couldn't save. Try again." }
     }
 
-    func editWish() {
-        do { try persist(Saved(draft: saved.pending?.wish ?? saved.draft)); refused = false; message = nil }
-        catch { message = "Couldn't save. Try again." }
+    func editMessage() {
+        guard let pending = saved.pending, pending.refused == true else { return }
+        do {
+            var next = saved
+            next.draft = pending.wish + (saved.draft.isEmpty ? "" : "\n\n" + saved.draft)
+            next.pending = nil
+            if pending.chatID == nil { next.chatID = nil; next.status = nil; next.transcript = nil }
+            try persist(next)
+            message = nil
+        } catch { message = "Couldn't save. Try again." }
     }
 
     func scanned(_ text: String) {
         guard let found = PhoneLink.Pair.read(text) else { message = "Scan the code in Lamp on Mac."; return }
-        if let pending = saved.pending, ![.ready, .needsMac].contains(pending.status.phase),
-           let pair, pair.id != found.id {
-            message = "Finish the current wish before pairing with another Mac."
+        if let pair, pair.id != found.id, saved.chatID != nil {
+            message = "Start a new app before pairing with another Mac."
             scanning = false
             return
         }
@@ -121,6 +156,7 @@ import AVFoundation
         browser?.cancel(); browser = nil
         exchange?.cancel(); exchange = nil
         endpoint = nil
+        assembly = .init()
         guard active, let pair, pair.valid else { return }
         let ticket = generation
         let parameters = NWParameters.tcp
@@ -157,13 +193,16 @@ import AVFoundation
     }
 
     private func poll() {
-        guard active, !refused, exchange == nil, let pair else { return }
-        guard let endpoint else { message = "Waiting for Mac on Wi-Fi"; return }
+        guard active, exchange == nil, let pair else { return }
+        guard let endpoint else { connectionProblem = true; message = "Waiting for Mac on Wi-Fi"; return }
         let request: PhoneLink.Request
         if hello { request = .init(action: .hello) }
-        else if let pending = saved.pending {
-            request = .init(action: .submit, id: pending.id, wish: pending.wish)
-        } else { request = .init(action: .hello) }
+        else if let pending = saved.pending, pending.refused != true {
+            request = .init(action: .submit, id: pending.id, wish: pending.wish, chatID: pending.chatID)
+        } else if let id = saved.chatID, saved.pending?.refused != true || saved.pending?.chatID != nil {
+            request = .init(action: .status, id: id, revision: assembly.revision, offset: assembly.data.count)
+        } else if saved.pending?.refused == true { return }
+        else { request = .init(action: .hello) }
         let ticket = generation
         let exchange = PhoneLinkExchange(endpoint: endpoint, pair: pair)
         self.exchange = exchange
@@ -172,17 +211,35 @@ import AVFoundation
                 guard let self, self.generation == ticket else { return }
                 self.exchange = nil
                 switch result {
-                case .failure: self.message = "Waiting for Mac on Wi-Fi"
+                case .failure:
+                    self.assembly = .init()
+                    self.connectionProblem = true
+                    self.message = "Waiting for Mac on Wi-Fi"
                 case .success(let reply):
-                    if let error = reply.error { self.message = error; self.refused = reply.refused == true; return }
-                    self.hello = false
-                    self.message = nil
-                    self.refused = false
-                    if let status = reply.status, status.id == self.saved.pending?.id {
-                        var next = self.saved
-                        next.pending?.status = status
-                        do { try self.persist(next) }
-                        catch { self.message = "Couldn't save progress. Reopen Lamp." }
+                    self.connectionProblem = false
+                    var next = self.saved
+                    if let accepted = reply.acceptedID, accepted == next.pending?.id { next.pending = nil }
+                    if let status = reply.status, status.id == next.chatID { next.status = status }
+                    if reply.refused == true, request.action == .submit, request.id == next.pending?.id {
+                        next.pending?.refused = true
+                        next.pending?.problem = reply.error
+                    }
+                    var more = false
+                    do {
+                        // A new Send can abandon an older snapshot while its next chunk is travelling.
+                        // Its acknowledgement is still considered above; that old chunk is just stale.
+                        let stale = request.revision != nil && request.revision != self.assembly.revision
+                        if !stale, let chunk = reply.chat, let id = next.chatID {
+                            if let chat = try self.assembly.append(chunk, for: id) { next.transcript = chat }
+                            else { more = true }
+                        }
+                        try self.persist(next)
+                        if reply.error == nil { self.hello = false }
+                        self.message = reply.error
+                        if reply.error == nil, more || (request.action == .hello && next.pending != nil) { self.poll() }
+                    } catch {
+                        self.assembly = .init()
+                        self.message = "Couldn't save the conversation. Reopen Lamp."
                     }
                 }
             }
@@ -190,7 +247,7 @@ import AVFoundation
     }
 
     func openApp() {
-        guard let text = saved.pending?.status.appURL, let url = URL(string: text),
+        guard let text = saved.status?.appURL, let url = URL(string: text),
               url.scheme?.hasPrefix("lamp-app-") == true else { return }
         UIApplication.shared.open(url, options: [:]) { [weak self] opened in
             if !opened { Task { @MainActor in self?.message = "Couldn't open app. Check Lamp on Mac." } }
@@ -201,42 +258,30 @@ import AVFoundation
 private struct CompanionView: View {
     @ObservedObject var model: CompanionModel
     @FocusState private var writing: Bool
+    @State private var atBottom = true
+    @State private var startingApp = false
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 20) {
+            Group {
                 if !model.paired {
-                    Text("In Lamp on Mac, open Settings → Experimental → iPhone wishes.")
-                    Button("Scan Mac Code") { model.scanning = true }.buttonStyle(.borderedProminent)
-                } else if let pending = model.saved.pending {
-                    Text(pending.wish)
-                    if ![.ready, .needsMac].contains(pending.status.phase) {
-                        HStack { ProgressView(); Text(pending.status.phase.text) }
-                    } else { Text(pending.status.phase.text).foregroundStyle(.secondary) }
-                    if pending.status.phase == .ready {
-                        Button("Open App") { model.openApp() }.buttonStyle(.borderedProminent)
-                    }
-                    if [.ready, .needsMac].contains(pending.status.phase) {
-                        Button("New Wish") { model.newWish() }.buttonStyle(.bordered)
-                    }
+                    VStack(alignment: .leading, spacing: 20) {
+                        Text("In Lamp on Mac, open Settings → Experimental → iPhone wishes.")
+                        Button("Scan Mac Code") { model.scanning = true }.buttonStyle(.borderedProminent)
+                        if let message = model.message { Text(message).foregroundStyle(.secondary) }
+                        Spacer()
+                    }.padding(24)
                 } else {
-                    Text("What would you like to make?")
-                    TextEditor(text: $model.saved.draft).focused($writing)
-                        .frame(minHeight: 150, maxHeight: 240)
-                        .padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
-                        .accessibilityLabel("Wish")
-                        .onChange(of: model.saved.draft) { _, _ in model.saveDraft() }
-                    Button("Send") { writing = false; model.send() }.buttonStyle(.borderedProminent)
-                        .disabled(model.saved.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.saved.draft.count > 4000)
+                    conversation
                 }
-                if let message = model.message { Text(message).foregroundStyle(.secondary) }
-                if model.refused { Button("Edit Wish") { model.editWish() } }
-                if model.paired, model.message != nil {
-                    Button("Scan Mac Code") { model.scanning = true }
-                }
-                Spacer()
             }
-            .padding(24)
-            .navigationTitle("Lamp")
+            .navigationTitle(model.saved.transcript?.title ?? "Lamp")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if model.canStartApp { Button("New App") { startingApp = true } }
+            }
+            .confirmationDialog("Start a new app? This conversation stays on your Mac.", isPresented: $startingApp, titleVisibility: .visible) {
+                Button("New App") { model.newApp() }
+            }
             .sheet(isPresented: $model.scanning) {
                 NavigationStack {
                     CodeScanner(scanned: model.scanned)
@@ -245,6 +290,75 @@ private struct CompanionView: View {
                 }
             }
         }
+    }
+
+    private var conversation: some View {
+        VStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 20) {
+                        if model.saved.chatID == nil { Text("What would you like to make?").foregroundStyle(.secondary) }
+                        ForEach(model.saved.transcript?.lines ?? []) { line in
+                            chatLine(line)
+                        }
+                        if let pending = model.saved.pending,
+                           model.saved.transcript?.lines.contains(where: { $0.id == pending.id }) != true {
+                            chatLine(.init(id: pending.id, kind: .user, text: pending.wish, queued: pending.refused != true))
+                            if pending.refused == true { Text(pending.problem ?? "Message not sent.").foregroundStyle(.secondary) }
+                        }
+                        if let message = model.message { Text(message).foregroundStyle(.secondary) }
+                        else if let status = model.saved.status, !status.phase.isFinished {
+                            if status.phase == .approval {
+                                Text("Approve this request in Lamp on Mac.").foregroundStyle(.secondary)
+                            } else {
+                                HStack { ProgressView(); Text(status.activity ?? status.phase.text) }.foregroundStyle(.secondary)
+                            }
+                        } else if model.saved.status?.phase == .needsMac {
+                            Text("Check Lamp on Mac.").foregroundStyle(.secondary)
+                        }
+                        if model.saved.pending?.refused == true {
+                            Button("Edit Message") { model.editMessage(); writing = true }
+                        }
+                        if model.saved.status?.phase == .ready, model.saved.status?.appURL != nil {
+                            Button("Open App") { model.openApp() }.buttonStyle(.borderedProminent)
+                        }
+                        if model.connectionProblem { Button("Scan Mac Code") { model.scanning = true } }
+                        Color.clear.frame(height: 1).id("bottom")
+                            .onAppear { atBottom = true }.onDisappear { atBottom = false }
+                    }.padding(20)
+                }
+                .defaultScrollAnchor(.bottom)
+                .onChange(of: model.saved.transcript) { _, _ in if atBottom { proxy.scrollTo("bottom") } }
+                .onChange(of: model.saved.pending?.id) { _, id in if id != nil { proxy.scrollTo("bottom") } }
+            }
+            Divider()
+            HStack(alignment: .bottom, spacing: 12) {
+                TextField(model.saved.chatID == nil ? "Describe an app…" : "Message…", text: $model.saved.draft, axis: .vertical)
+                    .lineLimit(1...6).focused($writing).padding(10)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityLabel("Message")
+                    .onChange(of: model.saved.draft) { _, _ in model.saveDraft() }
+                Button("Send") { model.send() }.disabled(!model.canSend).padding(.bottom, 10)
+            }.padding(12)
+        }
+    }
+
+    private func chatLine(_ line: PhoneLink.ChatLine) -> some View {
+        VStack(alignment: line.kind == .user ? .trailing : .leading, spacing: 6) {
+            if !line.text.isEmpty {
+                if line.kind == .agent {
+                    Text((try? AttributedString(markdown: line.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(line.text))
+                        .textSelection(.enabled)
+                } else {
+                    Text(line.text).textSelection(.enabled)
+                        .foregroundStyle(line.kind == .user ? Color.primary : Color.secondary)
+                        .padding(line.kind == .user ? 12 : 0)
+                        .background(line.kind == .user ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+            if line.attachments > 0 { Text(line.attachments == 1 ? "Attachment on Mac" : "Attachments on Mac").font(.footnote).foregroundStyle(.secondary) }
+            if line.queued { Text("Queued").font(.footnote).foregroundStyle(.secondary) }
+        }.frame(maxWidth: .infinity, alignment: line.kind == .user ? .trailing : .leading)
     }
 }
 

@@ -197,14 +197,20 @@ project/signing code as generated apps. `PhoneLink.swift` is bundled verbatim fo
 pairs one phone with a random 256-bit TLS PSK; Bonjour advertises only its random identity. Secrets live
 in Keychain, never in an app bundle or the wish ledger. Both network endpoints require Wi-Fi.
 
-`PhoneWishLedger` writes a request before acknowledging it; the request UUID is also the app's
-`instance`, so naming cannot lose the association. `Store.startPhoneWish` uses `PhoneSetup` and `send`,
-including the ordinary agent, sandbox and approval cards. The phone can submit and read progress only;
-approval stays on the Mac. Installation for these jobs completes without `devicectl --console`; the
+`PhoneWishLedger` writes each message before acknowledging it. The first request UUID is the app's
+`instance`, and follow-ups have their own UUID within that conversation, so naming and retries cannot
+create another app or repeat a message. `Store.startPhoneMessage` uses `PhoneSetup` and `send`, including
+the ordinary agent session, sandbox and approval cards. `PhoneTranscript` projects the normal visible Mac
+chat, using `LogLine.visible` and `ChatItem`; file contents, agent details and approval controls aren't
+exposed. Frozen transcript chunks carry the chat identity, revision, offsets and SHA256, and the phone
+publishes only a complete verified copy. Approval and attachments stay on the Mac.
+Installation for these jobs completes without `devicectl --console`; the
 companion's Open App uses the generated bundle's `phoneOpenScheme`. A failed connection/locked phone
 keeps delivery pending and retries when the companion returns, without rerunning the agent.
 
-Keep the phone's UI limited to pairing, one wish, progress and Open App. Changes here require independent
+Keep the phone's UI limited to pairing, the current app's conversation, text replies, progress and Open App.
+New App starts another conversation; older ones remain on the Mac, with no phone project browser.
+Changes here require independent
 security/concurrency review and real phone proof; a loopback check doesn't establish locked-Mac or
 Wi-Fi installation behavior. Seven-day renewal and slot management remain manual.
 

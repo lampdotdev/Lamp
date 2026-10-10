@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Security
+import CryptoKit
 
 /// Shared verbatim with the companion. Bonjour locates a Mac; only possession of the QR key
 /// authenticates it. No wish, credential, or status is sent before TLS authenticates both ends.
@@ -36,11 +37,15 @@ enum PhoneLink {
         let action: Action
         var id: UUID?
         var wish: String?
+        var chatID: UUID?
+        var revision: UUID?
+        var offset: Int?
     }
 
     struct Status: Codable, Equatable {
         enum Phase: String, Codable {
-            case queued, building, approval, installing, waitingPhone, ready, needsMac
+            case queued, building, approval, installing, waitingPhone, ready, replied, needsMac
+            var isFinished: Bool { [.ready, .replied, .needsMac].contains(self) }
             var text: String {
                 switch self {
                 case .queued: "Waiting for Mac"
@@ -49,6 +54,7 @@ enum PhoneLink {
                 case .installing: "Installing"
                 case .waitingPhone: "Unlock iPhone on Wi-Fi"
                 case .ready: "Ready"
+                case .replied: "Replied"
                 case .needsMac: "Check Lamp on Mac"
                 }
             }
@@ -56,12 +62,91 @@ enum PhoneLink {
         let id: UUID
         var phase: Phase
         var appURL: String?
+        var activity: String?
     }
 
     struct Reply: Codable {
         var status: Status?
         var error: String?
         var refused: Bool? = nil
+        var acceptedID: UUID?
+        var chat: ChatChunk?
+    }
+
+    struct Chat: Codable, Equatable {
+        let id: UUID
+        let title: String
+        let lines: [ChatLine]
+    }
+
+    struct ChatLine: Codable, Equatable, Identifiable {
+        enum Kind: String, Codable { case user, agent, status, error, notice }
+        let id: UUID
+        let kind: Kind
+        let text: String
+        var attachments = 0
+        var queued = false
+    }
+
+    struct ChatChunk: Codable {
+        let chatID: UUID
+        let revision: UUID
+        let offset: Int
+        let total: Int
+        let digest: Data
+        let data: Data
+    }
+
+    /// A frozen transcript is transferred in small frames. Streaming agent text can change while
+    /// these frames travel, so pieces from different revisions must never be stitched together.
+    struct ChatTransfer {
+        static let maximum = 8 * 1024 * 1024
+        static let chunkSize = 8 * 1024
+        let chatID: UUID
+        let revision = UUID()
+        let created = Date()
+        let data: Data
+        let digest: Data
+
+        init(_ chat: Chat) throws {
+            chatID = chat.id
+            data = try JSONEncoder().encode(chat)
+            guard data.count <= Self.maximum else { throw Failure.full }
+            digest = Data(SHA256.hash(data: data))
+        }
+
+        func chunk(at offset: Int) throws -> ChatChunk {
+            guard offset >= 0, offset < data.count else { throw Failure.invalid }
+            return .init(chatID: chatID, revision: revision, offset: offset, total: data.count,
+                         digest: digest, data: data.subdata(in: offset..<min(data.count, offset + Self.chunkSize)))
+        }
+    }
+
+    struct ChatAssembly {
+        private(set) var revision: UUID?
+        private(set) var data = Data()
+        private var total = 0
+        private var digest = Data()
+
+        mutating func append(_ chunk: ChatChunk, for chatID: UUID) throws -> Chat? {
+            guard chunk.chatID == chatID, chunk.total > 0, chunk.total <= ChatTransfer.maximum,
+                  chunk.digest.count == 32, !chunk.data.isEmpty, chunk.data.count <= ChatTransfer.chunkSize else { throw Failure.invalid }
+            if chunk.offset == 0 {
+                revision = chunk.revision
+                data = Data()
+                total = chunk.total
+                digest = chunk.digest
+            }
+            guard chunk.revision == revision, chunk.total == total, chunk.offset == data.count,
+                  chunk.digest == digest, chunk.data.count <= total - data.count else { throw Failure.invalid }
+            data.append(chunk.data)
+            guard data.count == total else { return nil }
+            guard Data(SHA256.hash(data: data)) == digest else { throw Failure.invalid }
+            let chat = try JSONDecoder().decode(Chat.self, from: data)
+            guard chat.id == chatID else { throw Failure.invalid }
+            self = Self()
+            return chat
+        }
     }
 
     enum Failure: LocalizedError {

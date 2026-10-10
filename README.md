@@ -102,15 +102,21 @@ With your Apple account signed in to Xcode, plug your phone in: Try On offers to
 
 Settings → Experimental → **iPhone wishes** installs a small Lamp companion on an already paired iPhone
 over Wi-Fi. Open it on the phone and scan the code shown on the Mac. Type a wish and Send; Lamp uses its
-selected agent and ordinary approvals to make the app. The companion shows progress and **Open App**
-after installation. It has no project list, chat or settings. Requests are saved before sending and
-deduplicated on the Mac, so returning from a locked phone or a dropped connection resumes the same wish.
-An approval still needs answering on the Mac; it is never granted by the companion.
+selected agent and ordinary approvals to make the app. The companion shows that app's normal Mac
+conversation: your messages, the agent's replies and progress, with **Open App** after installation.
+Reply in that chat to keep changing the same app. Each message is saved before sending and deduplicated
+on the Mac, so returning from a locked phone or a dropped connection resumes the same conversation.
+The last complete transcript stays readable offline.
+
+Approvals still need answering in Lamp on Mac; the phone says when one is waiting. Add or open
+attachments on the Mac too: the phone shows an attachment notice, never a file browser. Setup cards,
+stopping a build, editing a sent message and undo remain on the Mac. **New App** starts another chat;
+older chats remain on the Mac. There is no project list, model picker or phone settings screen.
 
 Use the same Wi-Fi, keep Lamp running, and choose the free Personal Team in Building settings. The
 companion uses one of the three development-app slots. Reinstallation after seven days, removing apps
 to free slots, first-time Apple pairing/Developer Mode, and recovery of a build interrupted by quitting
-Lamp remain manual. Only one phone and one active wish are supported. Live verification of this first
+Lamp remain manual. Only one phone and one app being worked on are supported. Live verification of this first
 version, including a locked Mac, is pending; see the PR's external evidence before relying on it.
 
 ## Choosing the AI
