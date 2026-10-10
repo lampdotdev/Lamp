@@ -42,7 +42,25 @@ enum ConnectionCard {
         (text ?? "").split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
     }
 
-    static func done(_ app: String, _ service: String) -> String { "All set. \(app) now has its Connect to \(service) button." }
+    /// Where an app is once its id is kept: the id is in the app only when the app has been built again.
+    enum Kept: Equatable {
+        /// Something else has the app (the agent is still working), and the build comes after it.
+        case waiting
+        case building
+        case done
+    }
+
+    static func kept(waiting: Bool, building: Bool) -> Kept { waiting ? .waiting : building ? .building : .done }
+
+    /// What the card says under its headline once the id is kept. Only the last is "All set": until the
+    /// app has been built again and reopened, it still has no Connect button.
+    static func status(_ kept: Kept, _ app: String, _ service: String) -> String {
+        switch kept {
+        case .waiting: "Saved. \(app) gets its Connect to \(service) button when the change being made is finished."
+        case .building: "Saved. Building \(app) again with its Connect to \(service) button…"
+        case .done: "All set. \(app) now has its Connect to \(service) button."
+        }
+    }
 
     static func idLabel(_ service: Connections.Service) -> String { service.register?.idLabel ?? "Client ID" }
 
@@ -103,17 +121,23 @@ struct ConnectionCardView: View {
 
     private func card(_ entry: Connections.Service, for project: LampProject) -> some View {
         let done = !entry.clientID.isEmpty
+        let kept = ConnectionCard.kept(waiting: store.pendingRebuilds.contains(project.id),
+                                       building: store.rebuilding.contains(project.id))
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: CardColumn.gap) {
-                badge(done: done)
+                badge(done: done && kept == .done)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(ConnectionCard.title(project.name, entry.name)).font(.headline)
                     Group {
                         if done {
                             Label {
-                                Text(ConnectionCard.done(project.name, entry.name))
+                                Text(ConnectionCard.status(kept, project.name, entry.name))
                             } icon: {
-                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                                if kept == .done {
+                                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                                } else {
+                                    ProgressView().controlSize(.small)
+                                }
                             }
                         } else {
                             Text(ConnectionCard.reason(project.name, entry.name))
@@ -137,6 +161,7 @@ struct ConnectionCardView: View {
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
         .animation(.easeInOut(duration: 0.35), value: done)
+        .animation(.easeInOut(duration: 0.35), value: kept)
     }
 
     /// Two steps: register the app on the service's page, then bring back the id it gives. What goes in the

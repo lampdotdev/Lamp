@@ -73,6 +73,19 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(Template.Capabilities.load(project).checked.connections, [Connections.Declared(id: "github", clientID: "Ov23liTESTtestTEST00")])
     }
 
+    /// "All set" is said only when the app has been built again with the id: until then it has no button.
+    func testTheCardSaysTheAppIsStillBeingBuilt() {
+        XCTAssertEqual(ConnectionCard.kept(waiting: true, building: true), .waiting)
+        XCTAssertEqual(ConnectionCard.kept(waiting: false, building: true), .building)
+        XCTAssertEqual(ConnectionCard.kept(waiting: false, building: false), .done)
+        XCTAssertEqual(ConnectionCard.status(.waiting, "Repo Radar", "GitHub"),
+                       "Saved. Repo Radar gets its Connect to GitHub button when the change being made is finished.")
+        XCTAssertEqual(ConnectionCard.status(.building, "Repo Radar", "GitHub"),
+                       "Saved. Building Repo Radar again with its Connect to GitHub button…")
+        XCTAssertEqual(ConnectionCard.status(.done, "Repo Radar", "GitHub"),
+                       "All set. Repo Radar now has its Connect to GitHub button.")
+    }
+
     func testOneCardForEachServiceInAChat() {
         XCTAssertTrue(ConnectionCard.isNeeded("github", after: []))
         XCTAssertFalse(ConnectionCard.isNeeded("github", after: [LogLine(kind: .connect, text: "github")]))
