@@ -248,11 +248,15 @@ services travel with a shared copy, which is right because none of it is secret;
 own is a line in the review (`Sharing.inspect`).
 
 Registering an app with a service is done once, by whoever builds it, and Lamp leads them through it: when
-a build's code names a service that has no id for the app (`Connections.waiting`), `Store.install` puts a
-card in the chat (`ConnectionCard`, a `.connect` line holding the service's id, once per service): the page
-to open, what to enter, and a field for the id, which `Connections.verify` tries on the service before
-`Connections.keep` writes it to capabilities.json and the app is built again. Until then the app's connect
-screen says it isn't registered, with no button. No engine has a tool for this: the agent only names the
+a build's code names a service that has no id for the app (`Connections.waiting`), the chat gets a card
+(`ConnectionCard`, a `.connect` line holding the service's id, once per service): the page to open, what to
+enter, and a field for the id, which `Connections.verify` tries on the service before `Connections.keep`
+writes it to capabilities.json and the app is built again. `Store.install` only notes that the card is
+wanted; it goes into the chat when whatever had the app is over (`Store.offerHeldConnections`, from
+`finish`), so it is the last thing there, under the agent's reply, and not among the turn's steps where
+nobody would see it. Until the id is kept the app's connect screen says it isn't registered, with no button;
+once it is, the card says the app is being built again (`Store.rebuilding`, `ConnectionCard.Kept`) and
+"All set" only when that build is in. No engine has a tool for this: the agent only names the
 service, or declares one, and is told to leave registering to the card.
 
 The card is the same for every service. An entry's page may be a fill-in link, an address that carries the

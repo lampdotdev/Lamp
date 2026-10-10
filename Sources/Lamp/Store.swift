@@ -304,11 +304,15 @@ final class Store: ObservableObject {
     /// Takes the app for a span of work. Nil when something else has it.
     /// Apps to build once more when whatever has them is done: something a build puts into the app was
     /// saved while a turn or a build had it (a service's id from its card, `ConnectionCard`).
-    private var pendingRebuilds: Set<String> = []
+    @Published private(set) var pendingRebuilds: Set<String> = []
+    /// Apps that don't yet have what was saved for them: from the save until the build that carries it has
+    /// been installed. What saved it (the service's card) says so meanwhile, and not that it's done.
+    @Published private(set) var rebuilding: Set<String> = []
 
     /// Builds the app again so it has what was just saved for it. When something has the app, the build
     /// waits for that to end; a build that starts meanwhile carries it already and takes this one's place.
     func rebuild(_ project: LampProject) async {
+        rebuilding.insert(project.id)
         guard turns[project.id] != nil else { return await run(project) }
         pendingRebuilds.insert(project.id)
     }
@@ -366,6 +370,7 @@ final class Store: ObservableObject {
     private var pendingIconArt: Set<String> = []     // artwork finished during a turn, to apply after it
     private var heldInstalls = HeldInstalls()        // new icons waiting for their app to close
     private var heldDrawingOffers: Set<String> = []  // "Draw Icon…" wanted during a turn, to offer after it
+    private var heldConnectionCards: Set<String> = [] // a service's card wanted at an install, to show after it
     private var artApplied: [String: IconSpec] = [:] // the spec whose artwork the rendered icon includes
     private var iconDesigns: [String: Task<Void, Never>] = [:]   // icons designed from the first message
     private var tokens: [String: String] = [:]   // app token → project id, for the app's own routes (/ai…)
@@ -1498,6 +1503,8 @@ final class Store: ObservableObject {
     /// Marks the app idle again, then starts anything queued while it was busy.
     private func finish(_ project: LampProject) {
         endApprovals(for: project)   // a card nobody can answer any more, from a request that raced the agent's end
+        // What was saved for the app is in it once no build is still waiting to carry it.
+        if !pendingRebuilds.contains(project.id) { rebuilding.remove(project.id) }
         // Artwork that arrived during the turn, for an icon that was installed without it: applied now, still
         // owning the app, so nothing else builds or installs meanwhile. With more work queued, the next
         // install picks the artwork up itself.
@@ -1508,6 +1515,7 @@ final class Store: ObservableObject {
                 await applyIconArt(project, spec: spec)
                 release(project)
                 offerHeldDrawing(project)
+                offerHeldConnections(project)
                 startQueued(project)
                 rebuildIfPending(project)
                 installHeldIcons(for: [project.id])
@@ -1516,6 +1524,7 @@ final class Store: ObservableObject {
         }
         release(project)
         offerHeldDrawing(project)
+        offerHeldConnections(project)
         startQueued(project)
         rebuildIfPending(project)
         // An icon that was waiting for the app to close, when the app closed while this had it: the moment
@@ -1529,6 +1538,19 @@ final class Store: ObservableObject {
     private func offerHeldDrawing(_ project: LampProject) {
         guard heldDrawingOffers.remove(project.id) != nil, exists(project) else { return }
         upgradeIconArt(project)
+    }
+
+    /// The card for a service the app signs people in to and isn't registered with yet, once per service:
+    /// wanted when the app was installed, and put in the chat now that whatever had the app is over. The
+    /// agent builds and opens the app to look at it long before it's done, and its reply comes after that,
+    /// so a card logged at the install sat above the reply, out of sight. Here it's the last thing in the
+    /// chat, where the person is when the work ends. Worked out afresh: the id may have been saved meanwhile.
+    private func offerHeldConnections(_ project: LampProject) {
+        guard heldConnectionCards.remove(project.id) != nil,
+              let project = projects.first(where: { $0.id == project.id }) else { return }
+        for service in Connections.waiting(in: project) where ConnectionCard.isNeeded(service.id, after: logs[project.id] ?? []) {
+            log(project, .connect, service.id)
+        }
     }
 
     /// Renders the icon with its artwork and installs it, when there's a built app to install it into;
@@ -2760,10 +2782,9 @@ final class Store: ObservableObject {
         // and start the next one's, which must not inherit this launch.
         let owner = turns[project.id]
         await prepareIcon(project)
-        // A service the app signs people in to, with no id for this app yet, gets its card, once.
-        for service in Connections.waiting(in: project) where ConnectionCard.isNeeded(service.id, after: logs[project.id] ?? []) {
-            log(project, .connect, service.id)
-        }
+        // A service the app signs people in to, with no id for this app yet, gets its card, once: when
+        // whatever is installing the app is over (`offerHeldConnections`), not here among its steps.
+        if !Connections.waiting(in: project).isEmpty { heldConnectionCards.insert(project.id) }
         if project.platform == .iphone {
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
             // The person's own phone gets the app when they press Play or a change is finished; the agent's
