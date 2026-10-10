@@ -14,14 +14,14 @@ enum Template {
     /// change its name and kind for free; its scaffold is written (`fill`) when there's first something to build.
     /// `instance` carries an existing app's identity into its replacement (rescaffolding under a new name);
     /// a new app gets a fresh one.
-    static func draft(name rawName: String, untitled: Bool = false, platform: Platform = .mac, family: DeviceFamily = .iphone,
-                      instance: String? = nil, in root: URL) throws -> LampProject {
+    static func draft(name rawName: String, untitled: Bool = false, fromWish: Bool = false, platform: Platform = .mac,
+                      family: DeviceFamily = .iphone, instance: String? = nil, in root: URL) throws -> LampProject {
         let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
         let exe = identifier(from: name)
         let slug = freeSlug(for: exe, in: root)
         let project = LampProject(id: slug, name: name.isEmpty ? exe : name, exe: exe,
                                    dir: root.appendingPathComponent(slug), instance: instance ?? UUID().uuidString,
-                                   untitled: untitled, platform: platform, family: family)
+                                   untitled: untitled, fromWish: fromWish, platform: platform, family: family)
         try FileManager.default.createDirectory(at: project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
         try saveMeta(project)
         return project
@@ -41,7 +41,8 @@ enum Template {
     static func saveMeta(_ project: LampProject) throws {
         try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
                                              platform: project.platform, family: project.platform == .iphone ? project.family : nil,
-                                             device: project.device, instance: project.instance.isEmpty ? nil : project.instance))
+                                             device: project.device, instance: project.instance.isEmpty ? nil : project.instance,
+                                             wish: project.untitled && project.fromWish ? true : nil))
             .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
     }
 

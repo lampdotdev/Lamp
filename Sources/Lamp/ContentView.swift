@@ -85,7 +85,7 @@ struct ContentView: View {
             Text("A name makes this version easy to find, and to go back to later.")
         }
         .onChange(of: store.naming) { versionName = store.naming?.version.name ?? "" }
-        .confirmationDialog("Delete “\(store.deleting?.name ?? "")”?", isPresented: Binding(
+        .confirmationDialog("Delete “\(store.deleting?.title ?? "")”?", isPresented: Binding(
             get: { store.deleting != nil }, set: { if !$0 { store.deleting = nil } })) {
             Button("Move to Trash", role: .destructive) {
                 if let project = store.deleting { Task { await store.delete(project) } }
@@ -104,7 +104,7 @@ struct ContentView: View {
     /// The app's own icon, or its blueprint stand-in if it doesn't have one yet.
     private func dialogIcon(for project: LampProject) -> NSImage {
         if let icon = store.icons[project.id] { return icon }
-        let renderer = ImageRenderer(content: BlueprintIcon(letter: project.untitled ? nil : project.name.first, size: 128))
+        let renderer = ImageRenderer(content: StandInIcon(project: project, size: 128))
         renderer.scale = 2
         return renderer.nsImage ?? NSApp.applicationIconImage
     }
@@ -151,7 +151,7 @@ struct AppSidebar: View {
             ForEach(store.projects) { project in
                 HStack(spacing: 8) {
                     Label {
-                        Text(project.name)
+                        Text(project.title)
                     } icon: {
                         AppIcon(project: project, size: 24)
                     }
@@ -203,7 +203,7 @@ struct AppSidebar: View {
                     .simultaneousGesture(TapGesture(count: 2).onEnded { store.openPrepared(project) })
                     .background(ShareAnchor(origin: .app(project.id)))
                     .contextMenu { AppMenu(project: project) }
-                    .accessibilityLabel(project.name)
+                    .accessibilityLabel(project.title)
                     .accessibilityAddTraits(store.selection == project.id ? [.isSelected] : [])
                 }
                 Button { store.create() } label: {
@@ -248,7 +248,7 @@ struct AppTile: View {
                 }
             // Up to two lines, so most names show whole; icons still line up, since rows align at the top.
             // The full name shows on hover.
-            Text(project.name)
+            Text(project.title)
                 .font(.callout)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
@@ -262,7 +262,7 @@ struct AppTile: View {
         .padding(6)
         .background(selected ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 10))
         .contentShape(Rectangle())
-        .help(project.name)
+        .help(project.title)
     }
 }
 
@@ -275,7 +275,64 @@ struct AppIcon: View {
         if let icon = store.icons[project.id] {
             Image(nsImage: icon).resizable().interpolation(.high).frame(width: size, height: size)
         } else {
+            StandInIcon(project: project, size: size)
+        }
+    }
+}
+
+/// What stands for an app that has no icon yet: the lamp's light for a wish still waiting to be sent, a
+/// blueprint for everything else.
+struct StandInIcon: View {
+    let project: LampProject
+    let size: CGFloat
+
+    var body: some View {
+        if project.untitled && project.fromWish {
+            WishIcon(size: size)
+        } else {
             BlueprintIcon(letter: project.untitled ? nil : project.name.first, size: size)
+        }
+    }
+}
+
+/// The lamp's light, as the site draws it under a wish: dusk warming to a glow, with one spark in it.
+struct WishIcon: View {
+    let size: CGFloat
+
+    var body: some View {
+        // Same footprint as a real macOS icon: an 824pt tile on a 1024pt canvas.
+        let side = size * 824 / 1024
+        let shape = RoundedRectangle(cornerRadius: side * 0.225, style: .continuous)
+        ZStack {
+            shape.fill(LinearGradient(colors: [Color(red: 0.36, green: 0.27, blue: 0.50), Color(red: 0.93, green: 0.60, blue: 0.33),
+                                               Color(red: 1.0, green: 0.80, blue: 0.47)],
+                                      startPoint: .topLeading, endPoint: .bottomTrailing))
+            shape.fill(RadialGradient(colors: [Color(red: 1.0, green: 0.93, blue: 0.72).opacity(0.95), .clear],
+                                      center: .center, startRadius: 0, endRadius: side * 0.42))
+            Spark().fill(.white)
+                .frame(width: side * 0.34, height: side * 0.34)
+                .shadow(color: Color(red: 1.0, green: 0.72, blue: 0.3).opacity(0.9), radius: side / 14)
+            shape.strokeBorder(.white.opacity(0.35), lineWidth: max(0.5, side / 160))
+        }
+        .frame(width: side, height: side)
+        .shadow(color: .black.opacity(0.18), radius: size / 60, y: size / 80)
+        .frame(width: size, height: size)
+    }
+
+    /// The four-pointed spark of the site's wish button.
+    private struct Spark: Shape {
+        func path(in rect: CGRect) -> Path {
+            let c = CGPoint(x: rect.midX, y: rect.midY), r = rect.width / 2, pinch = r * 0.2
+            var path = Path()
+            path.move(to: CGPoint(x: c.x, y: c.y - r))
+            for (tip, side) in [(CGPoint(x: c.x + r, y: c.y), CGPoint(x: c.x + pinch, y: c.y - pinch)),
+                                (CGPoint(x: c.x, y: c.y + r), CGPoint(x: c.x + pinch, y: c.y + pinch)),
+                                (CGPoint(x: c.x - r, y: c.y), CGPoint(x: c.x - pinch, y: c.y + pinch)),
+                                (CGPoint(x: c.x, y: c.y - r), CGPoint(x: c.x - pinch, y: c.y - pinch))] {
+                path.addQuadCurve(to: tip, control: side)
+            }
+            path.closeSubpath()
+            return path
         }
     }
 }
@@ -603,7 +660,7 @@ struct ProjectView: View {
                 .help("Attach files. You can also paste or drop images and files here.")
                 .accessibilityLabel("Attach files")
                 .frame(height: Composer.lineHeight)
-            Composer(text: draftBinding, height: $composerHeight,
+            Composer(text: shownDraft, height: $composerHeight,
                      placeholder: busy ? "Working… describe the next change"
                         : lines.isEmpty ? "Describe an app…" : "Describe a change…",
                      // No suggestion while a request from the chat is in the box: it would be about a turn
@@ -709,7 +766,7 @@ struct ProjectView: View {
             }
             .inspectorColumnWidth(min: 300, ideal: 340, max: 460)
         }
-        .navigationTitle(project.name)
+        .navigationTitle(project.title)
         .navigationSubtitle(usageSummary)
         .toolbarTitleMenu {
             Button("Rename…") { store.renaming = project }
@@ -779,6 +836,19 @@ struct ProjectView: View {
     /// including writes from a newly-created chat view after navigation.
     private var draftBinding: Binding<String> {
         Binding(get: { draft }, set: { draft = $0; saveDraft() })
+    }
+
+    /// The message box: the draft, or as much of an arriving wish as has been written in (`Wish.Arrival`).
+    /// The draft is the whole wish throughout, so that is what Send sends; typing ends the writing.
+    private var shownDraft: Binding<String> {
+        Binding(get: { store.arrivals[project.id]?.text(over: draft) ?? draft }, set: { typed in
+            if let arrival = store.arrivals[project.id] {
+                guard typed != arrival.text(over: draft) else { return }
+                store.endArrival(for: project.id)
+            }
+            draft = typed
+            saveDraft()
+        })
     }
 
     private func loadDraft() {
@@ -917,7 +987,7 @@ struct ProjectView: View {
             AppIcon(project: project, size: 30)
         }
         .buttonStyle(.plain)
-        .help("Show \(project.name)'s icon")
+        .help("Show \(project.title)'s icon")
         .quickLookPreview($iconPreview)
     }
 
@@ -946,6 +1016,7 @@ struct ProjectView: View {
         let submitted = Store.Draft(text: draft, attachments: attachments, replacing: replacing,
                                     setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? [])
         guard let token = store.beginSubmission(project) else { return }
+        store.endArrival(for: project.id)
         sends += 1
         store.saveDraft(submitted, for: project)
         PhoneSetup.shared.perform(for: project, in: store, cancelled: {
@@ -1062,7 +1133,7 @@ struct AppInfoView: View {
             Section {
                 VStack(spacing: 8) {
                     AppIcon(project: project, size: 64)
-                    Text(project.name).font(.headline)
+                    Text(project.title).font(.headline)
                     if let lastBuilt {
                         Text("Built \(lastBuilt, format: .relative(presentation: .named))")
                             .font(.caption).foregroundStyle(.secondary)
@@ -1267,7 +1338,10 @@ struct NewAppIntro: View {
         VStack(spacing: 14) {
             // Catches the light once the reveal has passed it.
             AppIcon(project: project, size: 112).shine(delay: 0.4)
-            TextField("Name", text: $name, prompt: Text(project.untitled ? "Untitled" : project.name))
+            // An unnamed app says what it is where its name will be. A wish reads as a title, the plain
+            // hint as a hint; either way a name typed here is the app's, and Lamp names it otherwise.
+            TextField("Name", text: $name, prompt: !project.untitled ? Text(project.name)
+                      : project.fromWish ? Text("") : Text("Name it, or Lamp will"))
                 .textFieldStyle(.plain)
                 .font(.title.weight(.semibold))
                 .multilineTextAlignment(.center)
@@ -1275,8 +1349,18 @@ struct NewAppIntro: View {
                 .onSubmit(commit)
                 .disabled(busy)
                 .frame(maxWidth: 360)
+                .overlay {
+                    // A hint is drawn gray whatever it's told; a wish's title is drawn as one, and steps
+                    // back while a name is being typed over it.
+                    if project.untitled && project.fromWish && name.isEmpty {
+                        Text(project.title).font(.title.weight(.semibold))
+                            .opacity(editingName ? 0.3 : 1)
+                            .allowsHitTesting(false)
+                    }
+                }
                 .help("Rename this app")
-            Text(project.untitled
+            Text(project.untitled && project.fromWish ? "Here's your wish. Change anything you like."
+                 : project.untitled
                  ? "Describe the \(AppKind(project).rawValue) app you wish you had, and Lamp will build it."
                  : "Describe what \(project.name) should do. Lamp builds it and opens it for you.")
                 .foregroundStyle(.secondary)

@@ -59,13 +59,19 @@ struct OnboardingView: View {
     @AppStorage(Onboarding.kindKey) private var kind = AppKind.mac
     @State private var leaving = false
     @State private var window: NSWindow?
+    /// The wish that came from the site this run (`Wish`), and whether it has yet to be written into the box.
+    @State private var wish: String?
+    @State private var wishUnwritten = false
+    @State private var dawn = 0.0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
             ZStack {
                 switch step {
                 case .hello: HelloStep { go(to: .idea) }
-                case .idea: IdeaStep(prompt: $prompt, kind: $kind, back: { go(to: .hello) }) { go(to: .setup) }
+                case .idea: IdeaStep(prompt: $prompt, kind: $kind, wish: wish, unwritten: $wishUnwritten, paste: { receive($0) },
+                                     back: { go(to: .hello) }) { go(to: .setup) }
                 case .setup: SetupStep(back: { go(to: .idea) }, start: finish)
                 }
             }
@@ -90,6 +96,10 @@ struct OnboardingView: View {
                                startPoint: .leading, endPoint: .trailing)
                     .opacity(step == .hello ? 0 : 1)
                     .animation(.easeInOut(duration: 0.8), value: step)
+                // Dawn, where the site left off when the wish appeared there: it fades into Lamp's daylight.
+                LinearGradient(colors: [Color(red: 1, green: 0.74, blue: 0.5).opacity(0.62), Color(red: 1, green: 0.6, blue: 0.5).opacity(0.3)],
+                               startPoint: .top, endPoint: .bottom)
+                    .opacity(dawn)
             }
             .ignoresSafeArea()
         }
@@ -105,8 +115,10 @@ struct OnboardingView: View {
             if UserDefaults.standard.object(forKey: Onboarding.startedKey) == nil {
                 UserDefaults.standard.set(Date(), forKey: Onboarding.startedKey)
             }
+            arrive(animated: false)
             Analytics.capture(.welcomeStep, ["step": "\(step)"])
         }
+        .onChange(of: store.arrivedWish) { arrive(animated: true) }
         // Menus can be rebuilt at any moment, so keep Settings switched off for as long as the welcome is up.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUpdateNotification)) { _ in
             SettingsMenu.enable(false)
@@ -118,6 +130,36 @@ struct OnboardingView: View {
         UserDefaults.standard.set(next.rawValue, forKey: Onboarding.stepKey)
         Analytics.capture(.welcomeStep, ["step": "\(next)", "back": !forward])
         withAnimation(.spring(response: 0.6, dampingFraction: 0.88)) { step = next }
+    }
+
+    /// Takes a wish from the site: one its link brought or, the first time the welcome is ever shown, one its
+    /// Download button left on the clipboard. That one look is all Lamp takes by itself.
+    private func arrive(animated: Bool) {
+        var found = store.arrivedWish
+        if found != nil { store.arrivedWish = nil }
+        let defaults = UserDefaults.standard
+        if found == nil, !defaults.bool(forKey: Wish.lookedKey) {
+            defaults.set(true, forKey: Wish.lookedKey)
+            if prompt.trimmed.isEmpty, case .wish(let text) = Wish.look() { found = text }
+        }
+        if let found { receive(found, animated: animated) }
+    }
+
+    /// Opens on the first-app step with the wish, with no hello in between: they have already said what they
+    /// want. The words come in as the site's did, under a dawn that fades.
+    private func receive(_ text: String, animated: Bool = true) {
+        prompt = text
+        wish = text
+        wishUnwritten = true
+        if step != .idea {
+            if animated { go(to: .idea) } else { step = .idea }
+        }
+        guard !reduceMotion else { return }
+        Task {
+            dawn = 1
+            try? await Task.sleep(for: .seconds(0.9))
+            withAnimation(.easeOut(duration: 3.2)) { dawn = 0 }
+        }
     }
 
     /// Fades the welcome out, grows the window into Lamp's, and starts the first app on the user's idea.
@@ -214,8 +256,18 @@ private struct HelloStep: View {
 private struct IdeaStep: View {
     @Binding var prompt: String
     @Binding var kind: AppKind
+    /// The wish that came from the site, if one did, and whether it still has to be written into the box.
+    let wish: String?
+    @Binding var unwritten: Bool
+    /// The person pasted their wish with the button in the box.
+    let paste: (String) -> Void
     let back: () -> Void
     let next: () -> Void
+    /// An arriving wish while it is written in; the whole wish is in `prompt` from the start.
+    @State private var arrival: Wish.Arrival?
+    /// A browser's copy is waiting that Lamp can't read without macOS asking: the box offers to paste it.
+    @State private var pasteOffered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var dictation = Dictation()
     @StateObject private var deck = IdeaDeck()
     @State private var chosen: String?
@@ -230,7 +282,8 @@ private struct IdeaStep: View {
             // Centered in the window, like the first step; the buttons sit along the bottom, and the space kept
             // below stops the content running into them when the window is small.
             Spacer(minLength: 40)
-            Heading(title: "What should your first app do?")
+            // The site's own sentence over the wish it wrote, so this reads as the same moment.
+            Heading(title: wish == nil ? "What should your first app do?" : "Here's your wish. Change anything you like.")
 
             KindPicker(selection: $kind)
             .padding(.top, 18)
@@ -242,13 +295,14 @@ private struct IdeaStep: View {
             }
 
             HStack(alignment: .top, spacing: 10) {
-                TextField("", text: $prompt,
+                TextField("", text: box,
                           prompt: Text("An app that…").foregroundStyle(.tertiary), axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 17))
                     .lineSpacing(3)
                     .lineLimit(3...5)
                     .focused($focused)
+                    .allowsHitTesting(arrival == nil)
                     .onChange(of: prompt) { if prompt != deck.ideas.first(where: { $0.id == chosen })?.prompt { chosen = nil } }
                 Button(action: toggleDictation) {
                     Image(systemName: dictation.isListening ? "waveform" : "mic")
@@ -269,6 +323,25 @@ private struct IdeaStep: View {
             .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(focused ? Palette.accent.opacity(0.55) : .black.opacity(0.08), lineWidth: focused ? 1.5 : 1))
             .shadow(color: .black.opacity(0.06), radius: 18, y: 8)
+            .overlay(alignment: .bottomTrailing) {
+                if pasteOffered && prompt.isEmpty {
+                    Button {
+                        if let text = Wish.pasted() { paste(text) }
+                        pasteOffered = false
+                    } label: {
+                        Text("Paste my wish")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 14).frame(height: 30)
+                            .background(Palette.accentDeep, in: Capsule())
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .focusEffectDisabled()
+                    .padding(12)
+                    .transition(.opacity)
+                }
+            }
             .padding(.top, 18)
 
             HStack {
@@ -307,7 +380,7 @@ private struct IdeaStep: View {
         .overlay(alignment: .bottom) {
             Footer(back: back) {
                 BigButton(title: "Continue") {
-                    let source = chosen != nil ? "picked" : picked ? "edited" : "typed"
+                    let source = chosen != nil ? "picked" : picked ? "edited" : wish != nil ? "site" : "typed"
                     Analytics.capture(.welcomeIdeaDone, ["kind": Analytics.kind(kind), "source": source, "dictated": dictated])
                     next()
                 }
@@ -325,10 +398,52 @@ private struct IdeaStep: View {
         .onAppear {
             deck.show(kind)   // back on this step with a phone chosen earlier
             deck.prefetch()
+            pasteOffered = Wish.offersPaste()
             // After the step has slid in: focus can't land while the old step still holds it.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { focused = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { if !unwritten { focused = true } }
         }
         .onDisappear { dictation.cancel() }
+        // Back from the browser with something copied there.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            pasteOffered = Wish.offersPaste()
+        }
+        .task(id: unwritten) { await write() }
+    }
+
+    /// The box shows the wish as far as it has been written; typing is theirs from the first key.
+    private var box: Binding<String> {
+        Binding { arrival?.text(over: prompt) ?? prompt } set: { typed in
+            if let arrival {
+                guard typed != arrival.text(over: prompt) else { return }
+                self.arrival = nil
+            }
+            prompt = typed
+        }
+    }
+
+    /// Writes an arriving wish into the box a word at a time, once.
+    private func write() async {
+        guard unwritten, let wish else { return }
+        defer { unwritten = false }
+        if !reduceMotion {
+            let steps = Wish.steps(wish)
+            let pace = Wish.pace(words: steps.count)
+            arrival = Wish.Arrival(wish)
+            try? await Task.sleep(for: .seconds(0.45))   // the step slides in first
+            // An idea picked or words dictated meanwhile take the box: the writing stops there.
+            for step in steps where !Task.isCancelled && arrival != nil && prompt == wish {
+                arrival?.advance(to: step)
+                try? await Task.sleep(for: pace)
+            }
+            arrival = nil
+        }
+        focused = true
+        // Focus selects everything in the box, and the next key would then replace the wish: put the caret
+        // at its end instead, ready to add to it.
+        try? await Task.sleep(for: .seconds(0.1))
+        if let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
+            editor.setSelectedRange(NSRange(location: editor.string.utf16.count, length: 0))
+        }
     }
 
     private func choose(_ idea: Idea) {

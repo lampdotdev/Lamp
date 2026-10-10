@@ -45,6 +45,8 @@ struct LampProject: Identifiable, Hashable {
     var instance: String = ""
     /// Made with New App and not named yet. The first message names it.
     var untitled = false
+    /// Made by a wish that came from the site (`Wish`): until it has a name it reads as their wish.
+    var fromWish = false
     var platform: Platform = .mac
     var family: DeviceFamily = .iphone
     /// The person's own iPhone or iPad that Play puts the app on (Devices), instead of the simulator.
@@ -56,6 +58,10 @@ struct LampProject: Identifiable, Hashable {
     var builtURL: URL { dir.appendingPathComponent("build/\(exe).app") }
     /// Every successful build is copied here so it shows up in Spotlight and Launchpad.
     var installedURL: URL { Store.installDir.appendingPathComponent("\(name).app") }
+    /// What the app is called on screen. An unnamed one has only a stand-in name on disk ("Untitled", which
+    /// its folder and everything that asks `untitled` go by), so the screen says what it is instead: their
+    /// wish, or a new app. The name Lamp or the person gives it takes over everywhere at once.
+    var title: String { !untitled ? name : fromWish ? "Your wish" : "New App" }
     /// False for a draft (Template.draft): a new app whose scaffold isn't written yet.
     var scaffolded: Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent("Package.swift").path) }
 }
@@ -68,6 +74,7 @@ struct ProjectMeta: Codable {
     var family: DeviceFamily?  // iOS apps: which simulator they open on; nil means iPhone
     var device: String?        // iOS apps: the person's own phone (its udid) that Play puts the app on, if any
     var instance: String?      // LampProject.instance
+    var wish: Bool?            // LampProject.fromWish
 }
 
 struct AppUsage: Codable {
@@ -200,6 +207,13 @@ final class Store: ObservableObject {
     /// Which Lamp built each installed app (see BuildStamp). Missing for apps that aren't built yet.
     @Published var stamps: [String: BuildStamp] = [:]
     @Published var chatFocusRequest = 0
+    /// A wish from the site's link that came while the welcome is up, for the welcome to take (`take(wish:)`).
+    @Published var arrivedWish: String?
+    /// The wishes being written into a message box right now, by app (`Wish.Arrival`). The drafts hold them whole.
+    @Published private(set) var arrivals: [String: Wish.Arrival] = [:]
+    private var wishWriting: Task<Void, Never>?
+    /// The new app the last such wish went into.
+    private var wishApp: String?
     @Published private(set) var pendingSubmissions = PendingSubmissions()
 
     func beginSubmission(_ project: LampProject) -> UUID? {
@@ -464,7 +478,8 @@ final class Store: ObservableObject {
                   let meta = try? JSONDecoder().decode(ProjectMeta.self, from: data) else { return nil }
             return LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
                                 instance: meta.instance ?? dir.lastPathComponent,
-                                untitled: meta.untitled ?? false, platform: meta.platform ?? .mac, family: meta.family ?? .iphone,
+                                untitled: meta.untitled ?? false, fromWish: meta.wish ?? false,
+                                platform: meta.platform ?? .mac, family: meta.family ?? .iphone,
                                 device: meta.device)
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -561,6 +576,14 @@ final class Store: ObservableObject {
         /// sent again after all.
         var setAsideText = ""
         var setAsideAttachments: [URL] = []
+
+        /// This draft with a wish from the site as its words: all of the wish at once, and everything else
+        /// the draft holds (files dropped into the box) kept.
+        func taking(wish: String) -> Draft {
+            var draft = self
+            draft.text = wish
+            return draft
+        }
 
         /// Only clear input that is still exactly the captured request. An idea, edit or late file added
         /// while setup was open belongs to the next draft, even though the earlier request was sent.
@@ -662,10 +685,63 @@ final class Store: ObservableObject {
             importApp(from: url)
             return
         }
+        if let wish = Wish.from(link: url) { return take(wish: wish) }
         guard url.scheme == Edition.urlScheme,
               let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "app" })?.value else { return }
         showChat(slug)
+    }
+
+    /// A wish the site's link brought (`Wish`). During the welcome it goes to the first-app box; after it, into
+    /// the message box of a new app, written in a word at a time as the site writes. It is never sent from
+    /// here: any web page can open such a link, so the person reads it and presses Send.
+    func take(wish: String) {
+        NSApp.activate()
+        guard Onboarding.isDone || welcomeFinished else { arrivedWish = wish; return }
+        wishWriting?.cancel()
+        // A second link goes into the app the first one made, while nothing has been sent there: a page that
+        // keeps opening links can't fill Lamp with apps.
+        arrivals = [:]
+        if let id = wishApp, let earlier = projects.first(where: { $0.id == id }), earlier.untitled, nothingAsked(of: id) {
+            showChat(id)
+        } else {
+            create(fromSite: true)
+        }
+        guard let project = selected else { return }
+        wishApp = project.id
+        // The draft is the whole wish at once, with whatever else it already held (a file dropped there):
+        // only the box's showing of it is written in, so Send at any moment sends all of it.
+        let whole = draft(for: project).taking(wish: wish)
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return updateDraft(whole, for: project) }
+        arrivals[project.id] = Wish.Arrival(wish)
+        updateDraft(whole, for: project)
+        let id = project.id
+        wishWriting = Task {
+            let steps = Wish.steps(wish)
+            let pace = Wish.pace(words: steps.count)
+            for step in steps {
+                guard !Task.isCancelled, arrivals[id] != nil else { return }
+                arrivals[id]?.advance(to: step)
+                try? await Task.sleep(for: pace)
+            }
+            if !Task.isCancelled { arrivals[id] = nil }
+        }
+    }
+
+    /// The box's text changed under an arriving wish, or it was sent: the writing is over.
+    func endArrival(for id: String) {
+        if arrivals[id] != nil { arrivals[id] = nil }
+    }
+
+    /// Nothing has been asked of this app yet: no line in its chat, no turn running, and no request waiting
+    /// on setup or in line. A request can be on its way with none of the first two (`beginSubmission`, `queued`).
+    private func nothingAsked(of id: String) -> Bool {
+        Self.nothingAsked(lines: logs[id]?.count ?? 0, busy: busy.contains(id), pending: pendingSubmissions.contains(id),
+                          queued: queued[id] != nil)
+    }
+
+    nonisolated static func nothingAsked(lines: Int, busy: Bool, pending: Bool, queued: Bool) -> Bool {
+        lines == 0 && !busy && !pending && !queued
     }
 
     /// Brings Lamp to the front on an app's chat, ready to type.
@@ -680,11 +756,11 @@ final class Store: ObservableObject {
 
     /// New App: an untitled app, straight into its chat. Its first message names it and designs its icon.
     /// A Mac app until the intro says otherwise (`setKind`).
-    func create(fromWelcome: Bool = false) {
+    func create(fromWelcome: Bool = false, fromSite: Bool = false) {
         // A draft: its scaffold waits for the first build (`materialize`), so the intro can still change its kind.
         let project: LampProject
         do {
-            project = try Template.draft(name: uniqueName("Untitled"), untitled: true, in: root)
+            project = try Template.draft(name: uniqueName("Untitled"), untitled: true, fromWish: fromSite, in: root)
         } catch {
             NSAlert(error: error).runModal()
             return
@@ -692,7 +768,7 @@ final class Store: ObservableObject {
         reload()
         selection = project.id
         chatFocusRequest += 1
-        Analytics.capture(.appCreated, ["source": fromWelcome ? "welcome" : "new_app"])
+        Analytics.capture(.appCreated, ["source": fromSite ? "site" : fromWelcome ? "welcome" : "new_app"])
     }
 
     /// Writes a draft's scaffold and makes its first version, before anything builds it. Nil, after saying so,
@@ -832,8 +908,7 @@ final class Store: ObservableObject {
     /// An untitled app you left without ever using is deleted, so trying New App leaves nothing behind.
     /// Words in its message box count as using it: they're kept, like a draft in any other app.
     private func discardIfUnused(_ id: String) {
-        guard let project = projects.first(where: { $0.id == id }), project.untitled,
-              (logs[id] ?? []).isEmpty, queued[id] == nil, !busy.contains(id), !pendingSubmissions.contains(id),
+        guard let project = projects.first(where: { $0.id == id }), project.untitled, nothingAsked(of: id),
               draft(for: project).text.trimmed.isEmpty,
               !FileManager.default.fileExists(atPath: project.builtURL.path) else { return }
         try? FileManager.default.removeItem(at: project.dir)
@@ -3832,7 +3907,7 @@ final class Store: ObservableObject {
             if computerUseRefused.insert(project.id).inserted {
                 NSApp.activate()
                 let alert = NSAlert()
-                alert.messageText = "\(project.name) wants to use your other apps"
+                alert.messageText = "\(project.title) wants to use your other apps"
                 alert.informativeText = "To let apps read and use apps like Slack, Mail or your browser, turn on “Let apps use your other apps” in Lamp's settings."
                 alert.addButton(withTitle: "Open Settings")
                 alert.addButton(withTitle: "Not Now")

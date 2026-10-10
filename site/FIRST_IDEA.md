@@ -3,7 +3,19 @@
 Right under the homepage's hero, a short conversation helps a visitor find their first app before they
 download Lamp. A button under its heading starts it: four everyday situations at a time ("Can you relate to any of these?"), one or two questions
 about the one they pick, then the request in their own words, in a card they can edit, with one button that
-copies it and downloads Lamp, to paste into New App.
+downloads Lamp and hands it the wish.
+
+The hand-off (`lib/wish.js` here, `Sources/Lamp/Wish.swift` in the app) has two ways in, since a page can't
+tell whether Lamp is installed:
+
+- **Download Lamp** copies the wish with a mark only Lamp looks for (an attribute in the clipboard's web
+  form; the plain text is just the wish). The first time Lamp opens it looks at the clipboard once and, if
+  the mark is there, puts the wish in the first-app box. Anything else on the clipboard is left alone, and
+  where macOS would ask before letting an app read it, Lamp doesn't read: the box offers "Paste my wish".
+- **Already have Lamp? Open it with this wish** opens `lamp://wish?text=…`: the card sinks back into the
+  lamp's light and Lamp comes to the front with the wish in a new app's message box (or the welcome's box,
+  if it's still there), waiting for the person to send it. The page is never told whether Lamp opened, so
+  it says "Off it goes." and offers to try again.
 
 - The page: `src/components/FirstIdea.astro`. The situations, the rounds and the questions used when the model
   can't be reached: `lib/situations.js`, shared with the server.
@@ -51,7 +63,7 @@ node --env-file=.env.local scripts/try-first-idea.js 1 5 9
 
 Each day keeps a tally of what happened, never what anyone typed: starts, rounds shown, "None of these" per round,
 which situation was picked, own words, questions asked, requests written (by the model or the built-in
-questions), edited, copied, Download pressed, and the model failing. From `site/`:
+questions), edited, copied, Download pressed, sent to Lamp by the link, and the model failing. From `site/`:
 
 ```bash
 vercel env pull .env.local

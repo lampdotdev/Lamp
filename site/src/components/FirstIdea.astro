@@ -8,7 +8,8 @@ import { together } from "../lib/text";
   recognise themselves in an everyday moment. Under a night sky, a heading and one button; pressing it starts a
   short conversation: four situations at a time (each round as different from the last as it can be), one or
   two questions from a model about the one they pick, then the request in their own words, rising out of the
-  lamp's light as a card to change, copy and take to Lamp. Made to be enjoyed rather than rushed through; all
+  lamp's light as a card to change and take to Lamp: Download copies it for Lamp to find when it first opens,
+  and on a Mac that has Lamp a link sends it straight there, the card sinking back into the light. Made to be enjoyed rather than rushed through; all
   of its motion stops for people who've asked for less (global.css).
 -->
 <!-- ph-no-capture: the model's questions and answers can repeat what the visitor wrote, so PostHog's autocapture
@@ -83,6 +84,7 @@ import { together } from "../lib/text";
 
 <script>
   import { SHAPES, SITUATIONS, ROUNDS, SCRIPT, TYPED } from "../../lib/situations.js";
+  import { copyWish, wishLink } from "../../lib/wish.js";
   import { shapeIcon } from "../lib/shape-icons";
   import { track } from "../lib/analytics";
 
@@ -337,8 +339,9 @@ import { together } from "../lib/text";
   // ---------- The wish: a card of their own, to change and take to Lamp ----------
   const dawn = sky.querySelector<HTMLElement>("[data-dawn]")!;
 
-  /** Genie smoke curling up from the lamp's light at the bottom of the sky to the middle of `target`. */
-  function smoke(target: HTMLElement) {
+  /** Genie smoke curling up from the lamp's light at the bottom of the sky to the middle of `target`, or,
+   *  `back`, drawn down into the light again. */
+  function smoke(target: HTMLElement, back = false) {
     if (calm.matches) return;
     const skyBox = sky.getBoundingClientRect();
     const box = target.getBoundingClientRect();
@@ -349,6 +352,7 @@ import { together } from "../lib/text";
     svg.setAttribute("preserveAspectRatio", "none");
     svg.setAttribute("aria-hidden", "true");
     svg.classList.add("wish-smoke");
+    if (back) svg.classList.add("wish-smoke-back");
     svg.style.height = `${rise}px`;
     const strands = [
       ["M50 100 C18 80 82 66 30 46 S74 18 50 0", "rgb(255 170 100 / 0.45)", "46"],
@@ -377,7 +381,8 @@ import { together } from "../lib/text";
     glow(1);
     dawn.classList.add("on");
     setTimeout(() => glow(0.8), 1800);
-    await lamp(lead || "Here's your wish. Change anything you like.");
+    const opening = lead || "Here's your wish. Change anything you like.";
+    const line = await lamp(opening);
 
     // The card waits (wish-rise holds its first frame through the delay) while the smoke reaches it.
     const card = add(el("div", "wish-rise relative mt-2 rounded-[22px] bg-page p-5 text-ink shadow-[0_0_60px_-6px_rgba(255,176,92,0.35)] sm:p-7"));
@@ -407,18 +412,24 @@ import { together } from "../lib/text";
     card.append(label, area);
     requestAnimationFrame(fit);
 
-    // One step to finish: the site's Download button copies the wish on its way to the download.
+    // One step to finish: the site's Download button copies the wish, with Lamp's mark, on its way to the
+    // download. Lamp finds it there the first time it opens, so there is nothing to paste.
     const finish = el("div", "mt-6 flex flex-col items-center");
     const parts = download.content.cloneNode(true) as DocumentFragment;
     const go = parts.querySelector("a")!;
     const requirement = parts.querySelector("p");
-    go.textContent = "Copy and download Lamp";
+    go.textContent = "Download Lamp";
     const row = el("div", "flex flex-wrap items-center justify-center gap-x-5 gap-y-3");
     const over = el("button", "text-[15px] text-muted transition hover:text-ink", "Start over");
     over.type = "button";
     over.onclick = reset;
     row.append(go, over);
     finish.append(row);
+    // A page can't tell whether Lamp is installed, so the Mac that has it gets its own way in, beside Download.
+    const mac = /Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2;
+    const send = el("button", "mt-3.5 text-[15px] font-medium text-[#b04e0a] underline decoration-[#b04e0a]/40 underline-offset-4 transition hover:decoration-[#b04e0a]", "Already have Lamp? Open it with this wish");
+    send.type = "button";
+    if (mac) finish.append(send);
     if (requirement) finish.append(requirement);
 
     card.append(finish);
@@ -426,10 +437,56 @@ import { together } from "../lib/text";
     go.addEventListener("click", () => {
       count("copy");
       count("download");
-      // The download leaves this page where it is, so the copy finishes and the button can say so.
-      navigator.clipboard?.writeText(area.value).then(() => {
-        go.textContent = "Copied ✓ Downloading…";
-      }, () => {});
+      // The download leaves this page where it is, so the copy finishes and the card can say what happens next.
+      copyWish(area.value).then((copied) => {
+        go.textContent = "Downloading…";
+        if (requirement) requirement.textContent = copied === "marked" ? "Open Lamp when it's ready. Your wish will be there."
+          : copied === "plain" ? "Your wish is copied. Paste it into Lamp when it's ready."
+          : "Copy your wish, and paste it into Lamp when it's ready.";
+        if (copied !== "none") lamp("Lamp is downloading.", line);
+      });
+    });
+
+    // The wish goes back into the lamp it came out of, and Lamp opens on it.
+    let after: HTMLElement | null = null;
+    send.addEventListener("click", async () => {
+      const link = wishLink(area.value);
+      if (!link) return;
+      count("open");
+      const skyBox = sky.getBoundingClientRect();
+      const box = card.getBoundingClientRect();
+      card.style.setProperty("--sink", `${Math.max(120, skyBox.bottom - (box.top + box.height / 2))}px`);
+      card.style.animationDelay = "";
+      card.classList.remove("wish-rise");
+      card.classList.add("wish-sink");
+      card.inert = true;
+      smoke(card, true);
+      glow(1);
+      lamp("Off it goes.", line);
+      // Lamp opens once the card is on its way: the browser's own question covers the page when it comes.
+      await wait(1000);
+      location.href = link;
+      await wait(400);
+      // Gone from sight but still holding its place, so the sky keeps its size and the page doesn't jump.
+      card.style.visibility = "hidden";
+      glow(0.8);
+      // A page is never told whether Lamp opened, so it only offers the next thing to try.
+      after = el("div", "wish-float flex flex-wrap gap-x-5 gap-y-2 text-[15px] text-white/60");
+      card.before(after);
+      const again = el("button", "underline underline-offset-4 transition hover:text-white", "Didn't open? Try again");
+      again.type = "button";
+      again.onclick = () => { const next = wishLink(area.value); if (next) location.href = next; };
+      const back = el("button", "underline underline-offset-4 transition hover:text-white", "Back to my wish");
+      back.type = "button";
+      back.onclick = () => {
+        after?.remove(); after = null;
+        card.style.visibility = "";
+        card.inert = false;
+        card.classList.remove("wish-sink");
+        card.classList.add("wish-rise");
+        lamp(opening, line);
+      };
+      after.append(again, back);
     });
   }
 
