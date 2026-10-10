@@ -45,6 +45,8 @@ struct LampProject: Identifiable, Hashable {
     var instance: String = ""
     /// Made with New App and not named yet. The first message names it.
     var untitled = false
+    /// Made by a wish that came from the site (`Wish`): until it has a name it reads as their wish.
+    var fromWish = false
     var platform: Platform = .mac
     var family: DeviceFamily = .iphone
     /// The person's own iPhone or iPad that Play puts the app on (Devices), instead of the simulator.
@@ -56,6 +58,10 @@ struct LampProject: Identifiable, Hashable {
     var builtURL: URL { dir.appendingPathComponent("build/\(exe).app") }
     /// Every successful build is copied here so it shows up in Spotlight and Launchpad.
     var installedURL: URL { Store.installDir.appendingPathComponent("\(name).app") }
+    /// What the app is called on screen. An unnamed one has only a stand-in name on disk ("Untitled", which
+    /// its folder and everything that asks `untitled` go by), so the screen says what it is instead: their
+    /// wish, or a new app. The name Lamp or the person gives it takes over everywhere at once.
+    var title: String { !untitled ? name : fromWish ? "Your wish" : "New App" }
     /// False for a draft (Template.draft): a new app whose scaffold isn't written yet.
     var scaffolded: Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent("Package.swift").path) }
 }
@@ -68,6 +74,7 @@ struct ProjectMeta: Codable {
     var family: DeviceFamily?  // iOS apps: which simulator they open on; nil means iPhone
     var device: String?        // iOS apps: the person's own phone (its udid) that Play puts the app on, if any
     var instance: String?      // LampProject.instance
+    var wish: Bool?            // LampProject.fromWish
 }
 
 struct AppUsage: Codable {
@@ -469,7 +476,8 @@ final class Store: ObservableObject {
                   let meta = try? JSONDecoder().decode(ProjectMeta.self, from: data) else { return nil }
             return LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
                                 instance: meta.instance ?? dir.lastPathComponent,
-                                untitled: meta.untitled ?? false, platform: meta.platform ?? .mac, family: meta.family ?? .iphone,
+                                untitled: meta.untitled ?? false, fromWish: meta.wish ?? false,
+                                platform: meta.platform ?? .mac, family: meta.family ?? .iphone,
                                 device: meta.device)
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -722,7 +730,7 @@ final class Store: ObservableObject {
         // A draft: its scaffold waits for the first build (`materialize`), so the intro can still change its kind.
         let project: LampProject
         do {
-            project = try Template.draft(name: uniqueName("Untitled"), untitled: true, in: root)
+            project = try Template.draft(name: uniqueName("Untitled"), untitled: true, fromWish: fromSite, in: root)
         } catch {
             NSAlert(error: error).runModal()
             return
@@ -3870,7 +3878,7 @@ final class Store: ObservableObject {
             if computerUseRefused.insert(project.id).inserted {
                 NSApp.activate()
                 let alert = NSAlert()
-                alert.messageText = "\(project.name) wants to use your other apps"
+                alert.messageText = "\(project.title) wants to use your other apps"
                 alert.informativeText = "To let apps read and use apps like Slack, Mail or your browser, turn on “Let apps use your other apps” in Lamp's settings."
                 alert.addButton(withTitle: "Open Settings")
                 alert.addButton(withTitle: "Not Now")

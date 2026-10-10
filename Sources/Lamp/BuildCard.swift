@@ -185,7 +185,7 @@ struct BuildCard: View {
             HStack(spacing: 12) {
                 AppIcon(project: project, size: 44)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(project.untitled ? "New app" : project.name).font(.headline)
+                    Text(project.title).font(.headline)
                     status.font(.body).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
