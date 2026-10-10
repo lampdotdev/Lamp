@@ -3066,13 +3066,24 @@ final class Store: ObservableObject {
             owner.build = nil
             let failure = PhoneFailure(stage: .build, output: output.joined(separator: "\n"))
             if companion { try? PhoneWishes.shared.mark(project, [.locked, .unreachable].contains(failure.cause) ? .waitingPhone : .needsMac) }
-            failed(failure.message, output: failure.output.isEmpty ? error.localizedDescription : failure.output)
+            failed(companion ? PhoneWishes.message(for: failure) : failure.message,
+                   output: failure.output.isEmpty ? error.localizedDescription : failure.output)
             return nil
         }
         guard stillOwns() else { return nil }
+        if companion {
+            let reachable = await Devices.list().contains { $0.udid == udid && $0.wifi }
+            // Stop may have arrived during discovery. No new install may begin after that.
+            guard stillOwns() else { return nil }
+            guard reachable else {
+                try? PhoneWishes.shared.mark(project, .waitingPhone)
+                failed("Unlock your iPhone on the same Wi-Fi. Lamp will retry when the companion reconnects.")
+                return nil
+            }
+        }
         log(project, .status, "Putting \(project.name) on \(name)…")
         do {
-            try await Devices.install(app, on: udid, wifiOnly: companion)
+            try await Devices.install(app, on: udid)
             guard stillOwns() else { return nil }
             if companion {
                 // Installation is the acknowledgement. The companion opens the app through its URL;
@@ -3102,7 +3113,9 @@ final class Store: ObservableObject {
                 let failure = error as? PhoneFailure
                 try? PhoneWishes.shared.mark(project, failure.map { [.locked, .unreachable].contains($0.cause) } == true ? .waitingPhone : .needsMac)
             }
-            if let failure = error as? PhoneFailure { failed(failure.message, output: failure.output) }
+            if let failure = error as? PhoneFailure {
+                failed(companion ? PhoneWishes.message(for: failure) : failure.message, output: failure.output)
+            }
             else if !(error is CancellationError) {
                 let failure = PhoneFailure(stage: .launch, output: error.localizedDescription)
                 failed(failure.message, output: failure.output)

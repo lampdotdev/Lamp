@@ -144,10 +144,7 @@ enum Devices {
         return app
     }
 
-    static func install(_ app: URL, on udid: String, wifiOnly: Bool = false) async throws {
-        if wifiOnly, !(await list()).contains(where: { $0.udid == udid && $0.wifi }) {
-            throw PhoneFailure(stage: .install, output: "Device is not connected over Wi-Fi.")
-        }
+    static func install(_ app: URL, on udid: String) async throws {
         let result = await Subprocess.run("/usr/bin/xcrun", ["devicectl", "device", "install", "app", "--device", udid, app.path],
                                           mergeErrors: true, timeout: 300)
         guard result.ok else {

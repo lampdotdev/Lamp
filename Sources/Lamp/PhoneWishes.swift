@@ -24,6 +24,12 @@ import CoreImage.CIFilterBuiltins
     private var enabled: Bool { UserDefaults.standard.bool(forKey: "phoneWishesEnabled") }
     private var keyService: String { Edition.bundleID + ".phone-wishes" }
 
+    static func message(for failure: PhoneFailure) -> String {
+        [.locked, .unreachable].contains(failure.cause)
+            ? "Unlock your iPhone on the same Wi-Fi."
+            : failure.message
+    }
+
     func start() {
         guard enabled, server == nil else { return }
         do {
@@ -180,9 +186,13 @@ import CoreImage.CIFilterBuiltins
             var output = ""
             let app: URL
             do { app = try await Devices.build(project, team: Devices.team, udid: device.udid) { output += $0 + "\n" } }
-            catch { throw PhoneFailure(stage: .build, output: output) }
+            catch { throw Devices.Failure(message: Self.message(for: PhoneFailure(stage: .build, output: output))) }
             activity = "Installing"
-            try await Devices.install(app, on: device.udid, wifiOnly: true)
+            guard await Devices.list().contains(where: { $0.udid == device.udid && $0.wifi }) else {
+                throw Devices.Failure(message: "Unlock your iPhone on the same Wi-Fi, then try again.")
+            }
+            do { try await Devices.install(app, on: device.udid) }
+            catch let failure as PhoneFailure { throw Devices.Failure(message: Self.message(for: failure)) }
             // Opening is deliberately left to the phone. devicectl --console would own its lifetime.
             let newPairing = try Pairing(pair: PhoneLink.Pair(), device: device.udid, name: device.name)
             try PhoneLink.saveKey(newPairing, service: keyService)
@@ -215,6 +225,7 @@ struct PhoneWishSettings: View {
         Form {
             Section {
                 Toggle("iPhone wishes", isOn: $enabled).toggleStyle(.checkbox)
+                    .disabled(model.activity != nil)
                     .onChange(of: enabled) { model.setEnabled(enabled) }
                 if enabled {
                     VStack(alignment: .leading, spacing: 12) {
