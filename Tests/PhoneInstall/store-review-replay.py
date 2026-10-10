@@ -109,6 +109,7 @@ enum Runtime {
     func endApprovals(for project: LampProject) { approvalsEnded += 1 }
     func saveChat(_ project: LampProject) {}
     func refreshOpenApps() {}
+    func offerAwaySetup(_ project: LampProject) {}  // the setup card offered after a phone install: not this replay's subject
     func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, retryPhone: String? = nil) {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, retryPhone: retryPhone))
     }
