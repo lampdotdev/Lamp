@@ -200,6 +200,11 @@ final class Store: ObservableObject {
     /// Which Lamp built each installed app (see BuildStamp). Missing for apps that aren't built yet.
     @Published var stamps: [String: BuildStamp] = [:]
     @Published var chatFocusRequest = 0
+    /// A wish from the site's link that came while the welcome is up, for the welcome to take (`take(wish:)`).
+    @Published var arrivedWish: String?
+    private var wishWriting: Task<Void, Never>?
+    /// The new app the last such wish went into.
+    private var wishApp: String?
     @Published private(set) var pendingSubmissions = PendingSubmissions()
 
     func beginSubmission(_ project: LampProject) -> UUID? {
@@ -662,10 +667,43 @@ final class Store: ObservableObject {
             importApp(from: url)
             return
         }
+        if let wish = Wish.from(link: url) { return take(wish: wish) }
         guard url.scheme == Edition.urlScheme,
               let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "app" })?.value else { return }
         showChat(slug)
+    }
+
+    /// A wish the site's link brought (`Wish`). During the welcome it goes to the first-app box; after it, into
+    /// the message box of a new app, written in a word at a time as the site writes. It is never sent from
+    /// here: any web page can open such a link, so the person reads it and presses Send.
+    func take(wish: String) {
+        NSApp.activate()
+        guard Onboarding.isDone || welcomeFinished else { arrivedWish = wish; return }
+        wishWriting?.cancel()
+        // A second link goes into the app the first one made, while nothing has been sent there: a page that
+        // keeps opening links can't fill Lamp with apps.
+        if let id = wishApp, let earlier = projects.first(where: { $0.id == id }), earlier.untitled,
+           (logs[id] ?? []).isEmpty, !busy.contains(id) {
+            updateDraft(Draft(), for: earlier)
+            showChat(id)
+        } else {
+            create(fromSite: true)
+        }
+        guard let project = selected else { return }
+        wishApp = project.id
+        wishWriting = Task {
+            let steps = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? [wish] : Wish.steps(wish)
+            let pace = Wish.pace(words: steps.count)
+            var written = ""
+            for step in steps {
+                // Anything typed meanwhile is theirs: the rest of the wish stays out of its way.
+                guard !Task.isCancelled, let current = current(project), draft(for: current).text == written else { return }
+                updateDraft(Draft(text: step), for: current)
+                written = step
+                try? await Task.sleep(for: pace)
+            }
+        }
     }
 
     /// Brings Lamp to the front on an app's chat, ready to type.
@@ -680,7 +718,7 @@ final class Store: ObservableObject {
 
     /// New App: an untitled app, straight into its chat. Its first message names it and designs its icon.
     /// A Mac app until the intro says otherwise (`setKind`).
-    func create(fromWelcome: Bool = false) {
+    func create(fromWelcome: Bool = false, fromSite: Bool = false) {
         // A draft: its scaffold waits for the first build (`materialize`), so the intro can still change its kind.
         let project: LampProject
         do {
@@ -692,7 +730,7 @@ final class Store: ObservableObject {
         reload()
         selection = project.id
         chatFocusRequest += 1
-        Analytics.capture(.appCreated, ["source": fromWelcome ? "welcome" : "new_app"])
+        Analytics.capture(.appCreated, ["source": fromSite ? "site" : fromWelcome ? "welcome" : "new_app"])
     }
 
     /// Writes a draft's scaffold and makes its first version, before anything builds it. Nil, after saying so,

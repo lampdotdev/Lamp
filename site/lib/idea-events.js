@@ -18,6 +18,7 @@ export const EVENTS = {
   edit: [""],             // they changed the request
   copy: [""],             // they copied it
   download: [""],         // they pressed Download in this section
+  open: [""],             // they pressed the link that opens Lamp with the wish
   failed: ["quota", "model", "network"], // the model couldn't be reached
 };
 export const PER_IP_PER_HOUR = 300;
