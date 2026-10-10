@@ -189,6 +189,25 @@ what the gateway would with the provider directly (chat completions with the JSO
 decisions, images). The prompt's fencing and dates are made in the library either way. What's spent this
 way isn't recorded in Lamp, and `/ai/computer` says it needs the Mac.
 
+### Wishes from an iPhone
+
+The companion experiment lives in Settings → Experimental → iPhone wishes (`PhoneWishes`). Lamp builds
+and installs its bundled source (`Resources/PhoneCompanion/CompanionApp.swift`) with the same device
+project/signing code as generated apps. `PhoneLink.swift` is bundled verbatim for both ends. A QR code
+pairs one phone with a random 256-bit TLS PSK; Bonjour advertises only its random identity. Secrets live
+in Keychain, never in an app bundle or the wish ledger. Both network endpoints require Wi-Fi.
+
+`PhoneWishLedger` writes a request before acknowledging it; the request UUID is also the app's
+`instance`, so naming cannot lose the association. `Store.startPhoneWish` uses `PhoneSetup` and `send`,
+including the ordinary agent, sandbox and approval cards. The phone can submit and read progress only;
+approval stays on the Mac. Installation for these jobs completes without `devicectl --console`; the
+companion's Open App uses the generated bundle's `phoneOpenScheme`. A failed connection/locked phone
+keeps delivery pending and retries when the companion returns, without rerunning the agent.
+
+Keep the phone's UI limited to pairing, one wish, progress and Open App. Changes here require independent
+security/concurrency review and real phone proof; a loopback check doesn't establish locked-Mac or
+Wi-Fi installation behavior. Seven-day renewal and slot management remain manual.
+
 ## Generated apps
 
 Lamp owns three files in every app and never trusts what's in them: `Sources/LampSupport.swift`, `build.sh`

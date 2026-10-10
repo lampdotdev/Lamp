@@ -109,6 +109,8 @@ fi
 cp Resources/THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 install -m 755 Resources/lamp-approve.sh "$APP/Contents/Resources/lamp-approve.sh"
 cp Resources/lamp-tools.ts Resources/lamp-tools.json "$APP/Contents/Resources/"   # the agent's tools: pi's extension and the registry both it and the MCP endpoint read
+mkdir -p "$APP/Contents/Resources/PhoneCompanion"
+cp Sources/Lamp/PhoneLink.swift Resources/PhoneCompanion/CompanionApp.swift Resources/AppIcon.png "$APP/Contents/Resources/PhoneCompanion/"
 cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Lamp builds a stable signature
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
 cp -R Resources/Onboarding "$APP/Contents/Resources/"
@@ -134,6 +136,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSLocalNetworkUsageDescription</key><string>Receive wishes from your paired iPhone.</string>
+  <key>NSBonjourServices</key><array><string>_lamp-wishes._tcp</string></array>
   <key>UTExportedTypeDeclarations</key><array><dict>
     <key>UTTypeIdentifier</key><string>dev.lamp.lampapp</string>
     <key>UTTypeDescription</key><string>Lamp App</string>

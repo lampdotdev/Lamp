@@ -457,6 +457,7 @@ enum Template {
                 .replacingOccurrences(of: "{{EXE}}", with: project.exe)
                 .replacingOccurrences(of: "{{NAME}}", with: project.name)
                 .replacingOccurrences(of: "{{BUNDLE}}", with: project.deviceBundleID(team: team))
+                .replacingOccurrences(of: "{{OPEN_SCHEME}}", with: project.phoneOpenScheme)
                 .replacingOccurrences(of: "{{TEAM}}", with: team)
             let url = dir.appendingPathComponent(path)
             if (try? String(contentsOf: url, encoding: .utf8)) != contents {
@@ -535,6 +536,7 @@ enum Template {
       <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
       <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
       <key>CFBundleDevelopmentRegion</key><string>en</string>
+      <key>CFBundleURLTypes</key><array><dict><key>CFBundleURLSchemes</key><array><string>{{OPEN_SCHEME}}</string></array></dict></array>
       <key>LSRequiresIPhoneOS</key><true/>
       <key>UILaunchScreen</key><dict/>
       <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>

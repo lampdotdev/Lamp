@@ -55,6 +55,9 @@ struct LampProject: Identifiable, Hashable {
     /// On a phone the app is registered with Apple under the person's team, so the id carries the team:
     /// another team may have registered the plain one for the same app name.
     func deviceBundleID(team: String) -> String { bundleID + "." + team.lowercased() }
+    var phoneOpenScheme: String {
+        "lamp-app-" + SHA256.hash(data: Data(instance.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
+    }
     var builtURL: URL { dir.appendingPathComponent("build/\(exe).app") }
     /// Every successful build is copied here so it shows up in Spotlight and Launchpad.
     var installedURL: URL { Store.installDir.appendingPathComponent("\(name).app") }
@@ -392,6 +395,7 @@ final class Store: ObservableObject {
         Onboarding.settle(hasApps: !projects.isEmpty)
         selection = projects.first?.id
         startGateway()
+        Task { PhoneWishes.shared.start() }
         watchOpenApps()
         // Asking for phones runs devicectl, so only for someone with iPhone apps; Try On asks again when it's opened.
         if projects.contains(where: { $0.platform == .iphone }) { refreshDevices() }
@@ -1357,6 +1361,38 @@ final class Store: ObservableObject {
         saveWaiting()
     }
 
+    /// An authenticated phone's Send enters the same setup check, queue, agent and approval flow as
+    /// Send on the Mac. The persisted request ID identifies the draft across naming and reconnects.
+    func startPhoneWish(_ job: PhoneWishLedger.Job, device: String, finished: @escaping () -> Void) {
+        let project: LampProject
+        do {
+            if let existing = projects.first(where: { $0.instance == job.id.uuidString }) {
+                project = existing
+            } else {
+                var draft = try Template.draft(name: uniqueName("Untitled"), untitled: true, platform: .iphone,
+                                               instance: job.id.uuidString, in: root)
+                draft.device = device
+                try Template.saveMeta(draft)
+                project = draft
+                reload()
+            }
+        } catch {
+            PhoneWishes.shared.reject(job.id)
+            finished()
+            return
+        }
+        PhoneSetup.shared.perform(for: project, in: self, cancelled: {
+            PhoneWishes.shared.reject(job.id)
+            finished()
+        }) { current in
+            defer { finished() }
+            do {
+                try PhoneWishes.shared.mark(current, .building)
+                self.send(job.wish, to: current)
+            } catch { PhoneWishes.shared.reject(job.id) }
+        }
+    }
+
     /// Requests waiting for setup (the welcome's first app, while Apple's tools install), kept on disk so
     /// quitting meanwhile doesn't lose them: they come back on the next launch and start once setup is done.
     private static let waitingKey = "waitingRequests"
@@ -1552,6 +1588,7 @@ final class Store: ObservableObject {
 
     /// Marks the app idle again, then starts anything queued while it was busy.
     private func finish(_ project: LampProject) {
+        PhoneWishes.shared.ended(project)
         endApprovals(for: project)   // a card nobody can answer any more, from a request that raced the agent's end
         // Artwork that arrived during the turn, for an icon that was installed without it: applied now, still
         // owning the app, so nothing else builds or installs meanwhile. With more work queued, the next
@@ -2982,6 +3019,7 @@ final class Store: ObservableObject {
     /// registers the phone and makes a certificate. What the app prints comes back to its log, as on the
     /// simulator. Returns a plain message when it couldn't be done, which the chat shows.
     private func installOnDevice(_ project: LampProject, owner: Turn, udid: String) async -> String? {
+        let companion = PhoneWishes.shared.owns(project)
         func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
         func failed(_ message: String, output: String = "") {
             guard stillOwns() else { return }
@@ -2996,7 +3034,13 @@ final class Store: ObservableObject {
         devices = await Devices.list()
         guard stillOwns() else { return nil }
         let device = devices.first(where: { $0.udid == udid })
+        if companion, device?.wifi != true {
+            try? PhoneWishes.shared.mark(project, .waitingPhone)
+            failed("Unlock your iPhone on the same Wi-Fi. Lamp will retry when the companion reconnects.")
+            return nil
+        }
         if let problem = Devices.problem(device, team: team) {
+            if companion { try? PhoneWishes.shared.mark(project, .needsMac) }
             failed(problem)
             return nil
         }
@@ -3004,10 +3048,15 @@ final class Store: ObservableObject {
         do {
             try Template.writeDeviceProject(for: project, team: team)
         } catch {
+            if companion { try? PhoneWishes.shared.mark(project, .needsMac) }
             failed("Lamp couldn't get the app ready for \(name). Click Retry. If it fails again, ask Lamp to fix it and include the error from Agent Details.", output: error.localizedDescription)
             return nil
         }
         log(project, .status, "Building for \(name)…")
+        if companion {
+            do { try PhoneWishes.shared.mark(project, .installing) }
+            catch { failed("Couldn't save wish progress. Try again."); return nil }
+        }
         var output: [String] = []
         let app: URL
         do {
@@ -3016,14 +3065,23 @@ final class Store: ObservableObject {
         } catch {
             owner.build = nil
             let failure = PhoneFailure(stage: .build, output: output.joined(separator: "\n"))
+            if companion { try? PhoneWishes.shared.mark(project, [.locked, .unreachable].contains(failure.cause) ? .waitingPhone : .needsMac) }
             failed(failure.message, output: failure.output.isEmpty ? error.localizedDescription : failure.output)
             return nil
         }
         guard stillOwns() else { return nil }
         log(project, .status, "Putting \(project.name) on \(name)…")
         do {
-            try await Devices.install(app, on: udid)
+            try await Devices.install(app, on: udid, wifiOnly: companion)
             guard stillOwns() else { return nil }
+            if companion {
+                // Installation is the acknowledgement. The companion opens the app through its URL;
+                // no Mac console owns the new app's lifetime or pulls it over the wish's progress.
+                try PhoneWishes.shared.mark(project, .ready, appURL: project.phoneOpenScheme + "://open")
+                owner.phoneReady = true
+                log(project, .status, "\(project.name) is ready on \(name)")
+                return nil
+            }
             deviceApps[project.id]?.terminate()
             deviceApps[project.id] = nil
             Runtime.startLog(project)
@@ -3040,6 +3098,10 @@ final class Store: ObservableObject {
             offerAwaySetup(project)
         } catch {
             owner.build = nil
+            if companion {
+                let failure = error as? PhoneFailure
+                try? PhoneWishes.shared.mark(project, failure.map { [.locked, .unreachable].contains($0.cause) } == true ? .waitingPhone : .needsMac)
+            }
             if let failure = error as? PhoneFailure { failed(failure.message, output: failure.output) }
             else if !(error is CancellationError) {
                 let failure = PhoneFailure(stage: .launch, output: error.localizedDescription)

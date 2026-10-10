@@ -21,6 +21,7 @@ enum Devices {
         let connected: Bool        // a tunnel to it is open now; it's opened on demand, so false says little
         let paired: Bool           // trusted this Mac for development; until then nothing can be put on it
         let developerMode: Bool
+        var wifi = false
         var id: String { udid }
         var family: DeviceFamily { model.hasPrefix("iPad") ? .ipad : .iphone }
     }
@@ -103,7 +104,8 @@ enum Devices {
                           model: hardware["marketingName"] as? String ?? (hardware["deviceType"] as? String ?? "iPhone"),
                           connected: connection["tunnelState"] as? String == "connected" || properties["ddiServicesAvailable"] as? Bool == true,
                           paired: connection["pairingState"] as? String == "paired",
-                          developerMode: properties["developerModeStatus"] as? String == "enabled")
+                          developerMode: properties["developerModeStatus"] as? String == "enabled",
+                          wifi: connection["transportType"] as? String == "localNetwork")
         }
         .sorted { ($0.connected ? 0 : 1, $0.name) < ($1.connected ? 0 : 1, $1.name) }
     }
@@ -142,7 +144,10 @@ enum Devices {
         return app
     }
 
-    static func install(_ app: URL, on udid: String) async throws {
+    static func install(_ app: URL, on udid: String, wifiOnly: Bool = false) async throws {
+        if wifiOnly, !(await list()).contains(where: { $0.udid == udid && $0.wifi }) {
+            throw PhoneFailure(stage: .install, output: "Device is not connected over Wi-Fi.")
+        }
         let result = await Subprocess.run("/usr/bin/xcrun", ["devicectl", "device", "install", "app", "--device", udid, app.path],
                                           mergeErrors: true, timeout: 300)
         guard result.ok else {
