@@ -263,8 +263,8 @@ private struct IdeaStep: View {
     let paste: (String) -> Void
     let back: () -> Void
     let next: () -> Void
-    /// What shows of an arriving wish while it is written in; the whole wish is in `prompt` from the start.
-    @State private var writing: String?
+    /// An arriving wish while it is written in; the whole wish is in `prompt` from the start.
+    @State private var arrival: Wish.Arrival?
     /// A browser's copy is waiting that Lamp can't read without macOS asking: the box offers to paste it.
     @State private var pasteOffered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -302,7 +302,7 @@ private struct IdeaStep: View {
                     .lineSpacing(3)
                     .lineLimit(3...5)
                     .focused($focused)
-                    .allowsHitTesting(writing == nil)
+                    .allowsHitTesting(arrival == nil)
                     .onChange(of: prompt) { if prompt != deck.ideas.first(where: { $0.id == chosen })?.prompt { chosen = nil } }
                 Button(action: toggleDictation) {
                     Image(systemName: dictation.isListening ? "waveform" : "mic")
@@ -412,9 +412,11 @@ private struct IdeaStep: View {
 
     /// The box shows the wish as far as it has been written; typing is theirs from the first key.
     private var box: Binding<String> {
-        Binding { writing ?? prompt } set: { typed in
-            guard typed != writing else { return }
-            writing = nil
+        Binding { arrival?.text(over: prompt) ?? prompt } set: { typed in
+            if let arrival {
+                guard typed != arrival.text(over: prompt) else { return }
+                self.arrival = nil
+            }
             prompt = typed
         }
     }
@@ -426,13 +428,14 @@ private struct IdeaStep: View {
         if !reduceMotion {
             let steps = Wish.steps(wish)
             let pace = Wish.pace(words: steps.count)
-            writing = ""
+            arrival = Wish.Arrival(wish)
             try? await Task.sleep(for: .seconds(0.45))   // the step slides in first
-            for step in steps where !Task.isCancelled {
-                writing = step
+            // An idea picked or words dictated meanwhile take the box: the writing stops there.
+            for step in steps where !Task.isCancelled && arrival != nil && prompt == wish {
+                arrival?.advance(to: step)
                 try? await Task.sleep(for: pace)
             }
-            writing = nil
+            arrival = nil
         }
         focused = true
         // Focus selects everything in the box, and the next key would then replace the wish: put the caret

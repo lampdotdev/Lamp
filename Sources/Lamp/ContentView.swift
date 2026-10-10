@@ -660,7 +660,7 @@ struct ProjectView: View {
                 .help("Attach files. You can also paste or drop images and files here.")
                 .accessibilityLabel("Attach files")
                 .frame(height: Composer.lineHeight)
-            Composer(text: draftBinding, height: $composerHeight,
+            Composer(text: shownDraft, height: $composerHeight,
                      placeholder: busy ? "Working… describe the next change"
                         : lines.isEmpty ? "Describe an app…" : "Describe a change…",
                      // No suggestion while a request from the chat is in the box: it would be about a turn
@@ -838,6 +838,19 @@ struct ProjectView: View {
         Binding(get: { draft }, set: { draft = $0; saveDraft() })
     }
 
+    /// The message box: the draft, or as much of an arriving wish as has been written in (`Wish.Arrival`).
+    /// The draft is the whole wish throughout, so that is what Send sends; typing ends the writing.
+    private var shownDraft: Binding<String> {
+        Binding(get: { store.arrivals[project.id]?.text(over: draft) ?? draft }, set: { typed in
+            if let arrival = store.arrivals[project.id] {
+                guard typed != arrival.text(over: draft) else { return }
+                store.endArrival(for: project.id)
+            }
+            draft = typed
+            saveDraft()
+        })
+    }
+
     private func loadDraft() {
         let saved = store.draft(for: store.current(project) ?? project)
         draft = saved.text
@@ -1003,6 +1016,7 @@ struct ProjectView: View {
         let submitted = Store.Draft(text: draft, attachments: attachments, replacing: replacing,
                                     setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? [])
         guard let token = store.beginSubmission(project) else { return }
+        store.endArrival(for: project.id)
         sends += 1
         store.saveDraft(submitted, for: project)
         PhoneSetup.shared.perform(for: project, in: store, cancelled: {

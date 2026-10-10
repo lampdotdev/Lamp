@@ -209,6 +209,8 @@ final class Store: ObservableObject {
     @Published var chatFocusRequest = 0
     /// A wish from the site's link that came while the welcome is up, for the welcome to take (`take(wish:)`).
     @Published var arrivedWish: String?
+    /// The wishes being written into a message box right now, by app (`Wish.Arrival`). The drafts hold them whole.
+    @Published private(set) var arrivals: [String: Wish.Arrival] = [:]
     private var wishWriting: Task<Void, Never>?
     /// The new app the last such wish went into.
     private var wishApp: String?
@@ -575,6 +577,14 @@ final class Store: ObservableObject {
         var setAsideText = ""
         var setAsideAttachments: [URL] = []
 
+        /// This draft with a wish from the site as its words: all of the wish at once, and everything else
+        /// the draft holds (files dropped into the box) kept.
+        func taking(wish: String) -> Draft {
+            var draft = self
+            draft.text = wish
+            return draft
+        }
+
         /// Only clear input that is still exactly the captured request. An idea, edit or late file added
         /// while setup was open belongs to the next draft, even though the earlier request was sent.
         func afterSubmission(_ captured: Draft, sent: Bool) -> Draft {
@@ -691,27 +701,47 @@ final class Store: ObservableObject {
         wishWriting?.cancel()
         // A second link goes into the app the first one made, while nothing has been sent there: a page that
         // keeps opening links can't fill Lamp with apps.
-        if let id = wishApp, let earlier = projects.first(where: { $0.id == id }), earlier.untitled,
-           (logs[id] ?? []).isEmpty, !busy.contains(id) {
-            updateDraft(Draft(), for: earlier)
+        arrivals = [:]
+        if let id = wishApp, let earlier = projects.first(where: { $0.id == id }), earlier.untitled, nothingAsked(of: id) {
             showChat(id)
         } else {
             create(fromSite: true)
         }
         guard let project = selected else { return }
         wishApp = project.id
+        // The draft is the whole wish at once, with whatever else it already held (a file dropped there):
+        // only the box's showing of it is written in, so Send at any moment sends all of it.
+        let whole = draft(for: project).taking(wish: wish)
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return updateDraft(whole, for: project) }
+        arrivals[project.id] = Wish.Arrival(wish)
+        updateDraft(whole, for: project)
+        let id = project.id
         wishWriting = Task {
-            let steps = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? [wish] : Wish.steps(wish)
+            let steps = Wish.steps(wish)
             let pace = Wish.pace(words: steps.count)
-            var written = ""
             for step in steps {
-                // Anything typed meanwhile is theirs: the rest of the wish stays out of its way.
-                guard !Task.isCancelled, let current = current(project), draft(for: current).text == written else { return }
-                updateDraft(Draft(text: step), for: current)
-                written = step
+                guard !Task.isCancelled, arrivals[id] != nil else { return }
+                arrivals[id]?.advance(to: step)
                 try? await Task.sleep(for: pace)
             }
+            if !Task.isCancelled { arrivals[id] = nil }
         }
+    }
+
+    /// The box's text changed under an arriving wish, or it was sent: the writing is over.
+    func endArrival(for id: String) {
+        if arrivals[id] != nil { arrivals[id] = nil }
+    }
+
+    /// Nothing has been asked of this app yet: no line in its chat, no turn running, and no request waiting
+    /// on setup or in line. A request can be on its way with none of the first two (`beginSubmission`, `queued`).
+    private func nothingAsked(of id: String) -> Bool {
+        Self.nothingAsked(lines: logs[id]?.count ?? 0, busy: busy.contains(id), pending: pendingSubmissions.contains(id),
+                          queued: queued[id] != nil)
+    }
+
+    nonisolated static func nothingAsked(lines: Int, busy: Bool, pending: Bool, queued: Bool) -> Bool {
+        lines == 0 && !busy && !pending && !queued
     }
 
     /// Brings Lamp to the front on an app's chat, ready to type.
@@ -878,8 +908,7 @@ final class Store: ObservableObject {
     /// An untitled app you left without ever using is deleted, so trying New App leaves nothing behind.
     /// Words in its message box count as using it: they're kept, like a draft in any other app.
     private func discardIfUnused(_ id: String) {
-        guard let project = projects.first(where: { $0.id == id }), project.untitled,
-              (logs[id] ?? []).isEmpty, queued[id] == nil, !busy.contains(id), !pendingSubmissions.contains(id),
+        guard let project = projects.first(where: { $0.id == id }), project.untitled, nothingAsked(of: id),
               draft(for: project).text.trimmed.isEmpty,
               !FileManager.default.fileExists(atPath: project.builtURL.path) else { return }
         try? FileManager.default.removeItem(at: project.dir)

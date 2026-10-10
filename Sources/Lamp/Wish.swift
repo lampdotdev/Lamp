@@ -72,6 +72,22 @@ enum Wish {
         tidy(pasteboard.string(forType: .string))
     }
 
+    /// A wish being written into a box a word at a time. Only what the box shows: the box's own text is the
+    /// whole wish from the first moment, so whatever reads it meanwhile (Send, Continue, a save) has all of it,
+    /// and nothing the person adds to the box (a file, their own words, an idea, dictation) is written over.
+    struct Arrival: Equatable {
+        let wish: String
+        private(set) var shown = ""
+
+        init(_ wish: String) { self.wish = wish }
+
+        /// What the box shows over what it holds. The moment it holds anything but the untouched wish, that
+        /// is what shows: the writing never covers a choice the person made.
+        func text(over held: String) -> String { held == wish ? shown : held }
+
+        mutating func advance(to step: String) { shown = step }
+    }
+
     /// How much of the wish shows at each moment while it is written into a box a word at a time, as the site
     /// writes its own lines: each step is the text up to the end of one more word, the last one all of it.
     static func steps(_ wish: String) -> [String] {
