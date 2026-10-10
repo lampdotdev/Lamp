@@ -63,6 +63,31 @@ final class WishTests: XCTestCase {
         XCTAssertEqual(Wish.look(at: board([:])), .nothing)
     }
 
+    /// With Apple's developer switch for the clipboard question on, macOS 27.0.1 never answered whether a
+    /// read would ask, and Lamp's welcome froze waiting for it (seen 2026-10-09). There Lamp no longer asks.
+    @MainActor func testWhereMacOSNeverAnswersLampDoesNotAsk() throws {
+        let suite = "lamp-wish-\(UUID().uuidString)"
+        let settings = try XCTUnwrap(UserDefaults(suiteName: suite))
+        addTeardownBlock { settings.removePersistentDomain(forName: suite) }
+        let macOS27 = OperatingSystemVersion(majorVersion: 27, minorVersion: 0, patchVersion: 1)
+        let macOS26 = OperatingSystemVersion(majorVersion: 26, minorVersion: 6, patchVersion: 2)
+
+        // As every Mac ships: asked, on either system.
+        XCTAssertTrue(Wish.canAsk(system: macOS27, settings: settings))
+        XCTAssertTrue(Wish.canAsk(system: macOS26, settings: settings))
+
+        settings.set(true, forKey: Wish.questionSwitch)
+        XCTAssertFalse(Wish.canAsk(system: macOS27, settings: settings))
+        // On macOS 26 the switch answers at once and the Paste button works, so nothing changes there.
+        XCTAssertTrue(Wish.canAsk(system: macOS26, settings: settings))
+
+        // Not asking means nothing is taken and nothing offered, even with a wish waiting.
+        let waiting = board([.html: chrome, .string: wish])
+        XCTAssertEqual(Wish.look(at: waiting, canAsk: false), .nothing)
+        XCTAssertFalse(Wish.offersPaste(from: waiting, canAsk: false))
+        XCTAssertEqual(Wish.look(at: waiting, canAsk: true), .wish(wish))
+    }
+
     func testOnlyABrowsersCopyIsOfferedForPasting() {
         func type(_ name: String) -> NSPasteboard.PasteboardType { NSPasteboard.PasteboardType(name) }
         XCTAssertTrue(Wish.fromBrowser([.string, .html, type("com.apple.WebKit.custom-pasteboard-data")]))
