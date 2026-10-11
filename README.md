@@ -101,7 +101,7 @@ With your Apple account signed in to Xcode, plug your phone in: Try On offers to
 ### iPhone wishes (experiment)
 
 Settings → Experimental → **iPhone wishes** installs a small Lamp companion on an already paired iPhone
-over Wi-Fi. Open it on the phone and scan the code shown on the Mac. Type a wish and Send; Lamp uses its
+over Wi-Fi only. Open it on the phone and scan the code shown on the Mac. Type a wish and Send; Lamp uses its
 selected agent and ordinary approvals to make the app. The companion shows that app's normal Mac
 conversation: your messages, the agent's replies and progress, with **Open App** after installation.
 Reply in that chat to keep changing the same app. Each message is saved before sending and deduplicated
@@ -116,12 +116,7 @@ older chats remain on the Mac. There is no project list, model picker or phone s
 Use the same Wi-Fi, keep Lamp running, and choose the free Personal Team in Building settings. The
 companion uses one of the three development-app slots. Reinstallation after seven days, removing apps
 to free slots, first-time Apple pairing/Developer Mode, and recovery of a build interrupted by quitting
-Lamp remain manual. Only one phone and one app being worked on are supported. A live counter-app run on
-an iPhone 17 Pro Max covered an unlocked Mac, a follow-up with the Mac locked, a phone lock and a
-30-second Wi-Fi drop: the conversation resumed, the update installed, and the phone's saved count survived. Missing Mac
-Accessibility permission blocked the agent's simulator button test; Dan checked the buttons on the
-phone. This is a proof of concept with naming and phone-message wording issues still open. A real
-command-approval pause, cold relaunch and renewal have not been verified; see the PR's external evidence.
+Lamp remain manual. Only one phone and one app being worked on are supported. This is a proof of concept.
 
 ## Choosing the AI
 

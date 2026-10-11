@@ -9,7 +9,7 @@ final class PhoneWishLedgerTests: XCTestCase {
         return folder.appendingPathComponent("wishes.json")
     }
 
-    // Dan's case: the phone disappears after Send, so it cannot know whether the Mac received it.
+    // The phone can disappear after Send without knowing whether the Mac received it.
     func testLostAcknowledgementAndMacReopenKeepOneWish() throws {
         let file = try file(), id = UUID(), pair = UUID()
         var first = try PhoneWishLedger(file: file)
@@ -21,7 +21,7 @@ final class PhoneWishLedgerTests: XCTestCase {
         XCTAssertEqual(reopened.jobs.first?.id, id)
     }
 
-    // Dan's case: locking the phone during work must preserve the job and show its progress on return.
+    // Locking the phone during work must preserve the job and show its progress on return.
     func testReconnectGetsCompletedStatusForTheOriginalRequest() throws {
         let file = try file(), id = UUID(), pair = UUID()
         var ledger = try PhoneWishLedger(file: file)
@@ -44,7 +44,7 @@ final class PhoneWishLedgerTests: XCTestCase {
         XCTAssertTrue(ledger.jobs.isEmpty)
     }
 
-    // Dan's added case: a reply changes the same app, even when its acknowledgement is lost.
+    // A reply changes the same app, even when its acknowledgement is lost.
     func testFollowupReconnectKeepsOneConversationAndOneCopyOfTheReply() throws {
         let file = try file(), chat = UUID(), pair = UUID(), reply = UUID()
         var ledger = try PhoneWishLedger(file: file)
