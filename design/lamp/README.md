@@ -14,7 +14,7 @@ Keep that color in sync in `encode-onboarding.py` and `LampBackdrop.page`. Onboa
 
 ## Rebuild the artwork
 
-The authoring toolchain is Blender 5.2.2 on Apple Silicon, Swift, Python 3, and FFmpeg with libx265 and zscale.
+Requires Blender (tested with 5.2.2 on Apple Silicon), Swift, Python 3, and FFmpeg with libx265 and zscale.
 Blender and FFmpeg are only authoring dependencies; ordinary Lamp builds use the checked-in assets.
 
 ```bash

@@ -158,7 +158,7 @@ the screen that Device Hub marks `iOSContentGroup`, an undocumented subrole; two
 are refused). That needs Lamp to be allowed in System Settings → Privacy & Security → Accessibility; the first
 `use_app` asks. The driver runs on its own queue (`AccessibilityActor`), never the main thread, and no call to
 the other app waits more than `Driver.patience`; when the screen can't be used, `Driver.Trouble` says which
-reason it was, in words for the agent. Device Hub in Xcode 27.0 doesn't pass on mouse or key events
+reason it was, in words for the agent. Device Hub (checked on Xcode 27.0) doesn't pass on mouse or key events
 posted to it, so there a scroll is the page scroll the iPhone's own elements offer, a row's swipe action is the
 row's own named action, return is the on-screen keyboard's key, and a long press, a sideways swipe and escape
 are refused with the reason rather than reported as done. Its list holds the devices added to it, not every

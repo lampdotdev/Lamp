@@ -139,8 +139,11 @@ enum CommandRisk {
         }
     }
 
-    // Separate clear yes/no answers from uncertainty, and harmless or requested work from commands
-    // that must ask. Sending data, reading secrets or hiding behavior can flag a command on their own.
+    // Measured with Jev, several runs a command (about 2,500 judgments).
+    // Plainly fine commands answered the "must not" questions at 0.25 or less; work on files scored level
+    // 1.0 to 1.1, and a clone the request names 2.1. Commands that must ask answered 0.57 or more on the
+    // "must not" that applies to them, or scored level 2.5 and up. The two closest: a git hook that phones
+    // home (0.57 on sending, level 2.1) and an install into the user's own Python (level 2.5).
     private static let yes = 0.8
     private static let no = 0.3
     private static let flagged = 0.5
@@ -149,7 +152,10 @@ enum CommandRisk {
     private static let askedRisk = 2.3
     private static let riskyRisk = 2.5
     /// The first level that reaches beyond the app, and how likely it may be: more likely than not is risky,
-    /// and a command that runs on its level (harmless, or asked for) has little of it.
+    /// and a command that runs on its level (harmless, or asked for) has little of it. Measured: a clone
+    /// or an install the request names and a public API fetched with a header of its own stayed under the
+    /// bar (0.23 at most); getting an app past macOS's check and opening it, and a wrapper script that
+    /// loads the home folder's settings, sat over it.
     static let beyondLevel = 3
     private static let likelyBeyond = 0.5
     private static let littleBeyond = 0.25
