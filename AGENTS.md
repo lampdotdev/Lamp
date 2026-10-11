@@ -345,5 +345,6 @@ anything that's the same for every app and already in Settings.
 ## Conventions
 
 - Comments explain why, in plain prose; user-facing text never names files, types or frameworks.
+- Files committed to the repo (README, docs, code comments, tests) must never name a person, personal device or hostname, or narrate a particular session or test run; put those details in the PR description.
 - Verify in an isolated harness app rather than in the user's apps.
 - No attribution lines in commits or PR descriptions.
