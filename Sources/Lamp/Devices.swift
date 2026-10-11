@@ -25,7 +25,7 @@ enum Devices {
         var family: DeviceFamily { model.hasPrefix("iPad") ? .ipad : .iphone }
     }
 
-    /// This Mac's name on the local network ("Matts-MacBook-Pro.local"), which an app on a phone reaches Lamp
+    /// This Mac's Bonjour name on the local network, which an app on a phone reaches Lamp
     /// at. Bonjour resolves it on the same Wi‑Fi, and it survives the Mac's address changing.
     static var macHost: String {
         let name = Subprocess.runBlocking("/usr/sbin/scutil", ["--get", "LocalHostName"], mergeErrors: false, timeout: 5).output.trimmed
