@@ -237,8 +237,8 @@ enum ComputerUse {
     static let stoppedByPerson = Failure(message: "You stopped the task before it finished.")
 
     /// How far a task may go before Lamp ends it, whatever is driving it. A model that isn't getting anywhere
-    /// doesn't stop by itself: it keeps looking and clicking on the person's desktop, at their cost (seven
-    /// minutes once, measured, with no end in sight). The tasks that came out right took a quarter of either.
+    /// may keep looking and clicking on the person's desktop, at their cost. Step and time limits stop
+    /// that work even when the model doesn't stop by itself.
     static let stepLimit = 40
     static let timeLimit: TimeInterval = 300
     static let tooManySteps = Failure(message: "The task took too many steps, so Lamp stopped it.")

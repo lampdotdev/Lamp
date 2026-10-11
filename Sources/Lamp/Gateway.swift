@@ -356,18 +356,13 @@ enum AppAI {
             ?? computerDefault(among: allTextRoutes, builder: Builder.engine, textDefault: defaultRoute, hasKey: Provider.hasKey)
     }
 
-    /// The OpenRouter model for those tasks when a key is all there is. Chosen by running one task in TextEdit
-    /// (a new document, a sentence, its font and colour) through Lamp's own loop: this one did it in 38
-    /// seconds for 5 cents, Opus in 93 seconds for 96 cents, Gemini Flash in 156 seconds for 22 cents, and
-    /// Sonnet, the text default, not at all. It isn't one of the models offered for apps' text.
+    /// The OpenRouter model for tasks in other apps when a key is all there is. Computer use has its own
+    /// default because it needs repeated window reads and actions. It isn't offered for apps' text.
     static let computerOpenRouterModel = (id: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol")
 
-    /// The route for a task in other apps when nobody chose one. Such a task is many steps of reading a
-    /// window and acting on it, and the text default did it badly: Sonnet through OpenRouter took minutes,
-    /// finished wrong and cost dollars a run, where the sign-ins did it right in about a minute. So a
-    /// sign-in comes first (the one that builds apps, then the other; Opus through Claude Code, which did
-    /// the task where Sonnet didn't), then the OpenRouter model that did. Someone staying on this Mac's own
-    /// models stays there, and whatever else answers text is the last resort.
+    /// The route for a task in other apps when nobody chose one. A sign-in comes first (the one that
+    /// builds apps, then the other; Opus through Claude Code), then the computer-use OpenRouter model.
+    /// Someone staying on this Mac's own models stays there, and whatever else answers text is the last resort.
     nonisolated static func computerDefault(among routes: [TextRoute], builder: Engine, textDefault: TextRoute, hasKey: Bool) -> TextRoute {
         if case .localModel = textDefault.kind { return textDefault }
         for engine in builder == .claude ? [Engine.claude, .codex] : [.codex, .claude] {
@@ -1177,8 +1172,7 @@ enum AppAI {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         // Anthropic's safety classifier sometimes refuses an ordinary request (finish_reason "content_filter",
-        // empty reply, HTTP 200): about 1 in 20 identical benign requests in others' measurements, and more
-        // under bursts. It's random, so asking again gets the answer.
+        // empty reply, HTTP 200). Retrying gives a transient refusal another chance before reporting it.
         var cost = 0.0
         for attempt in 0..<3 {
             let (data, response) = try await URLSession.shared.data(for: request)

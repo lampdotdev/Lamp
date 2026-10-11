@@ -3664,7 +3664,7 @@ final class Store: ObservableObject {
     }
 
     /// Whether a Host header is this Mac's name on the local network (what apps on phones are given), with
-    /// an optional port: "matts-macbook-pro.local:47811".
+    /// an optional numeric port.
     static func isMacHost(_ header: String?) -> Bool {
         guard let host = header?.trimmed.lowercased(), !host.isEmpty else { return false }
         let name = host.split(separator: ":", maxSplits: 1).first.map(String.init) ?? host

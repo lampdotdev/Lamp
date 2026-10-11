@@ -1,9 +1,8 @@
 import XCTest
 @testable import Lamp
 
-/// A task in the person's other apps, from an app nobody chose a model for, goes to what did such a task
-/// well when it was measured: a sign-in first, then the OpenRouter model that did. The text default (Sonnet through
-/// OpenRouter) took minutes over the same task, got it wrong and cost dollars a run.
+/// A task in the person's other apps, from an app nobody chose a model for, prefers a sign-in, then the
+/// computer-use OpenRouter model. Computer use has its own default rather than the text default.
 final class ComputerUseRouteTests: XCTestCase {
     private func route(_ id: String, _ kind: AppAI.TextRoute.Kind, available: Bool = true) -> AppAI.TextRoute {
         AppAI.TextRoute(id: id, label: id, group: "", name: id, kind: kind, available: available)
