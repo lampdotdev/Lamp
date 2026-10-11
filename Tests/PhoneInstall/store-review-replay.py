@@ -33,6 +33,7 @@ struct LampProject {
     let device: String? = "TEST-PHONE"
     let dir = FileManager.default.temporaryDirectory
     func deviceBundleID(team: String) -> String { "dev.example.pockettimer" }
+    var phoneOpenScheme: String { fatalError("Companion delivery is not this replay's subject") }
 }
 struct LogLine {
     enum Kind { case user, agent, status, error, detail }
@@ -60,8 +61,21 @@ enum Runtime {
     static func startLog(_ project: LampProject) {}
     static func logURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent("unused-review-log") }
 }
+// These existing cases exercise the ordinary phone path. Fail if one accidentally enters the
+// companion path; its transport and delivery have separate boundary and real-device evidence.
+@MainActor final class PhoneWishes {
+    enum Phase { case waitingPhone, needsMac, installing, ready }
+    static let shared = PhoneWishes()
+    func owns(_ project: LampProject) -> Bool { false }
+    func mark(_ project: LampProject, _ phase: Phase, appURL: String? = nil) throws {
+        fatalError("Companion delivery is not this replay's subject")
+    }
+    static func message(for failure: PhoneFailure) -> String {
+        fatalError("Companion delivery is not this replay's subject")
+    }
+}
 @MainActor enum Devices {
-    struct Device { let udid = "TEST-PHONE"; let name = "Test iPhone" }
+    struct Device { let udid = "TEST-PHONE"; let name = "Test iPhone"; let wifi = false }
     static let team = "TESTTEAM01"
     static var checking = false
     static var launching = false

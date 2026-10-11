@@ -342,7 +342,7 @@ card), check:
 
 Each tab has one job: **Building**, how Lamp builds apps; **Apps**, what apps use while they run; **AI
 Providers**, what's on this Mac, then cloud providers, with keys, sign-ins and downloads (other tabs' menus
-end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (none now: bring `ExperimentalSettings` back with the next one).
+end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (currently iPhone wishes).
 Lay out with the shared pieces in `Setup.swift`, and extend one rather than lay out by hand:
 `SettingsCheckboxes` (on/off is a checkbox, box first, never a switch), `.underCheckbox()`,
 `.checkboxNote(…)`, `NotReadyBadge`, `NotReadyRow`, `CapabilityNote` (the gray why-and-fix under Not Ready),

@@ -116,8 +116,12 @@ older chats remain on the Mac. There is no project list, model picker or phone s
 Use the same Wi-Fi, keep Lamp running, and choose the free Personal Team in Building settings. The
 companion uses one of the three development-app slots. Reinstallation after seven days, removing apps
 to free slots, first-time Apple pairing/Developer Mode, and recovery of a build interrupted by quitting
-Lamp remain manual. Only one phone and one app being worked on are supported. Live verification of this first
-version, including a locked Mac, is pending; see the PR's external evidence before relying on it.
+Lamp remain manual. Only one phone and one app being worked on are supported. A live counter-app run on
+Axis covered an unlocked Mac, a follow-up with the Mac locked, a phone lock and a 30-second Wi-Fi drop:
+the conversation resumed, the update installed, and the phone's saved count survived. Missing Mac
+Accessibility permission blocked the agent's simulator button test; Dan checked the buttons on the
+phone. This is a proof of concept with naming and phone-message wording issues still open. A real
+command-approval pause, cold relaunch and renewal have not been verified; see the PR's external evidence.
 
 ## Choosing the AI
 
