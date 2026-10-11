@@ -4,11 +4,13 @@ from pathlib import Path
 import subprocess
 import sys
 source = Path('Sources/Lamp/Devices.swift').read_text()
-def block(marker):
+def block(marker, source=source):
     start=source.index(marker); brace=source.index('{',start);depth=1;end=brace+1
     while depth:
         depth+=(source[end]=='{')-(source[end]=='}');end+=1
     return source[start:end]
+# Devices.xcodeTeams hands over to PhoneTools, where the read of Xcode's signed-in teams lives now.
+tools = Path('Sources/Lamp/PhoneTools.swift').read_text()
 folder=Path(sys.argv[1])
 for name,subject in [('different-id','/CN=Apple Development: Test Person (CLIENT0001)/OU=TEAM000001/O=Test'),
                      ('missing-team','/CN=Apple Development: Test Person (CLIENT0001)/O=Test'),
@@ -16,7 +18,9 @@ for name,subject in [('different-id','/CN=Apple Development: Test Person (CLIENT
     subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj',subject,
                     '-keyout',str(folder/(name+'.key')),'-out',str(folder/(name+'.pem'))],check=True,capture_output=True)
     subprocess.run(['openssl','x509','-in',str(folder/(name+'.pem')),'-outform','der','-out',str(folder/(name+'.der'))],check=True)
-text='import Foundation\nimport Security\nimport CryptoKit\nenum Devices {\n'
+text='import Foundation\nimport Security\nimport CryptoKit\n'
+text+='enum PhoneTools {\n'+block('static func xcodeTeams()', tools)+'\n}\n'
+text+='enum Devices {\n'
 text+='\n'.join(block(marker) for marker in ['static func xcodeTeams()', 'static func knownTeams()', 'static func certificateTeam('])+'\n}\n'
 text += r'''
 enum Preflight {
