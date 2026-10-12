@@ -23,6 +23,7 @@ struct SetupCheck {
     /// Looks for a Swift compiler without calling /usr/bin/swift or xcrun: on a Mac without the tools,
     /// those shims pop up Apple's installer, which would happen every time Lamp checks.
     static func buildToolsInstalled() -> Bool {
+        if Pretend.toolsMissing { return false }
         let fm = FileManager.default
         if fm.isExecutableFile(atPath: "/Library/Developer/CommandLineTools/usr/bin/swift") { return true }
         let select = Subprocess.runBlocking("/usr/bin/xcode-select", ["-p"], mergeErrors: false, timeout: 10)
@@ -34,6 +35,10 @@ struct SetupCheck {
 
     /// Opens Apple's installer for the free Command Line Tools (no developer account needed).
     static func installBuildTools() {
+        if Pretend.isMissing("tools") {
+            Pretend.startInstall()
+            return
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
         process.arguments = ["--install"]

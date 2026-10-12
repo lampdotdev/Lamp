@@ -206,6 +206,7 @@ enum ToolLocator {
     /// The tool's path. When several copies are installed (say, one from npm under nvm and one under mise),
     /// the newest version wins rather than whichever comes first in PATH.
     static func path(named tool: String) -> String? {
+        if Pretend.isMissing(tool) { return nil }
         lock.lock()
         // A remembered path can disappear (a tool uninstalled, or updated into a new folder).
         if let cached = chosen[tool], FileManager.default.isExecutableFile(atPath: cached) { lock.unlock(); return cached }

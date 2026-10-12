@@ -102,6 +102,7 @@ enum PhoneTools {
     }
 
     static func discover() -> String? {
+        if Pretend.isMissing("xcode") { return nil }
         let fm = FileManager.default
         let saved = UserDefaults.standard.string(forKey: preference)
         let inherited = ProcessInfo.processInfo.environment["DEVELOPER_DIR"]
@@ -121,7 +122,7 @@ enum PhoneTools {
     }
 
     static func restoreChoice() {
-        if let saved = UserDefaults.standard.string(forKey: preference), isXcode(saved) {
+        if !Pretend.isMissing("xcode"), let saved = UserDefaults.standard.string(forKey: preference), isXcode(saved) {
             setenv("DEVELOPER_DIR", saved, 1)
         }
     }
