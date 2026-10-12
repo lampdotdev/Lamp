@@ -375,6 +375,7 @@ final class Store: ObservableObject {
 
     private init() {
         Migration.fromForge()
+        AppsLink.ensure()
         // The keys are read off the main thread first; what needs them (pi's auth file, the setup check, the
         // views drawn meanwhile) follows once they're in.
         KeyStore.preload()
@@ -3214,6 +3215,7 @@ final class Store: ObservableObject {
         let replaced = await AppSigning.requirement(of: project.installedURL)
 
         try fm.createDirectory(at: Self.installDir, withIntermediateDirectories: true)
+        AppsLink.ensure()
         let staging = Self.installDir.appendingPathComponent(".\(project.exe)-\(UUID().uuidString).app")
         try fm.copyItem(at: project.builtURL, to: staging)
         // The app isn't running by now (a build quits it, an icon waits for it to close), but its widget's
