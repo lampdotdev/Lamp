@@ -158,10 +158,9 @@ extension Simulator {
         nonisolated static var isAllowed: Bool { AXIsProcessTrusted() }
 
         /// Takes the person to the Accessibility list with Lamp to drag into it (`SettingsGuide`), and brings
-        /// Lamp back to the front once it's allowed. Asking again while that's still up changes nothing.
+        /// Lamp back to the front once it's allowed. Asking again brings the list and Lamp's place in it back.
         nonisolated static func ask() {
             Task { @MainActor in
-                guard !SettingsGuide.isShowing else { return }
                 if await SettingsGuide.ask(.accessibility, isOn: { AXIsProcessTrusted() }) {
                     NSApp.activate(ignoringOtherApps: true)
                 }

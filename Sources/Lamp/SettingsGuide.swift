@@ -9,7 +9,9 @@ import SwiftUI
 /// Nothing here needs a permission of its own, which matters because it runs before any is given: macOS
 /// tells any app where other apps' windows are (only their titles need Screen Recording), and what's
 /// dragged is the app as a file, the same thing Finder would hand over. System Settings decides what a
-/// drop does; if a future macOS stops taking one, the list and its + button are still right there.
+/// drop does; if a future macOS stops taking one, the list and its + button are still right there. And
+/// if the Settings window can't be found, so there's no panel, macOS's own request is made instead: it puts
+/// Lamp in the list with its switch off.
 /// `LampPermissionGuide` in Template.swift is the same panel for the apps Lamp builds: keep the two in step.
 @MainActor
 enum SettingsGuide {
@@ -22,13 +24,18 @@ enum SettingsGuide {
         fileprivate var page: URL {
             URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
         }
+
+        /// macOS's own request, for when the panel can't be shown: it lists Lamp, switched off.
+        fileprivate func askTheSystem() {
+            _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
+        }
     }
 
     private static var showing: Guide?
-    static var isShowing: Bool { showing != nil }
 
-    /// Opens the page and shows the panel until `isOn` says the switch is on (true), or the person presses
-    /// its back button or quits System Settings (false). `app` is whose switch it is: Lamp, or a helper.
+    /// Opens the page, in front, and shows the panel until `isOn` says the switch is on (true), or the person
+    /// presses its back button or quits System Settings (false). `app` is whose switch it is: Lamp, or a
+    /// helper. Asking again starts over, which is how the page and the panel come back from wherever they went.
     static func ask(_ permission: Permission, for app: URL = Bundle.main.bundleURL,
                     isOn: @escaping @Sendable () async -> Bool) async -> Bool {
         showing?.end(false)   // one at a time: there is one Settings window
@@ -68,6 +75,7 @@ enum SettingsGuide {
 private final class Guide {
     private static let settingsID = "com.apple.systempreferences"
     private static let width: CGFloat = 530, margin: CGFloat = 14
+    private static let patience: TimeInterval = 4
 
     private let permission: SettingsGuide.Permission
     private let app: URL
@@ -78,6 +86,8 @@ private final class Guide {
     private var checking: Task<Void, Never>?
     private let began = Date()
     private var sawSettings = false
+    private var lost: Date?        // since when System Settings has been in front with no window to be found
+    private var askedSystem = false
 
     init(permission: SettingsGuide.Permission, app: URL, isOn: @escaping @Sendable () async -> Bool,
          finish: @escaping (Bool) -> Void) {
@@ -89,6 +99,8 @@ private final class Guide {
 
     func begin() {
         NSWorkspace.shared.open(permission.page)
+        // Already open on that page, it may stay where it was, behind other windows.
+        NSRunningApplication.runningApplications(withBundleIdentifier: Self.settingsID).first?.activate()
         let name = FileManager.default.displayName(atPath: app.path).replacingOccurrences(of: ".app", with: "")
         let view = GuideView(app: app, name: name, permission: permission.name) { [weak self] in
             self?.end(false)
@@ -134,10 +146,19 @@ private final class Guide {
             return
         }
         sawSettings = true
-        guard let window = SettingsGuide.settingsWindow(of: settings.processIdentifier), !window.busy else {
+        guard let window = SettingsGuide.settingsWindow(of: settings.processIdentifier) else {
             panel.orderOut(nil)
+            // In front for a while and still no window Lamp can find: there will be no panel to drag from.
+            guard settings.isActive else { return lost = nil }
+            if lost == nil { lost = Date() }
+            if let lost, Date().timeIntervalSince(lost) > Self.patience, !askedSystem, app == Bundle.main.bundleURL {
+                askedSystem = true
+                permission.askTheSystem()
+            }
             return
         }
+        lost = nil
+        guard !window.busy else { return panel.orderOut(nil) }
         let width = min(Self.width, window.frame.width - Self.margin * 2), height = panel.frame.height
         let spot = ComputerOverlay.cocoa(CGRect(x: window.frame.maxX - Self.margin - width,
                                                 y: window.frame.maxY - Self.margin - height, width: width, height: height))

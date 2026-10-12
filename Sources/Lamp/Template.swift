@@ -4607,7 +4607,8 @@ enum Template {
     ///
     /// The screen opens the right page of System Settings and puts a small panel at the foot of the Settings
     /// window with the app's icon to drag into the list there (macOS doesn't always list an app by itself, and
-    /// its + button starts in the wrong folder); the same icon is on the screen itself. Full Disk
+    /// its + button starts in the wrong folder). Pressing Open System Settings again brings both back from
+    /// wherever they went; only if the panel can't be shown is the icon on the screen itself. Full Disk
     /// Access only reaches an app when it starts, so for that one the screen ends in Quit & Reopen; for the
     /// others it notices by itself when the switch goes on, and offers Quit & Reopen if macOS wants a fresh start.
     /// Lamp signs every build of an app the same way, so a permission stays on when the app is changed.
@@ -4631,8 +4632,9 @@ enum Template {
         }
 
         /// Takes the person to the switch: puts the app in the list where macOS allows it (showing macOS's own
-        /// prompt the first time, for Screen Recording) and opens that page of System Settings, with the app to
-        /// drag into the list at the foot of its window (`LampPermissionGuide`).
+        /// prompt the first time, for Screen Recording) and opens that page of System Settings, in front, with
+        /// the app to drag into the list at the foot of its window (`LampPermissionGuide`). Every call starts
+        /// over, so it also brings back a panel that was closed and a Settings window that was closed or covered.
         @MainActor static func request(_ permission: LampPermission) {
             switch permission {
             case .fullDiskAccess: _ = canReadProtectedFiles   // being refused is what lists the app
@@ -4641,6 +4643,8 @@ enum Template {
             }
             print("LampPermissions: asked for \(permission.name); only the person can turn it on, in System Settings")
             NSWorkspace.shared.open(permission.settingsURL)
+            // Already open on that page, it may stay where it was, behind other windows.
+            NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.systempreferences").first?.activate()
             LampPermissionGuide.show(permission)
         }
 
@@ -4648,7 +4652,8 @@ enum Template {
         @MainActor static func reopen() { LampWindows.relaunch() }
 
         /// For trying the screens from Terminal on a Mac where nobody can flip the switch:
-        /// LAMP_PERMISSIONS=granted, denied, asked (denied, after Open System Settings was pressed) or reopen.
+        /// LAMP_PERMISSIONS=granted, denied, asked (denied, after Open System Settings was pressed), reopen or
+        /// nopanel (denied, and the Settings window can't be found, so the app to drag is on the screen instead).
         fileprivate static var pretend: String? { ProcessInfo.processInfo.environment["LAMP_PERMISSIONS"] }
 
         /// Files only Full Disk Access opens. Opening one never prompts; without access it's refused.
@@ -4776,6 +4781,7 @@ enum Template {
         @ObservedObject var state: LampPermissionState
         let reason: String
         @State private var asked = LampPermissions.pretend == "asked"
+        @ObservedObject private var panel = LampPermissionGuide.Watch.shared
 
         private var appName: String {
             Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
@@ -4802,10 +4808,13 @@ enum Template {
                         .multilineTextAlignment(.center)
                     VStack(alignment: .leading, spacing: 8) {
                         step(1, "Open System Settings.")
-                        step(2, "Switch on **\(appName)** in the list.")
-                        step(3, "Not in the list? Drag this into it:")
-                        appToDrag.padding(.leading, 26)
-                        if state.permission.startsOnReopen { step(4, "Come back here and press **Quit & Reopen**.") }
+                        step(2, "Drag **\(appName)** into the list there, or switch it on.")
+                        if state.permission.startsOnReopen { step(3, "Come back here and press **Quit & Reopen**.") }
+                        if panel.missing {
+                            // The one time the app is here to drag: nothing could be put on the Settings window.
+                            Text("Nothing to drag there? Drag this into the list:").padding(.leading, 26)
+                            appToDrag.padding(.leading, 26)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     HStack {
@@ -4862,7 +4871,8 @@ enum Template {
             }
         }
 
-        /// The app itself, to drag into the list in System Settings (or onto its + button's file panel).
+        /// The app itself, to drag into the list in System Settings (or onto its + button's file panel), for
+        /// when the panel on the Settings window couldn't be shown.
         private var appToDrag: some View {
             HStack(spacing: 8) {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath))
@@ -4896,9 +4906,18 @@ enum Template {
         private let began = Date()
         private var checked = Date()
         private var sawSettings = false
+        private var lost: Date?   // since when System Settings has been in front with no window to be found
+
+        /// Whether the panel couldn't be shown: System Settings is in front and its window can't be found
+        /// (a macOS that arranges it differently). The permission screen then has the app to drag on itself.
+        final class Watch: ObservableObject {
+            static let shared = Watch()
+            @Published fileprivate(set) var missing = false
+        }
 
         static func show(_ permission: LampPermission) {
             showing?.end()   // one at a time: there is one Settings window
+            Watch.shared.missing = false
             showing = LampPermissionGuide(permission)
         }
 
@@ -4958,12 +4977,19 @@ enum Template {
                 return (id, frame)
             }
             // The main window is the big one; a sheet is a smaller window of its own inside it.
-            guard let main = own.max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }),
-                  main.frame.width >= 400, main.frame.height >= 300,
-                  !own.contains(where: { $0.id != main.id && main.frame.contains($0.frame) }) else {
+            guard LampPermissions.pretend != "nopanel",
+                  let main = own.max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }),
+                  main.frame.width >= 400, main.frame.height >= 300 else {
                 panel.orderOut(nil)
+                // In front for a while and still no window to be found: there will be no panel to drag from.
+                guard settings.isActive else { return lost = nil }
+                if lost == nil { lost = Date() }
+                if let lost, Date().timeIntervalSince(lost) > 4, !Watch.shared.missing { Watch.shared.missing = true }
                 return
             }
+            lost = nil
+            if Watch.shared.missing { Watch.shared.missing = false }
+            guard !own.contains(where: { $0.id != main.id && main.frame.contains($0.frame) }) else { return panel.orderOut(nil) }
             // Window frames come measured from the top of the main display; AppKit measures from its foot.
             let width = min(Self.width, main.frame.width - Self.margin * 2), height = panel.frame.height
             let spot = CGRect(x: main.frame.maxX - Self.margin - width,
