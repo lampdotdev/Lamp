@@ -1811,9 +1811,10 @@ final class Store: ObservableObject {
         guard ran else {
             return TurnResult(end: .failed, watched: isWatching(project.id))
         }
-        // The agent asked: nothing is built or saved until the person answers, even if a file was written
-        // in the moment before Lamp ended it. The answer's turn picks up from there.
-        if owner.asked, Talk.open(in: logs[project.id] ?? []) != nil {
+        // The agent asked: nothing is built or saved in this turn, even if a file was written in the moment
+        // before Lamp ended it. That holds whether or not the card still waits: an answer clicked while the
+        // agent was finishing is only in line, and the agent hasn't had it. Its turn picks up from here.
+        if owner.asked {
             return TurnResult(end: .replied, watched: isWatching(project.id))
         }
         // A new app the agent didn't touch: it only replied (say, with questions about a vague request).
