@@ -9,15 +9,17 @@ import Foundation
 enum AppsLink {
     static let path = URL(fileURLWithPath: "/Applications").appendingPathComponent(Edition.appsFolder.lastPathComponent)
 
-    /// Once made, the link is never made again: someone who deleted it didn't want it.
+    /// Once made, the link is never made again: someone who deleted it didn't want it. The value is the
+    /// link's path, not a flag, because the development build's settings start as a copy of the installed
+    /// Lamp's (scripts/dev-data.sh), and the installed Lamp's link isn't Lamp Dev's.
     private static let madeKey = "appsLinkMade"
 
     /// Called at launch and after each install. Waits for the apps folder to exist, so the link never
     /// leads nowhere.
     static func ensure() {
-        guard !UserDefaults.standard.bool(forKey: madeKey),
+        guard UserDefaults.standard.string(forKey: madeKey) != path.path,
               FileManager.default.fileExists(atPath: Edition.appsFolder.path) else { return }
-        if link(at: path, to: Edition.appsFolder) { UserDefaults.standard.set(true, forKey: madeKey) }
+        if link(at: path, to: Edition.appsFolder) { UserDefaults.standard.set(path.path, forKey: madeKey) }
     }
 
     /// Whether `link` leads to `target` afterwards. Never replaces what's already there (another account's
