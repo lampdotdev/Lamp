@@ -105,35 +105,48 @@ private struct Answered: View {
 }
 
 /// One question at a time: its answers as tiles, a field for something else, and a way back.
+///
+/// The card is laid out for all its questions at once and shows one: its height is the tallest question's,
+/// and the field and the links under the tiles never move. A card that changed size from one question to the
+/// next would slide what's about to be clicked out from under the pointer.
 struct AskSteps: View {
     let ask: Talk.Ask
     @Binding var progress: AskProgress
     let send: ([String]) -> Void
+    /// Off for a moment after the question changes, so the second click of a double-click doesn't answer
+    /// the next question with whatever tile arrived under the pointer.
+    @State private var armed = true
 
     private var count: Int { ask.questions.count }
-    private var question: Talk.Question { ask.questions[min(progress.step, count - 1)] }
+    private var step: Int { min(progress.step, count - 1) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if count > 1 {
                 HStack {
-                    Text("Question \(progress.step + 1) of \(count)").font(.subheadline).foregroundStyle(.secondary)
+                    Text("Question \(step + 1) of \(count)").font(.subheadline).foregroundStyle(.secondary)
                     Spacer()
-                    StepDots(count: count, current: progress.step)
+                    StepDots(count: count, current: step)
                 }
             }
-            Text(question.question)
-                .font(.title3.weight(.semibold))
-                .fixedSize(horizontal: false, vertical: true)
-            let columns = Array(repeating: GridItem(.flexible(), spacing: 10),
-                                count: question.options.count == 4 ? 2 : question.options.count)
-            LazyVGrid(columns: columns, spacing: 10) {
-                ForEach(Array(question.options.enumerated()), id: \.offset) { _, option in
-                    OptionTile(option: option, chosen: progress.answers[progress.step] == option.title) {
-                        pick(option.title)
+            every { question, _ in
+                Text(question.question)
+                    .font(.title3.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            every { question, index in
+                let columns = Array(repeating: GridItem(.flexible(), spacing: 10),
+                                    count: question.options.count == 4 ? 2 : question.options.count)
+                LazyVGrid(columns: columns, spacing: 10) {
+                    ForEach(Array(question.options.enumerated()), id: \.offset) { _, option in
+                        OptionTile(option: option, chosen: progress.answers[index] == option.title) {
+                            pick(option.title)
+                        }
                     }
                 }
             }
+            .allowsHitTesting(armed)
             TextField("Something else…", text: $progress.typed)
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 12).padding(.vertical, 9)
@@ -141,17 +154,36 @@ struct AskSteps: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
                 .onSubmit { if !progress.typed.trimmed.isEmpty { pick(progress.typed.trimmed) } }
             HStack(spacing: 16) {
-                if progress.step > 0 {
+                Button(Talk.youDecide) { pick(Talk.youDecide) }
+                if step > 0 {
                     Button("Back") { progress.step -= 1 }
                 }
-                Button(Talk.youDecide) { pick(Talk.youDecide) }
                 Spacer()
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
+            .allowsHitTesting(armed)
         }
         .padding(16)
-        .animation(.snappy(duration: 0.2), value: progress.step)
+        .task(id: step) {
+            guard step > 0 || !armed else { return }
+            armed = false
+            try? await Task.sleep(for: .seconds(0.4))
+            armed = true
+        }
+    }
+
+    /// Every question's version of one part of the card, stacked, with only the current one there to see,
+    /// click or read aloud: the part takes the size of the largest.
+    private func every<Part: View>(@ViewBuilder _ part: @escaping (Talk.Question, Int) -> Part) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
+                part(question, index)
+                    .opacity(index == step ? 1 : 0)
+                    .allowsHitTesting(index == step)
+                    .accessibilityHidden(index != step)
+            }
+        }
     }
 
     private func pick(_ answer: String) {

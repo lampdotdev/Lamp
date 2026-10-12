@@ -155,5 +155,6 @@ enum Talk {
     }
 
     static let asked = "The person now sees your questions as a card and answers by clicking or typing. End your reply here with no more words. Their answer is the next message: one line for each question, in the order you asked, or their own words."
+    static let alreadyAsked = "The person already sees the questions you asked and hasn't answered yet, so these weren't shown. End your reply now with no more words; their answer is the next message."
     static let resultKept = "Lamp shows this when the app is built and open. End your reply now with nothing more: no question, no offer, nothing the card already says."
 }

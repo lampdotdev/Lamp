@@ -41,7 +41,10 @@ A capability given to one engine must be given to all of them that can take it, 
   tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the
   person's next message (`Store.answer`), so a click and a typed answer reach every engine the same way and
   the message box always answers a card (`Talk.open`). `show_result` is kept on the turn and shown only once
-  the app is built and open. A new piece is a tool there, its view, and a line in `talkRules`. The agent still
+  the app is built and open. While a card waits for its answer nothing above it changes height and the chat
+  doesn't follow what's added below: a new app's card goes to its short form as the questions arrive, a
+  second `ask` before the answer is turned away, and a one-at-a-time card is laid out for all its questions
+  at once (`AskSteps`), so nothing moves under the pointer. A new piece is a tool there, its view, and a line in `talkRules`. The agent still
   doesn't ask about layout, colours or names (`Agent.Rules.ask`).
 - **What Lamp remembers** (`Memory`): two short sets of notes, about the person (`about-you.md` in the
   support folder) and about each app (`.lamp/notes.md`), each with a one-line summary. They must cost the

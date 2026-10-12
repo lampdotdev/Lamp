@@ -2529,14 +2529,13 @@ final class Store: ObservableObject {
             case .failure(let trouble): return (400, ["error": trouble.text])
             case .success(let ask):
                 // Asked again before the person answered (the agent thought better of its questions): the
-                // new card takes the place of the one still waiting, so there's one thing to answer.
-                if let waiting = Talk.open(in: logs[project.id] ?? []),
-                   let index = logs[project.id]?.firstIndex(where: { $0.id == waiting.id }) {
-                    logs[project.id]?[index].ask = ask
-                    logs[project.id]?[index].text = ask.text
-                } else {
-                    logs[project.id, default: []].append(LogLine(kind: .ask, text: ask.text, ask: ask))
-                }
+                // card that's showing stays as it is. A card that changed under the pointer would be worse
+                // than a question worded the first way.
+                if Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
+                logs[project.id, default: []].append(LogLine(kind: .ask, text: ask.text, ask: ask))
+                // A new app's card gives up its checklist in the same moment the questions arrive, not when
+                // the turn ends a little later: once there's something to click, nothing above it moves.
+                if progress[project.id]?.newApp == true { progress[project.id]?.asking = true }
                 saveChat(project)
                 return (200, ["text": Talk.asked])
             }

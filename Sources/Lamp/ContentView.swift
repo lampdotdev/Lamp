@@ -596,21 +596,28 @@ struct ProjectView: View {
                 .defaultScrollAnchor(.bottom)
                 // The chat follows what's added at its end, but only from the end: scrolled up to read
                 // something earlier, it stays there. Sending a message goes back to the end.
-                .onChange(of: lines.count) { followEnd(proxy) }
-                .onChange(of: written(lines)) { followEnd(proxy) }
-                .onChange(of: queued.count) { followEnd(proxy) }
-                .onChange(of: store.progress[project.id]?.plan.count) { followEnd(proxy) }
-                .onChange(of: store.progress[project.id]?.screenshot != nil) { followEnd(proxy) }
+                // The agent's questions come into view whole as they arrive, and then the chat holds still
+                // until they're answered: following anything added meanwhile would slide the answers out
+                // from under the pointer.
+                .onChange(of: Talk.open(in: lines)?.id) {
+                    // After this pass: the card isn't laid out yet, and the end is still where it was.
+                    if follow.atEnd { DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) } }
+                }
+                .onChange(of: lines.count) { followEnd(proxy, lines) }
+                .onChange(of: written(lines)) { followEnd(proxy, lines) }
+                .onChange(of: queued.count) { followEnd(proxy, lines) }
+                .onChange(of: store.progress[project.id]?.plan.count) { followEnd(proxy, lines) }
+                .onChange(of: store.progress[project.id]?.screenshot != nil) { followEnd(proxy, lines) }
                 .onChange(of: sends) {
                     follow.atEnd = true
-                    followEnd(proxy)
+                    proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
         }
     }
 
-    private func followEnd(_ proxy: ScrollViewProxy) {
-        if follow.atEnd { proxy.scrollTo("bottom", anchor: .bottom) }
+    private func followEnd(_ proxy: ScrollViewProxy, _ lines: [LogLine]) {
+        if follow.atEnd, Talk.open(in: lines) == nil { proxy.scrollTo("bottom", anchor: .bottom) }
     }
 
     /// Reaches one more lot back. From what's shown, not from what was asked for: a long turn can take the

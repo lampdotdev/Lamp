@@ -18,7 +18,8 @@ struct TurnProgress {
     var finished: Date?
     /// The turn ended without a working app.
     var failed = false
-    /// The turn ended on the agent's questions: nothing is built until they're answered.
+    /// The agent has asked its questions: nothing is built until they're answered. Set as they arrive, so
+    /// the card is already at its short size under them.
     var asking = false
     /// What's happening right now, in the user's words rather than the code's: "Working on the interface",
     /// "Building…". It's the one place a turn in progress says what it's doing.
@@ -95,6 +96,7 @@ struct TurnProgress {
 
     /// The turn is over. When the app was built and opened, everything planned is done.
     mutating func finish(worked: Bool) {
+        asking = false   // it asked and then built anyway
         finished = Date()
         failed = !worked
         if worked { for index in plan.indices { plan[index].done = true } }
@@ -223,7 +225,6 @@ struct BuildCard: View {
         }
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
-        .animation(.easeInOut(duration: 0.35), value: progress.asking)
         .animation(.easeInOut(duration: 0.35), value: progress.plan)
         .animation(.easeInOut(duration: 0.35), value: progress.sketch)
         .animation(.easeInOut(duration: 0.35), value: progress.naming)
@@ -235,12 +236,12 @@ struct BuildCard: View {
     /// What's happening right now, under the app's name; once it's over, how it ended.
     @ViewBuilder
     private var status: some View {
-        if progress.finished == nil {
+        if progress.asking {
+            Text("A quick question first")
+        } else if progress.finished == nil {
             TimelineView(.periodic(from: progress.started, by: 1)) { context in
                 Text(progress.activity(at: context.date))
             }
-        } else if progress.asking {
-            Text("A quick question first")
         } else if progress.failed {
             Label("Didn't finish. See the messages below.", systemImage: "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)
