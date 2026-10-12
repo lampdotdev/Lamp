@@ -15,7 +15,7 @@
 #
 # This covers the welcome screen, the key check, picking an engine, and making the first app. Set
 # LAMP_PRETEND_MISSING (see Pretend.swift) to also see it as a Mac without the Command Line Tools, Xcode
-# or the coding agents would: LAMP_PRETEND_MISSING=bare scripts/fresh-start.sh begin. It can't show
+# or tools like uv would: LAMP_PRETEND_MISSING=bare scripts/fresh-start.sh begin. It can't show
 # Gatekeeper on a fresh download, Apple's own installer, or the permission prompts you've already
 # answered: for those, use a second macOS user (permissions) or a clean VM (everything).
 set -euo pipefail

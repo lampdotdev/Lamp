@@ -124,7 +124,7 @@ generated apps get it through the `{{SCHEME}}`, `{{NOTE}}`, `{{HOST}}` and `{{AP
 Lamp rebuilds them. `scripts/dev-data.sh` copies your apps, keys, settings and the agent's sign-ins from the
 installed Lamp into Lamp Dev, so the development build has something to work on. To see what someone with a bare Mac
 sees, `LAMP_PRETEND_MISSING` (`Pretend`, Lamp Dev only) makes Lamp's own checks miss the Command Line Tools,
-Xcode or the coding agents; a new check for something a fresh Mac lacks goes through it too.
+Xcode or tools from the PATH; a new check for something a fresh Mac lacks goes through it too.
 
 ## iPhone apps
 

@@ -7,13 +7,16 @@ import Foundation
 ///
 /// - `tools`: the Command Line Tools. Install… opens no installer; they "arrive" `installSeconds` later.
 /// - `xcode`: the full Xcode app, so iPhone apps ask for it, and the icon tools that come with it.
-/// - any other word: a command Lamp looks for on the PATH (`claude`, `codex`, `uv`, `mlx_lm.server`, …).
+/// - any other word: a command Lamp looks for on the PATH (`uv`, `mflux-generate`, `mlx_lm.server`).
 /// - `bare`: all of the above that a Mac straight out of the box doesn't have.
+///
+/// Claude Code and Codex aren't here: Lamp's copies live in its own folder, so `fresh-start.sh` already
+/// gives a Lamp without them, and their download is the real one.
 ///
 /// It fools only Lamp's checks: anything that runs `swift` or `xcrun` still finds the real ones. A release
 /// build ignores it.
 enum Pretend {
-    static let bare: Set<String> = ["tools", "xcode", "claude", "codex", "uv", "mflux-generate", "mlx_lm.server"]
+    static let bare: Set<String> = ["tools", "xcode", "uv", "mflux-generate", "mlx_lm.server"]
     static let installSeconds: TimeInterval = 30
 
     static let missing: Set<String> = {
