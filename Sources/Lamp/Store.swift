@@ -1601,7 +1601,7 @@ final class Store: ObservableObject {
                     }
                 }
                 if newApp && result.end != .replied {
-                    progress[project.id]?.finish(worked: worked && turns[project.id]?.phoneReady != false)
+                    progress[project.id]?.finish(worked: worked && turns[project.id]?.phoneReady != false, opened: !owner.didNotOpen)
                 } else if newApp, Talk.open(in: logs[project.id] ?? []) != nil {
                     // The agent asked through its card: the app's card stays where it is while the person
                     // answers, so the build that follows starts on it and nothing in the chat moves.
@@ -2296,7 +2296,7 @@ final class Store: ObservableObject {
             // replaced New Window can't open one), something has to be on screen: if there's nothing, relaunch it.
             let shown = await acknowledged.wait(seconds: 1.5)
             guard !running.isTerminated else { return }   // it's relaunching itself (LampWindows.relaunch)
-            guard !shown, !Self.hasWindow(running.processIdentifier) else { return }
+            guard !shown, !Self.hasWindow(running.processIdentifier) else { return noteOpened(true, for: project) }
             running.terminate()
             for _ in 0..<30 where !running.isTerminated { try? await Task.sleep(for: .milliseconds(100)) }
             if !running.isTerminated { running.forceTerminate() }
@@ -2310,8 +2310,10 @@ final class Store: ObservableObject {
         config.arguments = ["-LampInFront", "YES"]   // see install
         do {
             _ = try await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
+            noteOpened(true, for: project)
         } catch {
             log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
+            noteOpened(false, for: project)
         }
         refreshOpenApps()
     }
@@ -3008,6 +3010,13 @@ final class Store: ObservableObject {
         return tail
     }
 
+    /// A new app's card that has already said how its turn ended follows what happens to the app afterwards
+    /// (Play, a rebuild, opening the copy that's installed), as it does for a phone: it never goes on saying
+    /// the app didn't open beside one that has, or the reverse.
+    private func noteOpened(_ opened: Bool, for project: LampProject) {
+        if progress[project.id]?.finished != nil { progress[project.id]?.unopened = !opened }
+    }
+
     /// Installs and opens the app. Returns what's known about the failure if it died straight away.
     /// `inFront` is false for the agent's looks, which shouldn't pull the app in front of the user mid-turn.
     private func install(_ project: LampProject, inFront: Bool = true) async -> String? {
@@ -3040,6 +3049,7 @@ final class Store: ObservableObject {
         } catch {
             log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
             owner?.didNotOpen = true
+            noteOpened(false, for: project)
             return nil
         }
         // An app with a widget gets its card, once: the widget is built, and adding it is the person's to do.
@@ -3048,6 +3058,8 @@ final class Store: ObservableObject {
         // out of sight to tell Lamp when the widget has been placed, and quits by itself.
         if Template.isWidgetOnly(project) {
             await watchWidget(of: project)
+            // In place is all there is to it: a card that said it didn't get there says so no longer.
+            noteOpened(true, for: project)
             if inFront { log(project, .status, "\(project.name) is ready") }
             upgradeIconArt(project)
             refreshOpenApps()
@@ -3066,12 +3078,14 @@ final class Store: ObservableObject {
                 log(project, .status, "\(project.name) quit right after opening. Looking at why…")
                 crash = await Runtime.launchReport(project)
                 log(project, .detail, crash!)
-            } else if inFront {
-                log(project, .status, "\(project.name) is ready")
+            } else {
+                noteOpened(true, for: project)
+                if inFront { log(project, .status, "\(project.name) is ready") }
             }
         } catch {
             log(project, .error, ErrorMessages.openFailed(error.localizedDescription))
             owner?.didNotOpen = true
+            noteOpened(false, for: project)
         }
         upgradeIconArt(project)
         refreshOpenApps()
