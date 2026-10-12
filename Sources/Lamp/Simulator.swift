@@ -157,9 +157,14 @@ extension Simulator {
 
         nonisolated static var isAllowed: Bool { AXIsProcessTrusted() }
 
-        /// Asks macOS to let Lamp control the computer: the system opens the Accessibility list once.
+        /// Takes the person to the Accessibility list with Lamp to drag into it (`SettingsGuide`), and brings
+        /// Lamp back to the front once it's allowed. Asking again brings the list and Lamp's place in it back.
         nonisolated static func ask() {
-            _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
+            Task { @MainActor in
+                if await SettingsGuide.ask(.accessibility, isOn: { AXIsProcessTrusted() }) {
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            }
         }
 
         /// The simulated iPhone's screen as the Mac sees it: the Simulator's accessibility app element, the

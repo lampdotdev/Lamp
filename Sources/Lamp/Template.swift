@@ -4605,8 +4605,10 @@ enum Template {
     ///         LampPermissionView(.screenRecording, reason: "Capture records your screen.") { askForRecording = false }
     ///     }
     ///
-    /// The screen opens the right page of System Settings and has the app's icon to drag into the list there
-    /// (macOS doesn't always list an app by itself, and its + button starts in the wrong folder). Full Disk
+    /// The screen opens the right page of System Settings and puts a small panel at the foot of the Settings
+    /// window with the app's icon to drag into the list there (macOS doesn't always list an app by itself, and
+    /// its + button starts in the wrong folder). Pressing Open System Settings again brings both back from
+    /// wherever they went; only if the panel can't be shown is the icon on the screen itself. Full Disk
     /// Access only reaches an app when it starts, so for that one the screen ends in Quit & Reopen; for the
     /// others it notices by itself when the switch goes on, and offers Quit & Reopen if macOS wants a fresh start.
     /// Lamp signs every build of an app the same way, so a permission stays on when the app is changed.
@@ -4630,23 +4632,28 @@ enum Template {
         }
 
         /// Takes the person to the switch: puts the app in the list where macOS allows it (showing macOS's own
-        /// prompt the first time, for the permissions that have one) and opens that page of System Settings.
+        /// prompt the first time, for Screen Recording) and opens that page of System Settings, in front, with
+        /// the app to drag into the list at the foot of its window (`LampPermissionGuide`). Every call starts
+        /// over, so it also brings back a panel that was closed and a Settings window that was closed or covered.
         @MainActor static func request(_ permission: LampPermission) {
             switch permission {
             case .fullDiskAccess: _ = canReadProtectedFiles   // being refused is what lists the app
             case .screenRecording: CGRequestScreenCaptureAccess()
-            case .accessibility:
-                _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+            case .accessibility: _ = AXIsProcessTrusted()   // no prompt of macOS's own: it would only sit behind Settings
             }
             print("LampPermissions: asked for \(permission.name); only the person can turn it on, in System Settings")
             NSWorkspace.shared.open(permission.settingsURL)
+            // Already open on that page, it may stay where it was, behind other windows.
+            NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.systempreferences").first?.activate()
+            LampPermissionGuide.show(permission)
         }
 
         /// Quits the app and opens it again, for a permission macOS only applies to a fresh start.
         @MainActor static func reopen() { LampWindows.relaunch() }
 
         /// For trying the screens from Terminal on a Mac where nobody can flip the switch:
-        /// LAMP_PERMISSIONS=granted, denied, asked (denied, after Open System Settings was pressed) or reopen.
+        /// LAMP_PERMISSIONS=granted, denied, asked (denied, after Open System Settings was pressed), reopen or
+        /// nopanel (denied, and the Settings window can't be found, so the app to drag is on the screen instead).
         fileprivate static var pretend: String? { ProcessInfo.processInfo.environment["LAMP_PERMISSIONS"] }
 
         /// Files only Full Disk Access opens. Opening one never prompts; without access it's refused.
@@ -4774,6 +4781,7 @@ enum Template {
         @ObservedObject var state: LampPermissionState
         let reason: String
         @State private var asked = LampPermissions.pretend == "asked"
+        @ObservedObject private var panel = LampPermissionGuide.Watch.shared
 
         private var appName: String {
             Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
@@ -4800,10 +4808,13 @@ enum Template {
                         .multilineTextAlignment(.center)
                     VStack(alignment: .leading, spacing: 8) {
                         step(1, "Open System Settings.")
-                        step(2, "Switch on **\(appName)** in the list.")
-                        step(3, "Not in the list? Drag this into it:")
-                        appToDrag.padding(.leading, 26)
-                        if state.permission.startsOnReopen { step(4, "Come back here and press **Quit & Reopen**.") }
+                        step(2, "Drag **\(appName)** into the list there, or switch it on.")
+                        if state.permission.startsOnReopen { step(3, "Come back here and press **Quit & Reopen**.") }
+                        if panel.missing {
+                            // The one time the app is here to drag: nothing could be put on the Settings window.
+                            Text("Nothing to drag there? Drag this into the list:").padding(.leading, 26)
+                            appToDrag.padding(.leading, 26)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     HStack {
@@ -4860,7 +4871,8 @@ enum Template {
             }
         }
 
-        /// The app itself, to drag into the list in System Settings (or onto its + button's file panel).
+        /// The app itself, to drag into the list in System Settings (or onto its + button's file panel), for
+        /// when the panel on the Settings window couldn't be shown.
         private var appToDrag: some View {
             HStack(spacing: 8) {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath))
@@ -4874,6 +4886,246 @@ enum Template {
             .onDrag { NSItemProvider(object: Bundle.main.bundleURL as NSURL) }
             .help("Drag into the list in System Settings")
             .accessibilityLabel("\(appName), to drag into System Settings")
+        }
+    }
+
+    /// The panel `LampPermissions.request` keeps at the foot of the System Settings window: the app to drag into
+    /// the list there, and a way back. It follows that window and sits just above it in the stack, goes away
+    /// when the permission is on or System Settings quits, and needs no permission itself: macOS tells any app
+    /// where other apps' windows are, and what's dragged is the app as a file, as Finder would hand it over.
+    /// Lamp shows the same panel for its own permissions (SettingsGuide in Lamp's source): keep the two in step.
+    @MainActor
+    private final class LampPermissionGuide {
+        private static var showing: LampPermissionGuide?
+        private static let settingsID = "com.apple.systempreferences"
+        private static let width: CGFloat = 530, margin: CGFloat = 14
+
+        private let permission: LampPermission
+        private var panel: NSPanel?
+        private var tracker: Timer?
+        private let began = Date()
+        private var checked = Date()
+        private var sawSettings = false
+        private var lost: Date?   // since when System Settings has been in front with no window to be found
+
+        /// Whether the panel couldn't be shown: System Settings is in front and its window can't be found
+        /// (a macOS that arranges it differently). The permission screen then has the app to drag on itself.
+        final class Watch: ObservableObject {
+            static let shared = Watch()
+            @Published fileprivate(set) var missing = false
+        }
+
+        static func show(_ permission: LampPermission) {
+            showing?.end()   // one at a time: there is one Settings window
+            Watch.shared.missing = false
+            showing = LampPermissionGuide(permission)
+        }
+
+        private init(_ permission: LampPermission) {
+            self.permission = permission
+            let app = Bundle.main.bundleURL
+            let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
+            let host = Host(rootView: Contents(app: app, name: name, permission: permission.name) { [weak self] in
+                self?.end()
+                NSApp.activate(ignoringOtherApps: true)
+            })
+            let panel = Panel(contentRect: CGRect(x: 0, y: 0, width: Self.width, height: host.fittingSize.height),
+                              styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
+            panel.contentView = host
+            panel.isOpaque = false
+            panel.backgroundColor = .clear
+            panel.hasShadow = true
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+            panel.isReleasedWhenClosed = false
+            panel.hidesOnDeactivate = false
+            panel.setAccessibilityRole(.window)
+            panel.setAccessibilityLabel("Drag \(name) to the list in System Settings")
+            self.panel = panel
+            // Often enough that the panel rides along when the Settings window is moved.
+            let tracker = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.follow() }
+            }
+            RunLoop.main.add(tracker, forMode: .common)   // also while the icon is being dragged
+            self.tracker = tracker
+        }
+
+        /// Hidden while the Settings window isn't on screen (minimized, on another desktop) or has a sheet up
+        /// (macOS asking for the password after a drop); over when System Settings has quit, which closing its
+        /// window does, or the permission is on.
+        private func follow() {
+            guard let panel else { return }
+            if Date().timeIntervalSince(checked) >= 1 {
+                checked = Date()
+                if LampPermissions.has(permission) || LampPermissions.needsReopening(permission) {
+                    end()
+                    NSApp.activate(ignoringOtherApps: true)
+                    return
+                }
+            }
+            guard let settings = NSRunningApplication.runningApplications(withBundleIdentifier: Self.settingsID).first else {
+                if sawSettings || Date().timeIntervalSince(began) > 15 { end() }
+                return
+            }
+            sawSettings = true
+            let own = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]] ?? []).compactMap { window -> (id: CGWindowID, frame: CGRect)? in
+                guard window[kCGWindowOwnerPID as String] as? pid_t == settings.processIdentifier,
+                      window[kCGWindowLayer as String] as? Int == 0,
+                      let id = window[kCGWindowNumber as String] as? CGWindowID,
+                      let bounds = window[kCGWindowBounds as String] as? NSDictionary,
+                      let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }
+                return (id, frame)
+            }
+            // The main window is the big one; a sheet is a smaller window of its own inside it.
+            guard LampPermissions.pretend != "nopanel",
+                  let main = own.max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }),
+                  main.frame.width >= 400, main.frame.height >= 300 else {
+                panel.orderOut(nil)
+                // In front for a while and still no window to be found: there will be no panel to drag from.
+                guard settings.isActive else { return lost = nil }
+                if lost == nil { lost = Date() }
+                if let lost, Date().timeIntervalSince(lost) > 4, !Watch.shared.missing { Watch.shared.missing = true }
+                return
+            }
+            lost = nil
+            if Watch.shared.missing { Watch.shared.missing = false }
+            guard !own.contains(where: { $0.id != main.id && main.frame.contains($0.frame) }) else { return panel.orderOut(nil) }
+            // Window frames come measured from the top of the main display; AppKit measures from its foot.
+            let width = min(Self.width, main.frame.width - Self.margin * 2), height = panel.frame.height
+            let spot = CGRect(x: main.frame.maxX - Self.margin - width,
+                              y: (NSScreen.screens.first?.frame.height ?? 0) - main.frame.maxY + Self.margin,
+                              width: width, height: height)
+            if panel.frame != spot { panel.setFrame(spot, display: true) }
+            panel.order(.above, relativeTo: Int(main.id))
+        }
+
+        private func end() {
+            tracker?.invalidate()
+            tracker = nil
+            panel?.orderOut(nil)
+            panel?.contentView = nil
+            panel = nil
+            if Self.showing === self { Self.showing = nil }
+        }
+
+        /// Clicked and dragged from without making the app the active one or taking the keyboard.
+        private final class Panel: NSPanel {
+            override var canBecomeKey: Bool { false }
+            override var canBecomeMain: Bool { false }
+        }
+
+        private final class Host: NSHostingView<Contents> {
+            override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        }
+
+        private struct Contents: View {
+            let app: URL
+            let name: String
+            let permission: String
+            let back: () -> Void
+            @State private var nudge = false
+
+            var body: some View {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrowshape.up.fill")
+                            .font(.system(size: 17))
+                            .foregroundStyle(Color.accentColor)
+                            .offset(y: nudge ? -3 : 2)
+                            .frame(width: 28)
+                            .accessibilityHidden(true)
+                        Text("Drag **\(name)** to the list above to allow **\(permission)**")
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    HStack(spacing: 8) {
+                        Button(action: back) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 12, weight: .semibold))
+                                .frame(width: 28, height: 28)
+                                .background(.quaternary, in: Circle())
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Back to \(name)")
+                        .accessibilityLabel("Back to \(name)")
+                        HStack(spacing: 8) {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: app.path))
+                                .resizable()
+                                .frame(width: 32, height: 32)
+                            Text(name).lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 6)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
+                        .overlay(AppToDrag(app: app, name: name))
+                    }
+                }
+                .padding(10)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.separator))
+                .onAppear {
+                    guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+                    withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { nudge = true }
+                }
+            }
+        }
+
+        /// The drag: the app as a file, handed over by AppKit itself so it starts on the first press in a panel
+        /// that never becomes the active window.
+        private struct AppToDrag: NSViewRepresentable {
+            let app: URL
+            let name: String
+
+            func makeNSView(context: Context) -> Source { Source(app: app, name: name) }
+            func updateNSView(_ view: Source, context: Context) {}
+
+            final class Source: NSView, NSDraggingSource {
+                private let app: URL
+                private let name: String
+                private var pressed: NSEvent?
+
+                init(app: URL, name: String) {
+                    self.app = app
+                    self.name = name
+                    super.init(frame: .zero)
+                    setAccessibilityElement(true)
+                    setAccessibilityRole(.image)
+                    setAccessibilityLabel("\(name), to drag into System Settings")
+                }
+
+                required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+                override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+                override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
+                override func mouseDown(with event: NSEvent) { pressed = event }
+                override func mouseUp(with event: NSEvent) { pressed = nil }
+
+                override func mouseDragged(with event: NSEvent) {
+                    guard let pressed else { return }
+                    self.pressed = nil
+                    let item = NSDraggingItem(pasteboardWriter: app as NSURL)
+                    // What follows the pointer: the icon and the name, as in the panel.
+                    let icon = NSWorkspace.shared.icon(forFile: app.path)
+                    let label = NSAttributedString(string: name, attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                                                                              .foregroundColor: NSColor.labelColor])
+                    let size = CGSize(width: 32 + 8 + ceil(label.size().width), height: 32)
+                    let picture = NSImage(size: size, flipped: false) { _ in
+                        icon.draw(in: CGRect(x: 0, y: 0, width: 32, height: 32))
+                        label.draw(at: CGPoint(x: 40, y: (32 - label.size().height) / 2))
+                        return true
+                    }
+                    item.setDraggingFrame(CGRect(origin: CGPoint(x: 6, y: (bounds.height - 32) / 2), size: size), contents: picture)
+                    beginDraggingSession(with: [item], event: pressed, source: self)
+                }
+
+                func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+                    context == .outsideApplication ? [.copy, .link, .generic] : []
+                }
+            }
         }
     }
 
