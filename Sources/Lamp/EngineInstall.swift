@@ -22,6 +22,8 @@ import Security
 enum EngineInstall {
     /// Lamp's own folder, which the sandbox and the privacy rule keep closed to the agent. A test points it
     /// at a folder of its own.
+    private static let lock = NSLock()
+
     nonisolated(unsafe) static var folder = Edition.supportFolder.appendingPathComponent("Engines") {
         didSet { lock.lock(); current = [:]; lock.unlock() }
     }
@@ -57,8 +59,45 @@ enum EngineInstall {
     /// Whether Lamp runs the person's own copy of the engine rather than its own.
     static func usesPersonsCopy(_ engine: Engine) -> Bool { engine != .pi && personsCopy(engine) != nil }
 
-    /// Finds the person's own copy. A test replaces it, so what's installed on the Mac running it doesn't count.
-    nonisolated(unsafe) static var personsCopy: (Engine) -> String? = findPersonsCopy
+    /// The person's own copy, as the last look found it: nil until a look has run (`lookForPersonsCopies`).
+    /// Never looks itself, since looking runs each copy found with --version and can take seconds, and this is
+    /// asked whenever a screen redraws.
+    static func personsCopy(_ engine: Engine) -> String? {
+        // One removed since the look is gone now, not at the next look.
+        lock.withLock { found[engine] ?? nil }.flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil }
+    }
+
+    /// Whether a look for the person's copies has finished, so Lamp knows whether it needs its own.
+    static var hasLooked: Bool { lock.withLock { looked } }
+
+    nonisolated(unsafe) private static var found: [Engine: String?] = [:]
+    nonisolated(unsafe) private static var looked = false
+
+    /// How the person's copy is found. A test replaces it, so what's installed on the Mac running it doesn't count.
+    nonisolated(unsafe) static var finder: (Engine) -> String? = findPersonsCopy {
+        didSet { lock.withLock { found = [:]; looked = false } }
+    }
+
+    /// Looks for the person's copies now and remembers what's found. Blocking: off the main thread, through
+    /// `lookForPersonsCopies`, except in a test.
+    static func lookNow() {
+        let results = [Engine.claude, .codex].map { ($0, finder($0)) }
+        lock.withLock {
+            for (engine, path) in results { found[engine] = path }
+            looked = true
+        }
+    }
+
+    /// Looks again off the main thread (at launch, and before Lamp would download its own copy, so one
+    /// installed meanwhile is found), then has the screens that show the engines look again.
+    static func lookForPersonsCopies() async {
+        let before = [Engine.claude, .codex].map(personsCopy)
+        await Task.detached(priority: .userInitiated) {
+            _ = ToolLocator.userPath
+            lookNow()
+        }.value
+        if [Engine.claude, .codex].map(personsCopy) != before { await EngineDownloads.shared.copiesChanged() }
+    }
 
     /// The newest copy on the person's PATH or inside the desktop app (`ToolLocator`, which remembers it).
     private static func findPersonsCopy(_ engine: Engine) -> String? {
@@ -97,7 +136,6 @@ enum EngineInstall {
         return FileManager.default.isExecutableFile(atPath: path) ? path : nil
     }
 
-    private static let lock = NSLock()
     nonisolated(unsafe) private static var current: [Engine: String] = [:]
 
     /// The version in use, read once and then kept in memory (it's asked for whenever a screen redraws).
@@ -144,12 +182,15 @@ enum EngineInstall {
 
     // MARK: Conversations kept by the other copy
 
-    /// Whether the engine can resume conversation `session`, bringing it over first when the other copy kept
-    /// it: an app's conversation lives in the folder of the copy that had it (Claude Code's in
+    /// Whether the engine can resume conversation `session`, bringing it over first when the other copy has
+    /// the latest of it: an app's conversation lives in the folder of the copy that had it (Claude Code's in
     /// projects/<folder>/<id>.jsonl, Codex's in sessions/<date>/rollout-…-<id>.jsonl), and Lamp moves between
     /// its own copy and the person's as one appears or goes. Without this an app's next request would try to
-    /// resume a conversation its engine can't find and fail. False when it's nowhere: the caller then starts a
-    /// new conversation. Only that one conversation is copied, and the folder it came from is only read.
+    /// resume a conversation its engine can't find and fail. Going back to a copy that ran the conversation
+    /// before, the transcript there is older than the one the other copy went on with, so whichever was
+    /// written last is the conversation: it replaces the other, and the request goes on from every turn.
+    /// False when it's nowhere: the caller then starts a new conversation. Only that one conversation is
+    /// copied, and the folder it came from is only read.
     static func carryOver(session: String, for engine: Engine,
                           from home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Bool {
         guard engine != .pi, !session.isEmpty,
@@ -158,6 +199,15 @@ enum EngineInstall {
         let fm = FileManager.default
         let persons = personsFolder(engine, home: home)
         let (mine, other) = usesPersonsCopy(engine) ? (persons, ownConfigFolder(engine)) : (ownConfigFolder(engine), persons)
+        func modified(_ url: URL) -> Date {
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+        }
+        /// Puts `source` where `target` is, in place of whatever is there.
+        func replace(_ target: URL, with source: URL) {
+            try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: target)
+            try? fm.copyItem(at: source, to: target)
+        }
         switch engine {
         case .pi:
             return false
@@ -168,14 +218,21 @@ enum EngineInstall {
                 ((try? fm.contentsOfDirectory(at: root.appendingPathComponent("projects"), includingPropertiesForKeys: nil)) ?? [])
                     .first { fm.fileExists(atPath: $0.appendingPathComponent(session + ".jsonl").path) }
             }
-            if find(in: mine) != nil { return true }
-            guard let folder = find(in: other) else { return false }
-            let target = mine.appendingPathComponent("projects").appendingPathComponent(folder.lastPathComponent)
-            try? fm.createDirectory(at: target, withIntermediateDirectories: true)
-            for name in [session + ".jsonl", session] where fm.fileExists(atPath: folder.appendingPathComponent(name).path) {
-                try? fm.copyItem(at: folder.appendingPathComponent(name), to: target.appendingPathComponent(name))
+            let here = find(in: mine)
+            guard let folder = find(in: other) else { return here != nil }
+            let transcript = session + ".jsonl"
+            if let here, modified(here.appendingPathComponent(transcript)) >= modified(folder.appendingPathComponent(transcript)) {
+                return true
             }
-            return fm.fileExists(atPath: target.appendingPathComponent(session + ".jsonl").path)
+            let target = mine.appendingPathComponent("projects").appendingPathComponent(folder.lastPathComponent)
+            for name in [transcript, session] {
+                if fm.fileExists(atPath: folder.appendingPathComponent(name).path) {
+                    replace(target.appendingPathComponent(name), with: folder.appendingPathComponent(name))
+                } else {
+                    try? fm.removeItem(at: target.appendingPathComponent(name))   // nothing stale left beside it
+                }
+            }
+            return fm.fileExists(atPath: target.appendingPathComponent(transcript).path)
         case .codex:
             // Each conversation is one file, under the date it began.
             func find(in root: URL) -> String? {
@@ -186,11 +243,12 @@ enum EngineInstall {
                 }
                 return nil
             }
-            if find(in: mine) != nil { return true }
-            guard let path = find(in: other) else { return false }
-            let target = mine.appendingPathComponent(path)
-            try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? fm.copyItem(at: other.appendingPathComponent(path), to: target)
+            let here = find(in: mine)
+            guard let path = find(in: other) else { return here != nil }
+            if let here, modified(mine.appendingPathComponent(here)) >= modified(other.appendingPathComponent(path)) { return true }
+            // Where Codex will look for it: where it was here, or else where the other copy kept it.
+            let target = mine.appendingPathComponent(here ?? path)
+            replace(target, with: other.appendingPathComponent(path))
             return fm.fileExists(atPath: target.path)
         }
     }
@@ -522,9 +580,12 @@ final class EngineDownloads: ObservableObject {
 
     func isDownloading(_ engine: Engine) -> Bool { running[engine] != nil && EngineInstall.path(for: engine) == nil }
 
-    /// A copy of the engine, downloading one if there isn't one yet. True once there is.
+    /// A copy of the engine, downloading one if there isn't one yet. True once there is. The person's own copy
+    /// is looked for first, so one installed since the last look is used rather than downloaded past.
     @discardableResult
     func ensure(_ engine: Engine) async -> Bool {
+        if EngineInstall.path(for: engine) != nil { return true }
+        await EngineInstall.lookForPersonsCopies()
         if EngineInstall.path(for: engine) != nil { return true }
         return await run(engine)
     }
@@ -532,7 +593,13 @@ final class EngineDownloads: ObservableObject {
     /// Starts getting a copy without waiting for it (choosing Claude Code or ChatGPT in a menu, say).
     func start(_ engine: Engine) {
         guard engine != .pi, EngineInstall.path(for: engine) == nil else { return }
-        Task { await run(engine) }
+        Task { await ensure(engine) }
+    }
+
+    /// The person's copies were found, or went: what shows whether an engine is there looks again.
+    func copiesChanged() async {
+        revision += 1
+        await Store.shared.recheckSetup()
     }
 
     /// Moves to the release that should be in use when it differs from the one that is. Failure leaves the
@@ -607,6 +674,7 @@ final class EngineDownloads: ObservableObject {
     }
 
     private func keepCurrent() async {
+        await EngineInstall.lookForPersonsCopies()
         for engine in [Engine.claude, .codex] {
             if EngineInstall.path(for: engine) == nil {
                 if Self.inUse(engine) { await ensure(engine) }

@@ -400,18 +400,9 @@ final class Store: ObservableObject {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
         // The login shell's PATH, which every tool Lamp runs is given, and the person's own Claude Code and
-        // Codex (running each copy found with --version to pick the newest): looked for once, off the main
-        // thread, before anything decides whether Lamp needs its own copy, so neither the first turn nor a
-        // screen waits for it.
-        Task {
-            await Task.detached(priority: .utility) {
-                _ = ToolLocator.userPath
-                for engine in [Engine.claude, .codex] { _ = EngineInstall.path(for: engine) }
-            }.value
-            // Lamp's own Claude Code and Codex, for an engine in use the Mac has no copy of: downloaded, and kept
-            // up to date.
-            EngineDownloads.shared.startKeepingCurrent()
-        }
+        // Codex (running each copy found with --version to pick the newest) are looked for off the main thread
+        // when Lamp keeps its engines current, before it decides whether it needs its own copy of one.
+        EngineDownloads.shared.startKeepingCurrent()
         Task {
             LocalModels.shared.refresh()
             await LocalModels.shared.detectExternal()
@@ -1881,6 +1872,11 @@ final class Store: ObservableObject {
     /// Returns false when the agent couldn't run at all (bad key, no credit, …), after telling the user why.
     private func runAgent(_ prompt: String, files: [String] = [], on project: LampProject) async -> Bool {
         try? Template.writeSupport(for: project)
+        // A turn started at launch (one waiting from before) may come before the look for the person's own
+        // Claude Code or Codex has finished: it waits for it rather than finding no copy.
+        if Builder.engine != .pi, EngineInstall.path(for: Builder.engine) == nil, !EngineInstall.hasLooked {
+            await EngineInstall.lookForPersonsCopies()
+        }
         if let problem = Builder.problem() {
             log(project, .error, "\(problem) Open Lamp → Settings (⌘,) to fix it.")
             return false
