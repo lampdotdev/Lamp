@@ -44,43 +44,43 @@ const apps = [
   {
     image: readingQueue,
     name: "Reading Queue",
-    request: "A reading queue. I drop in PDFs and web links, tell it what I'm working on, and it ranks them by what matters most, with a one-line summary and a reason for each.",
+    request: "I'm building an icon system and running design reviews, and my reading pile is out of control. I drop in PDFs and links, and it ranks them by what matters for that work, with one line on each and why it's worth my time.",
     alt: "Reading Queue: articles ranked against what you're working on, with why each one matters",
   },
   {
     image: trailLog,
     name: "Trail Log",
-    request: "Trail Log: a hiking journal. Each hike has its route drawn on a map, the distance, the climb, how long it took and a few notes, and the list shows this year's totals at the top.",
+    request: "Trail Log: every Lake District hike I do this year, with the route on a map, the distance, the climb, how long it took and my notes from the day, and this year's totals at the top, for bragging.",
     alt: "Trail Log on two iPhones: this year's hikes with their totals, and Helvellyn's route on a map with its distance, climb and notes",
   },
   {
     image: neonBricks,
     name: "Neon Bricks",
-    request: "A brick breaker arcade game with a glowing neon look: a paddle I move with the mouse or arrow keys, colourful bricks, a few levels, power-ups and a high score table.",
+    request: "The brick breaker I played as a kid, but glowing neon, the way I always pictured it: a paddle on the mouse or arrow keys, a few levels, power-ups and my own high score table.",
     alt: "Neon Bricks: a glowing brick breaker game mid-play",
   },
   {
     image: mealPlanner,
     name: "Meal Planner",
-    request: "Meal Planner: the week laid out side by side, each day with breakfast, lunch and dinner cards I can drag between days, and a shopping list on the side built from the week's meals, grouped by aisle, that I can tick off.",
+    request: "Meal Planner for the four of us: the week side by side, breakfast, lunch and dinner cards I can drag between days, and a shopping list built from the week's meals, by aisle, to tick off at the shop.",
     alt: "Meal Planner on an iPad: a week of family meals and the shopping list for it",
   },
   {
     image: habitStreaks,
     name: "Habit Streaks",
-    request: "A habit tracker: a handful of daily habits with streaks, a heat map of the last three months and a chart of each week.",
+    request: "The five habits I keep promising myself (a morning walk, 20 pages, meditating, water, no phone after 10pm), with streaks, the last three months as a heat map and a chart of each week.",
     alt: "Habit Streaks: daily habits with streaks, a three-month heat map and a weekly chart",
   },
   {
     image: tripTab,
     name: "Trip Tab",
-    request: "Trip Tab: splits what a group spends on a trip. I add who paid for what and who it was for, and it shows everyone's balance, who's up and who's behind, and the fewest payments to settle up.",
+    request: "Trip Tab: our Lisbon weekend, four of us. I add who paid for what and who it was for, and it shows everyone's balance and the fewest payments to settle up, so nobody has to do the maths.",
     alt: "Trip Tab on two iPhones: four friends' balances after a weekend in Lisbon, and the three payments that settle up",
   },
   {
     image: paletteStudio,
     name: "Palette Studio",
-    request: "A colour palette studio: describe a mood or drop in a photo and it makes a five-colour palette with names, hex codes and a contrast check for text.",
+    request: "I design for fun and keep losing my colour ideas. I describe a mood or drop in a photo from a trip, and it makes a five-colour palette with names, hex codes and a contrast check for text.",
     alt: "Palette Studio: a five-colour palette called Lisbon Afternoon with names, hex codes and contrast scores",
   },
 ];
@@ -156,9 +156,9 @@ const points: Point[] = [
     centre: true,
   },
   {
-    title: "Made to share.",
+    title: "Selfish, not stingy.",
     // A line break in the text starts a new line on the tile.
-    text: "Send a Mac app by AirDrop, message, email, even Slack.\nYour friend gets their own copy, and Lamp shows them what it does.",
+    text: "Made for you, but happy to share.\nSend a Mac app by AirDrop, message, email, even Slack. Your friend gets their own copy, and Lamp shows them what it does.",
     tile: "bento:col-span-6 bg-linear-to-b from-lilac-from to-lilac-to text-white",
     visual: ShareWithAnyone,
   },
@@ -274,9 +274,9 @@ const description = `${pitch} ${noCode}`;
     </section>
 
     <section class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Apps with AI&nbsp;inside.</h2>
+      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Made with AI&nbsp;inside.</h2>
       <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
-        {together("AI doesn't just build your apps.")}<br />{together("It can be part of what they do.")}
+        {together("AI doesn't just make your software.")}<br />{together("It can be part of what it does.")}
       </p>
       <div class="mt-10"><Bento points={smarts} /></div>
     </section>
@@ -287,7 +287,7 @@ const description = `${pitch} ${noCode}`;
           <div class="overflow-hidden rounded-[28px] bg-page pt-12 text-center bento:col-span-10 sm:pt-16">
             <h3 class="px-8 font-display text-3xl font-bold tracking-tight sm:text-5xl">Real apps. Really&nbsp;yours.</h3>
             <p class="mx-auto mt-4 max-w-[50rem] px-8 text-xl leading-[1.4] text-muted">
-              {together("In your Applications folder, in your Dock and on your Home Screen.")}<br />{together("No browser tab, no subscription, no server to worry about.")}
+              {together("In your Applications folder, in your Dock and on your Home Screen.")}<br />{together("No browser tab, no subscription, no chat to come back to.")}
             </p>
             <div aria-hidden="true" class="mt-8 pb-10 sm:mt-10 sm:pb-12">
               <div class="relative left-1/2 flex w-max -translate-x-1/2 gap-4 sm:gap-6">
@@ -342,7 +342,7 @@ const description = `${pitch} ${noCode}`;
     <section class="bg-panel">
       <div class="mx-auto max-w-6xl px-4 py-24 text-center sm:px-6 sm:py-28">
       <Image src={icon} alt="" width={96} height={96} densities={[1, 2]} class="mx-auto size-24 drop-shadow-[0_12px_24px_rgba(217,122,6,0.25)]" />
-      <h2 class="mt-6 font-display text-4xl font-bold tracking-tight sm:text-5xl">Let your genie out.</h2>
+      <h2 class="mt-6 font-display text-4xl font-bold tracking-tight sm:text-5xl">Go on, be&nbsp;selfish.</h2>
       <div class="mt-9"><DownloadButton place="footer" /></div>
       </div>
     </section>
