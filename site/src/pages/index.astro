@@ -96,32 +96,33 @@ const shelf = [
 ].flatMap((name) => icons[`../assets/icons/${name}.png`] ?? []);
 
 // AI as part of what an app does, not only how Lamp builds it: four things it can do inside an app, in two rows
-// split 6/4 and 4/6. Judgment leads, as it's the one people don't expect; drawing beside it for the games and
-// the stories. No providers, models or technical words here: which AI answers is the section further down.
+// split 4/6 and 6/4, each with AI as its subject. Making sense of things leads, as the most everyday; judgment, the
+// one people don't expect, closes. No providers, models or technical words here: which AI answers is the section
+// further down.
 const smarts: Point[] = [
   {
-    title: "Makes the call.",
-    text: "Quick judgments, all day long. Which app is slowing your Mac down, and the setting that fixes it.",
-    tile: "bento:col-span-6 bg-linear-to-b from-indigo-from to-indigo-to text-white",
-    visual: MakesTheCall,
-  },
-  {
-    title: "Draws on demand.",
-    text: "Pictures for a bedtime story, characters for a game, art for anything.",
-    tile: "bento:col-span-4 bg-linear-to-b from-coral-from to-coral-to text-white",
-    visual: DrawsOnDemand,
-  },
-  {
-    title: "Makes sense of anything.",
-    text: "Sums up the long thread, explains the small print, finds what matters in a pile of PDFs.",
+    title: "AI makes sense of anything.",
+    text: "It sums up the long thread, explains the small print, finds what matters in a pile of PDFs.",
     tile: "bento:col-span-4 bg-linear-to-b from-teal-from to-teal-to text-white",
     visual: MakesSense,
   },
   {
-    title: "Finds the words.",
-    text: "Drafts the reply, names the thing, makes it friendlier.",
+    title: "AI draws on demand.",
+    text: "It makes pictures for a bedtime story, characters for a game, art for anything.",
+    tile: "bento:col-span-6 bg-linear-to-b from-coral-from to-coral-to text-white",
+    visual: DrawsOnDemand,
+  },
+  {
+    title: "AI finds the words.",
+    text: "It drafts the reply, names the thing, makes it friendlier.",
     tile: "bento:col-span-6 bg-linear-to-br from-butter-from to-butter-to",
     visual: FindsTheWords,
+  },
+  {
+    title: "AI makes the call.",
+    text: "It makes quick judgments all day long: which app is slowing your Mac down, and the setting that fixes it.",
+    tile: "bento:col-span-4 bg-linear-to-b from-indigo-from to-indigo-to text-white",
+    visual: MakesTheCall,
   },
 ];
 
