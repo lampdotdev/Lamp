@@ -1273,7 +1273,7 @@ private struct BuildToolsBanner: View {
                 .font(.callout)
             Spacer()
             Button(store.setup.installRequested ? "Show Installer" : "Install…") {
-                if store.setup.installRequested { SetupCheck.installBuildTools() } else { store.requestBuildTools() }
+                if store.setup.installRequested { SetupCheck.showInstaller() } else { store.requestBuildTools() }
             }
             .controlSize(.small)
         }

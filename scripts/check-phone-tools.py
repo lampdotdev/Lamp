@@ -28,6 +28,7 @@ runner += f' print("{len(names)} phone prerequisite checks passed")\n }}\n}}\n'
 with tempfile.TemporaryDirectory(prefix="lamp-phone-checks-") as folder:
     main = Path(folder) / "Checks.swift"
     main.write_text("\n".join([family, (sources / "Subprocess.swift").read_text(), shell,
+                               (sources / "Edition.swift").read_text(), (sources / "Pretend.swift").read_text(),
                                simulator, (sources / "PhoneTools.swift").read_text(), checks, runner]))
     executable = Path(folder) / "checks"
     subprocess.run(["/usr/bin/xcrun", "swiftc", "-parse-as-library", str(main), "-o", str(executable)], check=True)
