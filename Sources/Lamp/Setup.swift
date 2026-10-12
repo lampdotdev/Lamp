@@ -471,7 +471,11 @@ struct BuildingSettings: View {
         case .signedOut:
             LabeledContent("Sign in to \(selectedEngine.title) to build with it.") {
                 if signingIn == selectedEngine {
-                    HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Finish in your browser…").foregroundStyle(.secondary) }
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Finish in your browser…").foregroundStyle(.secondary)
+                        Button("Cancel") { EngineSignIn.cancelSignIn(selectedEngine) }
+                    }
                 } else {
                     Button("Sign In…") { Task { await startSignIn() } }
                 }
@@ -1131,11 +1135,15 @@ private struct EngineSheet: View {
             HStack {
                 Spacer()
                 Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(working ? "Signing In…" : "Sign In…") {
-                    working = true
-                    Task { _ = await EngineSignIn.signIn(engine); working = false; changed() }
+                if working {
+                    Button("Cancel Sign-In") { EngineSignIn.cancelSignIn(engine) }
+                } else {
+                    Button("Sign In…") {
+                        working = true
+                        Task { _ = await EngineSignIn.signIn(engine); working = false; changed() }
+                    }
+                    .keyboardShortcut(.defaultAction).disabled(signedIn == true)
                 }
-                .keyboardShortcut(.defaultAction).disabled(working || signedIn == true)
             }
         }
         .padding(20)

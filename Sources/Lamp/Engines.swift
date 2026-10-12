@@ -548,6 +548,9 @@ extension Agent {
         guard let obj = json(line), let type = obj["type"] as? String else {
             // Notices Codex prints for the flags Lamp chose on purpose.
             if line.contains("--dangerously-bypass-hook-trust") || line.hasPrefix("Reading additional input") { return [] }
+            // Codex looks for the person's own skills in ~/.agents/skills at every start, whatever its settings;
+            // the sandbox keeps the home folder closed, as it should, and Codex says so.
+            if line.contains("codex_skills_extension"), line.contains("failed to walk skills root") { return [] }
             return line.trimmed.isEmpty ? [] : [.raw(line)]
         }
         let item = obj["item"] as? [String: Any] ?? [:]
@@ -637,18 +640,37 @@ enum EngineSignIn {
     }
 
     /// Runs the tool's sign-in, which opens the browser, and waits for it (up to 10 minutes). Gets Lamp's
-    /// copy first if there isn't one yet.
-    static func signIn(_ engine: Engine) async -> Bool {
+    /// copy first if there isn't one yet. Nil when the person cancelled it (`cancelSignIn`).
+    static func signIn(_ engine: Engine) async -> Bool? {
         guard await EngineDownloads.shared.ensure(engine), let tool = EngineInstall.path(for: engine) else { return false }
         let arguments = engine == .claude ? ["auth", "login"] : ["login"]
-        let done = await run(engine, tool, arguments, timeout: 600).status == 0
+        let status = await run(engine, tool, arguments, timeout: 600) { process in
+            lock.withLock { signIns[engine] = (process, false) }
+        }.status
+        let cancelled = lock.withLock { signIns.removeValue(forKey: engine)?.cancelled ?? false }
         _ = await isSignedIn(engine)
-        return done
+        return cancelled ? nil : status == 0
     }
 
-    private static func run(_ engine: Engine, _ tool: String, _ arguments: [String], timeout: TimeInterval) async -> (status: Int32, output: String) {
+    /// Ends a sign-in still waiting for the browser: the tab was opened in the wrong browser profile, say, or
+    /// for the wrong account. Its sign-in page stops working, and Sign In… can start again at once.
+    static func cancelSignIn(_ engine: Engine) {
+        let process = lock.withLock { () -> Process? in
+            guard let process = signIns[engine]?.process else { return nil }
+            signIns[engine] = (process, true)
+            return process
+        }
+        if let process { Subprocess.terminateTree(process) }
+    }
+
+    /// The sign-in running for each engine, and whether it was cancelled.
+    nonisolated(unsafe) private static var signIns: [Engine: (process: Process, cancelled: Bool)] = [:]
+    private static let lock = NSLock()
+
+    private static func run(_ engine: Engine, _ tool: String, _ arguments: [String], timeout: TimeInterval,
+                            started: (@Sendable (Process) -> Void)? = nil) async -> (status: Int32, output: String) {
         let env = EngineInstall.environment(for: engine).merging(["PATH": ToolLocator.userPath]) { $1 }
-        let result = await Subprocess.run(tool, arguments, env: env, timeout: timeout)
+        let result = await Subprocess.run(tool, arguments, env: env, timeout: timeout, started: started)
         return (result.status, result.output)
     }
 }

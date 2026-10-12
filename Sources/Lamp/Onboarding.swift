@@ -763,6 +763,8 @@ private struct BuilderCard: View {
                 ProgressView().controlSize(.small)
                 Text("Finish signing in to \(app) in your browser…").font(.system(size: 13)).foregroundStyle(.secondary)
                 Spacer()
+                // A sign-in page opened in the wrong browser profile or for the wrong account can't be finished.
+                Button("Cancel") { EngineSignIn.cancelSignIn(which) }
             } else if signedIn[which] == nil {
                 ProgressView().controlSize(.small)
                 Text("Checking your \(app) sign-in…").font(.system(size: 13)).foregroundStyle(.secondary)
@@ -783,12 +785,13 @@ private struct BuilderCard: View {
         Task {
             signingIn = which
             Analytics.capture(.welcomeSignIn, ["agent": Analytics.agent(which)])
-            let ok = await EngineSignIn.signIn(which)
-            Analytics.capture(.welcomeSignedIn, ["agent": Analytics.agent(which), "success": ok])
+            let result = await EngineSignIn.signIn(which)
+            Analytics.capture(.welcomeSignedIn, ["agent": Analytics.agent(which), "success": result == true])
             signingIn = nil
             NSApp.activate()
-            signedIn[which] = ok
-            if !ok { problem = "Signing in didn't finish. Try again." }
+            // Cancelled: back to Sign In…, with nothing to apologise for.
+            signedIn[which] = await EngineSignIn.isSignedIn(which) ?? (result == true)
+            if result == false { problem = "Signing in didn't finish. Try again." }
             await store.recheckSetup()
         }
     }
