@@ -3,7 +3,7 @@ import SwiftUI
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, remember, art, offer, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, remember, art, offer, ask, result, other }
 
     let name: String
     let argument: String
@@ -35,7 +35,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
-        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "save_notes": .remember, "make_art": .art, "offer_setup": .offer,
+        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "save_notes": .remember, "make_art": .art, "offer_setup": .offer, "ask": .ask, "show_result": .result,
     ]
 
     var icon: String {
@@ -56,6 +56,8 @@ struct ToolCall {
         case .remember: "square.and.pencil"
         case .art: "paintbrush"
         case .offer: "sparkles"
+        case .ask: "questionmark.bubble"
+        case .result: "checkmark.rectangle.stack"
         case .other: "wrench.adjustable"
         }
     }
@@ -78,6 +80,8 @@ struct ToolCall {
         case .remember: "Updated its notes"
         case .art: "Painted a picture"
         case .offer: "Suggested a setup"
+        case .ask: "Asked you"
+        case .result: "Summed it up"
         case .other: name
         }
     }
@@ -102,6 +106,8 @@ struct ToolCall {
         case .remember: "updated its notes"
         case .art: "painted \(n("picture", "pictures"))"
         case .offer: "suggested a setup"
+        case .ask: "asked you"
+        case .result: "summed it up"
         case .other: n("step", "steps")
         }
     }
@@ -230,10 +236,16 @@ struct Transcript: View {
         let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(lines) : lines)
         let finalAnswers = Self.finalAnswers(in: lines, busy: busy)
         let latestRequest = lines.last { $0.kind == .user }?.id
+        let openAsk = Talk.open(in: lines)?.id
+        let currentResult = Talk.current(in: lines)?.id
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
             let isLast = index == items.count - 1
             Group {
                 switch item {
+                // The agent's cards depend on what came after them, so they're outside the row that's
+                // redrawn only when its own line changes.
+                case .line(let line) where line.kind == .ask: AskCard(line: line, dir: dir, isOpen: line.id == openAsk)
+                case .line(let line) where line.kind == .result: ResultCard(line: line, dir: dir, isCurrent: line.id == currentResult && !busy)
                 case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack, sendAgain: sendAgain,
                                              retryPhone: retryPhone, isLatestRequest: line.id == latestRequest).equatable()
                 case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && !progressShown).equatable()
@@ -418,6 +430,9 @@ struct LogRow: View, Equatable {
             if let project = Store.shared.projects.first(where: { $0.dir == dir }) { DrawIconLine(project: project) }
         case .widget:
             WidgetCardView(dir: dir)
+        case .ask, .result:
+            // Drawn by Transcript, which knows whether they're still waiting.
+            EmptyView()
         }
     }
 

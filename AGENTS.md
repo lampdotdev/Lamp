@@ -20,7 +20,7 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `ask`, `show_result`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
@@ -31,8 +31,18 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `ask`, `show_result`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
+- **How the agent talks** (`Talk`, `TalkCards.swift`): in a sentence or two and in cards, not paragraphs. Its
+  pieces are tools: `ask` puts questions in the chat as a card answered by clicking, laid out as the agent
+  chooses (`Talk.Layout`: one at a time, all on one card, or a page each over the chat), and `show_result` is
+  the card for what a new app or a big change came to, with the agent's guesses as buttons. What each piece
+  is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
+  tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the
+  person's next message (`Store.answer`), so a click and a typed answer reach every engine the same way and
+  the message box always answers a card (`Talk.open`). `show_result` is kept on the turn and shown only once
+  the app is built and open. A new piece is a tool there, its view, and a line in `talkRules`. The agent still
+  doesn't ask about layout, colours or names (`Agent.Rules.ask`).
 - **What Lamp remembers** (`Memory`): two short sets of notes, about the person (`about-you.md` in the
   support folder) and about each app (`.lamp/notes.md`), each with a one-line summary. They must cost the
   person tokens only when used: the agent is told just the summaries and opens the notes with `read_notes`

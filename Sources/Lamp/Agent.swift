@@ -22,7 +22,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,ask,show_result"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -37,7 +37,7 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static var tryRules: String { lookRules + planRules + artRules + setupRules + (Memory.isOn ? memoryRules : "") }
+    static var tryRules: String { talkRules + lookRules + planRules + artRules + setupRules + (Memory.isOn ? memoryRules : "") }
 
     /// For the engines whose shell commands run confined (Sandbox): what the shell can and can't reach.
     static let sandboxNote = """
@@ -97,6 +97,19 @@ enum Agent {
 
     /// The pictures an app's kind calls for (companion, collection, game), painted while building rather than
     /// drawn in code, in the icon's style so they match it.
+    /// The pieces the agent talks with (Talk): what each is for is in its tool's description, so this says only
+    /// that they come before prose, and how an answer returns.
+    private static let talkRules = """
+
+    - You talk to the person in a sentence or two and in cards, never in paragraphs or lists. Your pieces: \
+    `ask` for anything you need to ask (they click an answer, type their own, or leave it to you); \
+    `show_result` for what a new app or a big change came to, with your guesses as buttons; `plan` for what \
+    you're building; `offer_setup` for setting up AI. When a piece fits, use it instead of writing the same \
+    thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
+    message, the same as something typed. If they type something that isn't one of your options, that's their \
+    answer: follow it.
+    """
+
     private static let artRules = """
 
     - `make_art` paints a picture into the app's Assets/ folder, in the same style as its icon: one object on a \
@@ -193,12 +206,14 @@ enum Agent {
         """
 
         static let ask = """
-        - When a request for a new app or a big change is too vague to build well, ask before writing code: \
-        reply with up to three short questions, each with two or three likely answers to pick from (e.g. "Who \
-        is it for: just you, or your team?"), and change no files; Lamp then waits for the answers. Only ask \
+        - When a request for a new app or a big change is too vague to build well, ask before writing code, \
+        with `ask` and never as questions written out in your reply: up to three short questions, each with \
+        two to four likely answers to pick from (e.g. "Who is it for?": "Just me", "My team"), and change no \
+        files; Lamp then waits for the answers. Only ask \
         when the answers would really change what you build. Most requests, including short ones, are clear \
-        enough: build a good first version with sensible choices, and end by naming the main assumptions so \
-        the user can correct them ("I assumed one list of deals; say if you'd rather have a pipeline board"). \
+        enough: build a good first version with sensible choices, and name the main assumptions with \
+        `show_result` so the user can correct them (you assumed one list of deals; the button offers a \
+        pipeline board). \
         Never ask about things you can decide yourself, like layout, colors or names.
         """
 
@@ -680,7 +695,10 @@ enum Agent {
         """
 
         static let finish = """
-        - Finish with one or two plain sentences describing what changed. Users often don't know what {{A_DEVICE}} can \
+        - Finish with one or two plain sentences describing what changed. After a new app or a big change in \
+        which you chose things for the person, call `show_result` instead: its `summary` is that sentence, \
+        its `guesses` are your main assumptions, each with the other way as a button, and a suggestion like \
+        the one below is its `idea`; then say nothing more. Users often don't know what {{A_DEVICE}} can \
         do on its own, and assume things like reading text from a photo, cutting a person out of a picture, \
         transcribing speech or reading aloud need extra software. When one of the on-device abilities above would \
         clearly make this app better, and the user hasn't asked for it or turned it down, you may add one short \

@@ -316,5 +316,139 @@
       ],
       "type": "object"
     }
+  },
+  {
+    "name": "ask",
+    "label": "Ask",
+    "description": "Asks the person something as a card they answer with a click, instead of questions written in your reply. Each question comes with 2 to 4 likely answers; the person can also type their own, or leave it to you. `layout` is how it's shown: `steps` is one question at a time in the chat (the usual choice); `together` puts short questions on one card with their answers as chips, for two or three quick picks that don't depend on each other; `pages` gives each question a page of its own, for the questions before a new app is built. After calling it, end your reply: the answer is the next message.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "questions"
+      ],
+      "properties": {
+        "layout": {
+          "type": "string",
+          "enum": [
+            "steps",
+            "together",
+            "pages"
+          ],
+          "description": "How the questions are shown. Defaults to steps."
+        },
+        "questions": {
+          "type": "array",
+          "description": "1 to 4 questions, most important first",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "question",
+              "options"
+            ],
+            "properties": {
+              "question": {
+                "type": "string",
+                "description": "The question, under ten words, in everyday words"
+              },
+              "options": {
+                "type": "array",
+                "description": "2 to 4 likely answers",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "title"
+                  ],
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "description": "The answer, one to four words"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A few words on what it means, when the title needs them. Not with `together`."
+                    },
+                    "symbol": {
+                      "type": "string",
+                      "description": "An SF Symbol name that pictures it, e.g. fork.knife"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "show_result",
+    "label": "Show result",
+    "description": "Shows the person what this request made, as a card under the chat once the app is built and open: one sentence, then the things you decided for them, each with a button for the other way. Use it instead of naming your assumptions in your reply, when you made choices they may want changed: after building a new app, or a big change. Not for a small change, a fix, or an answer. After calling it, end your reply.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "summary"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "What they now have, in one plain sentence, without the app's name or “is ready”: “A week of dinners and one shared grocery list.”"
+        },
+        "guesses": {
+          "type": "array",
+          "description": "Up to 3 choices you made that they're most likely to want changed",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "guess",
+              "instead",
+              "request"
+            ],
+            "properties": {
+              "guess": {
+                "type": "string",
+                "description": "What you chose: “One grocery list for everyone”"
+              },
+              "instead": {
+                "type": "string",
+                "description": "The button, the other way in a few words: “A list per person”"
+              },
+              "request": {
+                "type": "string",
+                "description": "What clicking sends you, as the person would say it: “Give each person their own grocery list.”"
+              }
+            }
+          }
+        },
+        "idea": {
+          "type": "object",
+          "description": "One thing worth adding that they haven't asked for or turned down, such as something their device can do on its own",
+          "additionalProperties": false,
+          "required": [
+            "title",
+            "request"
+          ],
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "The idea in a few words: “Read recipes from a photo”"
+            },
+            "detail": {
+              "type": "string",
+              "description": "One short line on why it's easy or useful"
+            },
+            "request": {
+              "type": "string",
+              "description": "What clicking Add It sends you"
+            }
+          }
+        }
+      }
+    }
   }
 ]

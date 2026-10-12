@@ -38,7 +38,10 @@ enum NextStep {
 
     /// The agent message a suggestion would follow up on: the latest chat message, when it's the agent's.
     static func turn(in lines: [LogLine]) -> UUID? {
-        guard let last = lines.last(where: { $0.kind == .user || $0.kind == .agent }), last.kind == .agent,
+        // Not over the agent's questions: the card has the likely answers, and a guess at one in the message
+        // box would sit beside them as another.
+        guard Talk.open(in: lines) == nil,
+              let last = lines.last(where: { $0.kind == .user || $0.kind == .agent }), last.kind == .agent,
               lines.contains(where: { $0.kind == .user }) else { return nil }
         return last.id
     }

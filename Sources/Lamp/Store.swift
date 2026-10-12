@@ -91,7 +91,9 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// `needsKey` is a setup offer from before offers named their capability: it was always about pictures.
     /// `drawIcon` offers to draw the app's icon in Image Playground; its text is the design it's for (`Icons.artKey`).
     /// `widget` is the card of an app that has a widget (`WidgetCard`): how to add it, then that it's there.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, drawIcon, widget }
+    /// `ask` and `result` are the agent's own cards (`Talk`): questions to click through, and what a request
+    /// made with its guesses as buttons. Their text is the same in plain words.
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, drawIcon, widget, ask, result }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -102,6 +104,8 @@ struct LogLine: Identifiable, Codable, Equatable {
     var tookBack: [String]? = nil      // …and every request that left the chat for it, oldest first
     var retryPhone: String? = nil     // a phone install failure: retry this destination without the agent
     var offer: SetupOffer? = nil      // a setup offer: what it's about (its text is the reason)
+    var ask: Talk.Ask? = nil          // the agent's questions, and what was clicked
+    var result: Talk.Result? = nil    // what a request made, as the agent put it
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -290,6 +294,7 @@ final class Store: ObservableObject {
         var approving = false               // between the queue check and the approval card
         var look = Look()                   // what the agent's look_at_app has done
         var pendingName: String?            // a name the agent gave the version this request makes
+        var pendingResult: Talk.Result?     // the agent's card for what this request made, shown once it's open
         var artCost = 0.0                   // what make_art's pictures cost, for the turn's summary
         var request: String?                // the user's words, for the command classifiers
         var claudeSession: String?          // Claude Code's conversation, as its own output says (Privacy.isOwnOutput)
@@ -1848,6 +1853,11 @@ final class Store: ObservableObject {
             versionsRevision += 1
         }
         let failed = crash != nil || owner.stopped || owner.phoneReady == false
+        if !failed, edited, var result = owner.pendingResult {
+            result.version = await Versions.head(project)
+            logs[project.id, default: []].append(LogLine(kind: .result, text: result.text, result: result))
+            saveChat(project)
+        }
         return TurnResult(end: failed ? .failed : edited ? .changed : .replied, watched: watched)
     }
 
@@ -2418,6 +2428,7 @@ final class Store: ObservableObject {
             case "read_notes", "save_notes": (status, answer) = Memory.call(name, arguments, for: project)
             case "make_art": (status, answer) = await makeArt(arguments, for: project)
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
+            case "ask", "show_result": (status, answer) = talk(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -2495,6 +2506,50 @@ final class Store: ObservableObject {
         }
         do { try fm.removeItem(at: target) } catch { return (500, ["error": "Couldn't delete \(relative): \(error.localizedDescription)"]) }
         return (200, ["text": "Deleted \(relative)."])
+    }
+
+    /// `ask` and `show_result`, for every engine: pi's extension posts them to `/agent/talk`, Claude Code and
+    /// Codex call them over MCP.
+    func talk(_ tool: String, _ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
+        guard let turn = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        switch tool {
+        case "ask":
+            switch Talk.ask(from: arguments) {
+            case .failure(let trouble): return (400, ["error": trouble.text])
+            case .success(let ask):
+                // Asked again before the person answered (the agent thought better of its questions): the
+                // new card takes the place of the one still waiting, so there's one thing to answer.
+                if let waiting = Talk.open(in: logs[project.id] ?? []),
+                   let index = logs[project.id]?.firstIndex(where: { $0.id == waiting.id }) {
+                    logs[project.id]?[index].ask = ask
+                    logs[project.id]?[index].text = ask.text
+                } else {
+                    logs[project.id, default: []].append(LogLine(kind: .ask, text: ask.text, ask: ask))
+                }
+                saveChat(project)
+                return (200, ["text": Talk.asked])
+            }
+        case "show_result":
+            switch Talk.result(from: arguments) {
+            case .failure(let trouble): return (400, ["error": trouble.text])
+            case .success(let result):
+                // Kept until the app is built and open: a card saying it's ready over a build that failed
+                // would be the one thing on screen that isn't true.
+                turn.pendingResult = result
+                return (200, ["text": Talk.resultKept])
+            }
+        default:
+            return (400, ["error": "Unknown tool \(tool)."])
+        }
+    }
+
+    /// A card's answers, chosen by clicking: noted on the card, then sent as the person's message.
+    func answer(_ line: LogLine, with answers: [String], in project: LampProject) {
+        guard var ask = line.ask, let index = logs[project.id]?.firstIndex(where: { $0.id == line.id }) else { return }
+        ask.answers = answers
+        logs[project.id]?[index].ask = ask
+        saveChat(project)
+        send(Talk.message(for: ask, answers: answers), to: project)
     }
 
     /// `offer_setup`: the agent asks Lamp to offer the person a way to set up a capability, with its reason.
@@ -3713,7 +3768,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/art", "/mcp", "/pi/key"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/art", "/agent/talk", "/mcp", "/pi/key"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -3812,6 +3867,10 @@ final class Store: ObservableObject {
         }
         if route == "/agent/art" {
             return await makeArt((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/talk" {
+            let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+            return talk(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/setup" {
             return agentOffer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)

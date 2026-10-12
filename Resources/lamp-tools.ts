@@ -18,6 +18,9 @@
  *   shows it to the agent.
  * - `offer_setup`: asks Lamp to show the person a card in the chat for setting up a kind of AI the app can't
  *   use yet (a key, a download, a sign-in). Lamp decides whether to show it and says what happened.
+ * - `ask`, `show_result`: the agent's cards. `ask` puts questions in the chat as a card the person answers by
+ *   clicking; `show_result` is the card for what a request made, with the agent's guesses as buttons. Lamp
+ *   draws both and turns a click into the person's next message, so neither waits for an answer here.
  * - `web_fetch`: reads a web page (or any URL) as text. Reading needs no approval.
  * - pi's file tools (read, edit, write, grep, find, ls) are checked before they run: inside the app's folder
  *   they need nothing, outside it Lamp decides (system files are fine, Lamp's own keys never, the rest asks
@@ -369,6 +372,25 @@ const offerSetup = defineTool({
 	},
 });
 
+function talkTool(name: string) {
+	return defineTool({
+		...spec(name),
+		async execute(_toolCallId, params, signal) {
+			const url = process.env.LAMP_TALK_URL;
+			if (!url) throw new Error("Lamp isn't available to show that.");
+			const response = await fetch(url, {
+				method: "POST",
+				headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+				body: JSON.stringify({ tool: name, arguments: params }),
+				signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
+			});
+			const reply = (await response.json()) as { text?: string; error?: string };
+			if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+			return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+		},
+	});
+}
+
 export default function (pi: ExtensionAPI) {
 	const computer = computerTools();
 	if (computer.length > 0) {
@@ -399,5 +421,6 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(restoreVersion);
 	pi.registerTool(makeArt);
 	pi.registerTool(offerSetup);
+	for (const name of ["ask", "show_result"]) pi.registerTool(talkTool(name));
 	for (const name of ["read_notes", "save_notes"]) pi.registerTool(notesTool(name));
 }

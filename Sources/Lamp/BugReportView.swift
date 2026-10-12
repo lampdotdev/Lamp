@@ -102,8 +102,8 @@ struct BugReportView: View {
         let activity = lines.suffix(20).map { line -> BugReport.Activity in
             switch line.kind {
             case .user: .request
-            case .agent: .reply
-            case .status, .drawIcon, .widget: .status
+            case .agent, .ask: .reply
+            case .status, .drawIcon, .widget, .result: .status
             case .error: .error
             case .detail: .detail
             case .tool: .tool
