@@ -399,12 +399,11 @@ final class Store: ObservableObject {
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
-        // Finding Claude Code / Codex means asking the login shell for PATH, then running each copy found with
-        // --version to pick the newest; done off the main thread now, so the first turn doesn't wait for it.
-        Task.detached(priority: .utility) {
-            _ = ToolLocator.userPath
-            for engine in Engine.allCases { _ = ToolLocator.path(for: engine) }
-        }
+        // The login shell's PATH, which every tool Lamp runs is given: asked once, off the main thread now, so
+        // the first turn doesn't wait for it.
+        Task.detached(priority: .utility) { _ = ToolLocator.userPath }
+        // Lamp's own Claude Code and Codex: downloaded for whichever is in use, and kept up to date.
+        EngineDownloads.shared.startKeepingCurrent()
         Task {
             LocalModels.shared.refresh()
             await LocalModels.shared.detectExternal()
@@ -1917,9 +1916,15 @@ final class Store: ObservableObject {
             }
             return false
         }
+        // A conversation Lamp's own copy of the engine can't resume (one kept by the copy Lamp ran before, not
+        // found to bring over) is forgotten, and the request starts a new one rather than failing.
+        var session = engine == .pi ? Self.piSession(for: project) : Self.savedSession(sessionFile)
+        if engine != .pi, let saved = session, !EngineInstall.carryOver(session: saved, for: engine) {
+            try? FileManager.default.removeItem(at: sessionFile)
+            session = nil
+        }
         let run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
-                            session: engine == .pi ? Self.piSession(for: project) : Self.savedSession(sessionFile),
-                            token: turn.agentToken)
+                            session: session, token: turn.agentToken)
         let status = await Shell.run(run.command, cwd: project.dir, env: run.env,
                                      started: { turn.agent = $0 }) { [weak self] line in
             guard let self else { return }

@@ -551,7 +551,7 @@ enum ComputerUse {
             }
             return try await viaEngine(.pi, task, token: token, model: nil, piRoute: route)
         case .engine(let engine, let model):
-            guard ToolLocator.path(for: engine) != nil else {
+            guard EngineInstall.path(for: engine) != nil else {
                 throw Failure(message: "Using other apps needs an OpenRouter key, or a working builder. Set one up in Lamp → Settings (⌘,).")
             }
             return try await viaEngine(engine, task, token: token, model: model)
@@ -704,7 +704,8 @@ enum ComputerUse {
               --system-prompt "$LAMP_SYSTEM" -- "$LAMP_PROMPT"
             """
         case .claude:
-            env["LAMP_TOOL"] = ToolLocator.path(for: .claude) ?? "claude"
+            env["LAMP_TOOL"] = EngineInstall.path(for: .claude) ?? "claude"
+            env.merge(EngineInstall.environment(for: .claude)) { $1 }
             let mcpConfig = folder.appendingPathComponent("mcp.json")
             let mcp: [String: Any] = ["mcpServers": ["lamp": ["type": "http", "url": "http://127.0.0.1:\(Gateway.port)/mcp",
                                                                "headers": ["Authorization": "Bearer ${LAMP_TOKEN}"]]]]
@@ -718,7 +719,8 @@ enum ComputerUse {
               --tools '' --allowedTools "$LAMP_CLAUDE_ALLOWED" --system-prompt "$LAMP_SYSTEM"
             """ + ((model ?? "").isEmpty ? "" : " --model \"$LAMP_MODEL\"")
         case .codex:
-            env["LAMP_TOOL"] = ToolLocator.path(for: .codex) ?? "codex"
+            env["LAMP_TOOL"] = EngineInstall.path(for: .codex) ?? "codex"
+            env.merge(EngineInstall.environment(for: .codex)) { $1 }
             env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Agent.tomlString(task.systemPrompt)
             var modelArg = ""
             if let model, Builder.codexModels.contains(where: { $0.id == model && !model.isEmpty }) {

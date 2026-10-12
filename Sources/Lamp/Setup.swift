@@ -50,13 +50,13 @@ struct SetupView: View {
     @State private var keyProblem: String?
     @State private var choice = "openrouter"
 
-    /// The ways to build, in the order shown. Claude Code and Codex appear when they're installed.
+    /// The ways to build, in the order shown. Choosing Claude Code or Codex downloads Lamp's copy.
     private static var choices: [(id: String, title: String, detail: String)] {
         var all: [(id: String, title: String, detail: String)] = [
             ("openrouter", "OpenRouter",
              "Any of hundreds of models, paying OpenRouter only for what you use."),
         ]
-        for engine in [Engine.claude, .codex] where ToolLocator.path(for: engine) != nil {
+        for engine in [Engine.claude, .codex] {
             all.append((engine.rawValue, engine.title,
                         "Uses your \(engine.title) sign-in, for building and for the AI inside your apps."))
         }
@@ -158,7 +158,8 @@ struct SetupView: View {
     private func use(_ engine: Engine) {
         Builder.engine = engine
         Task {
-            // Bundled with a desktop app but never signed in on its own: sign in through the browser now.
+            // Lamp's copy downloads first if it isn't here yet, then the sign-in opens the browser.
+            await EngineDownloads.shared.ensure(engine)
             if await EngineSignIn.isSignedIn(engine) == false { _ = await EngineSignIn.signIn(engine) }
             await store.recheckSetup()
         }
@@ -400,6 +401,7 @@ extension View {
 struct BuildingSettings: View {
     @EnvironmentObject private var store: Store
     @ObservedObject private var local = LocalModels.shared
+    @ObservedObject private var downloads = EngineDownloads.shared
     @AppStorage("engine") private var engine = Engine.pi.rawValue
     @AppStorage("piProvider") private var provider = "openrouter"
     @AppStorage("settingsTab") private var tab = "building"
@@ -422,16 +424,19 @@ struct BuildingSettings: View {
     @State private var signIns: [Engine: Bool] = [:]
     @State private var signingIn: Engine?
     private var signedIn: Bool? { signIns[selectedEngine] }
-    /// Changes when the tool turns up (installed while Settings is open) or moves, as well as with the agent.
-    private var signInCheck: String { _ = revision; return "\(engine) \(ToolLocator.path(for: selectedEngine) ?? "")" }
+    /// Changes when Lamp's copy of the tool arrives or is updated, as well as with the agent.
+    private var signInCheck: String { _ = downloads.revision; return "\(engine) \(EngineInstall.path(for: selectedEngine) ?? "")" }
 
     /// What stands between the chosen agent and building, if anything.
-    private enum Readiness { case ready, checking, notInstalled, signedOut, problem(String) }
+    private enum Readiness { case ready, checking, downloading, signedOut, problem(String) }
 
     private var readiness: Readiness {
         _ = revision
+        _ = downloads.revision
         guard selectedEngine != .pi else { return Builder.problem().map(Readiness.problem) ?? .ready }
-        guard ToolLocator.path(for: selectedEngine) != nil else { return .notInstalled }
+        guard EngineInstall.path(for: selectedEngine) != nil else {
+            return downloads.failure[selectedEngine].map(Readiness.problem) ?? .downloading
+        }
         switch signedIn {
         case nil: return .checking
         case false?: return .signedOut
@@ -444,27 +449,33 @@ struct BuildingSettings: View {
     @ViewBuilder private var agentStatus: some View {
         Group {
             switch readiness {
-            case .ready: EmptyView()
+            case .ready, .downloading: EmptyView()
             case .checking: ProgressView().controlSize(.small)
             default: NotReadyBadge()
             }
         }
-        .help(ToolLocator.path(for: selectedEngine).map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "")
+        .help(EngineInstall.path(for: selectedEngine).map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "")
     }
 
     /// When the agent isn't ready: why, and the one thing that fixes it.
     @ViewBuilder private var agentFix: some View {
         switch readiness {
-        case .notInstalled:
-            if let app = selectedEngine.desktopApp {
-                LabeledContent("\(selectedEngine.title) comes with the \(app.name) app.") {
-                    Link("Download the \(app.name) App", destination: app.download)
-                }
+        case .downloading:
+            LabeledContent("Downloading \(selectedEngine.title)…") {
+                ProgressView(value: downloads.progress[selectedEngine] ?? 0).frame(width: 140)
+            }
+        case .problem(let problem) where selectedEngine != .pi && EngineInstall.path(for: selectedEngine) == nil:
+            LabeledContent(problem) {
+                Button("Try Again") { downloads.start(selectedEngine) }
             }
         case .signedOut:
             LabeledContent("Sign in to \(selectedEngine.title) to build with it.") {
                 if signingIn == selectedEngine {
-                    HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Finish in your browser…").foregroundStyle(.secondary) }
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Finish in your browser…").foregroundStyle(.secondary)
+                        Button("Cancel") { EngineSignIn.cancelSignIn(selectedEngine) }
+                    }
                 } else {
                     Button("Sign In…") { Task { await startSignIn() } }
                 }
@@ -478,7 +489,7 @@ struct BuildingSettings: View {
 
     private func checkSignIn() async {
         let engine = selectedEngine
-        guard engine != .pi, ToolLocator.path(for: engine) != nil else { return }
+        guard engine != .pi, EngineInstall.path(for: engine) != nil else { return }
         signIns[engine] = nil
         let signedIn = await EngineSignIn.isSignedIn(engine) ?? true   // can't tell: don't hold it up
         // The check's process outlives a cancelled task; a newer check of this engine has the say.
@@ -517,20 +528,11 @@ struct BuildingSettings: View {
     private var textChoices: [TextGroup] {
         _ = revision
         var groups: [TextGroup] = []
-        // The sign-ins, each model they offer, once installed: AI Providers lists them either way, with the
-        // download, and Configure providers… goes there.
-        if ToolLocator.path(for: .claude) != nil {
-            // The tool's own default stays on offer, so the account's choice can be returned to.
-            groups.append(TextGroup(title: Engine.claude.title, items: Builder.claudeModels.map { TextChoice(id: "claude:\($0.id)", label: $0.label) }))
-        }
-        if ToolLocator.path(for: .codex) != nil {
-            groups.append(TextGroup(title: Engine.codex.title, items: Builder.codexModels.map { TextChoice(id: "codex:\($0.id)", label: $0.label) }))
-        }
-        // Chosen and since uninstalled: kept, so the menu isn't blank beside Not Ready and its download.
-        if selectedEngine != .pi, ToolLocator.path(for: selectedEngine) == nil {
-            let id = "\(selectedEngine.rawValue):\(Builder.engineModel(selectedEngine))"
-            groups.append(TextGroup(title: selectedEngine.title, items: [TextChoice(id: id, label: "Not installed")]))
-        }
+        // The sign-ins, each model they offer. Always listed: choosing one downloads Lamp's copy, and the
+        // sign-in is asked for below the menu. The tool's own default stays on offer, so the account's choice
+        // can be returned to.
+        groups.append(TextGroup(title: Engine.claude.title, items: Builder.claudeModels.map { TextChoice(id: "claude:\($0.id)", label: $0.label) }))
+        groups.append(TextGroup(title: Engine.codex.title, items: Builder.codexModels.map { TextChoice(id: "codex:\($0.id)", label: $0.label) }))
         for api in addedProviders {
             var items: [TextChoice] = []
             let current = Builder.piModel(for: api.id)
@@ -580,6 +582,7 @@ struct BuildingSettings: View {
                 Builder.setEngineModel(parts.count > 1 ? parts[1] : "", for: which)
                 engine = which.rawValue
                 otherModel = false
+                downloads.start(which)
             case "pi":
                 // The model is saved under its provider before the provider changes, so the change reads it back.
                 Builder.piProvider = parts[1]
@@ -663,9 +666,10 @@ struct BuildingSettings: View {
         .task { notificationsDenied = await Notifier.shared.isDenied() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { notificationsDenied = await Notifier.shared.isDenied() }
-            revision += 1   // looks for the agent's tool again: it may have been installed meanwhile
+            revision += 1   // keys may have changed meanwhile
         }
         .onChange(of: engine) { recheck() }
+        .onAppear { downloads.start(selectedEngine) }   // chosen before Lamp kept its own copy
         .task(id: signInCheck) { await checkSignIn() }
         .onChange(of: provider) { model = Builder.piModel; recheck() }
         .onChange(of: model) { Builder.piModel = model; recheck() }
@@ -904,6 +908,7 @@ struct ProvidersSettings: View {
     @State private var removing: PiProvider?
     @State private var revision = 0   // bumps after key changes so the view re-reads KeyStore
     @State private var signedIn: [Engine: Bool?] = [:]
+    @ObservedObject private var downloads = EngineDownloads.shared
 
     private var added: [PiProvider] {
         _ = revision
@@ -915,8 +920,8 @@ struct ProvidersSettings: View {
         return Provider.keyProviders.filter { KeyStore.key(for: $0.id) == nil }
     }
 
-    /// On this Mac: Native Mac AI, Ollama and LM Studio, and the coding agents, installed or not: this is
-    /// where Building's Configure providers… leads, so a missing one is listed with its download.
+    /// On this Mac: Native Mac AI, Ollama and LM Studio, and the coding agents, downloaded or not: this is
+    /// where Building's Configure providers… leads, so each is listed with its sign-in.
     private var onThisMac: [String] {
         [Builder.localProvider] + LocalModels.externalIDs + [Engine.claude, .codex].map { "engine:\($0.rawValue)" }
     }
@@ -938,7 +943,7 @@ struct ProvidersSettings: View {
             .contextMenu(forSelectionType: String.self) { ids in
                 if let id = ids.first {
                     if id.hasPrefix("engine:") {
-                        Button(detail(id) == "Not installed" ? "Download…" : "Sign In…") { showing = ProviderDetail(id) }
+                        Button("Sign In…") { showing = ProviderDetail(id) }
                     } else {
                         Button(Provider.keyProvider(id) == nil ? "Show Models…" : "Edit…") { showing = ProviderDetail(id) }
                     }
@@ -1012,9 +1017,9 @@ struct ProvidersSettings: View {
         }
         .onAppear { openPending(); refreshSignIns(); KeyStore.preload() }   // a key declined at launch is asked for again
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            revision += 1   // looks for Claude Code and Codex again: one may have been installed meanwhile
             refreshSignIns()
         }
+        .onChange(of: downloads.revision) { refreshSignIns() }
         .onReceive(NotificationCenter.default.publisher(for: KeyStore.changed)) { _ in revision += 1 }
         .onChange(of: pendingSheet) { openPending() }
         .task { local.refresh(); await local.detectExternal() }
@@ -1022,7 +1027,7 @@ struct ProvidersSettings: View {
 
     private func refreshSignIns() {
         Task {
-            for engine in [Engine.claude, .codex] where ToolLocator.path(for: engine) != nil {
+            for engine in [Engine.claude, .codex] where EngineInstall.path(for: engine) != nil {
                 signedIn[engine] = await EngineSignIn.isSignedIn(engine)
             }
         }
@@ -1031,7 +1036,8 @@ struct ProvidersSettings: View {
     private func detail(_ id: String) -> String {
         if id.hasPrefix("engine:"), let engine = Engine(rawValue: String(id.dropFirst(7))) {
             _ = revision
-            guard ToolLocator.path(for: engine) != nil else { return "Not installed" }
+            if downloads.isDownloading(engine) { return "Downloading…" }
+            guard EngineInstall.path(for: engine) != nil else { return "Not signed in" }
             switch signedIn[engine] {
             case .some(.some(true)): return "Signed in"
             case .some(.some(false)): return "Not signed in"
@@ -1095,42 +1101,33 @@ private enum ProviderDetail: Identifiable {
     }
 }
 
-/// Claude Code or Codex: signed in or not, and the way to sign in. What they do for Lamp is on the row.
+/// Claude Code or Codex: signed in or not, and the way to sign in. Signing in first downloads Lamp's own
+/// copy when there isn't one yet. What they do for Lamp is on the row.
 private struct EngineSheet: View {
     let engine: Engine
     let signedIn: Bool?
     let changed: () -> Void
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var downloads = EngineDownloads.shared
     @State private var working = false
 
+    private var detail: String {
+        if let failure = downloads.failure[engine], EngineInstall.path(for: engine) == nil { return failure }
+        if downloads.isDownloading(engine) { return "Downloading \(engine.title)…" }
+        if EngineInstall.path(for: engine) == nil { return "Not signed in yet." }
+        switch signedIn {
+        case true?: return "Signed in. Builds apps and answers inside them with your \(engine == .claude ? "Claude" : "ChatGPT") subscription."
+        case false?: return "Not signed in yet."
+        case nil: return "Checking the sign-in…"
+        }
+    }
+
     var body: some View {
-        if ToolLocator.path(for: engine) == nil, let app = engine.desktopApp {
-            notInstalled(app)
-        } else {
-            installed
-        }
-    }
-
-    /// Claude Code and Codex come with their desktop apps: the one thing to do is get the app.
-    private func notInstalled(_ app: (name: String, download: URL)) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            ProviderHeader(id: "engine:\(engine.rawValue)", detail: "\(engine.title) comes with the \(app.name) app. Once it's installed and you've signed in, it can build apps and answer inside them.")
-            HStack {
-                Spacer()
-                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Download the \(app.name) App") { NSWorkspace.shared.open(app.download); dismiss() }
-                    .keyboardShortcut(.defaultAction)
+            ProviderHeader(id: "engine:\(engine.rawValue)", detail: detail)
+            if downloads.isDownloading(engine) {
+                ProgressView(value: downloads.progress[engine] ?? 0)
             }
-        }
-        .padding(20)
-        .frame(width: 440)
-    }
-
-    private var installed: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            ProviderHeader(id: "engine:\(engine.rawValue)",
-                           detail: signedIn == true ? "Signed in. Builds apps and answers inside them with your \(engine == .claude ? "Claude" : "ChatGPT") subscription."
-                                : signedIn == false ? "Not signed in yet." : "Checking the sign-in…")
             if Store.shared.projects.contains(where: { $0.platform == .iphone }) {   // said only to someone it concerns
                 Text("The sign-in stays on this Mac: iOS apps can use it only on the same Wi‑Fi network as it. Away from it they need an OpenRouter key.")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -1138,11 +1135,15 @@ private struct EngineSheet: View {
             HStack {
                 Spacer()
                 Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(working ? "Signing In…" : "Sign In…") {
-                    working = true
-                    Task { _ = await EngineSignIn.signIn(engine); working = false; changed() }
+                if working {
+                    Button("Cancel Sign-In") { EngineSignIn.cancelSignIn(engine) }
+                } else {
+                    Button("Sign In…") {
+                        working = true
+                        Task { _ = await EngineSignIn.signIn(engine); working = false; changed() }
+                    }
+                    .keyboardShortcut(.defaultAction).disabled(signedIn == true)
                 }
-                .keyboardShortcut(.defaultAction).disabled(working || signedIn == true)
             }
         }
         .padding(20)

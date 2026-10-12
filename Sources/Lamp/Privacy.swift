@@ -54,22 +54,23 @@ enum Privacy {
     }
 
     /// Claude Code keeps a command's output too long to show the model in a file of the conversation's own,
-    /// `~/.claude/projects/<the app's folder>/<session>/tool-results/`, and reads it back with its Read tool.
-    /// That's the agent's own output, so reading it doesn't ask: only reading, only this app's folder and only
-    /// the conversation Lamp is running (`session`, from Claude Code's own output, not from the hook's request),
-    /// with links worked out so one there can't lead anywhere else. pi's and Codex's equivalents need nothing:
-    /// pi writes its to the temporary folder (`pi-bash-….log`), and Codex keeps none for the model to read.
+    /// `projects/<the app's folder>/<session>/tool-results/` in its folder (Lamp's copy's, inside Lamp's own),
+    /// and reads it back with its Read tool. That's the agent's own output, so reading it doesn't ask: only
+    /// reading, only this app's folder and only the conversation Lamp is running (`session`, from Claude Code's
+    /// own output, not from the hook's request), with links worked out so one there can't lead anywhere else.
+    /// It's the one place in Lamp's folder the agent may read. pi's and Codex's equivalents need nothing: pi
+    /// writes its to the temporary folder (`pi-bash-….log`), and Codex keeps none for the model to read.
     static func isOwnOutput(tool: String, path raw: String, session: String, project: LampProject,
-                            home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Bool {
+                            claudeFolder: URL = EngineInstall.configFolder(.claude)) -> Bool {
         guard readers.contains(tool), !session.isEmpty,
               session.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "-") })
         else { return false }
-        // What's never opened stays closed, wherever Claude Code's folder leads.
-        if case .deny = verdict(tool: tool, path: raw, project: project) { return false }
+        // Every link worked out, so the path is where the read really lands: a link among the results can't
+        // lead to the sign-in beside them, or anywhere else in Lamp's folder.
         let path = resolved(raw, in: project.dir)
-        // Claude Code's own folder may be a link (to someone's dotfiles, say), so it's worked out; nothing
-        // below it may be: a link there would make wherever it leads the folder that doesn't ask.
-        let projects = resolved(home.appendingPathComponent(".claude/projects").path, in: project.dir)
+        // Lamp's copy's folder is Lamp's own and no link; nothing below it may be one either: a link there
+        // would make wherever it leads the folder that doesn't ask.
+        let projects = resolved(claudeFolder.appendingPathComponent("projects").path, in: project.dir)
         // Claude Code names the folder after the working directory, every character but ASCII letters and
         // digits made "-" (per UTF-16 unit, as JavaScript counts them). A name past 200 gets a hash Lamp
         // can't work out, so such an app's output asks like any other file.

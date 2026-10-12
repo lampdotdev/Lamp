@@ -12,12 +12,15 @@ enum Subprocess {
         var ok: Bool { status == 0 && !timedOut }
     }
 
-    /// Runs `tool` and waits for it, off the caller's thread.
+    /// Runs `tool` and waits for it, off the caller's thread. `started` is handed the process once it runs,
+    /// for a caller that may have to stop it early (a sign-in the person cancels).
     static func run(_ tool: String, _ arguments: [String] = [], cwd: URL? = nil, env: [String: String]? = nil,
-                    mergeErrors: Bool = true, timeout: TimeInterval? = 60) async -> Result {
+                    mergeErrors: Bool = true, timeout: TimeInterval? = 60,
+                    started: (@Sendable (Process) -> Void)? = nil) async -> Result {
         await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
-                continuation.resume(returning: runBlocking(tool, arguments, cwd: cwd, env: env, mergeErrors: mergeErrors, timeout: timeout))
+                continuation.resume(returning: runBlocking(tool, arguments, cwd: cwd, env: env, mergeErrors: mergeErrors,
+                                                           timeout: timeout, started: started))
             }
         }
     }
@@ -25,7 +28,8 @@ enum Subprocess {
     /// The same, blocking the calling thread: for the few places that can't await (a value computed under a
     /// lock, a one-time migration). Still read while running and still bounded by the deadline.
     static func runBlocking(_ tool: String, _ arguments: [String] = [], cwd: URL? = nil, env: [String: String]? = nil,
-                            mergeErrors: Bool = true, timeout: TimeInterval? = 60) -> Result {
+                            mergeErrors: Bool = true, timeout: TimeInterval? = 60,
+                            started: (@Sendable (Process) -> Void)? = nil) -> Result {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: tool)
         process.arguments = arguments
@@ -40,6 +44,7 @@ enum Subprocess {
         } catch {
             return Result(status: -1, output: "", errors: "Could not start \(tool): \(error.localizedDescription)", timedOut: false)
         }
+        started?(process)
         // Drained as it arrives, so neither pipe can fill while the tool runs, and what has arrived is kept
         // even if the pipe never closes (a child the tool left behind can hold it open).
         let output = Drain(out.fileHandleForReading)

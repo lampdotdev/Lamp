@@ -511,6 +511,7 @@ private struct SetupStep: View {
     @State private var signingIn: Engine?
     /// Whether the Lamp Agent option on screen (that provider, that model) is the one set up to build.
     @State private var lampReady = false
+    @ObservedObject private var downloads = EngineDownloads.shared
 
     var body: some View {
         // Centered like the other steps. The Lamp Agent options can make it taller than a small window,
@@ -551,8 +552,9 @@ private struct SetupStep: View {
         .onChange(of: store.setup.hasBuildTools) { _, has in
             if has { Analytics.capture(.welcomeToolsReady, ["already_installed": false]) }
         }
+        .onChange(of: downloads.revision) { Task { await refreshSignIns() } }   // Lamp's copy arrived
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            // Back from installing Claude or ChatGPT, or signing in.
+            // Back from signing in.
             Task {
                 await store.recheckSetup()
                 await refreshSignIns()
@@ -572,7 +574,7 @@ private struct SetupStep: View {
 
     /// A check that can't tell counts as signed out: the Sign In button is then the way to find out.
     private func refreshSignIns() async {
-        for engine in [Engine.claude, .codex] where ToolLocator.path(for: engine) != nil && signingIn != engine {
+        for engine in [Engine.claude, .codex] where EngineInstall.path(for: engine) != nil && signingIn != engine {
             signedIn[engine] = await EngineSignIn.isSignedIn(engine) ?? false
         }
     }
@@ -679,6 +681,7 @@ private struct BuilderCard: View {
     @Binding var lampReady: Bool
     @AppStorage("engine") private var engine = Engine.pi.rawValue
     @State private var problem: String?
+    @ObservedObject private var downloads = EngineDownloads.shared
 
     var body: some View {
         Card {
@@ -689,12 +692,10 @@ private struct BuilderCard: View {
                         .font(.system(size: 13)).foregroundStyle(.secondary)
                 }
                 HStack(spacing: 10) {
-                    Option(selected: choice == .claude, title: "Claude Code",
-                           detail: ToolLocator.path(for: .claude) != nil ? "Uses your Claude subscription" : "Not installed yet") {
+                    Option(selected: choice == .claude, title: "Claude Code", detail: "Uses your Claude subscription") {
                         ProviderLogo(id: "anthropic", size: 30)
                     } action: { pick(.claude) }
-                    Option(selected: choice == .chatGPT, title: "ChatGPT",
-                           detail: ToolLocator.path(for: .codex) != nil ? "Uses your ChatGPT subscription" : "Not installed yet") {
+                    Option(selected: choice == .chatGPT, title: "ChatGPT", detail: "Uses your ChatGPT subscription") {
                         ProviderLogo(id: "openai", size: 30)
                     } action: { pick(.chatGPT) }
                     Option(selected: choice?.isForge == true, title: "Lamp Agent", detail: "You choose the AI") {
@@ -704,8 +705,8 @@ private struct BuilderCard: View {
                 if let choice {
                     Group {
                         switch choice {
-                        case .claude: account(.claude, app: "Claude", download: "https://claude.ai/download")
-                        case .chatGPT: account(.codex, app: "ChatGPT", download: "https://openai.com/chatgpt/download/")
+                        case .claude: account(.claude, app: "Claude")
+                        case .chatGPT: account(.codex, app: "ChatGPT")
                         default: LampAgentOptions(choice: Binding(get: { choice }, set: { pick($0) }), ready: $lampReady)
                         }
                     }
@@ -717,46 +718,43 @@ private struct BuilderCard: View {
         }
     }
 
-    /// Choosing a card is choosing the agent: a sign-in picks its tool straight away, and only what's
-    /// missing (the app, or a sign-in) is asked for underneath.
+    /// Choosing a card is choosing the agent: a sign-in picks its tool straight away, Lamp downloads its
+    /// copy of the tool if it hasn't yet, and only the sign-in is asked for underneath.
     private func pick(_ new: Builder.Choice) {
         problem = nil
         if choice != new {
             var properties: [String: Any] = ["agent": Analytics.agent(new)]
-            if new == .claude { properties["installed"] = ToolLocator.path(for: .claude) != nil }
-            if new == .chatGPT { properties["installed"] = ToolLocator.path(for: .codex) != nil }
+            if new == .claude { properties["installed"] = EngineInstall.path(for: .claude) != nil }
+            if new == .chatGPT { properties["installed"] = EngineInstall.path(for: .codex) != nil }
             Analytics.capture(.welcomeAgent, properties)
         }
         choice = new
         let which: Engine? = new == .claude ? .claude : new == .chatGPT ? .codex : nil
         guard let which else { return }
-        // Saved whether or not the app is there yet: once it's installed and signed in, the choice stands.
+        // Saved whether or not Lamp's copy is here yet: once it is and is signed in, the choice stands.
         Builder.engine = which
         engine = which.rawValue
-        guard ToolLocator.path(for: which) != nil else { return }
+        guard EngineInstall.path(for: which) != nil else { downloads.start(which); return }
         Task {
             if signedIn[which] == nil { signedIn[which] = await EngineSignIn.isSignedIn(which) ?? false }
             await store.recheckSetup()
         }
     }
 
-    /// Claude Code or ChatGPT: get the app if it's missing, sign in if not yet.
+    /// Claude Code or ChatGPT: Lamp's copy downloading, then the sign-in if it's not done yet.
     @ViewBuilder
-    private func account(_ which: Engine, app: String, download: String) -> some View {
-        let installed = ToolLocator.path(for: which) != nil
+    private func account(_ which: Engine, app: String) -> some View {
+        let installed = EngineInstall.path(for: which) != nil
         let name = which == .claude ? "Claude Code" : app
         HStack(spacing: 10) {
-            if !installed {
-                Image(systemName: "arrow.down.circle").foregroundStyle(.secondary)
-                Text("\(app) isn't on this Mac yet. Get the \(app) app, open it once, then come back here.")
-                    .font(.system(size: 13)).foregroundStyle(.secondary)
+            if !installed, let failure = downloads.failure[which] {
+                Text(failure).font(.system(size: 13)).foregroundStyle(Color.orange)
                 Spacer()
-                Link("Get \(app)", destination: URL(string: download)!)
-                    .font(.system(size: 13, weight: .medium))
-                    .environment(\.openURL, OpenURLAction { _ in
-                        Analytics.capture(.welcomeAgentDownload, ["agent": Analytics.agent(which)])
-                        return .systemAction
-                    })
+                Button("Try Again") { downloads.start(which) }
+            } else if !installed {
+                ProgressView(value: downloads.progress[which] ?? 0).frame(width: 120)
+                Text("Getting \(name) ready…").font(.system(size: 13)).foregroundStyle(.secondary)
+                Spacer()
             } else if signedIn[which] == true {
                 Done()
                 Text("\(name) will make your apps.").font(.system(size: 13, weight: .medium))
@@ -765,12 +763,15 @@ private struct BuilderCard: View {
                 ProgressView().controlSize(.small)
                 Text("Finish signing in to \(app) in your browser…").font(.system(size: 13)).foregroundStyle(.secondary)
                 Spacer()
+                // A sign-in page opened in the wrong browser profile or for the wrong account can't be finished.
+                Button("Cancel") { EngineSignIn.cancelSignIn(which) }
             } else if signedIn[which] == nil {
                 ProgressView().controlSize(.small)
                 Text("Checking your \(app) sign-in…").font(.system(size: 13)).foregroundStyle(.secondary)
                 Spacer()
             } else {
-                Text(problem ?? "Sign in to \(app) so \(name) can build.")
+                // Claude's free plan doesn't include Claude Code: said before the browser, not after a failed build.
+                Text(problem ?? "Sign in to \(app) so \(name) can build.\(which == .claude ? " It needs a paid Claude plan." : "")")
                     .font(.system(size: 13)).foregroundStyle(problem == nil ? Color.secondary : Color.orange)
                 Spacer()
                 Button("Sign In…") { signIn(which) }
@@ -784,12 +785,13 @@ private struct BuilderCard: View {
         Task {
             signingIn = which
             Analytics.capture(.welcomeSignIn, ["agent": Analytics.agent(which)])
-            let ok = await EngineSignIn.signIn(which)
-            Analytics.capture(.welcomeSignedIn, ["agent": Analytics.agent(which), "success": ok])
+            let result = await EngineSignIn.signIn(which)
+            Analytics.capture(.welcomeSignedIn, ["agent": Analytics.agent(which), "success": result == true])
             signingIn = nil
             NSApp.activate()
-            signedIn[which] = ok
-            if !ok { problem = "Signing in didn't finish. Try again." }
+            // Cancelled: back to Sign In…, with nothing to apologise for.
+            signedIn[which] = await EngineSignIn.isSignedIn(which) ?? (result == true)
+            if result == false { problem = "Signing in didn't finish. Try again." }
             await store.recheckSetup()
         }
     }
