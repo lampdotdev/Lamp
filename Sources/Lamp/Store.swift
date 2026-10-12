@@ -435,9 +435,18 @@ final class Store: ObservableObject {
     func requestBuildTools() {
         SetupCheck.installBuildTools()
         setup.installRequested = true
+        setup.installRequestedAt = Date()
         setup.installerSeen = false
         setup.backFromInstaller = false
         pollSetup()
+    }
+
+    /// Apple's installer opened or quit. Noted as it happens, since it can come and go between two looks.
+    func installerChanged(open: Bool) {
+        guard !setup.hasBuildTools, setup.installRequested else { return }
+        setup.installerOpen = open
+        setup.installerSeen = true
+        if !open { Task { await recheckSetup() } }   // quit because it finished, or didn't
     }
 
     /// Lamp is back in front while Apple's installer is open: the person has been through its buttons.
@@ -3613,8 +3622,13 @@ final class Store: ObservableObject {
         refreshOpenApps()
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
-            workspace.addObserver(forName: name, object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated { Store.shared.refreshOpenApps() }
+            workspace.addObserver(forName: name, object: nil, queue: .main) { note in
+                let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                let installer = app?.bundleIdentifier == SetupCheck.installerID
+                MainActor.assumeIsolated {
+                    Store.shared.refreshOpenApps()
+                    if installer { Store.shared.installerChanged(open: name == NSWorkspace.didLaunchApplicationNotification) }
+                }
             }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in

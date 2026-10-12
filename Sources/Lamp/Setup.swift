@@ -9,6 +9,8 @@ struct SetupCheck {
     var hasAgent = true
     /// Lamp has already opened Apple's installer this launch.
     var installRequested = false
+    /// When it last did: an installer that never shows up soon after is treated as one that didn't finish.
+    var installRequestedAt: Date?
     /// Apple's installer window is open.
     var installerOpen = false
     /// It has been open since the install was asked for, so its closing with no tools means it didn't finish.
@@ -22,8 +24,13 @@ struct SetupCheck {
         if hasBuildTools { return .installed }
         if !installRequested { return .notAsked }
         if installerOpen { return backFromInstaller ? .installing : .inApplesWindow }
-        return installerSeen ? .failed : .inApplesWindow
+        // Closed again, or never opened: either way the person needs Try Again, not instructions.
+        let late = installRequestedAt.map { Date().timeIntervalSince($0) > Self.installerPatience } ?? false
+        return installerSeen || late ? .failed : .inApplesWindow
     }
+
+    /// How long Apple's installer may take to appear after it's asked for.
+    static let installerPatience: TimeInterval = 15
 
     var hasBuilder: Bool { builderProblem == nil }
     var ready: Bool { hasBuildTools && hasBuilder && hasAgent }
@@ -40,6 +47,7 @@ struct SetupCheck {
     func keeping(_ current: SetupCheck) -> SetupCheck {
         var check = self
         check.installRequested = current.installRequested
+        check.installRequestedAt = current.installRequestedAt
         check.installerSeen = current.installerSeen || installerOpen
         check.backFromInstaller = current.backFromInstaller || Pretend.backFromInstaller
         return check
