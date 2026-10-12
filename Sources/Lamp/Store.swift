@@ -1543,7 +1543,9 @@ final class Store: ObservableObject {
     }
 
     func unqueue(_ message: QueuedMessage, from project: LampProject) {
-        guard var waiting = queued[project.id], var lines = logs[project.id] else { return }
+        // A first request waiting for setup has no chat yet: it can still be taken back.
+        guard var waiting = queued[project.id] else { return }
+        var lines = logs[project.id] ?? []
         let reopened = Talk.unqueue(message, from: &waiting, lines: &lines)
         queued[project.id] = waiting
         if reopened {
