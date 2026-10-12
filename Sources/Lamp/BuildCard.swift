@@ -18,6 +18,9 @@ struct TurnProgress {
     var finished: Date?
     /// The turn ended without a working app.
     var failed = false
+    /// The app was built, but couldn't be put in place or opened: the turn made its change, and there is
+    /// nothing for the person to use yet.
+    var unopened = false
     /// What's happening right now, in the user's words rather than the code's: "Working on the interface",
     /// "Building…". It's the one place a turn in progress says what it's doing.
     var activity = "Getting started"
@@ -85,10 +88,19 @@ struct TurnProgress {
         }
     }
 
+    /// How a finished turn ended, for the line under the app's name.
+    enum Ending { case ready, didNotFinish, didNotOpen }
+
+    var ending: Ending? {
+        guard finished != nil else { return nil }
+        return failed ? .didNotFinish : unopened ? .didNotOpen : .ready
+    }
+
     /// The turn is over. When the app was built and opened, everything planned is done.
-    mutating func finish(worked: Bool) {
+    mutating func finish(worked: Bool, opened: Bool = true) {
         finished = Date()
         failed = !worked
+        unopened = !opened
         if worked { for index in plan.indices { plan[index].done = true } }
     }
 
@@ -223,11 +235,17 @@ struct BuildCard: View {
             TimelineView(.periodic(from: progress.started, by: 1)) { context in
                 Text(progress.activity(at: context.date))
             }
-        } else if progress.failed {
-            Label("Didn't finish. See the messages below.", systemImage: "exclamationmark.triangle.fill")
-                .symbolRenderingMode(.multicolor)
         } else {
-            Label { Text("Ready") } icon: { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
+            switch progress.ending {
+            case .didNotFinish:
+                Label("Didn't finish. See the messages below.", systemImage: "exclamationmark.triangle.fill")
+                    .symbolRenderingMode(.multicolor)
+            case .didNotOpen:
+                Label("Built, but it didn't open. See the messages below.", systemImage: "exclamationmark.triangle.fill")
+                    .symbolRenderingMode(.multicolor)
+            default:
+                Label { Text("Ready") } icon: { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
+            }
         }
     }
 
