@@ -953,24 +953,98 @@ final class Store: ObservableObject {
             _ = await Shell.run(Self.lsregister + " -f \"$LAMP_APP\"", cwd: current.dir,
                                 env: ["LAMP_APP": renamed.installedURL.path]) { _ in }
         }
-        // The old name in window titles and APP.md. Anything subtler is left for the agent.
-        let sources = current.dir.appendingPathComponent("Sources")
-        let files = (fm.enumerator(at: sources, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
-            .filter { $0.pathExtension == "swift" && $0.lastPathComponent != "LampSupport.swift" }
-        for file in files {
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
-            let updated = text.replacingOccurrences(of: "\"\(current.name)\"", with: "\"\(unique)\"")
-            if updated != text { try? updated.write(to: file, atomically: true, encoding: .utf8) }
-        }
-        let appMd = current.dir.appendingPathComponent("APP.md")
-        if let text = try? String(contentsOf: appMd, encoding: .utf8), text.hasPrefix("# \(current.name)\n") {
-            try? ("# \(unique)\n" + text.dropFirst(current.name.count + 3)).write(to: appMd, atomically: true, encoding: .utf8)
-        }
+        Self.retitle(current.dir, from: current.name, to: unique)
         _ = await Versions.git("git add -A && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: current.dir,
                             env: ["LAMP_MESSAGE": "Rename to \(unique)"]) { _ in }
         reload()
         log(renamed, .status, "Renamed to \(unique)")
         return renamed
+    }
+
+    /// The old name in window titles and APP.md. Anything subtler is left for the agent.
+    private static func retitle(_ dir: URL, from old: String, to new: String) {
+        let fm = FileManager.default
+        let sources = dir.appendingPathComponent("Sources")
+        let files = (fm.enumerator(at: sources, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
+            .filter { $0.pathExtension == "swift" && $0.lastPathComponent != "LampSupport.swift" }
+        for file in files {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let updated = text.replacingOccurrences(of: "\"\(old)\"", with: "\"\(new)\"")
+            if updated != text { try? updated.write(to: file, atomically: true, encoding: .utf8) }
+        }
+        let appMd = dir.appendingPathComponent("APP.md")
+        if let text = try? String(contentsOf: appMd, encoding: .utf8), text.hasPrefix("# \(old)\n") {
+            try? ("# \(new)\n" + text.dropFirst(old.count + 3)).write(to: appMd, atomically: true, encoding: .utf8)
+        }
+    }
+
+    /// What of `.lamp` a copy takes: what the app is (its notes, its model choices, its icon's artwork, the
+    /// pictures and titles of the versions it shares). Not its chat, cost, engine conversations or secrets:
+    /// the copy is an app of its own, and those are made afresh when it first needs them.
+    private static let duplicatedState = [".lamp/notes.md", ".lamp/models.json", ".lamp/art",
+                                          ".lamp/versions", ".lamp/version-titles.json"]
+
+    /// Makes a copy of an app to try a variation on: "<name> copy", with the same code, history and
+    /// icon artwork on a different background, so the two tell apart at a glance. Then builds it.
+    func duplicate(_ project: LampProject) async {
+        guard project.scaffolded, !project.untitled, begin(project) != nil else { return }
+        let fm = FileManager.default
+        let name = uniqueName("\(project.name) copy")
+        let exe = Template.identifier(from: name)
+        let slug = Template.freeSlug(for: exe, in: root)
+        let copy = LampProject(id: slug, name: name, exe: exe, dir: root.appendingPathComponent(slug),
+                               instance: UUID().uuidString, platform: project.platform, family: project.family,
+                               device: project.device)
+        do {
+            try fm.createDirectory(at: copy.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+            // Everything at the top but what a build makes again (Lamp's own files are rewritten before it).
+            for item in try fm.contentsOfDirectory(atPath: project.dir.path) where ![".lamp", "build", ".build"].contains(item) {
+                try fm.copyItem(at: project.dir.appendingPathComponent(item), to: copy.dir.appendingPathComponent(item))
+            }
+            for path in Self.duplicatedState where fm.fileExists(atPath: project.dir.appendingPathComponent(path).path) {
+                try fm.copyItem(at: project.dir.appendingPathComponent(path), to: copy.dir.appendingPathComponent(path))
+            }
+            try Template.saveMeta(copy)
+            Self.retitle(copy.dir, from: project.name, to: name)
+            if let spec = Icons.load(project) {
+                var recolored = spec
+                recolored.background = otherBackground(than: spec).name
+                // The same artwork, filed under the new background so the copy's icon finds it.
+                if fm.fileExists(atPath: Icons.artURL(copy, spec: spec).path) {
+                    try? fm.copyItem(at: Icons.artURL(copy, spec: spec), to: Icons.artURL(copy, spec: recolored))
+                }
+                Icons.save(recolored, for: copy)
+            }
+            // Lamp's own files as the copy's build writes them, so its first version is what it builds and
+            // it starts with nothing unsaved.
+            try Template.writeOwnedFiles(for: copy)
+        } catch {
+            try? fm.removeItem(at: copy.dir)
+            finish(project)
+            NSAlert(error: error).runModal()
+            return
+        }
+        // Listed before the original is given back, so a second Duplicate can't choose the same name.
+        reload()
+        finish(project)
+        guard begin(copy) != nil else { return }
+        _ = await Versions.git("git add -A && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: copy.dir,
+                               env: ["LAMP_MESSAGE": "Copy of \(project.name)"]) { _ in }
+        if let spec = Icons.load(copy) { await renderIcon(copy, spec: spec) }
+        finish(copy)
+        selection = copy.id
+        log(copy, .status, "A copy of \(project.name). Building it now…")
+        await run(copy)
+    }
+
+    /// A background for a copy's icon: not the one it was copied from, as light or dark as that one so the
+    /// artwork and symbol still sit well on it, and where possible one no other app with the same icon uses.
+    private func otherBackground(than spec: IconSpec) -> Icons.Background {
+        let current = Icons.background(named: spec.background)
+        let candidates = Icons.backgrounds.filter { $0.name != current.name && $0.isLight == current.isLight }
+        let taken = Set(projects.compactMap(Icons.load).filter { $0.subject == spec.subject }.map(\.background))
+        let fresh = candidates.filter { !taken.contains($0.name) }
+        return (fresh.isEmpty ? candidates : fresh).randomElement() ?? current
     }
 
     /// Replaces an untouched app with a fresh scaffold under its new name, carrying over its chat and queue.
