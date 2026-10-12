@@ -9,6 +9,21 @@ struct SetupCheck {
     var hasAgent = true
     /// Lamp has already opened Apple's installer this launch.
     var installRequested = false
+    /// Apple's installer window is open.
+    var installerOpen = false
+    /// It has been open since the install was asked for, so its closing with no tools means it didn't finish.
+    var installerSeen = false
+    /// The person came back to Lamp while it was open: they've been through its buttons, so it's installing.
+    var backFromInstaller = false
+
+    /// Where the install of the tools has got to, for the screens that show it.
+    enum InstallStage { case notAsked, inApplesWindow, installing, failed, installed }
+    var installStage: InstallStage {
+        if hasBuildTools { return .installed }
+        if !installRequested { return .notAsked }
+        if installerOpen { return backFromInstaller ? .installing : .inApplesWindow }
+        return installerSeen ? .failed : .inApplesWindow
+    }
 
     var hasBuilder: Bool { builderProblem == nil }
     var ready: Bool { hasBuildTools && hasBuilder && hasAgent }
@@ -16,7 +31,17 @@ struct SetupCheck {
     static func run(keeping previous: SetupCheck) async -> SetupCheck {
         var check = SetupCheck(checked: true, hasBuildTools: buildToolsInstalled(), builderProblem: Builder.problem(),
                                hasAgent: Agent.executable != nil)
-        check.installRequested = previous.installRequested
+        check.installerOpen = installerIsOpen()
+        return check.keeping(previous)
+    }
+
+    /// This look, with what the person has done since the install was asked for carried over from `current`:
+    /// a click made while the look was under way counts.
+    func keeping(_ current: SetupCheck) -> SetupCheck {
+        var check = self
+        check.installRequested = current.installRequested
+        check.installerSeen = current.installerSeen || installerOpen
+        check.backFromInstaller = current.backFromInstaller || Pretend.backFromInstaller
         return check
     }
 
@@ -31,6 +56,24 @@ struct SetupCheck {
         guard select.ok, !developer.isEmpty else { return false }
         return fm.isExecutableFile(atPath: developer + "/usr/bin/swift")
             || fm.isExecutableFile(atPath: developer + "/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift")
+    }
+
+    /// The app macOS opens for `xcode-select --install`: the Command Line Tools' own installer.
+    static let installerID = "com.apple.dt.CommandLineTools.installondemand"
+
+    static func installerIsOpen() -> Bool {
+        if Pretend.isMissing("tools") { return Pretend.installerOpen }
+        return !NSRunningApplication.runningApplications(withBundleIdentifier: installerID).isEmpty
+    }
+
+    /// Brings Apple's installer back to the front, or opens it again if it was closed.
+    static func showInstaller() {
+        if Pretend.isMissing("tools") { return }
+        if let installer = NSRunningApplication.runningApplications(withBundleIdentifier: installerID).first {
+            installer.activate()
+        } else {
+            installBuildTools()
+        }
     }
 
     /// Opens Apple's installer for the free Command Line Tools (no developer account needed).
@@ -92,7 +135,7 @@ struct SetupView: View {
                 VStack(alignment: .trailing, spacing: 6) {
                     if store.setup.installRequested {
                         ProgressView().controlSize(.small)
-                        Button("Show Installer Again", action: SetupCheck.installBuildTools)
+                        Button("Show Installer Again", action: SetupCheck.showInstaller)
                             .buttonStyle(.link)
                             .font(.caption)
                     } else {
