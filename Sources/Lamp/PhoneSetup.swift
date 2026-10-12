@@ -241,6 +241,17 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
 
     func act() {
         guard let issue = report?.issue else { return }
+        // Lamp Dev pretending Xcode isn't set up: the step is done a little later, as if the person had done it.
+        if Pretend.isMissing("xcode"), issue.step != .account, issue.step != .phone {
+            let step = "\(issue.step)"
+            Pretend.finish(xcodeStep: step)
+            if issue.action == .useXcode, let developer = report?.developer { PhoneTools.use(developer) }
+            Task {
+                try? await Task.sleep(for: .seconds(Pretend.xcodeSeconds(step) + 0.5))
+                refresh()
+            }
+            return
+        }
         switch issue.action {
         case .installXcode:
             open(URL(string: "macappstore://itunes.apple.com/app/id497799835")!)
