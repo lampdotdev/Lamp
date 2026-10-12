@@ -76,7 +76,10 @@ struct SetupCheck {
 
     /// Brings Apple's installer back to the front, or opens it again if it was closed.
     static func showInstaller() {
-        if Pretend.isMissing("tools") { return }
+        if Pretend.isMissing("tools") {
+            Pretend.startInstall()   // nothing to bring forward; starts the stand-in over if it has closed
+            return
+        }
         if let installer = NSRunningApplication.runningApplications(withBundleIdentifier: installerID).first {
             installer.activate()
         } else {
