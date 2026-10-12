@@ -1,19 +1,25 @@
 import XCTest
 @testable import Lamp
 
-/// Lamp's own Claude Code and Codex: which version is in use, what's kept, and what's refused.
+/// The Claude Code and Codex Lamp runs: the person's own when the Mac has one, else Lamp's, with which
+/// version is in use, what's kept, and what's refused.
 final class EngineInstallTests: XCTestCase {
     private var saved: URL!
+    private var savedFinder: ((Engine) -> String?)!
     private var root: URL!
 
     override func setUp() {
         saved = EngineInstall.folder
+        savedFinder = EngineInstall.finder
         root = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-engines-\(UUID().uuidString)")
         EngineInstall.folder = root
+        EngineInstall.finder = { _ in nil }   // whatever the Mac running the tests has
+        EngineInstall.lookNow()
     }
 
     override func tearDown() {
         EngineInstall.folder = saved
+        EngineInstall.finder = savedFinder
         try? FileManager.default.removeItem(at: root)
     }
 
@@ -65,6 +71,96 @@ final class EngineInstallTests: XCTestCase {
         XCTAssertEqual(EngineInstall.environment(for: .pi), [:])
     }
 
+    /// The person's own copy wins over Lamp's, and runs as it does for them: their folder, nothing set.
+    /// Lamp's copy stays where it is, for when theirs goes.
+    func testThePersonsOwnCopyIsUsedAsItIs() throws {
+        let own = try put(.claude, "2.1.287")
+        try write("2.1.287", current: .claude)
+        let theirs = root.appendingPathComponent("person/.local/bin/claude")
+        try FileManager.default.createDirectory(at: theirs.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: theirs.path, contents: Data("#!/bin/sh\n".utf8), attributes: [.posixPermissions: 0o755])
+        EngineInstall.finder = { $0 == .claude ? theirs.path : nil }
+        // Nothing until a look has run: screens never look themselves.
+        XCTAssertEqual(EngineInstall.path(for: .claude), own.path)
+        XCTAssertFalse(EngineInstall.hasLooked)
+        EngineInstall.lookNow()
+        XCTAssertTrue(EngineInstall.hasLooked)
+        XCTAssertEqual(EngineInstall.path(for: .claude), theirs.path)
+        XCTAssertTrue(EngineInstall.usesPersonsCopy(.claude))
+        XCTAssertEqual(EngineInstall.environment(for: .claude), [:])
+        XCTAssertEqual(EngineInstall.configFolder(.claude).lastPathComponent, ".claude")
+        XCTAssertEqual(EngineInstall.ownPath(for: .claude), own.path)
+        // Codex has no copy of the person's here, so it's Lamp's (none yet), with its own folder.
+        XCTAssertNil(EngineInstall.path(for: .codex))
+        XCTAssertFalse(EngineInstall.usesPersonsCopy(.codex))
+        XCTAssertEqual(EngineInstall.environment(for: .codex)["CODEX_HOME"], root.appendingPathComponent("codex/home").path)
+        XCTAssertFalse(EngineInstall.usesPersonsCopy(.pi))
+        XCTAssertNil(EngineInstall.path(for: .pi))
+        // Removed since the look: Lamp's copy again, without waiting for the next look.
+        try FileManager.default.removeItem(at: theirs)
+        XCTAssertEqual(EngineInstall.path(for: .claude), own.path)
+    }
+
+    /// A conversation Lamp's copy kept is brought to the person's folder once Lamp runs their copy.
+    func testConversationsGoToThePersonsCopy() throws {
+        let fm = FileManager.default
+        let home = root.appendingPathComponent("person")
+        let id = "0f3c2a9e-5b1d-4c7a-9e2f-123456789abc"
+        let claude = EngineInstall.ownConfigFolder(.claude).appendingPathComponent("projects/-Users-someone-Coin-Flip")
+        try fm.createDirectory(at: claude, withIntermediateDirectories: true)
+        try "{}".write(to: claude.appendingPathComponent("\(id).jsonl"), atomically: true, encoding: .utf8)
+        let codex = EngineInstall.ownConfigFolder(.codex).appendingPathComponent("sessions/2026/10/01")
+        try fm.createDirectory(at: codex, withIntermediateDirectories: true)
+        try "{}".write(to: codex.appendingPathComponent("rollout-2026-10-01T11-08-27-\(id).jsonl"), atomically: true, encoding: .utf8)
+        let theirs = root.appendingPathComponent("person/.local/bin/claude")
+        try fm.createDirectory(at: theirs.deletingLastPathComponent(), withIntermediateDirectories: true)
+        fm.createFile(atPath: theirs.path, contents: Data("#!/bin/sh\n".utf8), attributes: [.posixPermissions: 0o755])
+        EngineInstall.finder = { _ in theirs.path }
+        EngineInstall.lookNow()
+
+        XCTAssertTrue(EngineInstall.carryOver(session: id, for: .claude, from: home))
+        XCTAssertTrue(fm.fileExists(atPath: home.appendingPathComponent(".claude/projects/-Users-someone-Coin-Flip/\(id).jsonl").path))
+        XCTAssertTrue(EngineInstall.carryOver(session: id, for: .codex, from: home))
+        XCTAssertTrue(fm.fileExists(atPath: home.appendingPathComponent(".codex/sessions/2026/10/01/rollout-2026-10-01T11-08-27-\(id).jsonl").path))
+        // Lamp's copy's folder was only read.
+        XCTAssertTrue(fm.fileExists(atPath: claude.appendingPathComponent("\(id).jsonl").path))
+    }
+
+    /// Going back to a copy that ran the conversation before: the turns the other copy added since come
+    /// along, rather than the conversation resuming from where it was left there.
+    func testGoingBackBringsTheLatestTurns() throws {
+        let fm = FileManager.default
+        let home = root.appendingPathComponent("person")
+        let id = "0f3c2a9e-5b1d-4c7a-9e2f-123456789abc"
+        let older = Date().addingTimeInterval(-3600)
+        func put(_ text: String, at url: URL, modified: Date) throws {
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            try fm.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+        }
+        // Lamp's copy has the start of each conversation; the person's copy went on with both since.
+        let ownClaude = EngineInstall.ownConfigFolder(.claude).appendingPathComponent("projects/-App/\(id).jsonl")
+        try put("first", at: ownClaude, modified: older)
+        try put("old output", at: ownClaude.deletingLastPathComponent().appendingPathComponent("\(id)/tool-results/a.txt"), modified: older)
+        try put("first\nsecond", at: home.appendingPathComponent(".claude/projects/-App/\(id).jsonl"), modified: Date())
+        let ownCodex = EngineInstall.ownConfigFolder(.codex).appendingPathComponent("sessions/2026/10/01/rollout-x-\(id).jsonl")
+        try put("first", at: ownCodex, modified: older)
+        try put("first\nsecond", at: home.appendingPathComponent(".codex/sessions/2026/10/01/rollout-x-\(id).jsonl"), modified: Date())
+
+        // The person's copy went: Lamp's runs again, and gets every turn.
+        XCTAssertFalse(EngineInstall.usesPersonsCopy(.claude))
+        XCTAssertTrue(EngineInstall.carryOver(session: id, for: .claude, from: home))
+        XCTAssertEqual(try String(contentsOf: ownClaude, encoding: .utf8), "first\nsecond")
+        XCTAssertFalse(fm.fileExists(atPath: ownClaude.deletingLastPathComponent().appendingPathComponent(id).path))
+        XCTAssertTrue(EngineInstall.carryOver(session: id, for: .codex, from: home))
+        XCTAssertEqual(try String(contentsOf: ownCodex, encoding: .utf8), "first\nsecond")
+
+        // Once it's current, nothing is copied again; a later turn here stays.
+        try put("first\nsecond\nthird", at: ownClaude, modified: Date().addingTimeInterval(60))
+        XCTAssertTrue(EngineInstall.carryOver(session: id, for: .claude, from: home))
+        XCTAssertEqual(try String(contentsOf: ownClaude, encoding: .utf8), "first\nsecond\nthird")
+    }
+
     /// Only a Developer ID signature of the vendor's team passes: not Apple's own, not an unsigned file.
     func testSignaturesOfAnyoneElseAreRefused() throws {
         XCTAssertFalse(EngineInstall.isSigned(URL(fileURLWithPath: "/bin/ls"), by: EngineInstall.team(.claude)))
@@ -90,7 +186,7 @@ final class EngineInstallTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: EngineInstall.versionsFolder(.claude).appendingPathComponent("2.1.287").path))
     }
 
-    /// An app's conversation from before Lamp kept its own copies is brought over once, with what Claude
+    /// An app's conversation kept by the person's copy is brought over once Lamp runs its own, with what Claude
     /// Code keeps beside it, and then found where it is; one that's nowhere can't be resumed.
     func testConversationsFromBeforeAreBroughtOver() throws {
         let fm = FileManager.default

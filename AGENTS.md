@@ -8,11 +8,15 @@ Lamp is a Mac app that builds other Mac apps with an LLM agent. Read `README.md`
 Lamp drives three coding agents, chosen in Settings → Building: **pi** (bundled), **Claude Code** and
 **Codex**. They are set up in `Sources/Lamp/Engines.swift` (`Agent.run`), one `case` per engine, and
 the output of each is read by its own parser there (`parseClaude`, `parseCodex`, and pi's in
-`Agent.parseLine`). Lamp runs only its own copies of Claude Code and Codex (`EngineInstall`), downloaded when
-chosen, checked (the vendor's checksum and Developer ID team) and updated daily, each with its own folder for
-sign-in and state (`EngineInstall.environment`: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`). Every place that runs one
-takes its path from `EngineInstall.path(for:)` and merges that environment; never look for another copy on the
-PATH or in the desktop apps. `updates/api/engines.js` can hold an engine back to a version.
+`Agent.parseLine`). When the Mac already has Claude Code or Codex (on the person's PATH, or inside the Claude or
+ChatGPT app), Lamp runs that copy with the person's own sign-in and folder (~/.claude, ~/.codex), so nobody who
+already uses one downloads or signs in again; Lamp's runs are kept apart from their setup by their flags
+(`--restricted`, `--ignore-user-config`, …). Only when there is none does Lamp download its own (`EngineInstall`),
+checked (the vendor's checksum and Developer ID team) and updated daily, with its own folder for sign-in and
+state (`EngineInstall.environment`: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`). Which copy is used is decided in one
+place, `EngineInstall.path(for:)`: every place that runs one takes its path from there and merges
+`EngineInstall.environment`, and reads the engine's state from `EngineInstall.configFolder`. Never look for a copy
+anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a version.
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
@@ -46,7 +50,7 @@ A capability given to one engine must be given to all of them that can take it, 
   that opens the app's folder, the system, developer tools, caches, temp folders and the network, and
   closes the rest of the home folder and both Lamps' folders), so nothing reads a command's text to see
   where it looks. Codex's hook can't change a command and a sandbox can't be nested, so Codex itself runs
-  inside the profile (`Sandbox.wrapEngine`, with Lamp's copy and its `CODEX_HOME` opened and Codex's own sandbox off) and its
+  inside the profile (`Sandbox.wrapEngine`, with the copy in use and its folder opened and Codex's own sandbox off) and its
   commands with it. SwiftPM's own sandbox can't start inside Lamp's, so a `swift` shim first on the path
   (`Sandbox.bin`) gives `swift build`/`test`/`run`/`package` `--disable-sandbox`. Nothing reads a command's text
   for paths any more; don't bring that back.
@@ -124,7 +128,7 @@ generated apps get it through the `{{SCHEME}}`, `{{NOTE}}`, `{{HOST}}` and `{{AP
 Lamp rebuilds them. `scripts/dev-data.sh` copies your apps, keys, settings and the agent's sign-ins from the
 installed Lamp into Lamp Dev, so the development build has something to work on. To see what someone with a bare Mac
 sees, `LAMP_PRETEND_MISSING` (`Pretend`, Lamp Dev only) makes Lamp's own checks miss the Command Line Tools,
-Xcode or tools from the PATH; a new check for something a fresh Mac lacks goes through it too.
+Xcode, the person's own Claude Code and Codex or tools from the PATH; a new check for something a fresh Mac lacks goes through it too.
 
 ## iPhone apps
 

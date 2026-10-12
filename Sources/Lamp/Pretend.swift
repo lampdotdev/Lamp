@@ -11,16 +11,15 @@ import Foundation
 /// - `tools-fail`: as `tools`, but the first install closes halfway with nothing installed; trying again works.
 /// - `xcode`: the full Xcode app and every step of setting it up for iPhone apps (below), and the icon
 ///   tools that come with it.
-/// - any other word: a command Lamp looks for on the PATH (`uv`, `mflux-generate`, `mlx_lm.server`).
+/// - any other word: a command Lamp looks for on the PATH (`uv`, `mflux-generate`, `mlx_lm.server`), and for
+///   `claude` and `codex` the copies in the Claude and ChatGPT apps too, so Lamp uses its own copy (or
+///   downloads it) as on a Mac without them.
 /// - `bare`: all of the above that a Mac straight out of the box doesn't have.
-///
-/// Claude Code and Codex aren't here: Lamp's copies live in its own folder, so `fresh-start.sh` already
-/// gives a Lamp without them, and their download is the real one.
 ///
 /// It fools only Lamp's checks: anything that runs `swift` or `xcrun` still finds the real ones. A release
 /// build ignores it.
 enum Pretend {
-    static let bare: Set<String> = ["tools", "xcode", "uv", "mflux-generate", "mlx_lm.server"]
+    static let bare: Set<String> = ["tools", "xcode", "claude", "codex", "uv", "mflux-generate", "mlx_lm.server"]
     static let installSeconds: TimeInterval = 30
     static let backSeconds: TimeInterval = 8
 

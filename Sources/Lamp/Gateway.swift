@@ -1028,8 +1028,8 @@ enum AppAI {
             || (appText ?? "").hasPrefix("engine:codex")
     }
 
-    /// The route to act on. Codex counts only when it's chosen (above) and signed in (Lamp's copy can be
-    /// there before anyone has signed in to it); that's checked at most every few minutes.
+    /// The route to act on. Codex counts only when it's chosen (above) and signed in (a copy can be
+    /// there before anyone has signed in to it: Lamp's, or the one inside the ChatGPT app); that's checked at most every few minutes.
     /// A model on this Mac makes pictures from words only, so a request that edits existing pictures skips it.
     static func imageRoute(editing: Bool = false, appText: String? = nil, choice: String? = nil) async -> ImageRoute? {
         if codexChosen(appText: appText), EngineInstall.path(for: .codex) != nil {

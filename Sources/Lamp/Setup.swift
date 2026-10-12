@@ -109,7 +109,8 @@ struct SetupView: View {
     @State private var keyProblem: String?
     @State private var choice = "openrouter"
 
-    /// The ways to build, in the order shown. Choosing Claude Code or Codex downloads Lamp's copy.
+    /// The ways to build, in the order shown. Choosing Claude Code or Codex downloads Lamp's copy
+    /// when the Mac has none.
     private static var choices: [(id: String, title: String, detail: String)] {
         var all: [(id: String, title: String, detail: String)] = [
             ("openrouter", "OpenRouter",
@@ -217,7 +218,7 @@ struct SetupView: View {
     private func use(_ engine: Engine) {
         Builder.engine = engine
         Task {
-            // Lamp's copy downloads first if it isn't here yet, then the sign-in opens the browser.
+            // Lamp's copy downloads first if the Mac has none, then the sign-in opens the browser.
             await EngineDownloads.shared.ensure(engine)
             if await EngineSignIn.isSignedIn(engine) == false { _ = await EngineSignIn.signIn(engine) }
             await store.recheckSetup()
@@ -483,7 +484,7 @@ struct BuildingSettings: View {
     @State private var signIns: [Engine: Bool] = [:]
     @State private var signingIn: Engine?
     private var signedIn: Bool? { signIns[selectedEngine] }
-    /// Changes when Lamp's copy of the tool arrives or is updated, as well as with the agent.
+    /// Changes when a copy of the tool arrives or is updated, as well as with the agent.
     private var signInCheck: String { _ = downloads.revision; return "\(engine) \(EngineInstall.path(for: selectedEngine) ?? "")" }
 
     /// What stands between the chosen agent and building, if anything.
@@ -587,7 +588,7 @@ struct BuildingSettings: View {
     private var textChoices: [TextGroup] {
         _ = revision
         var groups: [TextGroup] = []
-        // The sign-ins, each model they offer. Always listed: choosing one downloads Lamp's copy, and the
+        // The sign-ins, each model they offer. Always listed: choosing one downloads Lamp's copy when the Mac has none, and the
         // sign-in is asked for below the menu. The tool's own default stays on offer, so the account's choice
         // can be returned to.
         groups.append(TextGroup(title: Engine.claude.title, items: Builder.claudeModels.map { TextChoice(id: "claude:\($0.id)", label: $0.label) }))

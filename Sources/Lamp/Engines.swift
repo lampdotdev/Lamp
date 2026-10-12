@@ -90,7 +90,7 @@ enum Builder {
     ]
 
     /// Codex's choices: the models its account can use, from the list Codex itself caches
-    /// (models_cache.json in Lamp's copy's own folder), best first. Just the default when the cache isn't there.
+    /// (models_cache.json in the folder of the copy Lamp runs), best first. Just the default when the cache isn't there.
     static var codexModels: [(id: String, label: String)] {
         [("", "ChatGPT Codex's default")] + codexCatalog.map { ($0.slug, $0.name) }
     }
@@ -152,7 +152,8 @@ enum Builder {
             }
             if piModel.isEmpty { return "Choose a model." }
         default:
-            // Lamp downloads its own copy when the engine is chosen (EngineDownloads), so this is a moment's state.
+            // With no copy on the Mac, Lamp downloads its own when the engine is chosen (EngineDownloads), so
+            // this is a moment's state.
             if EngineInstall.path(for: engine) == nil { return "\(engine.title) hasn't been downloaded yet." }
         }
         return nil
@@ -178,8 +179,8 @@ enum Builder {
 }
 
 /// Finds command-line tools the way the user's own Terminal would. GUI apps don't get the shell's
-/// PATH, and tools installed with nvm, mise, Homebrew or npm live in places only that PATH knows. Not for
-/// Claude Code or Codex: Lamp runs only its own copies of those (EngineInstall).
+/// PATH, and tools installed with nvm, mise, Homebrew or npm live in places only that PATH knows. Claude
+/// Code and Codex are looked for through EngineInstall, which adds the desktop apps' copies.
 enum ToolLocator {
     nonisolated(unsafe) private static var resolvedPath: String?
     private static let lock = NSLock()
@@ -203,16 +204,16 @@ enum ToolLocator {
 
     nonisolated(unsafe) private static var chosen: [String: String] = [:]
 
-    /// The tool's path. When several copies are installed (say, one from npm under nvm and one under mise),
-    /// the newest version wins rather than whichever comes first in PATH.
-    static func path(named tool: String) -> String? {
+    /// The tool's path. When several copies are installed (say, one from npm under nvm and one under mise,
+    /// or one inside a desktop app, `alsoAt`), the newest version wins rather than whichever comes first.
+    static func path(named tool: String, alsoAt extra: [String] = []) -> String? {
         if Pretend.isMissing(tool) { return nil }
         lock.lock()
         // A remembered path can disappear (a tool uninstalled, or updated into a new folder).
         if let cached = chosen[tool], FileManager.default.isExecutableFile(atPath: cached) { lock.unlock(); return cached }
         lock.unlock()
         var seen = Set<String>()
-        let candidates = userPath.split(separator: ":").map { "\($0)/\(tool)" }.filter {
+        let candidates = (userPath.split(separator: ":").map { "\($0)/\(tool)" } + extra).filter {
             FileManager.default.isExecutableFile(atPath: $0)
                 && seen.insert(URL(fileURLWithPath: $0).resolvingSymlinksInPath().path).inserted
         }
@@ -284,8 +285,8 @@ extension Agent {
                                                          sessionDir: project.dir.appendingPathComponent(".lamp/pi-sessions").path)) { $1 })
         case .claude:
             // Lamp builds the app itself. Attachments are listed in the prompt; Claude reads them.
-            // Isolated from the user's own Claude Code setup: Lamp's copy has its own folder and sign-in
-            // (EngineInstall), and --restricted ignores settings files (hooks, permission rules, plugins) while
+            // Isolated from the user's own Claude Code setup, whether this is their copy (with their sign-in) or
+            // Lamp's (EngineInstall): --restricted ignores settings files (hooks, permission rules, plugins) while
             // keeping Lamp's --settings; --strict-mcp-config
             // skips their MCP servers and --disable-slash-commands their skills. --tools then lists exactly
             // what the agent gets.
@@ -375,9 +376,9 @@ extension Agent {
             }
             return AgentRun(command: command, env: env)
         case .codex:
-            // Isolated from the user's own Codex setup: Lamp's copy has its own folder and sign-in (EngineInstall),
-            // and --ignore-user-config --ignore-rules keep out any model, MCP servers, features and rules set
-            // there. Lamp's rules go in as developer instructions.
+            // Isolated from the user's own Codex setup, whether this is their copy (with their sign-in) or Lamp's
+            // (EngineInstall): --ignore-user-config --ignore-rules keep out any model, MCP servers, features and
+            // rules set there. Lamp's rules go in as developer instructions.
             env["LAMP_TOOL"] = EngineInstall.path(for: .codex) ?? "codex"
             env.merge(EngineInstall.environment(for: .codex)) { $1 }
             env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt(for: project) + tryRules + Self.codexNote + sandboxNote)
