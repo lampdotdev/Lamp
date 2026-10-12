@@ -96,6 +96,32 @@ final class TalkTests: XCTestCase {
         XCTAssertTrue(answered.atEnd)
     }
 
+    /// An ordinary change ends on its card: the new things as rows, what wasn't tried as a request to try it,
+    /// and no reply above it saying the same.
+    func testAnOrdinaryChangeEndsOnItsCard() throws {
+        let result = try Talk.result(from: [
+            "summary": "You can save meals you cook often.",
+            "news": [["what": "Save a meal", "where": "The star beside its name"], ["what": "No place given"]],
+            "untried": "Saving and picking a favorite",
+        ]).get()
+        XCTAssertEqual(result.news, [Talk.News(what: "Save a meal", place: "The star beside its name")])
+        XCTAssertEqual(Talk.tryRequest(try XCTUnwrap(result.untried)), "Please try this out: Saving and picking a favorite")
+
+        let lines = [LogLine(kind: .user, text: "Make the title bigger"), LogLine(kind: .agent, text: "The title is bigger."),
+                     LogLine(kind: .summary, text: ""), LogLine(kind: .status, text: "App is ready"),
+                     LogLine(kind: .user, text: "Let me save meals"), LogLine(kind: .agent, text: "I'll add favorites."),
+                     LogLine(kind: .agent, text: "You can now save meals. - Saving: the star."), LogLine(kind: .summary, text: ""),
+                     LogLine(kind: .result, text: result.text, result: result)]
+        // The small change keeps its sentence; the one that ended on a card has only the card.
+        XCTAssertEqual(LogLine.visible(lines, details: false).filter { $0.kind == .agent }.map(\.text), ["The title is bigger."])
+    }
+
+    /// A card saved before there were rows for what's new still reads.
+    func testAnEarlierResultStillReads() throws {
+        let saved = Data(#"{"summary":"Done","guesses":[]}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(Talk.Result.self, from: saved).news)
+    }
+
     func testAResultsButtonsLastUntilTheNextRequest() {
         let result = LogLine(kind: .result, text: "", result: Talk.Result(summary: "Done", guesses: []))
         XCTAssertEqual(Talk.current(in: [result])?.id, result.id)

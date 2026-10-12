@@ -385,7 +385,7 @@
   {
     "name": "show_result",
     "label": "Show result",
-    "description": "Shows the person what this request made, as a card under the chat once the app is built and open: one sentence, then the things you decided for them, each with a button for the other way. Use it instead of naming your assumptions in your reply, when you made choices they may want changed: after building a new app, or a big change. Not for a small change, a fix, or an answer. After calling it, end your reply.",
+    "description": "Shows the person what this request came to, as a card in the chat once the app is built and open: its picture, one sentence, then rows. It is your whole ending: after calling it write nothing more. Two uses. After a change that gives them something new to find (a button, menu, page, shortcut or new way of doing something), whether or not you tried it: `news`, a row per new thing with where it is, plus `untried` if there's something you didn't try. After a new app, or a big change in which you chose things for them: `guesses`, each with a button for the other way, and maybe an `idea`. Not for a small change or a fix they'll see at once (bigger text, a color, a bug gone), and not for an answer: those get one sentence.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -446,6 +446,32 @@
               "description": "What clicking Add It sends you"
             }
           }
+        },
+        "news": {
+          "type": "array",
+          "description": "Up to 4 new things this change added, a row each: what they can now do and wouldn't find by themselves. Not how you built it.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "what",
+              "where"
+            ],
+            "properties": {
+              "what": {
+                "type": "string",
+                "description": "The new thing, two to five words: “Save a meal”"
+              },
+              "where": {
+                "type": "string",
+                "description": "Where to find it, a few words: “The star beside its name”"
+              }
+            }
+          }
+        },
+        "untried": {
+          "type": "string",
+          "description": "What you built and didn't try in the running app, in a few words: “Saving and picking a favorite”. Shown with a Try It button that asks you to try it. Leave it out when you tried everything."
         }
       }
     }

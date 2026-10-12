@@ -150,16 +150,28 @@ extension LogLine {
         // After the agent's questions its card is the answer: whatever it says on the way out ("Waiting for
         // your answers.") would sit under the card saying the same.
         var asked = false
+        // A request that ends on its result card is answered by the card: it takes the place of the reply,
+        // which would say the same above it.
+        var thisRequest: [UUID] = []
         for line in lines {
             switch line.kind {
             case .agent: latest = asked ? nil : line.id
             case .ask:
                 asked = true
                 latest = nil
-            case .summary, .user:
-                if let latest { answers.insert(latest) }
+            case .result:
+                answers.subtract(thisRequest)
                 latest = nil
-                if line.kind == .user { asked = false }
+            case .summary, .user:
+                if let latest {
+                    answers.insert(latest)
+                    thisRequest.append(latest)
+                }
+                latest = nil
+                if line.kind == .user {
+                    asked = false
+                    thisRequest = []
+                }
             default: break
             }
         }

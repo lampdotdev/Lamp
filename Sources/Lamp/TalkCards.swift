@@ -280,9 +280,10 @@ private struct ChipRow: View {
     }
 }
 
-/// What a request made: its picture, one sentence, and what the agent chose for the person, each with a
-/// button for the other way. The buttons are there while they'd still do what they say: until the person asks
-/// for something else.
+/// What a request made: its picture and one sentence, then rows. A new app's are what the agent chose for the
+/// person, each with a button for the other way; an ordinary change's are the new things and where to find
+/// them, and what the agent didn't try as something to try. The rows with buttons are there while they'd
+/// still do what they say, until the person asks for something else; what's new stays, since it stays true.
 struct ResultCard: View {
     let line: LogLine
     let dir: URL
@@ -306,6 +307,9 @@ struct ResultCard: View {
                     Spacer(minLength: 0)
                 }
                 .padding(14)
+                ForEach(Array((result.news ?? []).enumerated()), id: \.offset) { _, news in
+                    row(news.what, detail: news.place)
+                }
                 if isCurrent {
                     ForEach(Array(result.guesses.enumerated()), id: \.offset) { _, guess in
                         row(guess.guess, detail: "Lamp chose this for you.", button: guess.instead) {
@@ -314,6 +318,11 @@ struct ResultCard: View {
                     }
                     if let idea = result.idea {
                         row(idea.title, detail: idea.detail, button: "Add It") { store.send(idea.request, to: project) }
+                    }
+                    if let untried = result.untried {
+                        row(untried, detail: "Lamp hasn't tried this yet.", button: "Try It") {
+                            store.send(Talk.tryRequest(untried), to: project)
+                        }
                     }
                 }
             }
@@ -324,16 +333,18 @@ struct ResultCard: View {
         }
     }
 
-    private func row(_ title: String, detail: String?, button: String, action: @escaping () -> Void) -> some View {
+    private func row(_ title: String, detail: String?, button: String? = nil, action: @escaping () -> Void = {}) -> some View {
         VStack(spacing: 0) {
             Divider()
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                    if let detail { Text(detail).font(.callout).foregroundStyle(.secondary) }
+                    Text(title).fixedSize(horizontal: false, vertical: true)
+                    if let detail {
+                        Text(detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Spacer(minLength: 8)
-                Button(button, action: action)
+                if let button { Button(button, action: action) }
             }
             .padding(.horizontal, 14).padding(.vertical, 9)
         }

@@ -56,22 +56,38 @@ enum Talk {
         var request: String
     }
 
+    /// Something a change added that the person can now do, and where in the app it is.
+    struct News: Codable, Equatable {
+        var what: String
+        var place: String
+    }
+
     struct Result: Codable, Equatable {
         var summary: String
         var guesses: [Guess]
         var idea: Idea?
+        /// What an ordinary change added, a row each. Optional so that cards from before there were any still read.
+        var news: [News]?
+        /// What the agent built and didn't try in the running app, offered back as something to try.
+        var untried: String?
         /// The version this request made, for its picture.
         var version: String?
 
         var text: String {
-            ([summary] + guesses.map { "- \($0.guess) (or: \($0.instead))" } + (idea.map { ["- Idea: \($0.title)"] } ?? []))
+            ([summary] + (news ?? []).map { "- \($0.what): \($0.place)" }
+                + guesses.map { "- \($0.guess) (or: \($0.instead))" } + (idea.map { ["- Idea: \($0.title)"] } ?? [])
+                + (untried.map { ["- Not tried: \($0)"] } ?? []))
                 .joined(separator: "\n")
         }
     }
 
+    /// What the card's Try It button sends: the agent's own words for what it didn't try, as a request.
+    static func tryRequest(_ untried: String) -> String { "Please try this out: \(untried)" }
+
     static let questionLimit = 4
     static let optionLimit = 4
     static let guessLimit = 3
+    static let newsLimit = 4
 
     enum Trouble: Error, Equatable {
         case message(String)
@@ -122,7 +138,16 @@ enum Talk {
                   let request = (item["request"] as? String)?.trimmed.nilIfEmpty else { return nil }
             return Idea(title: title, detail: (item["detail"] as? String)?.trimmed.nilIfEmpty, request: request)
         }
-        return .success(Result(summary: summary, guesses: guesses, idea: idea))
+        let news: [News] = (arguments["news"] as? [[String: Any]] ?? []).compactMap { item in
+            guard let what = (item["what"] as? String)?.trimmed.nilIfEmpty,
+                  let place = (item["where"] as? String)?.trimmed.nilIfEmpty else { return nil }
+            return News(what: what, place: place)
+        }
+        guard news.count <= newsLimit else {
+            return .failure(.message("At most \(newsLimit) new things: the ones they wouldn't find by themselves."))
+        }
+        return .success(Result(summary: summary, guesses: guesses, idea: idea, news: news.isEmpty ? nil : news,
+                               untried: (arguments["untried"] as? String)?.trimmed.nilIfEmpty))
     }
 
     static func hasSymbol(_ name: String) -> Bool {
