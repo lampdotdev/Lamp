@@ -90,6 +90,39 @@ final class EngineInstallTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: EngineInstall.versionsFolder(.claude).appendingPathComponent("2.1.287").path))
     }
 
+    /// An app's conversation from before Lamp kept its own copies is brought over once, with what Claude
+    /// Code keeps beside it, and then found where it is; one that's nowhere can't be resumed.
+    func testConversationsFromBeforeAreBroughtOver() throws {
+        let fm = FileManager.default
+        let home = root.appendingPathComponent("person")
+        let id = "0f3c2a9e-5b1d-4c7a-9e2f-123456789abc"
+        let claude = home.appendingPathComponent(".claude/projects/-Users-someone-Coin-Flip")
+        try fm.createDirectory(at: claude.appendingPathComponent("\(id)/tool-results"), withIntermediateDirectories: true)
+        try "{}".write(to: claude.appendingPathComponent("\(id).jsonl"), atomically: true, encoding: .utf8)
+        try "out".write(to: claude.appendingPathComponent("\(id)/tool-results/toolu_01.txt"), atomically: true, encoding: .utf8)
+        let codex = home.appendingPathComponent(".codex/sessions/2026/10/01")
+        try fm.createDirectory(at: codex, withIntermediateDirectories: true)
+        try "{}".write(to: codex.appendingPathComponent("rollout-2026-10-01T11-08-27-\(id).jsonl"), atomically: true, encoding: .utf8)
+
+        XCTAssertTrue(EngineInstall.carryOver(session: id, for: .claude, from: home))
+        let mine = EngineInstall.configFolder(.claude).appendingPathComponent("projects/-Users-someone-Coin-Flip")
+        XCTAssertTrue(fm.fileExists(atPath: mine.appendingPathComponent("\(id).jsonl").path))
+        XCTAssertTrue(fm.fileExists(atPath: mine.appendingPathComponent("\(id)/tool-results/toolu_01.txt").path))
+        XCTAssertTrue(EngineInstall.carryOver(session: id, for: .codex, from: home))
+        XCTAssertTrue(fm.fileExists(atPath: EngineInstall.configFolder(.codex)
+            .appendingPathComponent("sessions/2026/10/01/rollout-2026-10-01T11-08-27-\(id).jsonl").path))
+
+        // Found in Lamp's copy's folder now, even with the person's gone.
+        try fm.removeItem(at: home)
+        XCTAssertTrue(EngineInstall.carryOver(session: id, for: .claude, from: home))
+        XCTAssertTrue(EngineInstall.carryOver(session: id, for: .codex, from: home))
+        // Nowhere, or not a conversation's id.
+        XCTAssertFalse(EngineInstall.carryOver(session: "11111111-1111-1111-1111-111111111111", for: .claude, from: home))
+        XCTAssertFalse(EngineInstall.carryOver(session: "11111111-1111-1111-1111-111111111111", for: .codex, from: home))
+        XCTAssertFalse(EngineInstall.carryOver(session: "../\(id)", for: .claude, from: home))
+        XCTAssertFalse(EngineInstall.carryOver(session: "", for: .codex, from: home))
+    }
+
     /// Against the real download sites: set LAMP_LIVE_ENGINES=1. Downloads both engines (about 230 MB
     /// for Claude Code and 130 MB for Codex) into the test's own folder and runs each.
     func testLiveInstall() async throws {

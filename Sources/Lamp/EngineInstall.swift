@@ -82,6 +82,59 @@ enum EngineInstall {
         return url.path
     }
 
+    // MARK: Conversations from before
+
+    /// Whether the engine can resume conversation `session`, bringing it over first when it was kept by the
+    /// copy Lamp ran before it had its own: Claude Code's in ~/.claude/projects/<folder>/<id>.jsonl, Codex's
+    /// in ~/.codex/sessions/<date>/rollout-…-<id>.jsonl. Lamp's copy is pointed at its own folder, so without
+    /// this an app's next request would try to resume a conversation its engine can't find and fail. False
+    /// when it's nowhere: the caller then starts a new conversation. Only that one conversation is copied,
+    /// and the person's folders are only read.
+    static func carryOver(session: String, for engine: Engine,
+                          from home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Bool {
+        guard engine != .pi, !session.isEmpty,
+              session.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "-") })
+        else { return false }
+        let fm = FileManager.default
+        let mine = configFolder(engine)
+        switch engine {
+        case .pi:
+            return false
+        case .claude:
+            // The conversation and the folder beside it (its long outputs, its subagents), under the folder
+            // Claude Code names after the app's.
+            func find(in root: URL) -> URL? {
+                ((try? fm.contentsOfDirectory(at: root.appendingPathComponent("projects"), includingPropertiesForKeys: nil)) ?? [])
+                    .first { fm.fileExists(atPath: $0.appendingPathComponent(session + ".jsonl").path) }
+            }
+            if find(in: mine) != nil { return true }
+            guard let folder = find(in: home.appendingPathComponent(".claude")) else { return false }
+            let target = mine.appendingPathComponent("projects").appendingPathComponent(folder.lastPathComponent)
+            try? fm.createDirectory(at: target, withIntermediateDirectories: true)
+            for name in [session + ".jsonl", session] where fm.fileExists(atPath: folder.appendingPathComponent(name).path) {
+                try? fm.copyItem(at: folder.appendingPathComponent(name), to: target.appendingPathComponent(name))
+            }
+            return fm.fileExists(atPath: target.appendingPathComponent(session + ".jsonl").path)
+        case .codex:
+            // Each conversation is one file, under the date it began.
+            func find(in root: URL) -> String? {
+                for folder in ["sessions", "archived_sessions"] {
+                    let base = root.appendingPathComponent(folder)
+                    guard let walk = fm.enumerator(atPath: base.path) else { continue }
+                    for case let path as String in walk where path.hasSuffix("-\(session).jsonl") { return folder + "/" + path }
+                }
+                return nil
+            }
+            if find(in: mine) != nil { return true }
+            let old = home.appendingPathComponent(".codex")
+            guard let path = find(in: old) else { return false }
+            let target = mine.appendingPathComponent(path)
+            try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.copyItem(at: old.appendingPathComponent(path), to: target)
+            return fm.fileExists(atPath: target.path)
+        }
+    }
+
     /// "2.1.287" or "0.162.1": digits and dots, and nothing that could step out of a folder.
     static func isVersion(_ text: String) -> Bool {
         text.range(of: #"^[0-9]+(\.[0-9]+){1,3}$"#, options: .regularExpression) != nil

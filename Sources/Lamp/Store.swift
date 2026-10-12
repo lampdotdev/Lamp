@@ -1841,9 +1841,15 @@ final class Store: ObservableObject {
             }
             return false
         }
+        // A conversation Lamp's own copy of the engine can't resume (one kept by the copy Lamp ran before, not
+        // found to bring over) is forgotten, and the request starts a new one rather than failing.
+        var session = engine == .pi ? Self.piSession(for: project) : Self.savedSession(sessionFile)
+        if engine != .pi, let saved = session, !EngineInstall.carryOver(session: saved, for: engine) {
+            try? FileManager.default.removeItem(at: sessionFile)
+            session = nil
+        }
         let run = Agent.run(prompt: prompt, files: files, project: project, offered: offers(in: project),
-                            session: engine == .pi ? Self.piSession(for: project) : Self.savedSession(sessionFile),
-                            token: turn.agentToken)
+                            session: session, token: turn.agentToken)
         let status = await Shell.run(run.command, cwd: project.dir, env: run.env,
                                      started: { turn.agent = $0 }) { [weak self] line in
             guard let self else { return }
