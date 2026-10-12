@@ -105,6 +105,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var retryPhone: String? = nil     // a phone install failure: retry this destination without the agent
     var offer: SetupOffer? = nil      // a setup offer: what it's about (its text is the reason)
     var ask: Talk.Ask? = nil          // the agent's questions, and what was clicked
+    var fromCard: Bool? = nil         // for a request: it was clicked on the agent's card, which shows it
     var result: Talk.Result? = nil    // what a request made, as the agent put it
 
     /// The offer a setup card is about, for this line and for the older key card.
@@ -172,6 +173,8 @@ struct QueuedMessage: Identifiable {
     let id = UUID()
     let text: String
     var attachments: [URL] = []
+    /// The answers clicked on the agent's card, which shows them: the chat doesn't say them again.
+    var fromCard = false
     /// Files already in the app's Attachments folder: those of a request that's sent again.
     var kept: [String] = []
     /// The request this one takes the place of, when it's one sent again in other words.
@@ -1443,11 +1446,11 @@ final class Store: ObservableObject {
 
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
     /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
-    func send(_ prompt: String, attachments: [URL] = [], to project: LampProject) {
+    func send(_ prompt: String, attachments: [URL] = [], fromCard: Bool = false, to project: LampProject) {
         // Waiting for setup can outlast this run, and the files may be temporary (a pasted screenshot):
         // keep copies, so the request still has them after a relaunch.
         let files = setup.ready ? attachments : keepForLater(attachments)
-        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files))
+        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, fromCard: fromCard))
         startQueued(project)
         saveWaiting()
     }
@@ -1586,6 +1589,10 @@ final class Store: ObservableObject {
                 }
                 if newApp && result.end != .replied {
                     progress[project.id]?.finish(worked: worked && turns[project.id]?.phoneReady != false)
+                } else if newApp, Talk.open(in: logs[project.id] ?? []) != nil {
+                    // The agent asked through its card: the app's card stays where it is while the person
+                    // answers, so the build that follows starts on it and nothing in the chat moves.
+                    progress[project.id]?.wait()
                 } else {
                     progress[project.id] = nil
                 }
@@ -1736,6 +1743,10 @@ final class Store: ObservableObject {
         for message in messages {
             let names = message.kept + Attachments.save(message.attachments, to: project)
             log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
+            if message.fromCard, let last = logs[project.id]?.indices.last {
+                logs[project.id]?[last].fromCard = true
+                saveChat(project)
+            }
             if message.replaces != nil || !message.tookBack.isEmpty, let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].replaced = message.replaces
                 logs[project.id]?[last].tookBack = message.tookBack.isEmpty ? nil : message.tookBack
@@ -2549,7 +2560,7 @@ final class Store: ObservableObject {
         ask.answers = answers
         logs[project.id]?[index].ask = ask
         saveChat(project)
-        send(Talk.message(for: ask, answers: answers), to: project)
+        send(Talk.message(for: ask, answers: answers), fromCard: true, to: project)
     }
 
     /// `offer_setup`: the agent asks Lamp to offer the person a way to set up a capability, with its reason.

@@ -473,8 +473,6 @@ struct ProjectView: View {
     @State private var composerHeight = Composer.lineHeight
     @State private var focusRequest = 0
     @State private var dropTargeted = false
-    /// Questions asked a page at a time that the person chose to answer in the chat instead.
-    @State private var pagesLeft: Set<UUID> = []
     @StateObject private var dictation = Dictation()
     @AppStorage("showDetails") private var showDetails = false
     @AppStorage("showInfo") private var showInfo = false
@@ -631,9 +629,9 @@ struct ProjectView: View {
                 .frame(minHeight: height - 32)
         }
         if let card = store.progress[project.id], card.newApp,
-           let request = lines.lastIndex(where: { $0.kind == .user }) {
-            // The build card goes straight after the request; what the agent says and
-            // does follows it.
+           let request = lines.firstIndex(where: { $0.kind == .user }) {
+            // The build card goes straight after the request that began the app, and stays there through
+            // the agent's questions and their answers; what the agent says and does follows it.
             transcript(Array(lines[...request]), busy: false)
             BuildCard(project: project, progress: card)
                 .padding(.top, 16).padding(.bottom, 12)
@@ -736,16 +734,8 @@ struct ProjectView: View {
     }
 
     private func chrome(_ lines: [LogLine]) -> some View {
-        // Questions the agent gave a page each cover the chat, not the message box: typing an answer is
-        // always there. The chat under the page keeps its own card of the same questions, so it's kept from
-        // VoiceOver meanwhile: one set of answers to choose from, not two.
-        let paged = Talk.open(in: lines).flatMap { $0.ask?.layout == .pages && !pagesLeft.contains($0.id) ? $0 : nil }
-        return VStack(spacing: 0) {
+        VStack(spacing: 0) {
             chat(lines)
-                .accessibilityHidden(paged != nil)
-                .overlay {
-                    if let paged { AskPage(line: paged, project: project) { pagesLeft.insert(paged.id) } }
-                }
             Divider()
             if let approval = store.approvals[project.id] {
                 ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation,

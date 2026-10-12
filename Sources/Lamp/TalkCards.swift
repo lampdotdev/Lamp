@@ -1,10 +1,9 @@
 import SwiftUI
 
-/// The agent's cards as the person sees them (`Talk`): questions to click through, in the chat or a page at a
-/// time, and what a request made. Built like the setup card, so the chat reads as one thing.
+/// The agent's cards as the person sees them (`Talk`): questions to click through in the chat, and what a
+/// request made. Built like the setup card, so the chat reads as one thing.
 
-/// Where a person is in a set of questions, and how an answer moves them on. The card and the page share it,
-/// so leaving the page for the chat keeps what was already picked.
+/// Where a person is in a set of questions, and how an answer moves them on.
 struct AskProgress: Equatable {
     var step = 0
     var answers: [Int: String] = [:]
@@ -40,7 +39,7 @@ struct AskCard: View {
                 } else if ask.layout == .together && ask.questions.count > 1 {
                     together(ask, project)
                 } else {
-                    AskSteps(ask: ask, progress: $progress, big: false) { store.answer(line, with: $0, in: project) }
+                    AskSteps(ask: ask, progress: $progress) { answers in withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: answers, in: project) } }
                 }
             }
             .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
@@ -64,11 +63,11 @@ struct AskCard: View {
             Divider()
             HStack {
                 if progress.answers.isEmpty {
-                    Button(Talk.youDecide) { store.answer(line, with: progress.all(ask.questions.count), in: project) }
+                    Button(Talk.youDecide) { withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: progress.all(ask.questions.count), in: project) } }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Send") { store.answer(line, with: progress.all(ask.questions.count), in: project) }
+                Button("Send") { withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: progress.all(ask.questions.count), in: project) } }
                     .buttonStyle(.borderedProminent)
                     .disabled(progress.answers.isEmpty)
             }
@@ -77,40 +76,46 @@ struct AskCard: View {
     }
 }
 
-/// What was asked, and what was clicked, once a card is no longer waiting.
+/// A card that's no longer waiting, folded where it was: the answers that were clicked, or, when the person
+/// typed their own answer instead, what was asked (their message under it is the answer).
 private struct Answered: View {
     let ask: Talk.Ask
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(question.question).foregroundStyle(.secondary)
-                    if let answers = ask.answers, index < answers.count {
-                        Text(answers[index]).fontWeight(.medium)
+        Group {
+            if let answers = ask.answers {
+                Label {
+                    Text(answers.joined(separator: " · ")).fontWeight(.medium)
+                } icon: {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                }
+                .help(ask.questions.map(\.question).joined(separator: "\n"))
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(ask.questions.enumerated()), id: \.offset) { _, question in
+                        Text(question.question).foregroundStyle(.secondary)
                     }
                 }
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
         .padding(.horizontal, 16).padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-/// One question at a time: its answers as tiles, a field for something else, and a way back. `big` is the
-/// page's size.
+/// One question at a time: its answers as tiles, a field for something else, and a way back.
 struct AskSteps: View {
     let ask: Talk.Ask
     @Binding var progress: AskProgress
-    let big: Bool
     let send: ([String]) -> Void
 
     private var count: Int { ask.questions.count }
     private var question: Talk.Question { ask.questions[min(progress.step, count - 1)] }
 
     var body: some View {
-        VStack(alignment: big ? .center : .leading, spacing: big ? 22 : 12) {
-            if count > 1 && !big {
+        VStack(alignment: .leading, spacing: 12) {
+            if count > 1 {
                 HStack {
                     Text("Question \(progress.step + 1) of \(count)").font(.subheadline).foregroundStyle(.secondary)
                     Spacer()
@@ -118,38 +123,34 @@ struct AskSteps: View {
                 }
             }
             Text(question.question)
-                .font(big ? .system(size: 30, weight: .bold) : .title3.weight(.semibold))
-                .multilineTextAlignment(big ? .center : .leading)
+                .font(.title3.weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
-            let columns = Array(repeating: GridItem(.flexible(), spacing: big ? 14 : 10),
+            let columns = Array(repeating: GridItem(.flexible(), spacing: 10),
                                 count: question.options.count == 4 ? 2 : question.options.count)
-            LazyVGrid(columns: columns, spacing: big ? 14 : 10) {
+            LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(Array(question.options.enumerated()), id: \.offset) { _, option in
-                    OptionTile(option: option, chosen: progress.answers[progress.step] == option.title, big: big) {
+                    OptionTile(option: option, chosen: progress.answers[progress.step] == option.title) {
                         pick(option.title)
                     }
                 }
             }
-            .frame(maxWidth: big ? 720 : .infinity)
             TextField("Something else…", text: $progress.typed)
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 12).padding(.vertical, 9)
                 .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
-                .frame(maxWidth: big ? 420 : .infinity)
                 .onSubmit { if !progress.typed.trimmed.isEmpty { pick(progress.typed.trimmed) } }
             HStack(spacing: 16) {
                 if progress.step > 0 {
                     Button("Back") { progress.step -= 1 }
                 }
                 Button(Talk.youDecide) { pick(Talk.youDecide) }
-                if !big { Spacer() }
+                Spacer()
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            if count > 1 && big { StepDots(count: count, current: progress.step) }
         }
-        .padding(big ? 0 : 16)
+        .padding(16)
         .animation(.snappy(duration: 0.2), value: progress.step)
     }
 
@@ -174,60 +175,41 @@ private struct StepDots: View {
     }
 }
 
-/// An answer to click: a symbol, its name and a few words.
+/// An answer to click: its symbol, its name and a few words.
 private struct OptionTile: View {
     let option: Talk.Option
     let chosen: Bool
-    let big: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Group {
-                if big {
-                    VStack(alignment: .leading, spacing: 12) {
-                        symbol(size: 52)
-                        words(centered: false)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
-                } else {
-                    HStack(spacing: 10) {
-                        symbol(size: 34)
-                        words(centered: false)
-                        Spacer(minLength: 0)
+            HStack(spacing: 10) {
+                if let symbol = option.symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 34, height: 34)
+                        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(option.title).fontWeight(.semibold)
+                    if let detail = option.detail {
+                        Text(detail).font(.callout).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
             }
-            .padding(big ? 16 : 11)
+            .padding(11)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: big ? 16 : 11, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: big ? 16 : 11, style: .continuous)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .strokeBorder(chosen ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary), lineWidth: chosen ? 2 : 1))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(option.title)
-    }
-
-    @ViewBuilder private func symbol(size: CGFloat) -> some View {
-        if let symbol = option.symbol {
-            Image(systemName: symbol)
-                .font(.system(size: size * 0.48, weight: .medium))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: size, height: size)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: size * 0.27, style: .continuous))
-        }
-    }
-
-    private func words(centered: Bool) -> some View {
-        VStack(alignment: centered ? .center : .leading, spacing: 1) {
-            Text(option.title).font(big ? .title3.weight(.semibold) : .body.weight(.semibold))
-            if let detail = option.detail {
-                Text(detail).font(big ? .body : .callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .multilineTextAlignment(centered ? .center : .leading)
     }
 }
 
@@ -248,8 +230,12 @@ private struct ChipRow: View {
         ForEach(Array(options.enumerated()), id: \.offset) { _, option in
             let on = chosen == option.title
             Button { pick(option.title) } label: {
-                Text(option.title)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if let symbol = option.symbol {
+                        Image(systemName: symbol).foregroundStyle(on ? Color.white : Color.accentColor)
+                    }
+                    Text(option.title).lineLimit(1)
+                }
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .foregroundStyle(on ? Color.white : Color.primary)
                     .background(on ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(Color(nsColor: .textBackgroundColor)), in: Capsule())
@@ -258,32 +244,6 @@ private struct ChipRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityAddTraits(on ? .isSelected : [])
-        }
-    }
-}
-
-/// The questions before a new app, a page at a time over the chat. The chat's card stays underneath, and the
-/// message box with it: "Answer in the Chat" goes back to them.
-struct AskPage: View {
-    let line: LogLine
-    let project: LampProject
-    let leave: () -> Void
-    @ObservedObject private var store = Store.shared
-    @State private var progress = AskProgress()
-
-    var body: some View {
-        if let ask = line.ask {
-            ZStack(alignment: .bottom) {
-                Color(nsColor: .textBackgroundColor)
-                AskSteps(ask: ask, progress: $progress, big: true) { store.answer(line, with: $0, in: project) }
-                    .padding(.horizontal, 40)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                Button("Answer in the Chat", action: leave)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .padding(.bottom, 22)
-            }
-            .transition(.opacity)
         }
     }
 }

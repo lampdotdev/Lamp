@@ -18,6 +18,8 @@ struct TurnProgress {
     var finished: Date?
     /// The turn ended without a working app.
     var failed = false
+    /// The turn ended on the agent's questions: nothing is built until they're answered.
+    var asking = false
     /// What's happening right now, in the user's words rather than the code's: "Working on the interface",
     /// "Building…". It's the one place a turn in progress says what it's doing.
     var activity = "Getting started"
@@ -83,6 +85,12 @@ struct TurnProgress {
             steps.removeAll { $0 == step }
             steps.append(step)
         }
+    }
+
+    /// The turn is over with nothing built yet: the agent asked first.
+    mutating func wait() {
+        finished = Date()
+        asking = true
     }
 
     /// The turn is over. When the app was built and opened, everything planned is done.
@@ -191,10 +199,14 @@ struct BuildCard: View {
                     status.font(.body).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
-                Elapsed(from: progress.started, to: progress.finished)
-                    .font(.callout).foregroundStyle(.secondary)
+                if !progress.asking {
+                    Elapsed(from: progress.started, to: progress.finished)
+                        .font(.callout).foregroundStyle(.secondary)
+                }
             }
             .padding(14)
+            // Nothing is being built while the agent waits for an answer: the card is just the app.
+            if !progress.asking {
             Divider()
             Group {
                 if let screenshot = progress.screenshot {
@@ -207,9 +219,11 @@ struct BuildCard: View {
                 }
             }
             .padding(14)
+            }
         }
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+        .animation(.easeInOut(duration: 0.35), value: progress.asking)
         .animation(.easeInOut(duration: 0.35), value: progress.plan)
         .animation(.easeInOut(duration: 0.35), value: progress.sketch)
         .animation(.easeInOut(duration: 0.35), value: progress.naming)
@@ -225,6 +239,8 @@ struct BuildCard: View {
             TimelineView(.periodic(from: progress.started, by: 1)) { context in
                 Text(progress.activity(at: context.date))
             }
+        } else if progress.asking {
+            Text("A quick question first")
         } else if progress.failed {
             Label("Didn't finish. See the messages below.", systemImage: "exclamationmark.triangle.fill")
                 .symbolRenderingMode(.multicolor)

@@ -147,12 +147,19 @@ extension LogLine {
         // the answer arriving) and gives way to the next.
         var answers: Set<UUID> = []
         var latest: UUID?
+        // After the agent's questions its card is the answer: whatever it says on the way out ("Waiting for
+        // your answers.") would sit under the card saying the same.
+        var asked = false
         for line in lines {
             switch line.kind {
-            case .agent: latest = line.id
+            case .agent: latest = asked ? nil : line.id
+            case .ask:
+                asked = true
+                latest = nil
             case .summary, .user:
                 if let latest { answers.insert(latest) }
                 latest = nil
+                if line.kind == .user { asked = false }
             default: break
             }
         }
@@ -233,11 +240,13 @@ struct Transcript: View {
     var body: some View {
         let _ = iconChoice
         let lines = Self.withoutSpentOffers(lines, dir: dir)
-        let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(lines) : lines)
         let finalAnswers = Self.finalAnswers(in: lines, busy: busy)
         let latestRequest = lines.last { $0.kind == .user }?.id
         let openAsk = Talk.open(in: lines)?.id
         let currentResult = Talk.current(in: lines)?.id
+        // Answers clicked on a card are shown by the card, folded where it was: not again as a message.
+        let shown = lines.filter { $0.fromCard != true }
+        let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(shown) : shown)
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
             let isLast = index == items.count - 1
             Group {

@@ -35,7 +35,7 @@ A capability given to one engine must be given to all of them that can take it, 
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **How the agent talks** (`Talk`, `TalkCards.swift`): in a sentence or two and in cards, not paragraphs. Its
   pieces are tools: `ask` puts questions in the chat as a card answered by clicking, laid out as the agent
-  chooses (`Talk.Layout`: one at a time, all on one card, or a page each over the chat), and `show_result` is
+  chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own), and `show_result` is
   the card for what a new app or a big change came to, with the agent's guesses as buttons. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
   tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the

@@ -45,6 +45,15 @@ final class TalkTests: XCTestCase {
         XCTAssertEqual(ask?.questions.first?.options.map(\.symbol), [nil, "person.2"])
     }
 
+    /// What the agent says after asking sits under a card that already asks it.
+    func testNothingIsSaidUnderACard() {
+        let lines = [LogLine(kind: .user, text: "An app"), LogLine(kind: .agent, text: "I'll ask first."), asked(),
+                     LogLine(kind: .agent, text: "Waiting for your answers."),
+                     LogLine(kind: .user, text: "A"), LogLine(kind: .agent, text: "I'll build it.")]
+        XCTAssertEqual(LogLine.visible(lines, details: false).filter { $0.kind == .agent }.map(\.text), ["I'll build it."])
+        XCTAssertEqual(LogLine.visible(lines, details: true).count, lines.count)
+    }
+
     func testAResultsButtonsLastUntilTheNextRequest() {
         let result = LogLine(kind: .result, text: "", result: Talk.Result(summary: "Done", guesses: []))
         XCTAssertEqual(Talk.current(in: [result])?.id, result.id)
