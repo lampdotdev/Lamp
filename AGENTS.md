@@ -122,7 +122,9 @@ these come from, read off the bundle id that `build.sh` writes (`FLAVOR=dev` by 
 generated apps get it through the `{{SCHEME}}`, `{{NOTE}}`, `{{HOST}}` and `{{APPS}}` placeholders in
 `Template.swift`. The app-signing keychain is shared on purpose, so apps keep their permissions whichever
 Lamp rebuilds them. `scripts/dev-data.sh` copies your apps, keys, settings and the agent's sign-ins from the
-installed Lamp into Lamp Dev, so the development build has something to work on.
+installed Lamp into Lamp Dev, so the development build has something to work on. To see what someone with a bare Mac
+sees, `LAMP_PRETEND_MISSING` (`Pretend`, Lamp Dev only) makes Lamp's own checks miss the Command Line Tools,
+Xcode or tools from the PATH; a new check for something a fresh Mac lacks goes through it too.
 
 ## iPhone apps
 

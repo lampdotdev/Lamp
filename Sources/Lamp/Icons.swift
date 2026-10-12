@@ -754,6 +754,7 @@ struct IconTools {
     var actool: String { developer + "/usr/bin/actool" }
 
     static let found: IconTools? = {
+        if Pretend.isMissing("xcode") { return nil }
         let selected = try? FileManager.default.destinationOfSymbolicLink(atPath: "/var/db/xcode_select_link")
         let candidates = [selected, "/Applications/Xcode.app/Contents/Developer", "/Applications/Xcode-beta.app/Contents/Developer"]
         return candidates.compactMap { $0 }.map(IconTools.init).first {

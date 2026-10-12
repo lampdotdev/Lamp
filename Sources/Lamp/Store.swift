@@ -420,7 +420,7 @@ final class Store: ObservableObject {
         Task { await EngineSignIn.refresh() }
         let wasReady = setup.checked && setup.ready
         let keysRead = KeyStore.keysRead
-        setup = await SetupCheck.run(keeping: setup)
+        setup = await SetupCheck.run(keeping: setup).keeping(setup)
         // The look that counts. A shared app kept by an earlier one gets its turn now, if setup was in place all along.
         if keysRead, !setupLook.isDone {
             setupLook.done()
@@ -435,7 +435,24 @@ final class Store: ObservableObject {
     func requestBuildTools() {
         SetupCheck.installBuildTools()
         setup.installRequested = true
+        setup.installRequestedAt = Date()
+        setup.installerSeen = false
+        setup.backFromInstaller = false
         pollSetup()
+    }
+
+    /// Apple's installer opened or quit. Noted as it happens, since it can come and go between two looks.
+    func installerChanged(open: Bool) {
+        guard !setup.hasBuildTools, setup.installRequested else { return }
+        setup.installerOpen = open
+        setup.installerSeen = true
+        if !open { Task { await recheckSetup() } }   // quit because it finished, or didn't
+    }
+
+    /// Lamp is back in front while Apple's installer is open: the person has been through its buttons.
+    func cameBackFromInstaller() {
+        guard !setup.hasBuildTools, setup.installRequested, SetupCheck.installerIsOpen() else { return }
+        setup.backFromInstaller = true
     }
 
     /// Requests sent before setup finished (the welcome's first app) start now.
@@ -453,7 +470,7 @@ final class Store: ObservableObject {
             defer { pollingSetup = false }
             while !setup.hasBuildTools {
                 try? await Task.sleep(for: .seconds(5))
-                setup = await SetupCheck.run(keeping: setup)
+                setup = await SetupCheck.run(keeping: setup).keeping(setup)
             }
             if setup.ready { await becameReady() }
         }
@@ -3605,14 +3622,20 @@ final class Store: ObservableObject {
         refreshOpenApps()
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
-            workspace.addObserver(forName: name, object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated { Store.shared.refreshOpenApps() }
+            workspace.addObserver(forName: name, object: nil, queue: .main) { note in
+                let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                let installer = app?.bundleIdentifier == SetupCheck.installerID
+                MainActor.assumeIsolated {
+                    Store.shared.refreshOpenApps()
+                    if installer { Store.shared.installerChanged(open: name == NSWorkspace.didLaunchApplicationNotification) }
+                }
             }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {
                 Store.shared.refreshOpenApps()
                 Store.shared.askAboutWidgets()
+                Store.shared.cameBackFromInstaller()
             }
         }
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in

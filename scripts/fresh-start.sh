@@ -13,9 +13,11 @@
 # dev.lamp.host (provider keys). `begin` moves the folder, exports the defaults and copies the Keychain
 # items into one backup folder, and `restore` puts them all back. Nothing is deleted until you restore.
 #
-# This covers the welcome screen, the key check, picking an engine, and making the first app. It can't
-# show a Mac without the Command Line Tools, Gatekeeper on a fresh download, or the permission prompts
-# you've already answered: for those, use a second macOS user (permissions) or a clean VM (everything).
+# This covers the welcome screen, the key check, picking an engine, and making the first app. Set
+# LAMP_PRETEND_MISSING (see Pretend.swift) to also see it as a Mac without the Command Line Tools, Xcode
+# or tools like uv would: LAMP_PRETEND_MISSING=bare scripts/fresh-start.sh begin. It can't show
+# Gatekeeper on a fresh download, Apple's own installer, or the permission prompts you've already
+# answered: for those, use a second macOS user (permissions) or a clean VM (everything).
 set -euo pipefail
 
 support="$HOME/Library/Application Support"
@@ -67,7 +69,10 @@ begin() {
   done
   echo "Your $name setup is in $backup. Opening $name as a first-time user."
   echo "When you're done: scripts/fresh-start.sh restore"
-  open -a "$name" 2>/dev/null || open "$(dirname "$0")/../build/$name.app"
+  # Passed on only when set, so a plain begin opens Lamp as it always did.
+  local env=()
+  [ -n "${LAMP_PRETEND_MISSING:-}" ] && env=(--env "LAMP_PRETEND_MISSING=$LAMP_PRETEND_MISSING")
+  open "${env[@]}" -a "$name" 2>/dev/null || open "${env[@]}" "$(dirname "$0")/../build/$name.app"
 }
 
 restore() {
@@ -110,5 +115,5 @@ restore() {
 case "${1:-}" in
   begin) begin ;;
   restore) restore ;;
-  *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

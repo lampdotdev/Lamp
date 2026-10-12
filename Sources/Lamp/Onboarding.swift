@@ -520,7 +520,7 @@ private struct SetupStep: View {
             ScrollView {
                 VStack(spacing: 0) {
                     Spacer(minLength: 40)
-                    Heading(title: "Get Lamp ready", detail: "We need to configure two things.")
+                    Heading(title: "Get Lamp ready", detail: "We just need to configure a couple of things.")
                     VStack(spacing: 12) {
                         ToolsCard()
                         BuilderCard(choice: $choice, signedIn: $signedIn, signingIn: $signingIn, lampReady: $lampReady)
@@ -641,20 +641,20 @@ private struct ToolsCard: View {
             HStack(alignment: .center, spacing: 16) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Install Apple's app-building tools").font(.system(size: 15, weight: .semibold))
-                    Text(LocalizedStringKey(detail))
+                    detail
                         .font(.system(size: 13)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
-                if store.setup.hasBuildTools {
+                switch store.setup.installStage {
+                case .installed:
                     Done()
-                } else if store.setup.installRequested {
-                    VStack(alignment: .trailing, spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Button("Show Installer", action: SetupCheck.installBuildTools)
-                            .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Palette.accentDeep)
-                    }
-                } else {
+                case .inApplesWindow, .installing:
+                    ProgressView().controlSize(.small)
+                case .failed:
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 20)).foregroundStyle(.white, .orange)
+                case .notAsked:
                     Button("Install") {
                         store.requestBuildTools()
                         Analytics.capture(.welcomeToolsInstall, ["by": "button"])
@@ -664,12 +664,40 @@ private struct ToolsCard: View {
         }
     }
 
-    private var detail: String {
-        if store.setup.hasBuildTools { return "Installed. Free from Apple, no account needed." }
-        if store.setup.installRequested {
-            return "In Apple's window, click **Install**, then **Agree**. It takes 5–10 minutes, and you can carry on meanwhile."
+    /// One line that follows the install along, with the one thing to click when there is one.
+    @ViewBuilder private var detail: some View {
+        switch store.setup.installStage {
+        case .notAsked:
+            Text("Free from Apple, and no developer account needed.")
+        case .inApplesWindow:
+            Text("In Apple's window, click Install, then Agree. It takes 5–10 minutes.")
+        case .installing:
+            HStack(spacing: 8) {
+                Text("Installing…")
+                InlineButton(title: "Show Installer", action: SetupCheck.showInstaller)
+            }
+        case .failed:
+            HStack(spacing: 8) {
+                Text("The install didn't finish.")
+                InlineButton(title: "Try Again") {
+                    store.requestBuildTools()
+                    Analytics.capture(.welcomeToolsInstall, ["by": "retry"])
+                }
+            }
+        case .installed:
+            Text("Installed.")
         }
-        return "Free from Apple, and no developer account needed."
+    }
+}
+
+/// A small button that sits in a line of text, after what it acts on.
+private struct InlineButton: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(title, action: action)
+            .buttonStyle(.bordered).controlSize(.small)
     }
 }
 

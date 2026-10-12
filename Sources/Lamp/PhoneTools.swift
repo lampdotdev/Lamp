@@ -68,6 +68,30 @@ enum PhoneTools {
         var teams: () -> [(id: String, name: String)] = xcodeTeams
         var team: () -> String = { (UserDefaults.standard.string(forKey: teamPreference) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased() }
         var chooseTeam: (String) -> Void = { UserDefaults.standard.set($0, forKey: teamPreference) }
+
+        /// Apple's tools as a new Mac has them, step by step (`Pretend`): each answers as it would before
+        /// the step is done, then as this Mac's own Xcode does.
+        static var pretending: Probe {
+            let real = Probe()
+            var probe = real
+            func failed(_ errors: String = "") -> Subprocess.Result { Subprocess.Result(status: 1, output: "", errors: errors, timedOut: false) }
+            func answer(_ output: String) -> Subprocess.Result { Subprocess.Result(status: 0, output: output, errors: "", timedOut: false) }
+            probe.active = { Pretend.xcodeMissing("tools") ? "/Library/Developer/CommandLineTools" : real.active() }
+            probe.run = { tool, arguments, env in
+                if arguments == ["-checkFirstLaunchStatus"], Pretend.xcodeMissing("firstLaunch") {
+                    return failed("You have not agreed to the Xcode license agreements.")
+                }
+                if arguments.contains("--show-sdk-path"), Pretend.xcodeMissing("platform") { return failed() }
+                if arguments.starts(with: ["simctl", "list", "runtimes"]), Pretend.xcodeMissing("runtime") {
+                    return answer(#"{"runtimes": []}"#)
+                }
+                if arguments.starts(with: ["simctl", "list", "devices"]), Pretend.xcodeMissing("simulator") {
+                    return answer(#"{"devices": {}}"#)
+                }
+                return real.run(tool, arguments, env)
+            }
+            return probe
+        }
     }
 
     /// The app that puts simulators on the Mac's screen, in this Xcode: Simulator, or Device Hub, which took
@@ -102,6 +126,7 @@ enum PhoneTools {
     }
 
     static func discover() -> String? {
+        if Pretend.xcodeMissing("xcode") { return nil }
         let fm = FileManager.default
         let saved = UserDefaults.standard.string(forKey: preference)
         let inherited = ProcessInfo.processInfo.environment["DEVELOPER_DIR"]
@@ -121,7 +146,7 @@ enum PhoneTools {
     }
 
     static func restoreChoice() {
-        if let saved = UserDefaults.standard.string(forKey: preference), isXcode(saved) {
+        if !Pretend.isMissing("xcode"), let saved = UserDefaults.standard.string(forKey: preference), isXcode(saved) {
             setenv("DEVELOPER_DIR", saved, 1)
         }
     }
@@ -165,7 +190,7 @@ enum PhoneTools {
 
     /// Stop at the first failed check: later commands often fail only because an earlier step is missing.
     /// A simulator is needed even for a real phone, because that's where Lamp's agent tries the app.
-    static func check(family: DeviceFamily = .iphone, phone: String? = nil, probe: Probe = Probe()) -> Report {
+    static func check(family: DeviceFamily = .iphone, phone: String? = nil, probe: Probe = Pretend.isMissing("xcode") ? .pretending : Probe()) -> Report {
         var report = Report()
         func stop(_ step: Step, _ title: String, _ message: String, _ action: Action) -> Report {
             report.issue = Issue(step: step, title: title, message: message, action: action)
