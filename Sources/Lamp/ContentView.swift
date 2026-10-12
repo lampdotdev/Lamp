@@ -432,6 +432,8 @@ struct AppMenu: View {
         Divider()
         Button("Rename…") { store.renaming = project }
             .disabled(busy)
+        Button("Duplicate") { Task { await store.duplicate(project) } }
+            .disabled(busy || !project.scaffolded || project.untitled)
         Button("New Icon") { Task { await store.newIcon(project) } }
             .disabled(busy || project.untitled)
         Button("Show in Finder") {

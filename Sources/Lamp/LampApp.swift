@@ -23,6 +23,8 @@ struct LampApp: App {
             CommandGroup(after: .newItem) {
                 Button("Import Shared App…") { store.chooseImport() }
                     .keyboardShortcut("o")
+                Button("Duplicate") { if let project = store.selected { Task { await store.duplicate(project) } } }
+                    .disabled(store.selected.map { store.busy.contains($0.id) || !$0.scaffolded || $0.untitled } ?? true)
             }
             CommandGroup(after: .pasteboard) {
                 // The same as Share ▸ Copy App File in the toolbar; here so the shortcut the Help lists exists.
