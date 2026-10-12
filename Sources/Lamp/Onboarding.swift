@@ -670,7 +670,7 @@ private struct ToolsCard: View {
         case .notAsked:
             Text("Free from Apple, and no developer account needed.")
         case .inApplesWindow:
-            Text("In Apple's window, click **Install**, then **Agree**. It takes 5–10 minutes.")
+            Text("In Apple's window, click Install, then Agree. It takes 5–10 minutes.")
         case .installing:
             HStack(spacing: 8) {
                 Text("Installing…")
