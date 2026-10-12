@@ -225,12 +225,15 @@ private struct HelloStep: View {
     var body: some View {
         GeometryReader { proxy in
             VStack(spacing: 0) {
-                Text("What do you wish your Mac did?")
+                // The website's own promise, so someone who just came from it sees the same words; the question
+                // is the next step's, where it can be answered.
+                Text("Lamp turns your wishes\ninto selfish software.")
                     .font(.system(size: 54, weight: .bold))
                     .tracking(-1.2)
+                    .multilineTextAlignment(.center)
                     .foregroundStyle(Palette.ink)
                     .reveal(shown, delay: 0.1)
-                Text("Tell Lamp, and it makes it for you: a helper, a widget, a game or a whole app,\nfor your Mac, iPhone and iPad.")
+                Text("Made by you, for nobody else. Tools, apps and games for your Mac, iPhone and iPad.")
                     .font(.system(size: 19))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -283,7 +286,7 @@ private struct IdeaStep: View {
             // below stops the content running into them when the window is small.
             Spacer(minLength: 40)
             // The site's own sentence over the wish it wrote, so this reads as the same moment.
-            Heading(title: wish == nil ? "What should your \(kind.rawValue) do for you?" : "Here's your wish. Change anything you like.")
+            Heading(title: wish == nil ? "What do you wish your \(kind.rawValue) did?" : "Here's your wish. Change anything you like.")
 
             KindPicker(selection: $kind)
             .padding(.top, 18)
