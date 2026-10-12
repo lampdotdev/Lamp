@@ -469,15 +469,17 @@ private struct IdeaTile: View {
     let selected: Bool
     let action: () -> Void
     @State private var hovering = false
+    /// How far the hover outline has swept: 0 none, 1 all the way round, 2 gone again (see `SweepOutline`).
+    @State private var sweep = 0.0
 
     var body: some View {
         Button(action: action) {
             HStack(alignment: .top, spacing: 12) {
                 // The symbol alone, without the icon's tile, to leave the wish more room. Gray until hovered
-                // or chosen, when it takes the idea's color, as the tile would.
+                // or chosen, when it takes the outline's blue.
                 Image(systemName: idea.symbol)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(hovering || selected ? Color(hue: idea.hue, saturation: 0.75, brightness: 0.8) : Color(white: 0.45))
+                    .font(.system(size: 17, weight: .regular))
+                    .foregroundStyle(hovering || selected ? Color.blue : Color(white: 0.45))
                     .frame(width: 24, height: 20)
                     // Its top level with the top of the wish's first line.
                     .padding(.top, 3)
@@ -495,13 +497,58 @@ private struct IdeaTile: View {
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(selected ? Palette.accent : .black.opacity(0.06), lineWidth: selected ? 1.5 : 1))
+            .overlay(SweepOutline(progress: sweep, cornerRadius: 14, color: .blue))
             .shadow(color: .black.opacity(hovering || selected ? 0.08 : 0.03), radius: hovering ? 12 : 6, y: hovering ? 6 : 3)
             .scaleEffect(hovering ? 1.015 : 1)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
-        .onHover { over in withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { hovering = over } }
+        .onHover { over in
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { hovering = over }
+            // The color comes in from the top left and leaves towards the bottom right. Back over a tile it
+            // has left, or is still leaving, it starts in again from the top left.
+            if over, sweep >= 1 { sweep = 0 }
+            withAnimation(.easeInOut(duration: 0.35)) { sweep = over ? 1 : 2 }
+        }
+    }
+}
+
+/// A tile's outline in `color`, drawn as far as `progress` says along the diagonal from the top left to the
+/// bottom right: from 0 (none) it fills in to 1 (all of it), and from 1 to 2 it empties the same way, so the
+/// color passes through the tile rather than going back where it came from.
+private struct SweepOutline: View, Animatable {
+    var progress: Double
+    let cornerRadius: CGFloat
+    let color: Color
+
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    /// How far along the diagonal each edge of the color fades, so it reads as a sweep and not a wipe.
+    private static let soft = 0.35
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .strokeBorder(LinearGradient(stops: stops, startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1.5)
+            .opacity(progress > 0 && progress < 2 ? 1 : 0)
+            .allowsHitTesting(false)
+    }
+
+    /// The outline's color at points along the diagonal: past the leading edge it hasn't arrived, behind
+    /// the trailing edge it has already gone.
+    private var stops: [Gradient.Stop] {
+        let soft = Self.soft
+        let lead = progress * (1 + soft)
+        let trail = (progress - 1) * (1 + soft) - soft
+        return (0...16).map { step in
+            let at = Double(step) / 16
+            let arrived = min(max((lead - at) / soft, 0), 1)
+            let remaining = min(max((at - trail) / soft, 0), 1)
+            return .init(color: color.opacity(arrived * remaining), location: at)
+        }
     }
 }
 
