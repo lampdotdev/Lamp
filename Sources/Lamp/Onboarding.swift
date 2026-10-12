@@ -473,7 +473,15 @@ private struct IdeaTile: View {
     var body: some View {
         Button(action: action) {
             HStack(alignment: .top, spacing: 12) {
-                IdeaIcon(symbol: idea.symbol, hue: idea.hue, size: 36, lit: hovering || selected)
+                // The symbol alone, without the icon's tile, to leave the wish more room. Gray until hovered
+                // or chosen, when it takes the idea's color, as the tile would.
+                Image(systemName: idea.symbol)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(hovering || selected ? Color(hue: idea.hue, saturation: 0.75, brightness: 0.8) : Color(white: 0.45))
+                    .frame(width: 24, height: 20)
+                    // Its top level with the top of the wish's first line.
+                    .padding(.top, 3)
+                    .animation(.easeOut(duration: 0.2), value: hovering || selected)
                 // Just the wish, in the person's words: the name and kind of app are Lamp's business.
                 // Room for the same number of lines in every tile, so the grid holds still as ideas change.
                 Text(idea.blurb).font(.system(size: 13)).foregroundStyle(Palette.ink)
