@@ -1863,11 +1863,11 @@ struct StarterIdeas: View {
                         HStack(alignment: .top, spacing: 8) {
                             IdeaIcon(symbol: example.symbol, hue: example.hue, size: 22, lit: hovered == example.title)
                             VStack(alignment: .leading, spacing: 1) {
-                                // Every tile keeps room for a one-line name and a two-line blurb, so the grid
+                                // Every tile keeps room for a one-line name and a three-line wish, so the grid
                                 // doesn't change height when the ideas change (another page, another kind).
                                 Text(example.title).font(.subheadline.weight(.semibold)).lineLimit(1)
                                 Text(example.blurb).font(.caption).foregroundStyle(.secondary)
-                                    .lineLimit(2, reservesSpace: true)
+                                    .lineLimit(3, reservesSpace: true)
                             }
                             Spacer(minLength: 0)
                         }

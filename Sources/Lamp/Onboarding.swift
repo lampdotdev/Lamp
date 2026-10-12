@@ -225,12 +225,12 @@ private struct HelloStep: View {
     var body: some View {
         GeometryReader { proxy in
             VStack(spacing: 0) {
-                Text("What app do you wish you had?")
+                Text("What do you wish your Mac did?")
                     .font(.system(size: 54, weight: .bold))
                     .tracking(-1.2)
                     .foregroundStyle(Palette.ink)
                     .reveal(shown, delay: 0.1)
-                Text("Lamp turns your ideas into your very own apps, for your Mac, iPhone and iPad.")
+                Text("Tell Lamp, and it makes it for you: a helper, a widget, a game or a whole app,\nfor your Mac, iPhone and iPad.")
                     .font(.system(size: 19))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -283,7 +283,7 @@ private struct IdeaStep: View {
             // below stops the content running into them when the window is small.
             Spacer(minLength: 40)
             // The site's own sentence over the wish it wrote, so this reads as the same moment.
-            Heading(title: wish == nil ? "What should your first app do?" : "Here's your wish. Change anything you like.")
+            Heading(title: wish == nil ? "What should your \(kind.rawValue) do for you?" : "Here's your wish. Change anything you like.")
 
             KindPicker(selection: $kind)
             .padding(.top, 18)
@@ -296,7 +296,7 @@ private struct IdeaStep: View {
 
             HStack(alignment: .top, spacing: 10) {
                 TextField("", text: box,
-                          prompt: Text("An app that…").foregroundStyle(.tertiary), axis: .vertical)
+                          prompt: Text("I wish my \(kind.rawValue)…").foregroundStyle(.tertiary), axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 17))
                     .lineSpacing(3)
@@ -474,12 +474,11 @@ private struct IdeaTile: View {
         Button(action: action) {
             HStack(alignment: .top, spacing: 12) {
                 IdeaIcon(symbol: idea.symbol, hue: idea.hue, size: 36, lit: hovering || selected)
-                VStack(alignment: .leading, spacing: 3) {
-                    // Room for the same number of lines in every tile, so the grid holds still as ideas change.
-                    Text(idea.title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
-                    Text(idea.blurb).font(.system(size: 12)).foregroundStyle(.secondary)
-                        .lineLimit(3, reservesSpace: true)
-                }
+                // Just the wish, in the person's words: the name and kind of app are Lamp's business.
+                // Room for the same number of lines in every tile, so the grid holds still as ideas change.
+                Text(idea.blurb).font(.system(size: 13)).foregroundStyle(Palette.ink)
+                    .lineLimit(4, reservesSpace: true)
+                    .padding(.top, 1)
                 Spacer(minLength: 0)
             }
             .padding(12)
