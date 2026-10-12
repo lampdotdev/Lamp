@@ -166,7 +166,9 @@ text, with the point to tap it). The app showing the simulator is Simulator, or 
 (`Driver.choose`) and finds the screen a few layers down its window (`Driver.screenBoxes`: a group shaped like
 the screen that Device Hub marks `iOSContentGroup`, an undocumented subrole; two candidates in different places
 are refused). That needs Lamp to be allowed in System Settings → Privacy & Security → Accessibility; the first
-`use_app` asks. The driver runs on its own queue (`AccessibilityActor`), never the main thread, and no call to
+`use_app` asks, by opening that page with a panel at the foot of the Settings window holding Lamp to drag into the
+list (`SettingsGuide`; `LampPermissionGuide` in LampSupport is the same panel for a generated app's own permissions,
+so a change to one is a change to the other). The driver runs on its own queue (`AccessibilityActor`), never the main thread, and no call to
 the other app waits more than `Driver.patience`; when the screen can't be used, `Driver.Trouble` says which
 reason it was, in words for the agent. Device Hub (checked on Xcode 27.0) doesn't pass on mouse or key events
 posted to it, so there a scroll is the page scroll the iPhone's own elements offer, a row's swipe action is the

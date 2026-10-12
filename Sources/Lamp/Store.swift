@@ -2321,7 +2321,7 @@ final class Store: ObservableObject {
         }
         guard Simulator.Driver.isAllowed else {
             Simulator.Driver.ask()
-            log(project, .status, "To try iPhone apps for you, Lamp needs to be allowed to control this computer: System Settings → Privacy & Security → Accessibility, then turn on Lamp.")
+            log(project, .status, "To try iPhone apps for you, Lamp needs to be allowed to control this computer. System Settings is open: drag Lamp into the list there.")
             return (200, ["text": "Lamp isn't allowed to control the simulator yet. The user has just been asked to allow it (System Settings → " +
                           "Privacy & Security → Accessibility). Say so to the user in plain words, and try again on their next request."])
         }
