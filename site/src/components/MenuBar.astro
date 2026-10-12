@@ -1,0 +1,49 @@
+---
+import { Image } from "astro:assets";
+import icon from "../assets/AppIcon.png";
+import { DOWNLOAD_URL } from "../lib/download";
+
+// The page we're on, so its link can say so.
+const here = Astro.url.pathname.replace(/\/$/, "") || "/";
+const links = [
+  { href: "/ideas", label: "Ideas" },
+  { href: "/#first-idea", label: "Find your wish", wide: true },
+];
+---
+
+<!--
+  A menu bar across the top of every page, in the manner of Apple's own sites: the name on the left, a few links
+  and a small Download on the right, on frosted white that stays put as the page scrolls. Its height is
+  --menu-height (global.css), which the homepage's opening takes off the window's.
+-->
+<header class="sticky top-0 z-40 h-(--menu-height) border-b border-black/[0.06] bg-white/80 backdrop-blur-xl backdrop-saturate-150">
+  <nav class="mx-auto flex h-full max-w-6xl items-center justify-between px-4 sm:px-6" aria-label="Lamp">
+    <a href="/" class="-ml-1 flex items-center gap-2 rounded-lg px-1 py-1 focus-visible:outline-2 focus-visible:outline-graphite">
+      <Image src={icon} alt="" width={26} height={26} densities={[1, 2]} class="size-6.5" />
+      <span class="text-[17px] font-semibold tracking-tight">Lamp</span>
+    </a>
+    <div class="flex items-center gap-1 sm:gap-2">
+      {
+        links.map((link) => (
+          <a
+            href={link.href}
+            aria-current={here === link.href ? "page" : undefined}
+            class:list={[
+              "rounded-full px-3 py-1.5 text-[14px] text-ink/75 transition hover:text-ink focus-visible:outline-2 focus-visible:outline-graphite aria-[current=page]:font-semibold aria-[current=page]:text-ink",
+              link.wide && "hidden sm:block",
+            ]}
+          >
+            {link.label}
+          </a>
+        ))
+      }
+      <a
+        href={DOWNLOAD_URL}
+        data-download-place="menu"
+        class="ml-1 inline-flex h-8 items-center rounded-full bg-linear-to-b from-[#cf620c] to-[#b04e0a] px-4 text-[14px] font-semibold text-white ring-1 ring-white/25 ring-inset transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#b04e0a]"
+      >
+        Download
+      </a>
+    </div>
+  </nav>
+</header>

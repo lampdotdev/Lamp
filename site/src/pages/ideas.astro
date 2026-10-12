@@ -1,0 +1,220 @@
+---
+import Base from "../layouts/Base.astro";
+import DownloadButton from "../components/DownloadButton.astro";
+import { CATEGORIES, IDEAS } from "../lib/ideas";
+import { together } from "../lib/text";
+
+const colour = Object.fromEntries(CATEGORIES.map((category) => [category.id, category.colour]));
+const title = Object.fromEntries(CATEGORIES.map((category) => [category.id, category.title]));
+// In the categories' order, so "All" reads as the categories one after another.
+const ideas = CATEGORIES.flatMap((category) => IDEAS.filter((idea) => idea.category === category.id));
+const description = "Wishes for software nobody else would make: for the office, your Mac, your family and your weekends. Find one that's nearly yours, and Lamp makes it yours.";
+---
+
+<Base title="Ideas · Lamp" description={description} image="/og.jpg">
+  <main>
+    <section class="mx-auto max-w-6xl px-4 pt-16 text-center sm:px-6 sm:pt-20">
+      <h1 class="font-display text-5xl leading-[1.05] font-bold tracking-tight text-balance sm:text-6xl">Wishes nobody else would&nbsp;make.</h1>
+      <p class="mx-auto mt-5 max-w-[46rem] text-xl leading-[1.4] font-semibold text-muted">
+        {together("Too small, too particular or too personal for anyone to sell.")}<br class="hidden sm:block" />
+        {" "}{together("Find one that's nearly yours, and make it yours.")}
+      </p>
+    </section>
+
+    <!--
+      The categories as a row of filters that stays under the menu bar while the wishes scroll by, and slides
+      sideways on a phone. The one chosen is kept in the address (#office), so a link can open on it.
+    -->
+    <nav aria-label="Kinds of wish" class="sticky top-(--menu-height) z-30 mt-10 border-b border-black/[0.06] bg-white/85 backdrop-blur-xl">
+      <div class="mx-auto max-w-7xl overflow-x-auto px-4 py-3 [scrollbar-width:none] sm:px-6 [&::-webkit-scrollbar]:hidden">
+        <div class="flex w-max gap-1.5 lg:w-auto lg:flex-wrap lg:justify-center">
+          {
+            [{ id: "", title: "All", colour: "" }, ...CATEGORIES].map((category) => (
+              <button
+                type="button"
+                data-filter={category.id}
+                aria-pressed={category.id === "" ? "true" : "false"}
+                class="flex h-8 items-center gap-1.5 rounded-full bg-panel px-3.5 text-[14px] whitespace-nowrap text-ink/80 ring-1 ring-black/[0.04] transition hover:bg-[#ebebef] hover:text-ink focus-visible:outline-2 focus-visible:outline-graphite aria-pressed:bg-graphite aria-pressed:text-white"
+              >
+                {category.colour && <span aria-hidden="true" class="size-2 rounded-full" style={`background: ${category.colour}`} />}
+                {category.title}
+              </button>
+            ))
+          }
+        </div>
+      </div>
+    </nav>
+
+    <section class="bg-panel">
+      <div class="mx-auto max-w-6xl px-4 pt-8 pb-20 sm:px-6 sm:pb-24">
+        <ul data-ideas class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {
+            ideas.map((idea) => (
+              <li data-category={idea.category} class="flex">
+                <button
+                  type="button"
+                  data-idea={JSON.stringify({ ...idea, title: title[idea.category], colour: colour[idea.category] })}
+                  class="group flex w-full flex-col items-start rounded-[22px] bg-page p-6 text-left shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-black/[0.04] transition duration-300 hover:-translate-y-0.5 hover:shadow-[0_14px_34px_-14px_rgba(0,0,0,0.22)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-graphite"
+                >
+                  <span class="flex w-full items-center justify-between gap-3 text-[13px]">
+                    <span class="flex items-center gap-1.5 font-semibold" style={`color: ${colour[idea.category]}`}>
+                      <span aria-hidden="true" class="size-2 rounded-full" style={`background: ${colour[idea.category]}`} />
+                      {title[idea.category]}
+                    </span>
+                    <span class="rounded-full bg-panel px-2.5 py-0.5 text-muted">{idea.form}</span>
+                  </span>
+                  <span class="mt-4 font-display text-2xl font-bold tracking-tight">{idea.name}</span>
+                  <span class="mt-1 text-[15px] text-muted">{idea.who}</span>
+                  <span class="mt-4 text-[16px] leading-relaxed text-ink/85">“{together(idea.wish)}”</span>
+                  <span class="mt-auto pt-5 text-[15px] font-semibold text-[#b04e0a] opacity-70 transition group-hover:opacity-100">Make this wish →</span>
+                </button>
+              </li>
+            ))
+          }
+        </ul>
+
+        <div class="mt-12 text-center">
+          <h2 class="font-display text-3xl font-bold tracking-tight sm:text-4xl">Not quite&nbsp;yours?</h2>
+          <p class="mx-auto mt-3 max-w-[40rem] text-xl leading-[1.4] text-muted">{together("A few questions about your week, and Lamp's first wish is written in your own words.")}</p>
+          <a
+            href="/#first-idea"
+            class="mt-6 inline-flex h-[52px] items-center rounded-full bg-graphite px-8 text-[17px] font-semibold text-white transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-[1.03] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-graphite active:scale-[0.98]"
+          >
+            Find your wish
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!--
+    A wish, opened to change and take to Lamp, as at the end of the homepage's first-idea section: Download copies
+    it with Lamp's mark for Lamp to find when it first opens, and on a Mac a link opens Lamp with it straight away.
+  -->
+  <dialog
+    data-wish
+    aria-labelledby="wish-name"
+    class="m-auto w-[min(36rem,calc(100vw-2rem))] rounded-[28px] bg-page p-0 text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)] backdrop:bg-black/40 backdrop:backdrop-blur-sm"
+  >
+    <div class="relative p-6 sm:p-8">
+      <button
+        type="button"
+        data-close
+        aria-label="Close"
+        class="absolute top-4 right-4 grid size-8 place-items-center rounded-full bg-panel text-muted transition hover:text-ink focus-visible:outline-2 focus-visible:outline-graphite"
+      >
+        <svg aria-hidden="true" viewBox="0 0 16 16" class="size-3.5 fill-none stroke-current stroke-2 [stroke-linecap:round]"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+      </button>
+      <p data-kind class="flex items-center gap-1.5 text-[13px] font-semibold"></p>
+      <h2 id="wish-name" data-name class="mt-3 pr-10 font-display text-3xl font-bold tracking-tight"></h2>
+      <p data-who class="mt-1 text-[15px] text-muted"></p>
+      <label for="wish-text" class="mt-6 mb-2.5 block text-[15px] font-semibold">Make it yours, then give it to Lamp:</label>
+      <textarea
+        id="wish-text"
+        data-text
+        rows="5"
+        class="w-full resize-none rounded-xl bg-panel/70 p-3.5 text-[17px] leading-relaxed ring-1 ring-rule transition focus:bg-page focus:ring-2 focus:ring-[#cf620c]/40 focus:outline-none"
+      ></textarea>
+      <div data-finish class="mt-6 flex flex-col items-center">
+        <DownloadButton place="ideas" />
+        <button
+          type="button"
+          data-open
+          hidden
+          class="mt-3.5 text-[15px] font-medium text-[#b04e0a] underline decoration-[#b04e0a]/40 underline-offset-4 transition hover:decoration-[#b04e0a]"
+        >
+          Already have Lamp? Open it with this wish
+        </button>
+      </div>
+    </div>
+  </dialog>
+</Base>
+
+<script>
+  import { copyWish, wishLink } from "../../lib/wish.js";
+  import { track } from "../lib/analytics";
+
+  // ---------- The filters ----------
+  const filters = [...document.querySelectorAll<HTMLButtonElement>("[data-filter]")];
+  const items = [...document.querySelectorAll<HTMLElement>("[data-ideas] > li")];
+
+  const show = (id: string) => {
+    if (id && !filters.some((filter) => filter.dataset.filter === id)) id = "";
+    filters.forEach((filter) => filter.setAttribute("aria-pressed", String(filter.dataset.filter === id)));
+    items.forEach((item) => (item.hidden = !!id && item.dataset.category !== id));
+  };
+  filters.forEach((filter) =>
+    filter.addEventListener("click", () => {
+      const id = filter.dataset.filter ?? "";
+      show(id);
+      history.replaceState(null, "", id ? `#${id}` : location.pathname);
+      if (id) track("ideas_filtered", { category: id });
+      // Back to the first wish, which may have scrolled away, but no further up than the filters.
+      const list = document.querySelector<HTMLElement>("[data-ideas]")!;
+      const top = list.getBoundingClientRect().top + scrollY - 120;
+      if (scrollY > top) scrollTo({ top, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    }),
+  );
+  show(location.hash.slice(1));
+
+  // ---------- A wish, opened ----------
+  const dialog = document.querySelector<HTMLDialogElement>("[data-wish]")!;
+  const kind = dialog.querySelector<HTMLElement>("[data-kind]")!;
+  const name = dialog.querySelector<HTMLElement>("[data-name]")!;
+  const who = dialog.querySelector<HTMLElement>("[data-who]")!;
+  const text = dialog.querySelector<HTMLTextAreaElement>("[data-text]")!;
+  const go = dialog.querySelector<HTMLAnchorElement>("[data-finish] a")!;
+  const requirement = dialog.querySelector<HTMLElement>("[data-finish] p");
+  const open = dialog.querySelector<HTMLButtonElement>("[data-open]")!;
+  const usual = requirement?.textContent ?? "";
+  go.textContent = "Download Lamp";
+  // A page can't tell whether Lamp is installed, so the Mac that has it gets its own way in, beside Download.
+  open.hidden = !(/Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2);
+
+  const fit = () => { text.style.height = "auto"; text.style.height = `${text.scrollHeight + 2}px`; };
+  text.addEventListener("input", fit);
+
+  type Idea = { name: string; who: string; wish: string; title: string; colour: string };
+  let current: Idea | null = null;
+  document.querySelectorAll<HTMLButtonElement>("[data-idea]").forEach((card) =>
+    card.addEventListener("click", () => {
+      current = JSON.parse(card.dataset.idea!) as Idea;
+      kind.replaceChildren();
+      const dot = document.createElement("span");
+      dot.className = "size-2 rounded-full";
+      dot.style.background = current.colour;
+      kind.append(dot, current.title);
+      kind.style.color = current.colour;
+      name.textContent = current.name;
+      who.textContent = current.who;
+      text.value = current.wish;
+      go.textContent = "Download Lamp";
+      if (requirement) requirement.textContent = usual;
+      dialog.showModal();
+      fit();
+      track("idea_opened", { idea: current.name });
+    }),
+  );
+
+  dialog.querySelector("[data-close]")!.addEventListener("click", () => dialog.close());
+  // A click on the dimmed page around the card closes it too.
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+
+  go.addEventListener("click", () => {
+    if (current) track("idea_download", { idea: current.name });
+    // The download leaves this page where it is, so the copy finishes and the card can say what happens next.
+    copyWish(text.value).then((copied) => {
+      go.textContent = "Downloading…";
+      if (requirement) requirement.textContent = copied === "marked" ? "Open Lamp when it's ready. Your wish will be there."
+        : copied === "plain" ? "Your wish is copied. Paste it into Lamp when it's ready."
+        : "Copy your wish, and paste it into Lamp when it's ready.";
+    });
+  });
+
+  open.addEventListener("click", () => {
+    const link = wishLink(text.value);
+    if (!link) return;
+    if (current) track("idea_sent", { idea: current.name });
+    location.href = link;
+  });
+</script>

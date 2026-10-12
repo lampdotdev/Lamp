@@ -230,7 +230,8 @@ const description = `${pitch} ${noCode}`;
       </div>
       <div class="hero-button relative z-10 mt-9"><DownloadButton place="hero" /></div>
       <!-- As wide as the card allows, but no taller than leaves the whole card in the window: the words above
-           take about 530px with the space under them, and the render is 2.98 times as wide as it is tall. -->
+           take about 530px with the space under them, the menu bar 48px more, and the render is 2.98 times as wide
+           as it is tall. -->
       <Image
         src={heroLamp}
         alt=""
@@ -238,7 +239,7 @@ const description = `${pitch} ${noCode}`;
         sizes="100vw"
         loading="eager"
         class="hero-lamp pointer-events-none mt-6 h-auto max-w-none select-none sm:mt-4"
-        style="width: min(100%, calc((100svh - 530px) * 2.98))"
+        style="width: min(100%, calc((100svh - 578px) * 2.98))"
       />
     </section>
 
@@ -253,6 +254,9 @@ const description = `${pitch} ${noCode}`;
           {together("Something for the task that bugs you, or a game for when you're done.")}<br />{together("Each of these started as a single wish:")}
         </p>
         <Carousel slides={apps} />
+        <p class="-mt-4 pb-6 text-center">
+          <a href="/ideas" class="text-[17px] font-medium text-[#b04e0a] underline decoration-[#b04e0a]/40 underline-offset-4 transition hover:decoration-[#b04e0a]">See 80 more wishes, from the office to family movie night</a>
+        </p>
       </div>
     </section>
 
@@ -351,7 +355,4 @@ const description = `${pitch} ${noCode}`;
 
   <QuickLook />
 
-  <footer class="bg-panel py-10 text-center text-sm text-muted">
-    <p>Made by <a href="https://roocode.com" class="text-ink hover:underline">Roo Code</a> · © {new Date().getFullYear()}</p>
-  </footer>
 </Base>

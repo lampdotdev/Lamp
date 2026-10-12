@@ -1,5 +1,7 @@
 ---
 import "../styles/global.css";
+import MenuBar from "../components/MenuBar.astro";
+import Footer from "../components/Footer.astro";
 
 interface Props {
   title: string;
@@ -10,6 +12,8 @@ interface Props {
 
 const { title, description, image } = Astro.props;
 const imageURL = image && new URL(image, Astro.site).href;
+// This page's own address on the site, whichever page it is.
+const pageURL = new URL(Astro.url.pathname, Astro.site).href;
 ---
 
 <!doctype html>
@@ -19,13 +23,13 @@ const imageURL = image && new URL(image, Astro.site).href;
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
-    <link rel="canonical" href={Astro.site} />
+    <link rel="canonical" href={pageURL} />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#ffffff" />
 
     <meta property="og:type" content="website" />
-    <meta property="og:url" content={Astro.site} />
+    <meta property="og:url" content={pageURL} />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     {imageURL && <meta property="og:image" content={imageURL} />}
@@ -35,7 +39,9 @@ const imageURL = image && new URL(image, Astro.site).href;
     <meta name="twitter:card" content={imageURL ? "summary_large_image" : "summary"} />
   </head>
   <body class="font-sans">
+    <MenuBar />
     <slot />
+    <Footer />
     <script>
       import { startAnalytics, track } from "../lib/analytics";
       startAnalytics();

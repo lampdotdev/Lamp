@@ -43,8 +43,15 @@
   --breakpoint-bento: 72rem;
 }
 
+/* The menu bar's height (MenuBar.astro), which the homepage's opening takes off the window's. */
+:root {
+  --menu-height: 3rem;
+}
+
 @layer base {
   html {
+    /* A link to a section scrolls it to just under the menu bar, not behind it. */
+    scroll-padding-top: var(--menu-height);
     color-scheme: light;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
@@ -74,11 +81,11 @@
 }
 
 @keyframes hero-card {
-  0%, 18% { min-height: calc(100svh - 0.75rem); }
+  0%, 18% { min-height: calc(100svh - 0.75rem - var(--menu-height)); }
   100% { min-height: 0; }
 }
 @keyframes hero-icon {
-  0%, 18% { translate: 0 calc(50svh - 120px); scale: 2.6; }
+  0%, 18% { translate: 0 calc(50svh - 120px - var(--menu-height) / 2); scale: 2.6; }
   100% { translate: 0 0; scale: 1; }
 }
 @keyframes hero-rise {
