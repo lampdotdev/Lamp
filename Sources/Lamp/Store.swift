@@ -299,6 +299,10 @@ final class Store: ObservableObject {
         var look = Look()                   // what the agent's look_at_app has done
         var pendingName: String?            // a name the agent gave the version this request makes
         var pendingResult: Talk.Result?     // the agent's card for what this request made, shown once it's open
+        /// The agent put its questions to the person this turn: the turn is over, whatever the agent does next.
+        var asked = false
+        /// Lamp ended the agent because it went on working past its own questions. Not a stop and not a failure.
+        var endedOnQuestions = false
         var artCost = 0.0                   // what make_art's pictures cost, for the turn's summary
         var request: String?                // the user's words, for the command classifiers
         var claudeSession: String?          // Claude Code's conversation, as its own output says (Privacy.isOwnOutput)
@@ -1805,6 +1809,11 @@ final class Store: ObservableObject {
         guard ran else {
             return TurnResult(end: .failed, watched: isWatching(project.id))
         }
+        // The agent asked: nothing is built or saved until the person answers, even if a file was written
+        // in the moment before Lamp ended it. The answer's turn picks up from there.
+        if owner.asked, Talk.open(in: logs[project.id] ?? []) != nil {
+            return TurnResult(end: .replied, watched: isWatching(project.id))
+        }
         // A new app the agent didn't touch: it only replied (say, with questions about a vague request).
         // There's nothing worth building or opening yet; the answers start the first build.
         if !hasVersions(project), await !agentChangedFiles(project) {
@@ -1875,6 +1884,10 @@ final class Store: ObservableObject {
         // card would say it's ready next to the line saying it didn't open.
         if !failed, edited, !owner.didNotOpen, var result = owner.pendingResult {
             result.version = await Versions.head(project)
+            // The card is the word that it's ready: the line saying so just above it would say it twice.
+            if let last = logs[project.id]?.last, last.kind == .status, last.text == "\(project.name) is ready" {
+                logs[project.id]?.removeLast()
+            }
             logs[project.id, default: []].append(LogLine(kind: .result, text: result.text, result: result))
             saveChat(project)
         }
@@ -1995,6 +2008,7 @@ final class Store: ObservableObject {
                         log(project, .agent, text)
                     }
                 case .step(let tool):
+                    if !tool.isEmpty { endOnQuestions(turn, before: tool) }
                     streamingTool = tool
                     streamingArguments = ""
                     note(TurnProgress.activity(tool: tool, partialArguments: ""), for: project)
@@ -2013,6 +2027,7 @@ final class Store: ObservableObject {
                 case .tool(let text, let fullCall):
                     log(project, .tool, text)
                     let call = ToolCall(text)
+                    endOnQuestions(turn, before: call.name)
                     note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
                     if let file = TurnProgress.file(changedBy: call) { progress[project.id]?.wrote(file) }
                     toolCalls += 1
@@ -2052,6 +2067,8 @@ final class Store: ObservableObject {
             log(project, .status, "Stopped. Any changes made so far are kept; press Undo to discard them.")
             return false
         }
+        // Ended by Lamp on the agent's own questions: the engine's exit says nothing went wrong.
+        if turn.endedOnQuestions { return true }
         if let failure, failure.hasPrefix("The model ") {
             log(project, .error, failure + " Try again, or pick a stronger model in Settings.")
             return false
@@ -2070,6 +2087,15 @@ final class Store: ObservableObject {
         }
         log(project, .error, Provider.friendlyError(failure, from: Provider.name(of: engine)))
         return false
+    }
+
+    /// Asking ends the turn. The tool says so, and an agent that goes on to another step anyway (it has been
+    /// seen to ask and then build the app without waiting) is ended here, the way a runaway one is: what it
+    /// would build is a guess at the answer, under a card the person hasn't answered yet.
+    private func endOnQuestions(_ turn: Turn, before tool: String) {
+        guard turn.asked, !turn.endedOnQuestions, ToolCall(tool).action != .ask, let process = turn.agent else { return }
+        turn.endedOnQuestions = true
+        Subprocess.terminateTree(process)
     }
 
     /// One pi conversation per app, so the agent remembers earlier requests, including ones that were undone.
@@ -2545,6 +2571,7 @@ final class Store: ObservableObject {
                 // A new app's card gives up its checklist in the same moment the questions arrive, not when
                 // the turn ends a little later: once there's something to click, nothing above it moves.
                 if progress[project.id]?.newApp == true { progress[project.id]?.asking = true }
+                turn.asked = true
                 saveChat(project)
                 return (200, ["text": Talk.asked])
             }

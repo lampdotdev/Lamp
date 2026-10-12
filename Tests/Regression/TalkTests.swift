@@ -81,6 +81,21 @@ final class TalkTests: XCTestCase {
         XCTAssertEqual(LogLine.visible(lines, details: true).count, lines.count)
     }
 
+    /// A card folding as it's answered makes the chat shorter, and the scroll view goes up with it: that
+    /// isn't the person scrolling away, and the reply that follows has to stay in view.
+    func testAnAnsweredCardFoldingDoesNotStopTheChatFollowing() {
+        let scrolledAway = ChatFollow()
+        scrolledAway.moved(to: 300, fromEnd: 0)
+        scrolledAway.moved(to: 120, fromEnd: 180)
+        XCTAssertFalse(scrolledAway.atEnd)
+
+        let answered = ChatFollow()
+        answered.moved(to: 300, fromEnd: 0)
+        answered.followThroughSettling()
+        answered.moved(to: 120, fromEnd: 180)
+        XCTAssertTrue(answered.atEnd)
+    }
+
     func testAResultsButtonsLastUntilTheNextRequest() {
         let result = LogLine(kind: .result, text: "", result: Talk.Result(summary: "Done", guesses: []))
         XCTAssertEqual(Talk.current(in: [result])?.id, result.id)

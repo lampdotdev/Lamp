@@ -44,7 +44,10 @@ A capability given to one engine must be given to all of them that can take it, 
   the app is built and open. While a card waits for its answer nothing above it changes height and the chat
   doesn't follow what's added below: a new app's card goes to its short form as the questions arrive, a
   second `ask` before the answer is turned away, and a one-at-a-time card is laid out for all its questions
-  at once (`AskSteps`), so nothing moves under the pointer. A new piece is a tool there, its view, and a line in `talkRules`. The agent still
+  at once (`AskSteps`), so nothing moves under the pointer. Asking ends the turn: nothing is built or saved
+  until the answer, and an agent that goes on to another step after `ask` is ended by Lamp, the way a
+  runaway one is (`Store.endOnQuestions`), whichever engine it is. Once the card is answered the chat
+  follows its end again (`ChatFollow.followThroughSettling`). A new piece is a tool there, its view, and a line in `talkRules`. The agent still
   doesn't ask about layout, colours or names (`Agent.Rules.ask`).
 - **What Lamp remembers** (`Memory`): two short sets of notes, about the person (`about-you.md` in the
   support folder) and about each app (`.lamp/notes.md`), each with a one-line summary. They must cost the

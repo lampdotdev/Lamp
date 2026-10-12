@@ -599,7 +599,10 @@ struct ProjectView: View {
                 // The agent's questions come into view whole as they arrive, and then the chat holds still
                 // until they're answered: following anything added meanwhile would slide the answers out
                 // from under the pointer.
-                .onChange(of: Talk.open(in: lines)?.id) {
+                .onChange(of: Talk.open(in: lines)?.id) { _, waiting in
+                    // Answered, by a click or in words: the chat goes back to following its end, where the
+                    // reply is about to be. It stopped following while the card waited, so it may not be there.
+                    if waiting == nil { follow.followThroughSettling() }
                     // After this pass: the card isn't laid out yet, and the end is still where it was.
                     if follow.atEnd { DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) } }
                 }
@@ -650,7 +653,9 @@ struct ProjectView: View {
                 .zIndex(1)
             transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy)
         } else {
-            let progress = busy ? store.progress[project.id] : nil
+            // No line of activity under the agent's questions: it would go away when the turn ends a moment
+            // later, and the card above it would move.
+            let progress = busy && Talk.open(in: lines) == nil ? store.progress[project.id] : nil
             transcript(lines, busy: busy, progressShown: progress != nil)
             if let progress { ActivityRow(progress: progress).padding(.top, 12) }
         }

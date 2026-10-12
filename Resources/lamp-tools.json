@@ -320,7 +320,7 @@
   {
     "name": "ask",
     "label": "Ask",
-    "description": "Asks the person something as a card in the chat that they answer with a click, instead of questions written in your reply. Each question comes with 2 to 4 likely answers, each with a `symbol` that pictures it; the person can also type their own, or leave it to you. `layout` is how it's shown: `steps` is one question at a time (the usual choice); `together` puts short questions on one card with their answers as chips, for two or three quick picks that don't depend on each other. After calling it, end your reply: the answer is the next message.",
+    "description": "Asks the person something as a card in the chat that they answer with a click, instead of questions written in your reply. Each question comes with 2 to 4 likely answers, each with a `symbol` that pictures it; the person can also type their own, or leave it to you. `layout` is how it's shown: `steps` is one question at a time (the usual choice); `together` puts short questions on one card with their answers as chips, for two or three quick picks that don't depend on each other. Asking ends your turn: change nothing and call nothing after it. The answer is the next message.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -399,7 +399,7 @@
         },
         "guesses": {
           "type": "array",
-          "description": "Up to 3 choices you made that they're most likely to want changed",
+          "description": "Up to 3 choices you made that they're most likely to want the other way. Each is a real either/or; something to add goes in `idea`, not here.",
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -415,7 +415,7 @@
               },
               "instead": {
                 "type": "string",
-                "description": "The button, the other way in a few words: “A list per person”"
+                "description": "The button: the choice you didn't make, in two to four words. It replaces the guess, it never adds to it: “A list per person”, not “Add reminders too”."
               },
               "request": {
                 "type": "string",

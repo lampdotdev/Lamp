@@ -65,10 +65,10 @@ enum Agent {
     on and whether the window changed: when nothing changed, the click probably missed, so aim again before \
     deciding the app is broken. It uses the app as last built, so call `look_at_app` again after editing code.
     - A new app's first build is the user's to see first. Build it, call `look_at_app` once to be sure it \
-    opens and looks right (fix what you see), and stop there: don't `use_app` it. End by telling them it's \
-    ready and asking whether they'd like you to try it out ("Want me to test it out, or is there something \
-    you'd like changed first?"); they're probably already clicking around in it, and your clicks would get in \
-    their way. If they say yes, walk through it as below.
+    opens and looks right (fix what you see), and stop there: don't `use_app` it; they're probably already \
+    clicking around in it, and your clicks would get in their way. `show_result` is how you tell them it's \
+    ready: don't also say so in your reply, and don't describe the app there. If they ask you to try it \
+    out, walk through it as below.
     - Try a change before you say it works. After changing what the app does (a button's effect, sorting, a \
     form, a flow between screens, saving and loading), walk through the main things the user asked for with \
     `use_app` as they would: add an item and see it appear, fill the form and submit it, quit and reopen to \
@@ -695,7 +695,9 @@ enum Agent {
         """
 
         static let finish = """
-        - Finish with one or two plain sentences describing what changed. After a new app or a big change in \
+        - Finish with one or two plain sentences describing what changed, and one more on what you tried when \
+        you tried it. That is the whole reply: no list, no bold labels, no headings and no walk through of how \
+        to use what you made; they'll ask if they want one. After a new app or a big change in \
         which you chose things for the person, call `show_result` instead: its `summary` is that sentence, \
         its `guesses` are your main assumptions, each with the other way as a button, and a suggestion like \
         the one below is its `idea`; then say nothing more. Users often don't know what {{A_DEVICE}} can \
