@@ -1005,27 +1005,33 @@ final class Store: ObservableObject {
                 try fm.copyItem(at: project.dir.appendingPathComponent(path), to: copy.dir.appendingPathComponent(path))
             }
             try Template.saveMeta(copy)
+            Self.retitle(copy.dir, from: project.name, to: name)
+            if let spec = Icons.load(project) {
+                var recolored = spec
+                recolored.background = otherBackground(than: spec).name
+                // The same artwork, filed under the new background so the copy's icon finds it.
+                if fm.fileExists(atPath: Icons.artURL(copy, spec: spec).path) {
+                    try? fm.copyItem(at: Icons.artURL(copy, spec: spec), to: Icons.artURL(copy, spec: recolored))
+                }
+                Icons.save(recolored, for: copy)
+            }
+            // Lamp's own files as the copy's build writes them, so its first version is what it builds and
+            // it starts with nothing unsaved.
+            try Template.writeOwnedFiles(for: copy)
         } catch {
             try? fm.removeItem(at: copy.dir)
             finish(project)
             NSAlert(error: error).runModal()
             return
         }
+        // Listed before the original is given back, so a second Duplicate can't choose the same name.
+        reload()
         finish(project)
-        Self.retitle(copy.dir, from: project.name, to: name)
-        if let spec = Icons.load(project) {
-            var recolored = spec
-            recolored.background = otherBackground(than: spec).name
-            // The same artwork, filed under the new background so the copy's icon finds it.
-            if fm.fileExists(atPath: Icons.artURL(copy, spec: spec).path) {
-                try? fm.copyItem(at: Icons.artURL(copy, spec: spec), to: Icons.artURL(copy, spec: recolored))
-            }
-            Icons.save(recolored, for: copy)
-        }
+        guard begin(copy) != nil else { return }
         _ = await Versions.git("git add -A && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: copy.dir,
                                env: ["LAMP_MESSAGE": "Copy of \(project.name)"]) { _ in }
-        reload()
         if let spec = Icons.load(copy) { await renderIcon(copy, spec: spec) }
+        finish(copy)
         selection = copy.id
         log(copy, .status, "A copy of \(project.name). Building it now…")
         await run(copy)
