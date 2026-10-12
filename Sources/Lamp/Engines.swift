@@ -13,25 +13,6 @@ enum Engine: String, CaseIterable, Identifiable {
         case .codex: "ChatGPT Codex"
         }
     }
-
-    /// The command-line tool an external engine needs (nil for the bundled pi).
-    var tool: String? {
-        switch self {
-        case .pi: nil
-        case .claude: "claude"
-        case .codex: "codex"
-        }
-    }
-
-    /// The desktop app that brings an external engine with it (ToolLocator.desktopCopies): the simplest way
-    /// to get one that isn't installed.
-    var desktopApp: (name: String, download: URL)? {
-        switch self {
-        case .pi: nil
-        case .claude: ("Claude", URL(string: "https://claude.ai/download")!)
-        case .codex: ("ChatGPT", URL(string: "https://openai.com/chatgpt/download/")!)
-        }
-    }
 }
 
 /// When the agent needs the user's go-ahead to run a shell command (Settings → Building).
@@ -109,7 +90,7 @@ enum Builder {
     ]
 
     /// Codex's choices: the models its account can use, from the list Codex itself caches
-    /// (~/.codex/models_cache.json), best first. Just the default when the cache isn't there.
+    /// (models_cache.json in Lamp's copy's own folder), best first. Just the default when the cache isn't there.
     static var codexModels: [(id: String, label: String)] {
         [("", "ChatGPT Codex's default")] + codexCatalog.map { ($0.slug, $0.name) }
     }
@@ -118,7 +99,7 @@ enum Builder {
     static var codexFastModel: String? { codexCatalog.first { $0.slug.contains("luna") }?.slug }
 
     private static var codexCatalog: [(slug: String, name: String)] {
-        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/models_cache.json")
+        let url = EngineInstall.configFolder(.codex).appendingPathComponent("models_cache.json")
         guard let data = try? Data(contentsOf: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let models = json["models"] as? [[String: Any]] else { return [] }
@@ -171,7 +152,8 @@ enum Builder {
             }
             if piModel.isEmpty { return "Choose a model." }
         default:
-            if ToolLocator.path(for: engine) == nil { return "\(engine.title) isn't installed on this Mac." }
+            // Lamp downloads its own copy when the engine is chosen (EngineDownloads), so this is a moment's state.
+            if EngineInstall.path(for: engine) == nil { return "\(engine.title) hasn't been downloaded yet." }
         }
         return nil
     }
@@ -196,7 +178,8 @@ enum Builder {
 }
 
 /// Finds command-line tools the way the user's own Terminal would. GUI apps don't get the shell's
-/// PATH, and tools installed with nvm, mise, Homebrew or npm live in places only that PATH knows.
+/// PATH, and tools installed with nvm, mise, Homebrew or npm live in places only that PATH knows. Not for
+/// Claude Code or Codex: Lamp runs only its own copies of those (EngineInstall).
 enum ToolLocator {
     nonisolated(unsafe) private static var resolvedPath: String?
     private static let lock = NSLock()
@@ -218,21 +201,17 @@ enum ToolLocator {
         return path
     }
 
-    static func path(for engine: Engine) -> String? {
-        engine.tool.flatMap(path(named:))
-    }
-
     nonisolated(unsafe) private static var chosen: [String: String] = [:]
 
     /// The tool's path. When several copies are installed (say, one from npm under nvm and one under mise),
     /// the newest version wins rather than whichever comes first in PATH.
     static func path(named tool: String) -> String? {
         lock.lock()
-        // The Claude app replaces its bundled copy when it updates, so a remembered path can disappear.
+        // A remembered path can disappear (a tool uninstalled, or updated into a new folder).
         if let cached = chosen[tool], FileManager.default.isExecutableFile(atPath: cached) { lock.unlock(); return cached }
         lock.unlock()
         var seen = Set<String>()
-        let candidates = (userPath.split(separator: ":").map { "\($0)/\(tool)" } + desktopCopies(of: tool)).filter {
+        let candidates = userPath.split(separator: ":").map { "\($0)/\(tool)" }.filter {
             FileManager.default.isExecutableFile(atPath: $0)
                 && seen.insert(URL(fileURLWithPath: $0).resolvingSymlinksInPath().path).inserted
         }
@@ -245,28 +224,6 @@ enum ToolLocator {
         chosen[tool] = best
         lock.unlock()
         return best
-    }
-
-    /// Copies bundled with the desktop apps, so someone with only the Claude or ChatGPT app can build with
-    /// them: the Claude app keeps Claude Code in its support folder (one folder per version), and the
-    /// ChatGPT app ships Codex inside its bundle.
-    static func desktopCopies(of tool: String) -> [String] {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser.path
-        switch tool {
-        case "claude":
-            let root = home + "/Library/Application Support/Claude/claude-code"
-            return ((try? fm.contentsOfDirectory(atPath: root)) ?? []).flatMap { version in
-                ((try? fm.contentsOfDirectory(atPath: "\(root)/\(version)")) ?? []).map {
-                    "\(root)/\(version)/\($0)/claude.app/Contents/MacOS/claude"
-                }
-            }
-        case "codex":
-            return ["/Applications/ChatGPT.app", home + "/Applications/ChatGPT.app"]
-                .map { $0 + "/Contents/Resources/codex-cli/bin/codex" }
-        default:
-            return []
-        }
     }
 
     /// The numbers in `<tool> --version` (e.g. "codex-cli 0.160.0" → [0, 160, 0]); [] if it can't tell.
@@ -326,8 +283,9 @@ extension Agent {
                                                          sessionDir: project.dir.appendingPathComponent(".lamp/pi-sessions").path)) { $1 })
         case .claude:
             // Lamp builds the app itself. Attachments are listed in the prompt; Claude reads them.
-            // Isolated from the user's own Claude Code setup: --restricted ignores their settings files (hooks,
-            // permission rules, plugins) while keeping their sign-in and Lamp's --settings; --strict-mcp-config
+            // Isolated from the user's own Claude Code setup: Lamp's copy has its own folder and sign-in
+            // (EngineInstall), and --restricted ignores settings files (hooks, permission rules, plugins) while
+            // keeping Lamp's --settings; --strict-mcp-config
             // skips their MCP servers and --disable-slash-commands their skills. --tools then lists exactly
             // what the agent gets.
             // Shell commands go through a PreToolUse hook that asks Lamp and waits for the user's answer; Lamp
@@ -398,7 +356,8 @@ extension Agent {
             env["LAMP_CLAUDE_SETTINGS"] = String(decoding: (try? JSONSerialization.data(withJSONObject: ["hooks": hooks])) ?? Data("{}".utf8), as: UTF8.self)
             env["LAMP_CLAUDE_MODE"] = permissionMode
             env["LAMP_CLAUDE_ALLOWED"] = allowed
-            env["LAMP_TOOL"] = ToolLocator.path(for: .claude) ?? "claude"
+            env["LAMP_TOOL"] = EngineInstall.path(for: .claude) ?? "claude"
+            env.merge(EngineInstall.environment(for: .claude)) { $1 }
             var command = """
             "$LAMP_TOOL" -p "$LAMP_PROMPT" --output-format stream-json --verbose --include-partial-messages \\
               --restricted --strict-mcp-config --mcp-config "$LAMP_CLAUDE_MCP" --disable-slash-commands \\
@@ -415,9 +374,11 @@ extension Agent {
             }
             return AgentRun(command: command, env: env)
         case .codex:
-            // Isolated from the user's own Codex setup (--ignore-user-config --ignore-rules: their model, MCP
-            // servers, features and rules), keeping their sign-in. Lamp's rules go in as developer instructions.
-            env["LAMP_TOOL"] = ToolLocator.path(for: .codex) ?? "codex"
+            // Isolated from the user's own Codex setup: Lamp's copy has its own folder and sign-in (EngineInstall),
+            // and --ignore-user-config --ignore-rules keep out any model, MCP servers, features and rules set
+            // there. Lamp's rules go in as developer instructions.
+            env["LAMP_TOOL"] = EngineInstall.path(for: .codex) ?? "codex"
+            env.merge(EngineInstall.environment(for: .codex)) { $1 }
             env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt(for: project) + tryRules + Self.codexNote + sandboxNote)
             // Approvals (Settings → Building): a PreToolUse hook sends each shell command to Lamp before it runs,
             // and Lamp applies the setting: the decision model, then the user (Only when risky), or the user
@@ -461,9 +422,8 @@ extension Agent {
             // the folders of sessions, logs, caches, snapshots and memories. What tells Codex how to behave
             // (config.toml, AGENTS.md, and the rules, skills, plugins and prompts folders) stays out of reach
             // of its apply_patch, which, unlike a shell command, never asks Lamp.
-            let home = FileManager.default.homeDirectoryForCurrentUser.path
-            let codex = home + "/.codex"
-            let install = ToolLocator.path(for: .codex).map(Sandbox.installFolders(of:)) ?? []
+            let codex = EngineInstall.configFolder(.codex).path
+            let install = EngineInstall.path(for: .codex).map(Sandbox.installFolders(of:)) ?? []
             let state = ["sessions", "archived_sessions", "log", "tmp", ".tmp", "cache", "shell_snapshots", "memories",
                          "thread-writer-locks", "mcp-oauth-locks"].map { codex + "/" + $0 }
             // Without its profile Codex doesn't run at all: nothing else keeps its commands inside the app.
@@ -654,39 +614,41 @@ enum EngineSignIn {
     /// Checks the engines that are installed and haven't been checked lately, so what Lamp knows of them is
     /// current without asking on every call.
     static func refresh(olderThan age: TimeInterval = 300) async {
-        for engine in [Engine.claude, .codex] where ToolLocator.path(for: engine) != nil {
+        for engine in [Engine.claude, .codex] where EngineInstall.path(for: engine) != nil {
             let last = await MainActor.run { checked[engine] }
             if Date().timeIntervalSince(last ?? .distantPast) > age { _ = await isSignedIn(engine) }
         }
     }
 
     private static func ask(_ engine: Engine) async -> Bool? {
-        guard let tool = ToolLocator.path(for: engine) else { return nil }
+        guard let tool = EngineInstall.path(for: engine) else { return nil }
         switch engine {
         case .claude:
-            let (status, output) = await run(tool, ["auth", "status"], timeout: 20)
+            let (status, output) = await run(engine, tool, ["auth", "status"], timeout: 20)
             guard status == 0, let info = try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any]
             else { return status == 0 ? nil : false }
             return info["loggedIn"] as? Bool
         case .codex:
-            let (status, output) = await run(tool, ["login", "status"], timeout: 20)
+            let (status, output) = await run(engine, tool, ["login", "status"], timeout: 20)
             return status == 0 && output.localizedCaseInsensitiveContains("logged in")
         default:
             return nil
         }
     }
 
-    /// Runs the tool's sign-in, which opens the browser, and waits for it (up to 10 minutes).
+    /// Runs the tool's sign-in, which opens the browser, and waits for it (up to 10 minutes). Gets Lamp's
+    /// copy first if there isn't one yet.
     static func signIn(_ engine: Engine) async -> Bool {
-        guard let tool = ToolLocator.path(for: engine) else { return false }
+        guard await EngineDownloads.shared.ensure(engine), let tool = EngineInstall.path(for: engine) else { return false }
         let arguments = engine == .claude ? ["auth", "login"] : ["login"]
-        let done = await run(tool, arguments, timeout: 600).status == 0
+        let done = await run(engine, tool, arguments, timeout: 600).status == 0
         _ = await isSignedIn(engine)
         return done
     }
 
-    private static func run(_ tool: String, _ arguments: [String], timeout: TimeInterval) async -> (status: Int32, output: String) {
-        let result = await Subprocess.run(tool, arguments, env: ["PATH": ToolLocator.userPath], timeout: timeout)
+    private static func run(_ engine: Engine, _ tool: String, _ arguments: [String], timeout: TimeInterval) async -> (status: Int32, output: String) {
+        let env = EngineInstall.environment(for: engine).merging(["PATH": ToolLocator.userPath]) { $1 }
+        let result = await Subprocess.run(tool, arguments, env: env, timeout: timeout)
         return (result.status, result.output)
     }
 }

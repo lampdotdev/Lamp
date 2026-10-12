@@ -135,7 +135,7 @@ extension AppAI {
             case .openRouter:
                 upgrades.append(.key("openrouter"))
                 why = " without an OpenRouter key."
-            case .engine(let engine, _) where engine != .pi && ToolLocator.path(for: engine) != nil:
+            case .engine(let engine, _) where engine != .pi && EngineInstall.path(for: engine) != nil:
                 upgrades.append(.signIn(engine))
                 why = " until you sign in to \(engine.title) again."
             default: break
@@ -159,7 +159,7 @@ extension AppAI {
     @MainActor private static var textUpgrades: [Upgrade] {
         let engines = ([Builder.engine] + [.claude, .codex]).filter { $0 != .pi }
         var upgrades: [Upgrade] = [.key("openrouter")]
-        for engine in engines where ToolLocator.path(for: engine) != nil && !upgrades.contains(.signIn(engine)) {
+        for engine in engines where EngineInstall.path(for: engine) != nil && !upgrades.contains(.signIn(engine)) {
             upgrades.append(.signIn(engine))
         }
         return upgrades

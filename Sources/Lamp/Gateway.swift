@@ -150,7 +150,7 @@ enum AppAI {
                     || (Provider.apiProvider(Builder.piProvider) != nil && KeyStore.key(for: Builder.piProvider) != nil))
             // Installed, and not known to be signed out: a signed-out sign-in can't answer, and the setup offer
             // should be to sign in rather than to say it's set up.
-            case .engine(let engine, _): available = ToolLocator.path(for: engine) != nil && EngineSignIn.known[engine] != false
+            case .engine(let engine, _): available = EngineInstall.path(for: engine) != nil && EngineSignIn.known[engine] != false
             case .localModel(let provider, let model):
                 available = provider == Builder.localProvider ? LocalModels.shared.installed.contains { $0.id == model }
                                                               : LocalModels.shared.external[provider]?.contains(model) == true
@@ -530,9 +530,10 @@ enum AppAI {
             try data.write(to: folder.appendingPathComponent(name))
             files.append(name)
         }
-        var env: [String: String] = ["PATH": ToolLocator.userPath, "LAMP_TOOL": ToolLocator.path(for: engine) ?? "",
+        var env: [String: String] = ["PATH": ToolLocator.userPath, "LAMP_TOOL": EngineInstall.path(for: engine) ?? "",
                                      "LAMP_SYSTEM": system.isEmpty ? "You are a helpful assistant inside an app." : system,
                                      "LAMP_PROMPT": prompt]
+        env.merge(EngineInstall.environment(for: engine)) { $1 }
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
         let command: String
         switch engine {
@@ -1012,7 +1013,7 @@ enum AppAI {
         if wantsLocal, ImageModels.ready, !editing { return .local }
         if Provider.hasKey { return .openRouter }
         if ImageModels.ready, !editing { return .local }
-        if codexChosen(appText: appText), ToolLocator.path(for: .codex) != nil, EngineSignIn.known[.codex] != false { return .codex }
+        if codexChosen(appText: appText), EngineInstall.path(for: .codex) != nil, EngineSignIn.known[.codex] != false { return .codex }
         return nil
     }
 
@@ -1027,11 +1028,11 @@ enum AppAI {
             || (appText ?? "").hasPrefix("engine:codex")
     }
 
-    /// The route to act on. Codex counts only when it's chosen (above) and signed in (the copy inside the
-    /// ChatGPT app is there whether or not anyone ever logged in); that's checked at most every few minutes.
+    /// The route to act on. Codex counts only when it's chosen (above) and signed in (Lamp's copy can be
+    /// there before anyone has signed in to it); that's checked at most every few minutes.
     /// A model on this Mac makes pictures from words only, so a request that edits existing pictures skips it.
     static func imageRoute(editing: Bool = false, appText: String? = nil, choice: String? = nil) async -> ImageRoute? {
-        if codexChosen(appText: appText), ToolLocator.path(for: .codex) != nil {
+        if codexChosen(appText: appText), EngineInstall.path(for: .codex) != nil {
             let last = await MainActor.run { EngineSignIn.checked[.codex] }
             if Date().timeIntervalSince(last ?? .distantPast) > 300 { _ = await EngineSignIn.isSignedIn(.codex) }
         }
@@ -1132,8 +1133,9 @@ enum AppAI {
             request += "\n\nUse the attached \(files.count == 1 ? "image" : "images") (\(files.joined(separator: ", "))) as "
                 + (files.count == 1 ? "the reference: edit or build on it as the description says." : "references.")
         }
-        var env: [String: String] = ["PATH": ToolLocator.userPath, "LAMP_TOOL": ToolLocator.path(for: .codex) ?? "codex",
+        var env: [String: String] = ["PATH": ToolLocator.userPath, "LAMP_TOOL": EngineInstall.path(for: .codex) ?? "codex",
                                      "LAMP_PROMPT": request]
+        env.merge(EngineInstall.environment(for: .codex)) { $1 }
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
         let imageArgs = files.indices.map { "-i \"$LAMP_FILE_\($0)\"" }.joined(separator: " ")
         let command = """

@@ -398,12 +398,11 @@ final class Store: ObservableObject {
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
-        // Finding Claude Code / Codex means asking the login shell for PATH, then running each copy found with
-        // --version to pick the newest; done off the main thread now, so the first turn doesn't wait for it.
-        Task.detached(priority: .utility) {
-            _ = ToolLocator.userPath
-            for engine in Engine.allCases { _ = ToolLocator.path(for: engine) }
-        }
+        // The login shell's PATH, which every tool Lamp runs is given: asked once, off the main thread now, so
+        // the first turn doesn't wait for it.
+        Task.detached(priority: .utility) { _ = ToolLocator.userPath }
+        // Lamp's own Claude Code and Codex: downloaded for whichever is in use, and kept up to date.
+        EngineDownloads.shared.startKeepingCurrent()
         Task {
             LocalModels.shared.refresh()
             await LocalModels.shared.detectExternal()
