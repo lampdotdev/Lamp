@@ -147,6 +147,18 @@ enum Talk {
         return lines[index]
     }
 
+    /// Takes a message that was waiting to be sent back out of the line. Answers clicked on a card were
+    /// noted on it when they were clicked; taken back before they went out, they were never given, so the
+    /// card waits again. Left folded, nothing would be asking the question any more. True when a card changed.
+    static func unqueue(_ message: QueuedMessage, from queue: inout [QueuedMessage], lines: inout [LogLine]) -> Bool {
+        guard let waiting = queue.firstIndex(where: { $0.id == message.id }) else { return false }
+        queue.remove(at: waiting)
+        guard let card = message.card, let index = lines.firstIndex(where: { $0.id == card }),
+              lines[index].ask?.answers != nil else { return false }
+        lines[index].ask?.answers = nil
+        return true
+    }
+
     /// The result whose buttons still mean something: the latest, until the person asks for anything else.
     static func current(in lines: [LogLine]) -> LogLine? {
         guard let index = lines.lastIndex(where: { $0.kind == .result }),
