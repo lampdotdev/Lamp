@@ -123,6 +123,36 @@ final class EngineInstallTests: XCTestCase {
         XCTAssertFalse(EngineInstall.carryOver(session: "", for: .codex, from: home))
     }
 
+    /// A sign-in waiting for the browser ends when cancelled, says it was cancelled rather than failed, and
+    /// leaves nothing running.
+    func testASignInCanBeCancelled() async throws {
+        let program = try put(.claude, "2.1.287")
+        try """
+        #!/bin/sh
+        if [ "$1 $2" = "auth login" ]; then sleep 30; exit 0; fi
+        echo '{"loggedIn": false}'
+        """.write(to: program, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: program.path)
+        try write("2.1.287", current: .claude)
+        let started = Date()
+        let signIn = Task { await EngineSignIn.signIn(.claude) }
+        try await Task.sleep(for: .seconds(1))
+        EngineSignIn.cancelSignIn(.claude)
+        let result = await signIn.value
+        XCTAssertNil(result)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 10)
+        // Cancelling when nothing is under way does nothing, and the next sign-in isn't cancelled by it.
+        EngineSignIn.cancelSignIn(.claude)
+        try """
+        #!/bin/sh
+        if [ "$1 $2" = "auth login" ]; then exit 0; fi
+        echo '{"loggedIn": true}'
+        """.write(to: program, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: program.path)
+        let again = await EngineSignIn.signIn(.claude)
+        XCTAssertEqual(again, true)
+    }
+
     /// Against the real download sites: set LAMP_LIVE_ENGINES=1. Downloads both engines (about 230 MB
     /// for Claude Code and 130 MB for Codex) into the test's own folder and runs each.
     func testLiveInstall() async throws {

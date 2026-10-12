@@ -640,31 +640,43 @@ enum EngineSignIn {
     }
 
     /// Runs the tool's sign-in, which opens the browser, and waits for it (up to 10 minutes). Gets Lamp's
-    /// copy first if there isn't one yet. Nil when the person cancelled it (`cancelSignIn`).
+    /// copy first if there isn't one yet. Nil when the person cancelled it (`cancelSignIn`), whether that was
+    /// while the copy was still downloading or while the browser was open.
     static func signIn(_ engine: Engine) async -> Bool? {
-        guard await EngineDownloads.shared.ensure(engine), let tool = EngineInstall.path(for: engine) else { return false }
+        lock.withLock { signIns[engine] = (nil, false) }
+        defer { lock.withLock { _ = signIns.removeValue(forKey: engine) } }
+        func cancelled() -> Bool { lock.withLock { signIns[engine]?.cancelled ?? false } }
+        let ready = await EngineDownloads.shared.ensure(engine)
+        if cancelled() { return nil }
+        guard ready, let tool = EngineInstall.path(for: engine) else { return false }
         let arguments = engine == .claude ? ["auth", "login"] : ["login"]
         let status = await run(engine, tool, arguments, timeout: 600) { process in
-            lock.withLock { signIns[engine] = (process, false) }
+            // Cancelled in the moment between the check above and the login starting: it ends at once.
+            let stop = lock.withLock { () -> Bool in
+                signIns[engine] = (process, signIns[engine]?.cancelled ?? false)
+                return signIns[engine]?.cancelled ?? false
+            }
+            if stop { Subprocess.terminateTree(process) }
         }.status
-        let cancelled = lock.withLock { signIns.removeValue(forKey: engine)?.cancelled ?? false }
+        let wasCancelled = cancelled()
         _ = await isSignedIn(engine)
-        return cancelled ? nil : status == 0
+        return wasCancelled ? nil : status == 0
     }
 
-    /// Ends a sign-in still waiting for the browser: the tab was opened in the wrong browser profile, say, or
-    /// for the wrong account. Its sign-in page stops working, and Sign In… can start again at once.
+    /// Ends a sign-in still waiting: for the browser (the tab opened in the wrong browser profile, say, or for
+    /// the wrong account), or for Lamp's copy to finish downloading, in which case the browser never opens.
+    /// Sign In… can start again at once.
     static func cancelSignIn(_ engine: Engine) {
         let process = lock.withLock { () -> Process? in
-            guard let process = signIns[engine]?.process else { return nil }
-            signIns[engine] = (process, true)
-            return process
+            guard let running = signIns[engine] else { return nil }
+            signIns[engine] = (running.process, true)
+            return running.process
         }
         if let process { Subprocess.terminateTree(process) }
     }
 
-    /// The sign-in running for each engine, and whether it was cancelled.
-    nonisolated(unsafe) private static var signIns: [Engine: (process: Process, cancelled: Bool)] = [:]
+    /// The sign-in under way for each engine: its login process once it has started, and whether it was cancelled.
+    nonisolated(unsafe) private static var signIns: [Engine: (process: Process?, cancelled: Bool)] = [:]
     private static let lock = NSLock()
 
     private static func run(_ engine: Engine, _ tool: String, _ arguments: [String], timeout: TimeInterval,
