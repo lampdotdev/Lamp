@@ -399,11 +399,19 @@ final class Store: ObservableObject {
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
-        // The login shell's PATH, which every tool Lamp runs is given: asked once, off the main thread now, so
-        // the first turn doesn't wait for it.
-        Task.detached(priority: .utility) { _ = ToolLocator.userPath }
-        // Lamp's own Claude Code and Codex: downloaded for whichever is in use, and kept up to date.
-        EngineDownloads.shared.startKeepingCurrent()
+        // The login shell's PATH, which every tool Lamp runs is given, and the person's own Claude Code and
+        // Codex (running each copy found with --version to pick the newest): looked for once, off the main
+        // thread, before anything decides whether Lamp needs its own copy, so neither the first turn nor a
+        // screen waits for it.
+        Task {
+            await Task.detached(priority: .utility) {
+                _ = ToolLocator.userPath
+                for engine in [Engine.claude, .codex] { _ = EngineInstall.path(for: engine) }
+            }.value
+            // Lamp's own Claude Code and Codex, for an engine in use the Mac has no copy of: downloaded, and kept
+            // up to date.
+            EngineDownloads.shared.startKeepingCurrent()
+        }
         Task {
             LocalModels.shared.refresh()
             await LocalModels.shared.detectExternal()
@@ -1916,8 +1924,8 @@ final class Store: ObservableObject {
             }
             return false
         }
-        // A conversation Lamp's own copy of the engine can't resume (one kept by the copy Lamp ran before, not
-        // found to bring over) is forgotten, and the request starts a new one rather than failing.
+        // A conversation the copy of the engine Lamp runs can't resume (one kept by the other copy, Lamp's or
+        // the person's, not found to bring over) is forgotten, and the request starts a new one rather than failing.
         var session = engine == .pi ? Self.piSession(for: project) : Self.savedSession(sessionFile)
         if engine != .pi, let saved = session, !EngineInstall.carryOver(session: saved, for: engine) {
             try? FileManager.default.removeItem(at: sessionFile)

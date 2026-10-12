@@ -1,19 +1,24 @@
 import XCTest
 @testable import Lamp
 
-/// Lamp's own Claude Code and Codex: which version is in use, what's kept, and what's refused.
+/// The Claude Code and Codex Lamp runs: the person's own when the Mac has one, else Lamp's, with which
+/// version is in use, what's kept, and what's refused.
 final class EngineInstallTests: XCTestCase {
     private var saved: URL!
+    private var savedFinder: ((Engine) -> String?)!
     private var root: URL!
 
     override func setUp() {
         saved = EngineInstall.folder
+        savedFinder = EngineInstall.personsCopy
         root = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-engines-\(UUID().uuidString)")
         EngineInstall.folder = root
+        EngineInstall.personsCopy = { _ in nil }   // whatever the Mac running the tests has
     }
 
     override func tearDown() {
         EngineInstall.folder = saved
+        EngineInstall.personsCopy = savedFinder
         try? FileManager.default.removeItem(at: root)
     }
 
@@ -65,6 +70,47 @@ final class EngineInstallTests: XCTestCase {
         XCTAssertEqual(EngineInstall.environment(for: .pi), [:])
     }
 
+    /// The person's own copy wins over Lamp's, and runs as it does for them: their folder, nothing set.
+    /// Lamp's copy stays where it is, for when theirs goes.
+    func testThePersonsOwnCopyIsUsedAsItIs() throws {
+        let own = try put(.claude, "2.1.287")
+        try write("2.1.287", current: .claude)
+        let theirs = root.appendingPathComponent("person/.local/bin/claude").path
+        EngineInstall.personsCopy = { $0 == .claude ? theirs : nil }
+        XCTAssertEqual(EngineInstall.path(for: .claude), theirs)
+        XCTAssertTrue(EngineInstall.usesPersonsCopy(.claude))
+        XCTAssertEqual(EngineInstall.environment(for: .claude), [:])
+        XCTAssertEqual(EngineInstall.configFolder(.claude).lastPathComponent, ".claude")
+        XCTAssertEqual(EngineInstall.ownPath(for: .claude), own.path)
+        // Codex has no copy of the person's here, so it's Lamp's (none yet), with its own folder.
+        XCTAssertNil(EngineInstall.path(for: .codex))
+        XCTAssertFalse(EngineInstall.usesPersonsCopy(.codex))
+        XCTAssertEqual(EngineInstall.environment(for: .codex)["CODEX_HOME"], root.appendingPathComponent("codex/home").path)
+        XCTAssertFalse(EngineInstall.usesPersonsCopy(.pi))
+        XCTAssertNil(EngineInstall.path(for: .pi))
+    }
+
+    /// A conversation Lamp's copy kept is brought to the person's folder once Lamp runs their copy.
+    func testConversationsGoToThePersonsCopy() throws {
+        let fm = FileManager.default
+        let home = root.appendingPathComponent("person")
+        let id = "0f3c2a9e-5b1d-4c7a-9e2f-123456789abc"
+        let claude = EngineInstall.ownConfigFolder(.claude).appendingPathComponent("projects/-Users-someone-Coin-Flip")
+        try fm.createDirectory(at: claude, withIntermediateDirectories: true)
+        try "{}".write(to: claude.appendingPathComponent("\(id).jsonl"), atomically: true, encoding: .utf8)
+        let codex = EngineInstall.ownConfigFolder(.codex).appendingPathComponent("sessions/2026/10/01")
+        try fm.createDirectory(at: codex, withIntermediateDirectories: true)
+        try "{}".write(to: codex.appendingPathComponent("rollout-2026-10-01T11-08-27-\(id).jsonl"), atomically: true, encoding: .utf8)
+        EngineInstall.personsCopy = { _ in "/usr/local/bin/somewhere" }
+
+        XCTAssertTrue(EngineInstall.carryOver(session: id, for: .claude, from: home))
+        XCTAssertTrue(fm.fileExists(atPath: home.appendingPathComponent(".claude/projects/-Users-someone-Coin-Flip/\(id).jsonl").path))
+        XCTAssertTrue(EngineInstall.carryOver(session: id, for: .codex, from: home))
+        XCTAssertTrue(fm.fileExists(atPath: home.appendingPathComponent(".codex/sessions/2026/10/01/rollout-2026-10-01T11-08-27-\(id).jsonl").path))
+        // Lamp's copy's folder was only read.
+        XCTAssertTrue(fm.fileExists(atPath: claude.appendingPathComponent("\(id).jsonl").path))
+    }
+
     /// Only a Developer ID signature of the vendor's team passes: not Apple's own, not an unsigned file.
     func testSignaturesOfAnyoneElseAreRefused() throws {
         XCTAssertFalse(EngineInstall.isSigned(URL(fileURLWithPath: "/bin/ls"), by: EngineInstall.team(.claude)))
@@ -90,7 +136,7 @@ final class EngineInstallTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: EngineInstall.versionsFolder(.claude).appendingPathComponent("2.1.287").path))
     }
 
-    /// An app's conversation from before Lamp kept its own copies is brought over once, with what Claude
+    /// An app's conversation kept by the person's copy is brought over once Lamp runs its own, with what Claude
     /// Code keeps beside it, and then found where it is; one that's nowhere can't be resumed.
     func testConversationsFromBeforeAreBroughtOver() throws {
         let fm = FileManager.default

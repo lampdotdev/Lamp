@@ -2,20 +2,23 @@ import CryptoKit
 import Foundation
 import Security
 
-/// Lamp's own copies of Claude Code and Codex, downloaded from Anthropic and OpenAI and kept up to date by
-/// Lamp, so building with a Claude or ChatGPT subscription needs nothing else installed: no desktop app, no
-/// Terminal. Lamp never runs another copy on the Mac. That way the version it runs is one whose output
-/// its parsers have been read against, and the person's own setup, if they have one, is never touched.
+/// The Claude Code and Codex Lamp runs. When the Mac already has one (installed for Terminal, or inside the
+/// Claude or ChatGPT app), Lamp runs that copy as it is, with the person's own sign-in and folder (~/.claude,
+/// ~/.codex), so someone who already uses it neither downloads nor signs in again. Lamp's runs stay apart from
+/// the person's setup by their flags (`Agent.run`: `--restricted`, `--ignore-user-config` and the rest), not by
+/// their folder; the copy updates itself, or not, as the person has it.
 ///
-/// Each copy has a sign-in of its own as well (`configFolder`, through `CLAUDE_CONFIG_DIR` and `CODEX_HOME`):
-/// signing in to Lamp signs in nothing else, and a Claude Code or Codex someone runs from Terminal isn't
-/// signed in by Lamp. Claude Code keeps that sign-in in the Keychain under a name made from its folder, so
-/// it stays apart from the person's own too.
+/// When the Mac has none, Lamp downloads its own from Anthropic or OpenAI and keeps it up to date, so building
+/// with a Claude or ChatGPT subscription needs nothing else installed: no desktop app, no Terminal. That copy
+/// has a sign-in and folder of its own (`configFolder`, through `CLAUDE_CONFIG_DIR` and `CODEX_HOME`): Claude
+/// Code keeps the sign-in in the Keychain under a name made from its folder, so it stays apart from any the
+/// person makes later. Once the person has a copy of their own, Lamp moves to it (`carryOver` brings each
+/// app's conversation along), and stops updating its own.
 ///
-/// What's kept: `Engines/<engine>/versions/<version>/` (the program, and for Codex the files it ships with),
-/// `Engines/<engine>/current` (the version in use), and `Engines/<engine>/home` (the sign-in and the tool's
-/// own state). The version in use and the one before it are kept, so a turn still running when an update
-/// lands finishes on the version it started with.
+/// What's kept of Lamp's copy: `Engines/<engine>/versions/<version>/` (the program, and for Codex the files it
+/// ships with), `Engines/<engine>/current` (the version in use), and `Engines/<engine>/home` (the sign-in and
+/// the tool's own state). The version in use and the one before it are kept, so a turn still running when an
+/// update lands finishes on the version it started with.
 enum EngineInstall {
     /// Lamp's own folder, which the sandbox and the privacy rule keep closed to the agent. A test points it
     /// at a folder of its own.
@@ -27,16 +30,68 @@ enum EngineInstall {
     static func versionsFolder(_ engine: Engine) -> URL { root(engine).appendingPathComponent("versions") }
     private static func currentFile(_ engine: Engine) -> URL { root(engine).appendingPathComponent("current") }
 
-    /// The engine's own settings, sign-in, conversations and caches: what would otherwise be ~/.claude or
-    /// ~/.codex. Made on first use, readable only by the person.
-    static func configFolder(_ engine: Engine) -> URL { root(engine).appendingPathComponent("home") }
+    /// The engine's settings, sign-in, conversations and caches for the copy in use: the person's own
+    /// (~/.claude, ~/.codex) when Lamp runs theirs, else Lamp's copy's.
+    static func configFolder(_ engine: Engine) -> URL {
+        usesPersonsCopy(engine) ? personsFolder(engine) : ownConfigFolder(engine)
+    }
+
+    /// Lamp's copy's folder. Made on first use, readable only by the person.
+    static func ownConfigFolder(_ engine: Engine) -> URL { root(engine).appendingPathComponent("home") }
+
+    /// Where the person's own copy keeps its state.
+    static func personsFolder(_ engine: Engine, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        home.appendingPathComponent(engine == .codex ? ".codex" : ".claude")
+    }
 
     /// The program inside a version's folder, as each vendor lays it out.
     private static func entry(_ engine: Engine) -> String { engine == .codex ? "bin/codex" : "claude" }
 
-    /// Lamp's copy of the engine's program, nil until one has been downloaded (and always for pi, which
-    /// comes inside Lamp).
+    /// The copy Lamp runs: the person's own when the Mac has one, else Lamp's (nil until it's downloaded).
+    /// Always nil for pi, which comes inside Lamp.
     static func path(for engine: Engine) -> String? {
+        guard engine != .pi else { return nil }
+        return personsCopy(engine) ?? ownPath(for: engine)
+    }
+
+    /// Whether Lamp runs the person's own copy of the engine rather than its own.
+    static func usesPersonsCopy(_ engine: Engine) -> Bool { engine != .pi && personsCopy(engine) != nil }
+
+    /// Finds the person's own copy. A test replaces it, so what's installed on the Mac running it doesn't count.
+    nonisolated(unsafe) static var personsCopy: (Engine) -> String? = findPersonsCopy
+
+    /// The newest copy on the person's PATH or inside the desktop app (`ToolLocator`, which remembers it).
+    private static func findPersonsCopy(_ engine: Engine) -> String? {
+        switch engine {
+        case .pi: nil
+        case .claude: ToolLocator.path(named: "claude", alsoAt: desktopCopies(of: .claude))
+        case .codex: ToolLocator.path(named: "codex", alsoAt: desktopCopies(of: .codex))
+        }
+    }
+
+    /// Copies that come with the desktop apps: the Claude app keeps Claude Code in its support folder (one
+    /// folder per version), and the ChatGPT app ships Codex inside its bundle.
+    private static func desktopCopies(of engine: Engine) -> [String] {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        switch engine {
+        case .pi:
+            return []
+        case .claude:
+            let root = home + "/Library/Application Support/Claude/claude-code"
+            return ((try? fm.contentsOfDirectory(atPath: root)) ?? []).flatMap { version in
+                ((try? fm.contentsOfDirectory(atPath: "\(root)/\(version)")) ?? []).map {
+                    "\(root)/\(version)/\($0)/claude.app/Contents/MacOS/claude"
+                }
+            }
+        case .codex:
+            return ["/Applications/ChatGPT.app", home + "/Applications/ChatGPT.app"]
+                .map { $0 + "/Contents/Resources/codex-cli/bin/codex" }
+        }
+    }
+
+    /// Lamp's own copy of the engine's program, nil until one has been downloaded.
+    static func ownPath(for engine: Engine) -> String? {
         guard engine != .pi, let version = currentVersion(engine) else { return nil }
         let path = versionsFolder(engine).appendingPathComponent(version).appendingPathComponent(entry(engine)).path
         return FileManager.default.isExecutableFile(atPath: path) ? path : nil
@@ -63,9 +118,14 @@ enum EngineInstall {
         lock.unlock()
     }
 
-    /// What every run of the engine gets, whoever starts it: its own folder for sign-in and state, and
-    /// Claude Code's self-updater off, since Lamp is what updates it.
+    /// What every run of the engine gets, whoever starts it: nothing for the person's own copy, which runs as
+    /// it does for them; for Lamp's, its own folder for sign-in and state, and Claude Code's self-updater off,
+    /// since Lamp is what updates it.
     static func environment(for engine: Engine) -> [String: String] {
+        usesPersonsCopy(engine) ? [:] : ownEnvironment(for: engine)
+    }
+
+    static func ownEnvironment(for engine: Engine) -> [String: String] {
         switch engine {
         case .pi: return [:]
         case .claude:
@@ -77,26 +137,27 @@ enum EngineInstall {
 
     /// Codex refuses a CODEX_HOME that isn't there, so the folder is made before anything names it.
     private static func ensureConfigFolder(_ engine: Engine) -> String {
-        let url = configFolder(engine)
+        let url = ownConfigFolder(engine)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         return url.path
     }
 
-    // MARK: Conversations from before
+    // MARK: Conversations kept by the other copy
 
-    /// Whether the engine can resume conversation `session`, bringing it over first when it was kept by the
-    /// copy Lamp ran before it had its own: Claude Code's in ~/.claude/projects/<folder>/<id>.jsonl, Codex's
-    /// in ~/.codex/sessions/<date>/rollout-…-<id>.jsonl. Lamp's copy is pointed at its own folder, so without
-    /// this an app's next request would try to resume a conversation its engine can't find and fail. False
-    /// when it's nowhere: the caller then starts a new conversation. Only that one conversation is copied,
-    /// and the person's folders are only read.
+    /// Whether the engine can resume conversation `session`, bringing it over first when the other copy kept
+    /// it: an app's conversation lives in the folder of the copy that had it (Claude Code's in
+    /// projects/<folder>/<id>.jsonl, Codex's in sessions/<date>/rollout-…-<id>.jsonl), and Lamp moves between
+    /// its own copy and the person's as one appears or goes. Without this an app's next request would try to
+    /// resume a conversation its engine can't find and fail. False when it's nowhere: the caller then starts a
+    /// new conversation. Only that one conversation is copied, and the folder it came from is only read.
     static func carryOver(session: String, for engine: Engine,
                           from home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Bool {
         guard engine != .pi, !session.isEmpty,
               session.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "-") })
         else { return false }
         let fm = FileManager.default
-        let mine = configFolder(engine)
+        let persons = personsFolder(engine, home: home)
+        let (mine, other) = usesPersonsCopy(engine) ? (persons, ownConfigFolder(engine)) : (ownConfigFolder(engine), persons)
         switch engine {
         case .pi:
             return false
@@ -108,7 +169,7 @@ enum EngineInstall {
                     .first { fm.fileExists(atPath: $0.appendingPathComponent(session + ".jsonl").path) }
             }
             if find(in: mine) != nil { return true }
-            guard let folder = find(in: home.appendingPathComponent(".claude")) else { return false }
+            guard let folder = find(in: other) else { return false }
             let target = mine.appendingPathComponent("projects").appendingPathComponent(folder.lastPathComponent)
             try? fm.createDirectory(at: target, withIntermediateDirectories: true)
             for name in [session + ".jsonl", session] where fm.fileExists(atPath: folder.appendingPathComponent(name).path) {
@@ -126,11 +187,10 @@ enum EngineInstall {
                 return nil
             }
             if find(in: mine) != nil { return true }
-            let old = home.appendingPathComponent(".codex")
-            guard let path = find(in: old) else { return false }
+            guard let path = find(in: other) else { return false }
             let target = mine.appendingPathComponent(path)
             try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? fm.copyItem(at: old.appendingPathComponent(path), to: target)
+            try? fm.copyItem(at: other.appendingPathComponent(path), to: target)
             return fm.fileExists(atPath: target.path)
         }
     }
@@ -317,7 +377,7 @@ enum EngineInstall {
         }
 
         // It starts, and is the version it says.
-        let check = await Subprocess.run(program.path, ["--version"], env: environment(for: engine), mergeErrors: false, timeout: 60)
+        let check = await Subprocess.run(program.path, ["--version"], env: ownEnvironment(for: engine), mergeErrors: false, timeout: 60)
         guard check.ok, check.output.contains(release.version) else {
             throw Failure(message: "\(engine.title) \(release.version) didn't start on this Mac.")
         }
@@ -445,7 +505,8 @@ private final class Download: NSObject, URLSessionDownloadDelegate, @unchecked S
 }
 
 /// Getting Lamp's copies and keeping them current, for the screens to follow: how far a download has got,
-/// and why the last one failed. One download per engine at a time; asking again joins it.
+/// and why the last one failed. One download per engine at a time; asking again joins it. An engine the
+/// person has a copy of is never downloaded: there is already a copy (`EngineInstall.path`).
 @MainActor
 final class EngineDownloads: ObservableObject {
     static let shared = EngineDownloads()
@@ -475,9 +536,9 @@ final class EngineDownloads: ObservableObject {
     }
 
     /// Moves to the release that should be in use when it differs from the one that is. Failure leaves the
-    /// copy in use as it was.
+    /// copy in use as it was. Only Lamp's own copy: the person's updates itself, or not, as they have it.
     func update(_ engine: Engine) async {
-        guard EngineInstall.path(for: engine) != nil else { return }
+        guard !EngineInstall.usesPersonsCopy(engine), EngineInstall.ownPath(for: engine) != nil else { return }
         _ = await run(engine)
     }
 
@@ -492,7 +553,7 @@ final class EngineDownloads: ObservableObject {
         let task = Task<Bool, Never> {
             do {
                 let release = try await EngineInstall.target(engine)
-                if release.version != EngineInstall.currentVersion(engine) || EngineInstall.path(for: engine) == nil {
+                if release.version != EngineInstall.currentVersion(engine) || EngineInstall.ownPath(for: engine) == nil {
                     try await EngineInstall.install(release, for: engine) { fraction in
                         guard first else { return }
                         Task { @MainActor in EngineDownloads.shared.progress[engine] = fraction }

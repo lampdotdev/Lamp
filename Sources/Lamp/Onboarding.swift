@@ -719,7 +719,7 @@ private struct BuilderCard: View {
     }
 
     /// Choosing a card is choosing the agent: a sign-in picks its tool straight away, Lamp downloads its
-    /// copy of the tool if it hasn't yet, and only the sign-in is asked for underneath.
+    /// own copy of the tool if the Mac has none, and only the sign-in is asked for underneath.
     private func pick(_ new: Builder.Choice) {
         problem = nil
         if choice != new {
@@ -731,7 +731,7 @@ private struct BuilderCard: View {
         choice = new
         let which: Engine? = new == .claude ? .claude : new == .chatGPT ? .codex : nil
         guard let which else { return }
-        // Saved whether or not Lamp's copy is here yet: once it is and is signed in, the choice stands.
+        // Saved whether or not a copy is here yet: once it is and is signed in, the choice stands.
         Builder.engine = which
         engine = which.rawValue
         guard EngineInstall.path(for: which) != nil else { downloads.start(which); return }
@@ -741,7 +741,7 @@ private struct BuilderCard: View {
         }
     }
 
-    /// Claude Code or ChatGPT: Lamp's copy downloading, then the sign-in if it's not done yet.
+    /// Claude Code or ChatGPT: Lamp's copy downloading when the Mac has none, then the sign-in if it's not done yet.
     @ViewBuilder
     private func account(_ which: Engine, app: String) -> some View {
         let installed = EngineInstall.path(for: which) != nil
