@@ -221,12 +221,8 @@ struct Transcript: View {
     /// worked on: that has to finish first.
     var sendAgain: ((LogLine) -> Void)?
     var retryPhone: ((String) -> Void)?
-    /// The request just sent from the chat, which it holds at the top while the answer comes in below, and
-    /// what's told where that request's row starts in the chat (`space`).
+    /// The request just sent from the chat, which it holds at the top while the answer comes in below.
     var pinned: UUID?
-    var pinnedTop: ((CGFloat) -> Void)?
-    /// The chat's content, unmoved by scrolling, where rows are measured.
-    static let space = "chatContent"
     /// Read so the chat follows the choice of what draws icons: it decides whether a "Draw Icon…" line shows.
     @AppStorage("iconModel") private var iconChoice = ""
 
@@ -238,6 +234,8 @@ struct Transcript: View {
         let latestRequest = lines.last { $0.kind == .user }?.id
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
             let isLast = index == items.count - 1
+            let gap = ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item,
+                                   isFinalAnswer: finalAnswers.contains(item.id))
             Group {
                 switch item {
                 case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack, sendAgain: sendAgain,
@@ -246,14 +244,9 @@ struct Transcript: View {
                 case .statuses(let lines): StatusGroup(lines: lines, running: isLast && busy && !progressShown)
                 }
             }
-            .padding(.top, ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item,
-                                        isFinalAnswer: finalAnswers.contains(item.id)))
-            // Measured with the gap above it, which is what's left showing above it at the top of the chat.
-            .background {
-                if item.id == pinned, let pinnedTop {
-                    Color.clear.onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Self.space)).minY } action: { pinnedTop($0) }
-                }
-            }
+            .padding(.top, gap)
+            // The gap goes off the top of the chat with whatever is above it.
+            .layoutValue(key: ChatStack.Pinned.self, value: item.id == pinned ? gap : nil)
         }
     }
 
