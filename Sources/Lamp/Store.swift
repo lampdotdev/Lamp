@@ -1856,7 +1856,9 @@ final class Store: ObservableObject {
         try? Template.writeSupport(for: project)
         let changed = Runtime.sourcesChanged(project)
         if changed {
-            guard await buildFixingErrors(project) else { return TurnResult(end: .failed, watched: isWatching(project.id)) }
+            guard await buildFixingErrors(project) else {
+                return TurnResult(end: owner.asked ? .replied : .failed, watched: isWatching(project.id))
+            }
         }
         // Opening the app brings it in front of Lamp, so whether the user was watching is decided first.
         let watched = isWatching(project.id)
@@ -1891,8 +1893,12 @@ final class Store: ObservableObject {
         for _ in 0..<2 where crash != nil {
             log(project, .status, "Fixing the crash…")
             guard await runAgent("The app builds, but it quit right after launching. Find the cause and fix it.\n\n\(crash!)",
-                                 on: project),
-                  await buildFixingErrors(project) else { return TurnResult(end: .failed, watched: watched) }
+                                 on: project) else { return TurnResult(end: .failed, watched: watched) }
+            // It asked instead of fixing: the turn waits for the answer here, as it does after any question.
+            if owner.asked { return TurnResult(end: .replied, watched: watched) }
+            guard await buildFixingErrors(project) else {
+                return TurnResult(end: owner.asked ? .replied : .failed, watched: watched)
+            }
             let commit = committed ? "-q --amend --no-edit" : "-qm 'Fix a crash on launch'"
             switch await Versions.commitAll(commit, in: project.dir) {
             case .saved: (committed, unsaved) = (true, false)
@@ -1952,7 +1958,8 @@ final class Store: ObservableObject {
         return !output.trimmed.isEmpty
     }
 
-    /// Builds the app, sending compiler errors back to the agent up to three times. False when it still doesn't build.
+    /// Builds the app, sending compiler errors back to the agent up to three times. False when it still doesn't
+    /// build, or when the agent asked the person something instead (`Turn.asked`).
     private func buildFixingErrors(_ project: LampProject) async -> Bool {
         var errors = await build(project)
         for _ in 0..<3 where errors != nil {
@@ -1961,6 +1968,9 @@ final class Store: ObservableObject {
             log(project, .status, "Fixing a problem…")
             guard await runAgent("The app failed to build. Fix these compiler errors:\n\n\(errors!)",
                                  on: project) else { return false }
+            // Asking ends the turn while fixing as well: no build, and no further try, under a card that
+            // hasn't been answered. Whoever called says the turn is waiting, not that it failed.
+            if turns[project.id]?.asked == true { return false }
             errors = await build(project)
         }
         guard turns[project.id]?.stopped != true, exists(project) else { return false }
