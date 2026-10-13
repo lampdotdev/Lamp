@@ -290,16 +290,7 @@ enum Versions {
 
     /// Saves a reduced copy of a screenshot as a version's picture.
     static func savePicture(_ screenshot: URL, in project: LampProject, for version: String) {
-        let url = pictureURL(in: project, for: version)
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let options = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 900,
-                       kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary
-        guard let source = CGImageSourceCreateWithURL(screenshot as CFURL, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options),
-              let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil)
-        else { return }
-        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
-        CGImageDestinationFinalize(destination)
+        Previews.write(screenshot, to: pictureURL(in: project, for: version), maxPixels: 900, quality: 0.8)
     }
 
     static func copyPicture(in project: LampProject, from version: String, to other: String) {
