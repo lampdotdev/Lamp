@@ -65,7 +65,7 @@ final class HealthTests: XCTestCase {
     func testEveryKindOfHealthDataHasItsUnit() throws {
         let support = Template.lampSupportSwift
         let start = try XCTUnwrap(support.range(of: "    enum LampHealth {"))
-        let end = try XCTUnwrap(support.range(of: "    /// The app's own files, from its Assets/ folder", range: start.upperBound..<support.endIndex))
+        let end = try XCTUnwrap(support.range(of: "    // MARK: - Photos", range: start.upperBound..<support.endIndex))
         let program = """
         import Foundation
         import HealthKit

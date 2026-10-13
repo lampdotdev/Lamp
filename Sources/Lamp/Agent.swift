@@ -272,7 +272,7 @@ enum Agent {
         per platform when a block will do. The rules below marked "On the Mac" apply inside the Mac's blocks and \
         the rest of the Mac's code; those marked "On iPhone and iPad" inside iOS's. The Mac-only building blocks \
         (folders, shortcuts that work in every app, the menu bar, the clipboard watcher, Mail, other apps, the \
-        permission screens, opening at login) exist only under `#if os(macOS)`; `LampMotion` only under \
+        permission screens, opening at login) exist only under `#if os(macOS)`; `LampMotion` and `LampHome` only under \
         `#if os(iOS)`; `LampImage` is NSImage on the Mac and UIImage on iOS. This app has no widget. Check both \
         halves compile before a look: `swift build` for the Mac's, `./build.sh ios` for iOS's (it builds into build/iOS, beside the Mac's build).
         """
@@ -374,8 +374,23 @@ enum Agent {
         `await LampText.recognize(in: nsImage)`; `.lampDropFiles { urls in }` on any view and `LampDropZone("Drop \
         screenshots here") { urls in }` for an empty state (Finder files, images from other apps, links); \
         `LampClipboardWatcher { item in }` (item.text / image / fileURLs; keep it alive) and \
-        `LampClipboardWatcher.copy(text)`; `LampNotifications.send("Title", body: "…")`. Make the most of being on the \
+        `LampClipboardWatcher.copy(text)`; `LampNotifications.send("Title", body: "…")`. \
+        \(Rules.sharedBlocks) Make the most of being on the \
         Mac: local files, drag and drop, the menu bar, keyboard shortcuts, and fitting into what the user already does.
+        """
+
+        /// The blocks a Mac and an iPhone both have, said in both kinds' rules.
+        static let sharedBlocks = """
+        Photos: `LampPhotos` (`authorize()`, `photos(days:)`, `photos(near:_:km:)`, `favorites()`, `albums()`, \
+        `photos(in:)`, `image(_:size:)`, `tags(of:)` for what a picture shows (empty in the simulator), `save(_:)`; choosing one is SwiftUI's \
+        `PhotosPicker`). Location: `LampLocation` (`current()` with a name from the map, `find(address)`, \
+        `distance(from:to:)`, `shared.watch()` for big moves, `shared.watchVisits()` on the iPhone for where the \
+        person stops and for how long, which needs `"backgroundModes": ["location"]`). Weather: `LampWeather` \
+        (`now(latitude:longitude:)`, `hours`, `days`, `here()`), after `{"weather": true}` in capabilities.json, \
+        for apps with an iPhone half only; the team also turns WeatherKit on for the app at developer.apple.com \
+        once, and the call's message says so until then. Music: `LampMusic` (`authorize()`, `recentlyPlayed()`, \
+        `library()`, `search(_:)`, `play(_:)`, `pause()`, and on the iPhone `nowPlaying`), Apple Music only, with \
+        MusicKit turned on for the app at developer.apple.com the same way.
         """
 
         static let iPhoneBlocks = """
@@ -387,8 +402,10 @@ enum Agent {
         dragged in from another app, which matters on iPad); `LampNotifications.send("Title", body: "…")`. This \
         app's copy of the library has none of the Mac-only blocks (watching folders, the user's folders, shortcuts \
         that work in every app, opening at login, the clipboard watcher, Mail, other apps, the menu bar, the \
-        permission screens): never call them. Make the most of being on a phone: the camera, photos, location, \
-        haptics, and being with the person wherever they are.
+        permission screens): never call them. \(Rules.sharedBlocks) Home: `LampHome` (iPhone only, after \
+        `{"homekit": true}` in capabilities.json): `accessories()` (lights, locks, thermostats, sensors, switches, \
+        each with its room and state), `set(_:on:)`, `set(_:brightness:)`, `set(_:locked:)`, `read(_:)`. Make the most \
+        of being on a phone: the camera, photos, location, haptics, and being with the person wherever they are.
         """
 
         static let finder = """
@@ -809,7 +826,7 @@ enum Agent {
         wants each of these (microphone, speech, camera, photos, location, motion, Bluetooth, Face ID, health, \
         NFC, Siri, nearby devices, music), so just request authorization before use and handle denial in the \
         interface. Health, NFC, Siri, nearby phones and background work need a declaration first: write \
-        `capabilities.json` at the app's root, e.g. `{"healthkit": true, "nfc": true, "siri": true, \
+        `capabilities.json` at the app's root, e.g. `{"healthkit": true, "nfc": true, "siri": true, "weather": true, "homekit": true, \
         "backgroundModes": ["audio", "location"], "bonjourServices": ["_myapp._tcp", "_myapp._udp"], \
         "backgroundTasks": ["com.example.refresh"]}`, and Lamp signs the app for them and declares them. Modes: \
         audio, location, fetch, processing, remote-notification, bluetooth-central, bluetooth-peripheral. \

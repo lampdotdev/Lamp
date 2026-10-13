@@ -316,6 +316,22 @@ there, and an app for both reads on the iPhone and keeps what the Mac shows in L
 HealthKit with no data in it, so the agent is told to save a sample before reading (`Agent.Rules.iPhoneHardware`).
 `HealthTests` compiles the block out of the template and checks every kind's unit.
 
+## Photos, location, weather, music and the home
+
+Five more building blocks in LampSupport.swift, each the one place for its framework: `LampPhotos` (Photos: the
+library by day and place, albums, a picture at a size, what a picture shows by Vision, saving; the picker is
+SwiftUI's), `LampLocation` (CoreLocation: where the person is with a name from the map, watching big moves,
+and on the iPhone the visits where they stop, kept in LampStore), `LampWeather` (WeatherKit: now, hours, days),
+`LampMusic` (MusicKit: recently played, the library, the catalog, playing; and on the iPhone what the Music app
+is playing) and `LampHome` (HomeKit, iPhone only: accessories with their room and state, switching, dimming and
+locking). The first four compile on both platforms. Weather and the home are entitlements, declared in
+`capabilities.json` as `weather` and `homekit` (`Template.Capabilities`): weather goes to both halves of an app
+Apple signs for a team and never to a Mac app on its own (`weather(for:)`), the home to the iPhone's signature
+only. Apple also wants WeatherKit and MusicKit turned on for the app under App Services at developer.apple.com,
+which automatic signing doesn't do: the blocks' failures say so. The reasons the system shows are in
+`iosUsageDescriptions` and, for the Mac, in `Store.deploy` and `universalMacInfoPlist`. The agent is told in
+`Agent.Rules.sharedBlocks` (both kinds) and the Home part of `iPhoneBlocks`.
+
 ## Generated apps
 
 Lamp owns three files in every app and never trusts what's in them: `Sources/LampSupport.swift`, `build.sh`
