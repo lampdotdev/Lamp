@@ -52,12 +52,12 @@ final class OpensFromFinderTests: XCTestCase {
         try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents"), withIntermediateDirectories: true)
         let plist = app.appendingPathComponent("Contents/Info.plist")
         XCTAssertTrue(NSDictionary(dictionary: ["CFBundleIdentifier": "dev.lamp.app.folderpeek"]).write(to: plist, atomically: true))
-        Template.Capabilities.load(project).apply(to: app)
+        Template.Capabilities.load(project).apply(to: app, for: project)
         let written = try XCTUnwrap(NSDictionary(contentsOf: plist))
         XCTAssertEqual(((written["CFBundleDocumentTypes"] as? [[String: Any]])?.first?["LSItemContentTypes"] as? [String]), ["public.folder"])
         XCTAssertEqual(written["CFBundleIdentifier"] as? String, "dev.lamp.app.folderpeek")
         // An app that no longer opens anything stops being offered.
-        Template.Capabilities().apply(to: app)
+        Template.Capabilities().apply(to: app, for: project)
         XCTAssertNil(try XCTUnwrap(NSDictionary(contentsOf: plist))["CFBundleDocumentTypes"])
     }
 

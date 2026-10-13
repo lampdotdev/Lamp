@@ -216,7 +216,7 @@ enum Agent {
                      Rules.script, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
                      half(onPhone, Rules.iPhoneHardware), Rules.store, Rules.kinds(mac: true),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
-                     Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
+                     Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
                      Rules.universalTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
         return (Rules.universalHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: family.name)
@@ -235,7 +235,7 @@ enum Agent {
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.permissions] }
         rules += [Rules.script, mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules.append(Rules.computer) }
-        if !mac { rules.append(Rules.iPhoneHardware) }
+        if !mac { rules += [Rules.iPhoneHardware, Rules.icloud] }
         rules += [Rules.store, Rules.kinds(mac: mac), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
                   Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
@@ -283,6 +283,21 @@ enum Agent {
         One `WindowGroup`. Package.swift and build.sh belong to Lamp and are written afresh before every build, so an \
         edit to either is lost: no dependencies, plugins, compiler flags or build steps; everything the app needs \
         goes in Sources/.
+        """
+
+        static let icloud = """
+        - To keep the person's data the same on every device signed in to their iCloud account (the Mac and the \
+        iPhone, or an iPhone and an iPad), declare `{"icloud": true}` in `capabilities.json` and keep that data \
+        with `LampSync` from LampSupport.swift instead of LampStore: `@StateObject private var notes = \
+        LampSync.collection("notes", of: Note.self)` in the view that owns the list (one object per name, shared \
+        by every view that asks), then `notes.items`, `notes.put(note)`, `notes.delete(id)`, `notes.get(id)`; the \
+        view follows changes made anywhere. Items are Codable and Identifiable, and the same rules as LampStore's \
+        apply to changing a saved type. Lamp signs the app for iCloud with the person's Apple team, which must be \
+        in the Apple Developer Program (a free account can't use iCloud; the build then fails at signing, and \
+        you say so plainly). Sync needs the device signed in to iCloud; the simulator usually isn't, so what you \
+        see there is the data kept on that device, and `LampSync.shared.status` says why. Offer the status in \
+        the app's settings. Use it for the data people would expect everywhere; settings for one device stay \
+        in LampStore.
         """
 
         static let universalTry = """
