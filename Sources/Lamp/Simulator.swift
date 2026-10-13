@@ -146,6 +146,7 @@ extension Simulator {
     enum Driver {
         struct Action: Decodable, Sendable {
             let action: String
+            var target: String?       // what to act on: an id ("b2") or exact name from the screen as text
             var x: Double?
             var y: Double?
             var text: String?
@@ -495,6 +496,22 @@ extension Simulator {
         static func forget(_ projectID: String) { lastFields = lastFields.filter { !$0.key.hasPrefix(projectID + ":") } }
 
         private static func carryOut(_ action: Action, on screen: Screen, live: () async -> Bool) async -> String {
+            // What the action names is found in the screen as text, and acted on at its middle: on an iPhone
+            // everything takes a tap, so the point is the action.
+            var action = action
+            if let target = action.target?.trimmed, !target.isEmpty {
+                guard let items = items(on: screen) else { return "\(action.action) \"\(target)\": " + unread(screen) }
+                switch find(target, in: items) {
+                case .one(let index):
+                    action.x = items[index].frame.midX
+                    action.y = items[index].frame.midY
+                case .none:
+                    return "\(action.action) \"\(target)\": nothing on the screen is called that. Use an id or exact name from the " +
+                        "screen as text, or x and y for what isn't listed there."
+                case .several(let ids):
+                    return "\(action.action) \"\(target)\": several things are called that (\(ids.joined(separator: ", "))). Use one of their ids."
+                }
+            }
             let at = "\(Int(action.x ?? 0)), \(Int(action.y ?? 0))"
             let point = screen.point(action.x ?? 0, action.y ?? 0)
             switch action.action {
@@ -532,8 +549,16 @@ extension Simulator {
                 guard let text = action.text else { return "type: no text given" }
                 // The field with the keyboard is the one last tapped; the bridge doesn't say which has focus,
                 // so the text goes to the text field under the point given, or the one tapped last.
-                guard let field = rememberedField(in: screen) ?? textField(near: point, in: screen) ?? onlyTextField(in: screen) else {
-                    return "typed nothing: tap a text field first, then type"
+                // A named field is the one meant, whatever was tapped before it.
+                let field: AXUIElement
+                if let target = action.target {
+                    guard let named = textField(near: point, in: screen) else { return "type into \"\(target)\": it isn't a text field" }
+                    field = named
+                } else {
+                    guard let found = rememberedField(in: screen) ?? textField(near: point, in: screen) ?? onlyTextField(in: screen) else {
+                        return "typed nothing: tap a text field first, then type"
+                    }
+                    field = found
                 }
                 // The text replaces what the field holds: a tapped field on an iPhone shows its old value
                 // formatted ("0.00"), and typing after it would make nonsense of a number.
@@ -739,15 +764,17 @@ extension Simulator {
             }
         }
 
-        /// One short line for each thing: what it is, its name, what it holds, the point to tap and its size.
+        /// One short line for each thing: its id, what it is, its name, what it holds, the point to tap and its size.
+        /// The same lines a Mac app writes for its window (`LampScreen` in LampSupport.swift), so the agent
+        /// learns one format: a change here is a change there, and a test holds the two together.
         nonisolated static func text(for items: [Item]) -> String? {
             guard !items.isEmpty else { return nil }
             func short(_ text: String, _ limit: Int) -> String {
                 let line = text.replacingOccurrences(of: "\n", with: " ")
                 return line.count > limit ? line.prefix(limit - 1) + "…" : line
             }
-            var lines = items.prefix(itemLimit).map { item -> String in
-                var line = word(for: item.role)
+            var lines = zip(ids(for: items), items.prefix(itemLimit)).map { id, item -> String in
+                var line = "\(id) \(word(for: item.role))"
                 if !item.label.isEmpty { line += " \"\(short(item.label, 80))\"" }
                 var value = item.value == item.label ? "" : item.value
                 if item.role == kAXCheckBoxRole { value = value == "1" ? "on" : value == "0" ? "off" : value }
@@ -758,8 +785,59 @@ extension Simulator {
                 return line + " @\(Int(item.frame.midX.rounded())),\(Int(item.frame.midY.rounded())) \(Int(item.frame.width.rounded()))x\(Int(item.frame.height.rounded()))"
             }
             if items.count > itemLimit { lines.append("… and \(items.count - itemLimit) more") }
-            return "The screen as text, in reading order. Each line is what a thing is, its name, \"= \" what it holds, " +
-                "then @x,y (its middle in the picture: where to tap it) and its size:\n" + lines.joined(separator: "\n")
+            return heading + "\n" + lines.joined(separator: "\n")
+        }
+
+        nonisolated static let heading = "The screen as text, in reading order. Each line is a thing's id, what it is, its name, \"= \" what it holds, " +
+            "then @x,y (its middle in the picture) and its size. Act on a thing with `target` set to its id or exact name; " +
+            "x and y are for what isn't listed:"
+
+        /// A thing's id: a letter for its kind and a number counted within that kind, so a new label doesn't
+        /// renumber the buttons.
+        nonisolated static func ids(for items: [Item]) -> [String] {
+            var counts: [String: Int] = [:]
+            return items.map { item in
+                let letter = prefix(for: word(for: item.role))
+                counts[letter, default: 0] += 1
+                return "\(letter)\(counts[letter]!)"
+            }
+        }
+
+        nonisolated static func prefix(for role: String) -> String {
+            switch role {
+            case "button": "b"
+            case "text field", "text area", "search field", "password field", "combo box": "f"
+            case "text", "heading": "t"
+            case "switch": "s"
+            case "choice", "tab": "c"
+            case "slider", "stepper": "n"
+            case "picture": "i"
+            case "link": "k"
+            case "picker", "menu button", "menu item", "tabs": "m"
+            case "row": "r"
+            default: "e"
+            }
+        }
+
+        enum Found: Equatable { case one(Int), none, several([String]) }
+
+        /// The thing a `target` names: an id from the list, else the one thing with exactly that name.
+        nonisolated static func find(_ target: String, in items: [Item]) -> Found {
+            let ids = ids(for: items)
+            let wanted = plain(target)
+            if let index = ids.firstIndex(where: { $0.lowercased() == wanted }) { return .one(index) }
+            var matches = items.indices.filter { plain(items[$0].label) == wanted }
+            // Something and its own caption are one thing: the control.
+            if matches.count > 1 { matches = matches.filter { items[$0].role != kAXStaticTextRole } }
+            switch matches.count {
+            case 0: return .none
+            case 1: return .one(matches[0])
+            default: return .several(matches.map { ids[$0] })
+            }
+        }
+
+        nonisolated private static func plain(_ text: String) -> String {
+            text.lowercased().replacingOccurrences(of: "...", with: "…").trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         nonisolated private static func word(for role: String) -> String {

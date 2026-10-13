@@ -2418,8 +2418,13 @@ final class Store: ObservableObject {
         guard Self.binary(of: project, contains: "lampUseAppSignature") else {
             return (200, ["text": "The open app was built before use_app could do this. Call look_at_app to rebuild it, then try again."])
         }
+        let readsScreen = Self.binary(of: project, contains: Self.screenTextMarker)
+        if !readsScreen, actions.contains(where: { ($0["target"] as? String)?.isEmpty == false }) {
+            return (200, ["text": "The open app was built before use_app could act on things by name. Call look_at_app to rebuild it, then try again."])
+        }
         let id = UUID().uuidString
         let printed = Runtime.logSize(project)
+        let asked = Date()
         // Signed with the app's token rather than carrying it: distributed notifications reach every process.
         let key = SymmetricKey(data: Data(Template.token(for: project).utf8))
         let signature = HMAC<SHA256>.authenticationCode(for: Data("\(id)\n\(json)".utf8), using: key)
@@ -2441,13 +2446,18 @@ final class Store: ObservableObject {
             text += "\n\nThis is the app as last built: it doesn't have the changes you've made to the code since. " +
                 "Call look_at_app to build and open them."
         }
+        // The front window in words goes wherever its picture does: what's on it is the same thing either way.
+        if Privacy.sharesPictures, readsScreen, let words = await Runtime.screenText(of: project, since: asked) { text += "\n\n" + words }
         text += Privacy.sharesPictures
-            ? "\n\nPictures of its windows follow, frontmost first. Points for the next use_app are pixels in the first picture."
+            ? "\n\nPictures of its windows follow, frontmost first. The screen as text is the first picture's, and x and y for the next use_app are pixels in it."
             : "\n\n" + Privacy.picturesOff
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
         return (200, ["text": text, "screenshots": Self.agentPictures(Runtime.pictures(of: project), in: project)])
     }
+
+    /// A line every app that writes its screen as text (`LampScreen` in LampSupport.swift) has in its binary.
+    private static let screenTextMarker = "The screen as text, in reading order"
 
     /// `use_app` for an iPhone app: Lamp drives the simulator through the Mac's accessibility system
     /// (Simulator.Driver), then a fresh picture of the screen follows the report.
@@ -4503,9 +4513,11 @@ final class Store: ObservableObject {
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
             return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
         }
+        var since = Date()
         if !changed, NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first != nil {
             // Nothing to rebuild and the app is open: ask it for fresh pictures instead of relaunching it.
             let asked = Date()
+            since = asked
             Runtime.requestScreenshots(of: project)
             screenshots = await Runtime.screenshots(of: project, since: asked, waiting: 2)
             note = "The app is running your latest code; nothing needed rebuilding."
@@ -4514,6 +4526,7 @@ final class Store: ObservableObject {
         }
         if screenshots.isEmpty {
             let launched = Date()
+            since = launched
             let crash = await install(project, inFront: false)
             turn.look.installed = true
             turn.look.crash = crash
@@ -4525,9 +4538,12 @@ final class Store: ObservableObject {
         }
         var text = note + " " + (screenshots.isEmpty
             ? "It has no window open, so there's no picture. If it lives in the menu bar, use_app's bar_icon opens its panel."
-            : Privacy.sharesPictures ? "Pictures of its windows follow, frontmost first." : Privacy.picturesOff)
+            : Privacy.sharesPictures ? "Pictures of its windows follow, frontmost first; x and y for use_app are pixels in the first." : Privacy.picturesOff)
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         text += Self.handingHint(for: project)
+        // The front window in words, beside its picture, from the app itself (LampScreen in LampSupport.swift).
+        if Privacy.sharesPictures, !screenshots.isEmpty, Self.binary(of: project, contains: Self.screenTextMarker),
+           let words = await Runtime.screenText(of: project, since: since) { text += "\n\n" + words }
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
     }

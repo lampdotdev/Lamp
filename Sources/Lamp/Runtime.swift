@@ -160,6 +160,22 @@ enum Runtime {
         return nil
     }
 
+    /// The front window as text, which a Mac app writes beside its pictures (`LampScreen` in the app): what's on
+    /// it with an id for each thing, for the agent to read and act on by name. Written a moment after the
+    /// pictures, so it's waited for briefly. Nil when the app wrote none since `date` (an app built before
+    /// there was one, or a window with nothing named in it).
+    static func screenText(of project: LampProject, since date: Date) async -> String? {
+        let url = folder(project).appendingPathComponent("screen.txt")
+        func fresh() -> String? {
+            guard (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast > date else { return nil }
+            return try? String(contentsOf: url, encoding: .utf8)
+        }
+        for _ in 0..<6 where fresh() == nil {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        return fresh()
+    }
+
     /// The pictures the app last saved of its windows, frontmost first.
     static func pictures(of project: LampProject) -> [URL] {
         ["screenshot.png", "screenshot-2.png", "screenshot-3.png"].map { folder(project).appendingPathComponent($0) }

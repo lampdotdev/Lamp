@@ -205,7 +205,11 @@ iPhone's whole accessibility tree to the Mac, so Lamp finds what's under a point
 field's text, and sends real mouse events for swipes, scrolls and long presses. Pictures are made at point
 size, so a pixel in them is a point on the screen. The same tree, read whole, is the screen as text that
 `look_at_app` and `use_app` return beside the picture (`Driver.screenText`: one line per control or piece of
-text, with the point to tap it). The app showing the simulator is Simulator, or from Xcode 27 Device Hub
+text, with a short id, its name, what it holds and the point to tap it). An action names what it's for by
+`target`, an id or exact name from that list (`Driver.find`), and is carried out at the thing's middle; x and y
+are for what the list doesn't have. A Mac app does the same for itself (see "Generated apps" below), and the two
+lists share one format: `Driver.text` here and `LampScreen.text` in LampSupport.swift are copies, held together
+by `MacScreenTextTests`, so a change to one is a change to the other. The app showing the simulator is Simulator, or from Xcode 27 Device Hub
 (`Simulator.viewers`), which shows one device at a time: Lamp chooses the device in its list
 (`Driver.choose`) and finds the screen a few layers down its window (`Driver.screenBoxes`: a group shaped like
 the screen that Device Hub marks `iOSContentGroup`, an undocumented subrole; two candidates in different places
@@ -260,6 +264,18 @@ into them, with no card, can run. Shared apps never carry them: import writes it
 app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_app`). It is a Swift
 string: after editing it, extract and type-check it (`swiftc -typecheck`), and bump anything that detects
 an outdated app (`Store.open` rebuilds apps built by an older Lamp).
+
+`use_app` on a Mac app is carried out by the app itself (`LampDriver`, reached by a distributed notification
+signed with the app's token, `Store.use`), so no Accessibility permission is needed. With every picture the
+app writes its front window as text (`LampScreen` in LampSupport.swift, `.lamp/runtime/screen.txt`): one line
+per thing its own accessibility tree names (NSAccessibility walked in-process, SwiftUI's elements included),
+with a short id, what it is, its name, what it holds and its middle in the picture. `look_at_app` and `use_app`
+return it beside the picture (`Runtime.screenText`), the same lines the iPhone driver writes. An action names
+what it's for by `target` (an id or exact name, `LampScreen.find`): a button, switch, link or choice is asked
+to press itself (`accessibilityPerformPress`), a field takes the text in place of what it held, a slider or
+stepper takes a number or a step, and what has no action of its own, or isn't listed (a drawing, a canvas),
+is clicked at a point, pixels in the picture. Lamp tells an app built before the list existed by a line of the
+heading in its binary (`Store.screenTextMarker`): such an app is told to be rebuilt when a target is used.
 
 `capabilities.json` at an app's root is where the agent declares what the app needs beyond its code
 (`Template.Capabilities`): for an iPhone app the entitlements and background work described above, for a Mac
