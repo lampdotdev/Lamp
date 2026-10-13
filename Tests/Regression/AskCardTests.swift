@@ -46,12 +46,11 @@ final class AskCardTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode([LogLine].self, from: JSONEncoder().encode(lines)), lines)
     }
 
-    /// An answer waiting for setup is kept with the card it answers, under either name the card has had.
+    /// An answer waiting for setup is kept with the card it answers.
     func testAWaitingAnswerKeepsItsCardAcrossARelaunch() {
         let card = UUID()
         let kept = QueuedMessage(saved: QueuedMessage(text: "Who is it for? Just me.", card: card).saved, attachments: [])
         XCTAssertEqual(kept.card, card)
-        XCTAssertEqual(QueuedMessage(saved: ["text": "Just me", "ask": card.uuidString], attachments: []).card, card)
         XCTAssertNil(QueuedMessage(saved: ["text": "Make it blue"], attachments: []).card)
     }
 

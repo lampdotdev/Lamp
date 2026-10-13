@@ -194,10 +194,9 @@ extension QueuedMessage {
         return saved
     }
 
-    /// `ask` is the name the card had in what an earlier Lamp kept.
     init(saved: [String: Any], attachments: [URL]) {
         self.init(text: saved["text"] as? String ?? "", attachments: attachments,
-                  card: ((saved["card"] ?? saved["ask"]) as? String).flatMap(UUID.init(uuidString:)))
+                  card: (saved["card"] as? String).flatMap(UUID.init(uuidString:)))
     }
 }
 
