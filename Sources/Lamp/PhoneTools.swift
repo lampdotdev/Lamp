@@ -300,7 +300,7 @@ enum PhoneTools {
                     guard !teams.contains(where: { !free.contains($0.id) }) else {
                         return stop(.account, "Choose your paid Apple team", "This app keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership, and the team chosen in Lamp is a free one. Click Open Settings and choose your paid team under Building, then click Check Again.", .settings)
                     }
-                    return stop(.account, "This app needs a paid Apple membership", "This app keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership. The account signed in to Xcode is a free one. Click See Membership to join on Apple's website, then click Check Again. To keep working without one, click Cancel and choose a simulator under Try On.", .membership)
+                    return stop(.account, "This app needs a paid Apple membership", "This app keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership. The account signed in to Xcode is a free one. Click See Membership to join on Apple's website, then click Check Again. To keep working without one, click Cancel and choose a simulator under Try On, or ask Lamp to keep the data on the device instead.", .membership)
                 }
             }
             report.passed.append(.account)

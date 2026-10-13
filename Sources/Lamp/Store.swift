@@ -2025,7 +2025,9 @@ final class Store: ObservableObject {
     /// build, or when the agent asked the person something instead (`Turn.asked`).
     private func buildFixingErrors(_ project: LampProject) async -> Bool {
         var errors = await build(project)
-        for _ in 0..<3 where errors != nil {
+        // The person's Apple account, not the code: build has said so, and the agent has nothing to fix.
+        func isTheAccount() -> Bool { errors != nil && errors == macMembershipProblem(project) }
+        for _ in 0..<3 where errors != nil && !isTheAccount() {
             // A build the user stopped (or whose app they deleted) isn't a problem for the agent to fix.
             guard turns[project.id]?.stopped != true, exists(project) else { return false }
             log(project, .status, "Fixing a problem…")
@@ -2037,10 +2039,16 @@ final class Store: ObservableObject {
             errors = await build(project)
         }
         guard turns[project.id]?.stopped != true, exists(project) else { return false }
-        if errors != nil {
+        if errors != nil, !isTheAccount() {
             log(project, .error, ErrorMessages.buildFailed)
         }
         return errors == nil
+    }
+
+    /// The Mac half of an app for both is signed for the person's team, so one that keeps data in iCloud
+    /// can't be built there on a free account (`Devices.membershipProblem`). Nil anywhere else.
+    private func macMembershipProblem(_ project: LampProject) -> String? {
+        project.platform == .universal && !project.onIOS ? Devices.membershipProblem(for: project, on: "this Mac") : nil
     }
 
     /// Returns false when the agent couldn't run at all (bad key, no credit, …), after telling the user why.
@@ -2969,9 +2977,10 @@ final class Store: ObservableObject {
         guard begin(project) != nil else { return }
         defer { finish(project) }
         guard let project = await materialize(project) else { return }
-        if await build(project) == nil {
+        let errors = await build(project)
+        if errors == nil {
             await installReportingCrash(project)
-        } else {
+        } else if errors != macMembershipProblem(project) {
             log(project, .error, ErrorMessages.appDoesNotBuild)
         }
     }
@@ -3208,6 +3217,13 @@ final class Store: ObservableObject {
             log(project, .error, problem)
             return problem
         }
+        // Xcode would get as far as signing and fail there: said first, in the person's words, and once for
+        // a request, however many times the request tries to build.
+        if let problem = macMembershipProblem(project) {
+            let said = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }.contains { $0.kind == .error && $0.text == problem }
+            if !said { log(project, .error, problem) }
+            return problem
+        }
         let command = universal ? "./build.sh \(project.onIOS ? "ios" : "mac")" : "./build.sh"
         let status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: universal ? ["LAMP_TEAM": Devices.team] : [:],
                                      started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
@@ -3433,6 +3449,10 @@ final class Store: ObservableObject {
             return nil
         }
         let name = device?.name ?? "your phone"
+        if let problem = Devices.membershipProblem(for: project, on: name, team: team) {
+            failed(problem)
+            return nil
+        }
         do {
             try Template.writeDeviceProject(for: project, team: team)
         } catch {
@@ -4560,6 +4580,9 @@ final class Store: ObservableObject {
         try? Template.writeSupport(for: project)
         let changed = Runtime.sourcesChanged(project)
         if changed, let errors = await build(project) {
+            if errors == macMembershipProblem(project) {
+                return (200, ["text": "The app can't be built for this Mac, and Lamp has told the person why: \(errors)\n\nThis isn't a mistake in the code. Don't take iCloud out unless the person asked for that; finish what was asked without a look."])
+            }
             return (200, ["text": "The app doesn't build yet. Fix these compiler errors:\n\n\(errors)"])
         }
         var note = "The app built and is running."

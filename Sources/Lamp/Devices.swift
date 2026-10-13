@@ -237,6 +237,16 @@ enum Devices {
         output.split(separator: "\n").map(String.init).filter { !$0.trimmed.isEmpty }.suffix(lines).joined(separator: "\n")
     }
 
+    /// Why an app that keeps data in iCloud can't be built for `place` (the person's phone, this Mac), or nil
+    /// when it can: Apple signs iCloud only for a team in its Developer Program, so with a free account's team
+    /// Xcode's build would fail at signing. Said at the build, never before a request: a message always
+    /// reaches the agent, which is how the person takes iCloud out again.
+    static func membershipProblem(for project: LampProject, on place: String, team: String = Devices.team,
+                                  free: Set<String> = PhoneTools.xcodeFreeTeams()) -> String? {
+        guard free.contains(team), Template.Capabilities.load(project).container(for: project) != nil else { return nil }
+        return "\(project.name) keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership. Your Apple account is a free one, so Lamp can't put the app on \(place). Choose a simulator under Try On to keep working, or ask Lamp to keep the data on the device instead."
+    }
+
     /// What's wrong before anything is tried, in plain words, or nil when the phone is ready.
     static func problem(_ device: Device?, team: String) -> String? {
         guard let device else { return "Lamp can't see that phone. Plug it in with a data cable and unlock it, then Retry. If it still doesn't appear, choose it again under Try On." }

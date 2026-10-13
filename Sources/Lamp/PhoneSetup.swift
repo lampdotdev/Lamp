@@ -76,14 +76,16 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         startNext()
     }
 
-    func perform(for project: LampProject, in store: Store, cancelled: @escaping () -> Void = {},
+    /// `building` is for what only builds the app (Open, Rebuild & Open). A message is never held for a paid
+    /// team: it has to reach the agent, and the build says what it couldn't do (`Devices.membershipProblem`).
+    func perform(for project: LampProject, in store: Store, building: Bool = false, cancelled: @escaping () -> Void = {},
                  then: @escaping (LampProject) -> Void) {
         guard let current = store.current(project) else { cancelled(); return }
         // An app for both needs Xcode wherever it opens: its Mac build is Xcode's too (Template.universalBuildSh).
         guard current.platform.hasIOS else { then(current); return }
         perform(resolve: {
             guard let current = store.current(project) else { return nil }
-            return Context(for: current, phone: current.onIOS ? current.device : nil)
+            return Context(for: current, phone: current.onIOS ? current.device : nil, building: building)
         }, cancelled: cancelled) {
             if let current = store.current(project) { then(current) }
             else { cancelled() }
@@ -463,13 +465,14 @@ struct PhoneSetupView: View {
 }
 
 extension PhoneSetup.Context {
-    /// What an app needs checked before it is built for where it opens, `phone` being the person's own
-    /// device when it opens there. The simulator's copy isn't signed for a team, so there an account is asked
-    /// for only by an app for both, and a paid one by nothing.
-    init(for project: LampProject, phone: String?) {
+    /// What an app needs checked before a request or, with `building`, before it is built for where it opens,
+    /// `phone` being the person's own device when it opens there. A paid team is asked for only before a
+    /// build that is signed for the team; the simulator's copy isn't, so there an account is asked for only
+    /// by an app for both, and a paid one by nothing.
+    init(for project: LampProject, phone: String?, building: Bool = false) {
         self.init(family: project.family, phone: phone, requiresPhoneTools: project.platform.hasIOS,
                   requiresTeam: project.platform == .universal,
-                  requiresPaidTeam: (phone != nil || (project.platform == .universal && !project.onIOS)) && Self.usesICloud(project))
+                  requiresPaidTeam: building && (phone != nil || (project.platform == .universal && !project.onIOS)) && Self.usesICloud(project))
     }
 
     static func usesICloud(_ project: LampProject) -> Bool {
@@ -480,7 +483,7 @@ extension PhoneSetup.Context {
 @MainActor
 extension Store {
     func openPrepared(_ project: LampProject) {
-        PhoneSetup.shared.perform(for: project, in: self) { current in Task { await self.open(current) } }
+        PhoneSetup.shared.perform(for: project, in: self, building: true) { current in Task { await self.open(current) } }
     }
     func choosePreparedDevice(_ project: LampProject, _ phone: String?) {
         PhoneSetup.shared.perform(resolve: {
@@ -497,6 +500,6 @@ extension Store {
     }
 
     func runPrepared(_ project: LampProject) {
-        PhoneSetup.shared.perform(for: project, in: self) { current in Task { await self.run(current) } }
+        PhoneSetup.shared.perform(for: project, in: self, building: true) { current in Task { await self.run(current) } }
     }
 }
