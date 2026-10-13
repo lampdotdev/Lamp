@@ -16,6 +16,26 @@ final class PhoneSetupTests: XCTestCase {
         XCTFail("The check did not finish")
     }
 
+    func testAMessageGoesAheadOfABuildStoppedForAPaidMembership() async {
+        var issue = PhoneTools.Issue(step: .account, title: "Needs a paid membership", message: "Join", action: .membership)
+        issue.needsPaidTeam = true
+        let stopped = PhoneTools.Report(issue: issue)
+        let model = PhoneSetup(presentsWindow: false) { context in context.requiresPaidTeam ? stopped : self.ready() }
+        var built = false, buildCancelled = false, sent = false, sendCancelled = false
+        model.perform(resolve: { .init(requiresTeam: true, requiresPaidTeam: true) }, cancelled: { buildCancelled = true }) { built = true }
+        await settle(model)
+        XCTAssertTrue(model.hasRequest)
+        XCTAssertFalse(built)
+        // The window is still up when the person sends a message.
+        model.perform(resolve: { .init(requiresTeam: true) }, cancelled: { sendCancelled = true }) { sent = true }
+        await settle(model)
+        XCTAssertTrue(sent)
+        XCTAssertFalse(sendCancelled)
+        XCTAssertTrue(buildCancelled)
+        XCTAssertFalse(built)
+        XCTAssertFalse(model.hasRequest)
+    }
+
     func testEveryActionRunsWhenSubmittedDuringAnotherCheck() async {
         var release: CheckedContinuation<PhoneTools.Report, Never>?
         var calls = 0

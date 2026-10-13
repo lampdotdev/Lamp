@@ -31,6 +31,8 @@ enum PhoneTools {
         let title: String
         let message: String
         let action: Action
+        /// The account is a free one and this app needs a paid one: nothing the person can finish in a moment.
+        var needsPaidTeam = false
         var button: String {
             switch action {
             case .installXcode: return "Open App Store"
@@ -297,10 +299,11 @@ enum PhoneTools {
             if requiresPaidTeam {
                 let free = probe.freeTeams()
                 if free.contains(team) {
-                    guard !teams.contains(where: { !free.contains($0.id) }) else {
-                        return stop(.account, "Choose your paid Apple team", "This app keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership, and the team chosen in Lamp is a free one. Click Open Settings and choose your paid team under Building, then click Check Again.", .settings)
-                    }
-                    return stop(.account, "This app needs a paid Apple membership", "This app keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership. The account signed in to Xcode is a free one. Click See Membership to join on Apple's website, then click Check Again. To keep working without one, click Cancel and choose a simulator under Try On, or ask Lamp to keep the data on the device instead.", .membership)
+                    var stopped = teams.contains(where: { !free.contains($0.id) })
+                        ? stop(.account, "Choose your paid Apple team", "This app keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership, and the team chosen in Lamp is a free one. Click Open Settings and choose your paid team under Building, then click Check Again.", .settings)
+                        : stop(.account, "This app needs a paid Apple membership", "This app keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership. The account signed in to Xcode is a free one. Click See Membership to join on Apple's website, then click Check Again. To keep working without one, click Cancel and choose a simulator under Try On, or ask Lamp to keep the data on the device instead.", .membership)
+                    stopped.issue?.needsPaidTeam = true
+                    return stopped
                 }
             }
             report.passed.append(.account)

@@ -73,7 +73,10 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
     func perform(resolve: @escaping () -> Context?, cancelled: @escaping () -> Void = {},
                  isReady: @escaping () -> Bool = { true }, then: @escaping () -> Void) {
         pending.append(Request(resolve: resolve, then: then, cancelled: cancelled, isReady: isReady))
-        startNext()
+        // A build stopped for a paid membership isn't about to go ahead, and what the person does next, a
+        // message asking for iCloud to be taken out above all, must not wait behind it or be closed with it.
+        if !checking, active?.waiting == true, report?.issue?.needsPaidTeam == true { cancelActive() }
+        else { startNext() }
     }
 
     /// `building` is for what only builds the app (Open, Rebuild & Open). A message is never held for a paid

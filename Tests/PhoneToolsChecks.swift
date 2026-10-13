@@ -178,6 +178,7 @@ final class PhoneToolsChecks {
                        PhoneTools.check(requiresTeam: true, requiresPaidTeam: true, probe: p)] {
             expectEqual(report.issue?.step, .account)
             expectEqual(report.issue?.action, .membership)
+            expectEqual(report.issue?.needsPaidTeam, true)
             expectTrue(report.issue?.message.contains("paid Apple Developer membership") == true)
             expectFalse(report.passed.contains(.account))
         }
@@ -195,11 +196,13 @@ final class PhoneToolsChecks {
         p.teams = { [(id: "ABCDE12345", name: "Test Person"), (id: "FGHIJ67890", name: "Test Company")] }
         p.freeTeams = { ["ABCDE12345"] }
         expectEqual(PhoneTools.check(phone: "phone", requiresPaidTeam: true, probe: p).issue?.action, .settings)
+        expectEqual(PhoneTools.check(phone: "phone", requiresPaidTeam: true, probe: p).issue?.needsPaidTeam, true)
         p.team = { "FGHIJ67890" }
         expectTrue(PhoneTools.check(phone: "phone", requiresPaidTeam: true, probe: p).ready)
         // Nobody signed in: a free account isn't offered to an app it can't sign.
         let none = PhoneTools.check(phone: "phone", requiresPaidTeam: true, probe: probe(fail: .account))
         expectEqual(none.issue?.title, "Sign in to Xcode")
+        expectEqual(none.issue?.needsPaidTeam, false)
         expectFalse(none.issue?.message.contains("a free one will do") == true)
         expectTrue(PhoneTools.check(phone: "phone", probe: probe(fail: .account)).issue?.message.contains("a free one will do") == true)
     }
