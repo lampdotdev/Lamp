@@ -353,12 +353,13 @@ enum Memory {
     }
 }
 
-/// Settings → Memory: whether Lamp keeps notes, and under that what it has noted about the person and about
-/// each app, to open, change and clear.
+/// Settings → Memory: whether Lamp keeps notes, and under that the notes it holds, about the person and about
+/// each app, to open, change and clear. Only notes that hold something are listed: a row for everything Lamp
+/// could have notes on was a column of "Nothing yet" for anyone with a few apps.
 struct MemorySettings: View {
     @EnvironmentObject private var store: Store
     @AppStorage(Memory.switchKey) private var memory = Memory.onByDefault
-    @State private var revision = 0   // bumps when notes change, so the rows re-read them
+    @State private var revision = 0   // bumps when notes change, so the list re-reads them
     @State private var editing: Row?
 
     /// One set of notes in the list. The app's id, not the app, so a row for an app that has since gone
@@ -368,11 +369,24 @@ struct MemorySettings: View {
         let title: String
     }
 
+    /// Every set of notes there could be, the person's first, split by whether it holds anything: `saved` is
+    /// the list, and `empty` is what Add Notes offers, so the person can still start a set Lamp hasn't.
+    /// An app that has no name yet is offered nothing to note.
+    static func rows(apps: [LampProject], holds: (Row) -> Bool) -> (saved: [Row], empty: [Row]) {
+        let all = [Row(id: "", title: "About you")] + apps.map { Row(id: $0.id, title: "About \($0.name)") }
+        let unnamed = Set(apps.filter(\.untitled).map(\.id))
+        return (all.filter(holds), all.filter { !holds($0) && !unnamed.contains($0.id) })
+    }
+
     private func place(_ row: Row) -> Memory.Place? {
         row.id.isEmpty ? .you : store.projects.first { $0.id == row.id }.map(Memory.Place.app)
     }
 
+    private func notes(_ row: Row) -> Memory.Notes { place(row).map(Memory.read) ?? Memory.Notes() }
+
     var body: some View {
+        let _ = revision
+        let rows = Self.rows(apps: store.projects) { !notes($0).isEmpty }
         Form {
             Section {
                 SettingsCheckboxes {
@@ -382,14 +396,22 @@ struct MemorySettings: View {
             // The notes depend on the checkbox: off, nothing reads them, so they aren't listed.
             if memory {
                 Section {
-                    ForEach([Row(id: "", title: "About you")] + store.projects.map { Row(id: $0.id, title: "About \($0.name)") }) { row in
-                        let notes = place(row).map(Memory.read) ?? Memory.Notes()
+                    if rows.saved.isEmpty {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Nothing yet")
+                            Text("Lamp takes notes as you build: how you like things, and what you decided for each app.")
+                                .font(.caption)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .foregroundStyle(.secondary)
+                    }
+                    ForEach(rows.saved) { row in
                         Button { editing = row } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(row.title)
-                                    Text(notes.isEmpty ? "Nothing yet" : notes.summary)
-                                        .font(.caption).foregroundStyle(notes.isEmpty ? .tertiary : .secondary).lineLimit(2)
+                                    Text(notes(row).summary)
+                                        .font(.caption).foregroundStyle(.secondary).lineLimit(2)
                                 }
                                 Spacer()
                                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
@@ -397,22 +419,30 @@ struct MemorySettings: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .id("\(row.id)-\(revision)")
                     }
                 } header: {
                     Text("What Lamp remembers")
                 } footer: {
-                    Text("Notes on how you like things and what you decided for each app. They stay on this Mac. Click one to read or clear it.")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(rows.saved.isEmpty ? "Notes stay on this Mac." : "Notes stay on this Mac. Click one to read, change or clear it.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if !rows.empty.isEmpty {
+                            Menu("Add Notes") {
+                                ForEach(rows.empty) { row in Button(row.title) { editing = row } }
+                            }
+                            .controlSize(.small)
+                            .fixedSize()
+                        }
+                    }
                 }
             }
         }
         .settingsPane()
         .onReceive(NotificationCenter.default.publisher(for: Memory.changed).receive(on: RunLoop.main)) { _ in revision += 1 }
         .sheet(item: $editing) { row in
-            NotesSheet(title: row.title, notes: place(row).map(Memory.read) ?? Memory.Notes()) { changed, opened in
+            NotesSheet(title: row.title, notes: notes(row)) { changed, opened in
                 guard let place = place(row) else { return .failed("This app isn't in Lamp any more.") }
                 // The sheet holds its own copy. If Lamp has rewritten the notes while it was open, saving the
                 // copy would undo that, so the person is told and chooses.
