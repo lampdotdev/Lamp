@@ -500,8 +500,18 @@ struct ProjectView: View {
     @State private var earlierOnScroll = false
     /// Whether the chat is at its end, and so follows what's added there.
     @State private var follow = ChatFollow()
-    /// Goes up with each message sent from here, which takes the chat back to its end.
+    /// Goes up with each message sent from here, which takes the chat to it (see `pinned`).
     @State private var sends = 0
+    /// A message was sent from here and its request isn't in the chat yet: when it arrives, it's pinned.
+    @State private var pinWanted = false
+    /// The request sent from here, scrolled to the top of the chat with room left below it for the answer,
+    /// as long as it's the latest one. Only one sent from here: a chat opens on its end, as ever.
+    @State private var pinned: UUID?
+    /// Where the pinned request starts and where the chat's rows end, in the chat's content (`Transcript.space`).
+    @State private var pinnedTop: CGFloat?
+    @State private var rowsEnd: CGFloat = 0
+    /// The pinned request is still to be scrolled to the top, once the room below it is there.
+    @State private var pinScrollPending = false
     /// What the toolbar knows of the app's history, for which of its buttons can do anything. Nil until read.
     @State private var history: History?
 
@@ -554,8 +564,10 @@ struct ProjectView: View {
         // Only the end of a long chat is shown until more is asked for (see `LogLine.recentStart`).
         let start = LogLine.recentStart(in: lines, atLeast: reach)
         let shown = start > 0 ? Array(lines[start...]) : lines
+        let latestRequest = lines.last { $0.kind == .user }?.id
         return ScrollViewReader { proxy in
             GeometryReader { area in
+                let room = roomBelowPin(latestRequest, height: area.size.height)
                 ScrollView {
                     // Every row shown is laid out, not only the ones in view. A stack that makes its rows as
                     // they scroll into view has to guess the height of the rest, and during a turn that
@@ -582,7 +594,16 @@ struct ProjectView: View {
                         // room: in a short window a pinned card would fill the chat and hide everything else.
                         chatRows(shown, height: area.size.height,
                                  cardPinned: building != nil && area.size.height >= Self.roomToPinCard)
+                        // Measured only while there's a request pinned: it moves with every word of an answer.
+                        if pinned != nil {
+                            Color.clear.frame(height: 0)
+                                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Transcript.space)).minY } action: { rowsEnd = $0 }
+                        }
+                        // Room for the answer to a request just sent: enough to take the request to the top
+                        // of the chat. The answer fills it as it comes; once there's more, the chat follows it.
+                        Color.clear.frame(height: room).id("bottom")
                     }
+                    .coordinateSpace(.named(Transcript.space))
                     .background(EarlierOnScroll(more: start > 0, follow: follow, watching: $earlierOnScroll) { showEarlier(lines, from: start) })
                     // A readable line length; wide windows get margins instead of longer lines.
                     .frame(maxWidth: 640)
@@ -595,18 +616,45 @@ struct ProjectView: View {
                 // no scrolling to get there.
                 .defaultScrollAnchor(.bottom)
                 // The chat follows what's added at its end, but only from the end: scrolled up to read
-                // something earlier, it stays there. Sending a message goes back to the end.
+                // something earlier, it stays there. A message sent goes to the top, with room below for the answer.
                 .onChange(of: lines.count) { followEnd(proxy) }
                 .onChange(of: written(lines)) { followEnd(proxy) }
                 .onChange(of: queued.count) { followEnd(proxy) }
                 .onChange(of: store.progress[project.id]?.plan.count) { followEnd(proxy) }
                 .onChange(of: store.progress[project.id]?.screenshot != nil) { followEnd(proxy) }
                 .onChange(of: sends) {
-                    follow.atEnd = true
-                    followEnd(proxy)
+                    // A message that waits its turn joins the queue at the end, which is where it's shown.
+                    pinWanted = !busy
+                    if busy {
+                        follow.atEnd = true
+                        followEnd(proxy)
+                    }
+                }
+                .onChange(of: latestRequest) {
+                    guard pinWanted, let latestRequest else { return }
+                    pinWanted = false
+                    pinned = latestRequest
+                    pinnedTop = nil
+                    pinScrollPending = true
+                }
+                // The room is made once the request has been measured; only then can it go to the top.
+                .onChange(of: pinnedTop) {
+                    guard pinScrollPending, pinnedTop != nil, let pinned else { return }
+                    pinScrollPending = false
+                    Task { @MainActor in
+                        await Task.yield()
+                        withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo(pinned, anchor: .top) }
+                    }
                 }
             }
         }
+    }
+
+    /// How much empty space the chat needs below its rows for the pinned request to reach the top of it.
+    private func roomBelowPin(_ latestRequest: UUID?, height: CGFloat) -> CGFloat {
+        guard let pinned, pinned == latestRequest, let pinnedTop else { return 0 }
+        // Less the scroll view's padding below the rows.
+        return max(0, height - 16 - (rowsEnd - pinnedTop))
     }
 
     private func followEnd(_ proxy: ScrollViewProxy) {
@@ -651,7 +699,6 @@ struct ProjectView: View {
             QueuedRow(message: message) { store.unqueue(message, from: project) }
                 .padding(.top, lines.isEmpty ? 0 : 32)
         }
-        Color.clear.frame(height: 1).id("bottom")
     }
 
     /// The message box with the buttons around it.
@@ -831,7 +878,7 @@ struct ProjectView: View {
             Task { await store.restore(project, toVersionOf: line, before: before) }
         }, sendAgain: self.busy || submissionPending ? nil : takeBack, retryPhone: project.device != nil ? { udid in
             Task { await store.retryPhone(project, udid: udid) }
-        } : nil)
+        } : nil, pinned: pinned, pinnedTop: { pinnedTop = $0 })
     }
 
     /// Persist writes synchronously so a check finishing in this event cycle sees the newest input,

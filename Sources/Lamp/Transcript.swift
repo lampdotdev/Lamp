@@ -221,6 +221,12 @@ struct Transcript: View {
     /// worked on: that has to finish first.
     var sendAgain: ((LogLine) -> Void)?
     var retryPhone: ((String) -> Void)?
+    /// The request just sent from the chat, which it holds at the top while the answer comes in below, and
+    /// what's told where that request's row starts in the chat (`space`).
+    var pinned: UUID?
+    var pinnedTop: ((CGFloat) -> Void)?
+    /// The chat's content, unmoved by scrolling, where rows are measured.
+    static let space = "chatContent"
     /// Read so the chat follows the choice of what draws icons: it decides whether a "Draw Icon…" line shows.
     @AppStorage("iconModel") private var iconChoice = ""
 
@@ -242,6 +248,12 @@ struct Transcript: View {
             }
             .padding(.top, ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item,
                                         isFinalAnswer: finalAnswers.contains(item.id)))
+            // Measured with the gap above it, which is what's left showing above it at the top of the chat.
+            .background {
+                if item.id == pinned, let pinnedTop {
+                    Color.clear.onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Self.space)).minY } action: { pinnedTop($0) }
+                }
+            }
         }
     }
 
