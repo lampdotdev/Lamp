@@ -40,18 +40,24 @@ enum Template {
 
     static func saveMeta(_ project: LampProject) throws {
         try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
-                                             platform: project.platform, family: project.platform == .iphone ? project.family : nil,
-                                             device: project.device, instance: project.instance.isEmpty ? nil : project.instance,
+                                             platform: project.platform, family: project.platform.hasIOS ? project.family : nil,
+                                             device: project.device, target: project.platform == .universal ? project.chosen : nil,
+                                             instance: project.instance.isEmpty ? nil : project.instance,
                                              wish: project.untitled && project.fromWish ? true : nil))
             .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
     }
 
     /// Writes the scaffold into a draft's folder, as the kind of app it is now.
     static func fill(_ project: LampProject) throws {
-        let iphone = project.platform == .iphone
-        try write(iphone ? iPhoneAppSwift : appSwift, to: "Sources/App.swift", for: project)
-        try write(iphone ? iPhoneContentViewSwift : contentViewSwift, to: "Sources/ContentView.swift", for: project)
-        try write(iphone ? iPhoneAppMd : appMd, to: "APP.md", for: project)
+        let app: String, view: String, md: String
+        switch project.platform {
+        case .mac: (app, view, md) = (appSwift, contentViewSwift, appMd)
+        case .iphone: (app, view, md) = (iPhoneAppSwift, iPhoneContentViewSwift, iPhoneAppMd)
+        case .universal: (app, view, md) = (universalAppSwift, universalContentViewSwift, universalAppMd)
+        }
+        try write(app, to: "Sources/App.swift", for: project)
+        try write(view, to: "Sources/ContentView.swift", for: project)
+        try write(md, to: "APP.md", for: project)
         try write(".build/\nbuild/\n.lamp/\n", to: ".gitignore", for: project)
         // Born with its Assets folder: the app's own files go there from the start, and the one-time adoption of
         // attached files (Sharing.Assets.adopt) is for apps from before the folder existed, never a new one.
@@ -86,10 +92,22 @@ enum Template {
     /// a failure to build, since the old file would be what runs.
     static func writeOwnedFiles(for project: LampProject) throws {
         try writeSupport(for: project)
-        let iphone = project.platform == .iphone
         let widget = hasWidget(project)
-        try write(iphone ? iPhoneBuildSh : buildSh(widget: widget, widgetOnly: isWidgetOnly(project)), to: "build.sh", for: project, executable: true)
-        try write(iphone ? iPhonePackageSwift : packageSwift(widget: widget), to: "Package.swift", for: project)
+        switch project.platform {
+        case .mac:
+            try write(buildSh(widget: widget, widgetOnly: isWidgetOnly(project)), to: "build.sh", for: project, executable: true)
+            try write(packageSwift(widget: widget), to: "Package.swift", for: project)
+        case .iphone:
+            try write(iPhoneBuildSh, to: "build.sh", for: project, executable: true)
+            try write(iPhonePackageSwift, to: "Package.swift", for: project)
+        case .universal:
+            // The Mac build is Xcode's, from a project Lamp writes beside the phone's (it is the phone's: one
+            // project, both platforms), signed for the person's team: that is what lets the app use what Apple
+            // ties to a team, which Lamp's own signing can't give it.
+            try write(universalBuildSh, to: "build.sh", for: project, executable: true)
+            try write(universalPackageSwift, to: "Package.swift", for: project)
+            try writeDeviceProject(for: project, team: Devices.team)
+        }
     }
 
     private static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
@@ -120,7 +138,7 @@ enum Template {
             .replacingOccurrences(of: "{{HOST}}", with: Edition.bundleID)
             .replacingOccurrences(of: "{{APPS}}", with: Edition.supportFolder.appendingPathComponent("Apps").path)
             .replacingOccurrences(of: "{{MACHOST}}", with: Devices.macHost)
-            .replacingOccurrences(of: "{{PHONE_SECRET}}", with: project.platform == .iphone ? phoneSecret(for: project) : "")
+            .replacingOccurrences(of: "{{PHONE_SECRET}}", with: project.platform.hasIOS ? phoneSecret(for: project) : "")
             .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
             .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: project.platform == .mac ? widgetToken(for: project) : "")
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
@@ -178,6 +196,106 @@ enum Template {
     }
 
     """
+
+    static let universalPackageSwift = """
+    // swift-tools-version:5.9
+    import PackageDescription
+
+    let package = Package(
+        name: "{{EXE}}",
+        platforms: [.macOS(.v14), .iOS(.v17)],
+        targets: [.executableTarget(name: "{{EXE}}", path: "Sources")]
+    )
+
+    """
+
+    static let universalAppSwift = """
+    import SwiftUI
+
+    @main
+    struct MainApp: SwiftUI.App {
+        var body: some SwiftUI.Scene {
+            WindowGroup("{{NAME}}") {
+                ContentView()
+            }
+            #if os(macOS)
+            .commands { LampCommands() }
+            #endif
+        }
+    }
+
+    """
+
+    static let universalContentViewSwift = """
+    import SwiftUI
+
+    struct ContentView: View {
+        var body: some View {
+            VStack(spacing: 12) {
+                Image(systemName: "laptopcomputer.and.iphone")
+                    .font(.system(size: 40))
+                    .foregroundStyle(.secondary)
+                Text("{{NAME}}")
+                    .font(.title2.bold())
+                Text("\(scaffoldHint)")
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            #if os(macOS)
+            .frame(minWidth: 420, minHeight: 300)
+            #endif
+        }
+    }
+
+    """
+
+    static let universalAppMd = """
+    # {{NAME}}
+
+    A SwiftUI app for the Mac and for iPhone and iPad, one code for both, built and live-edited with Lamp. It
+    opens on this Mac or in the iOS Simulator, whichever Try On points at.
+
+    ## What it does
+    Nothing yet: fresh scaffold.
+
+    ## Structure
+    - `Sources/App.swift`: entry point.
+    - `Sources/ContentView.swift`: the main screen.
+    - `Sources/LampSupport.swift`: Lamp's building blocks (AI, saved data, text from pictures and documents, and the rest). Generated; don't edit.
+    - `build.sh`: builds `build/{{EXE}}.app` for the Mac (`./build.sh mac`) or the simulator (`./build.sh ios`).
+
+    """
+
+    /// An app for both: the simulator's build is the iPhone's, and the Mac's is Xcode's, from the project
+    /// Lamp writes under .lamp/device, signed for the team Lamp was given (LAMP_TEAM, from Settings → Building).
+    static var universalBuildSh: String {
+        // Not indented: the iPhone script writes Info.plist with a heredoc, whose end line must start the line.
+        let ios = iPhoneBuildSh.components(separatedBy: "\n").dropFirst(4).joined(separator: "\n")   // after the shebang, the comment, set and cd
+        return """
+        #!/bin/zsh
+        # Builds build/{{EXE}}.app for this Mac (./build.sh mac) or for the iPhone simulator (./build.sh ios). Run after every change.
+        set -euo pipefail
+        cd "$(dirname "$0")"
+        if [[ "${1:-mac}" == "ios" ]]; then
+        \(ios)
+          exit 0
+        fi
+        # The Mac build is Xcode's, signed for the person's Apple team, so the app can use what Apple ties to a team.
+        if [[ -z "${LAMP_TEAM:-}" ]]; then
+          echo "The Mac build of an app for both needs your Apple team: choose it in Lamp's Settings → Building." >&2
+          exit 1
+        fi
+        xcodebuild -project ".lamp/device/{{EXE}}.xcodeproj" -scheme "{{EXE}}" -configuration Release -destination "platform=macOS" \\
+          -derivedDataPath ".lamp/device/DerivedData" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \\
+          DEVELOPMENT_TEAM="$LAMP_TEAM" build 2>&1
+        APP="build/{{EXE}}.app"
+        rm -rf "$APP"
+        mkdir -p build
+        cp -R ".lamp/device/DerivedData/Build/Products/Release/{{EXE}}.app" "$APP"
+        echo "Built $APP"
+
+        """
+    }
 
     /// Builds the app for the iOS Simulator without an Xcode project: the package is compiled for the
     /// simulator's SDK and wrapped in an app bundle, signed ad hoc, which is all the simulator asks for.
@@ -435,6 +553,7 @@ enum Template {
     /// Package.swift stays what the simulator and the agent build with.
     static func writeDeviceProject(for project: LampProject, team: String) throws {
         let fm = FileManager.default
+        let universal = project.platform == .universal
         let dir = project.dir.appendingPathComponent(".lamp/device")
         let xcodeproj = dir.appendingPathComponent("\(project.exe).xcodeproj")
         try fm.createDirectory(at: xcodeproj.appendingPathComponent("xcshareddata/xcschemes"), withIntermediateDirectories: true)
@@ -446,8 +565,8 @@ enum Template {
         let hasIcon = fm.fileExists(atPath: Icons.squareURL(project).path)
         if hasIcon { try fm.copyItem(at: Icons.squareURL(project), to: iconset.appendingPathComponent("AppIcon.png")) }
         let capabilities = Capabilities.load(project)
-        let files: [(String, String)] = [
-            ("\(project.exe).xcodeproj/project.pbxproj", devicePbxproj),
+        var files: [(String, String)] = [
+            ("\(project.exe).xcodeproj/project.pbxproj", universal ? universalPbxproj : devicePbxproj),
             ("App.entitlements", capabilities.entitlementsPlist),
             ("\(project.exe).xcodeproj/xcshareddata/xcschemes/\(project.exe).xcscheme", deviceScheme),
             ("Info.plist", deviceInfoPlist),
@@ -456,13 +575,15 @@ enum Template {
                 ? #"{ "images": [ { "filename": "AppIcon.png", "idiom": "universal", "platform": "ios", "size": "1024x1024" } ], "info": { "author": "xcode", "version": 1 } }"#
                 : #"{ "images": [ { "idiom": "universal", "platform": "ios", "size": "1024x1024" } ], "info": { "author": "xcode", "version": 1 } }"#),
         ]
+        // The Mac half has its own Info.plist, and its icon comes from Lamp when the app is installed (Store.deploy), as every Mac app's does.
+        if universal { files.append(("Info-macOS.plist", universalMacInfoPlist)) }
         for (path, template) in files {
             let contents = template
                 .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
                 .replacingOccurrences(of: "{{BACKGROUND}}", with: capabilities.backgroundPlistLine)
                 .replacingOccurrences(of: "{{EXE}}", with: project.exe)
                 .replacingOccurrences(of: "{{NAME}}", with: project.name)
-                .replacingOccurrences(of: "{{BUNDLE}}", with: project.deviceBundleID(team: team))
+                .replacingOccurrences(of: "{{BUNDLE}}", with: universal ? project.bundleID : project.deviceBundleID(team: team))
                 .replacingOccurrences(of: "{{TEAM}}", with: team)
             let url = dir.appendingPathComponent(path)
             if (try? String(contentsOf: url, encoding: .utf8)) != contents {
@@ -548,6 +669,69 @@ enum Template {
       <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
     {{USAGE}}
     {{BACKGROUND}}
+    </dict></plist>
+
+    """
+
+    /// The same project for an app for both: one target built for iOS and for the Mac, as Xcode's own
+    /// multiplatform template has it, with the Mac's own Info.plist. The icon in the catalog is the iPhone's;
+    /// the Mac's is put in when the app is installed, as for every Mac app.
+    static let universalPbxproj = """
+    // !$*UTF8*$!
+    {
+    	archiveVersion = 1;
+    	classes = {
+    	};
+    	objectVersion = 77;
+    	objects = {
+    		A00000000000000000000001 /* Assets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* Assets */; };
+    		A00000000000000000000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000004 /* Assets.xcassets */; };
+    		A00000000000000000000002 /* Assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Assets; path = ../../Assets; sourceTree = "<group>"; };
+    		A00000000000000000000004 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+    		A00000000000000000000005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+    		A00000000000000000000006 /* {{EXE}}.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "{{EXE}}.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+    		A00000000000000000000007 /* Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; name = Sources; path = ../../Sources; sourceTree = "<group>"; };
+    		A00000000000000000000008 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+    		A00000000000000000000013 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
+    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
+    		A0000000000000000000000A /* Products */ = {isa = PBXGroup; children = (A00000000000000000000006 /* {{EXE}}.app */); name = Products; sourceTree = "<group>"; };
+    		A0000000000000000000000B /* {{EXE}} */ = {isa = PBXNativeTarget; buildConfigurationList = A0000000000000000000000C; buildPhases = (A0000000000000000000000D /* Sources */, A00000000000000000000008 /* Frameworks */, A0000000000000000000000E /* Resources */); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (A00000000000000000000007 /* Sources */); name = "{{EXE}}"; packageProductDependencies = (); productName = "{{EXE}}"; productReference = A00000000000000000000006 /* {{EXE}}.app */; productType = "com.apple.product-type.application"; };
+    		A0000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {A0000000000000000000000B = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A00000000000000000000010; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000009; minimizedProjectReferenceProxies = 1; preferredProjectObjectVersion = 77; productRefGroup = A0000000000000000000000A /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A0000000000000000000000B /* {{EXE}} */); };
+    		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Assets in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
+    		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+    		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = 14.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = auto; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
+    		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {"ASSETCATALOG_COMPILER_APPICON_NAME[sdk=iphone*]" = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; "INFOPLIST_FILE[sdk=macosx*]" = "Info-macOS.plist"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); "LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = ("$(inherited)", "@executable_path/../Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+    		A00000000000000000000010 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+    		A0000000000000000000000C /* Build configuration list for PBXNativeTarget */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+    	};
+    	rootObject = A0000000000000000000000F /* Project object */;
+    }
+
+    """
+
+    /// The Mac half's Info.plist of an app for both: what the Mac build.sh writes, with Xcode filling in the names.
+    static let universalMacInfoPlist = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0"><dict>
+      <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+      <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+      <key>CFBundleName</key><string>{{NAME}}</string>
+      <key>CFBundleDisplayName</key><string>{{NAME}}</string>
+      <key>CFBundlePackageType</key><string>APPL</string>
+      <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+      <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+      <key>CFBundleDevelopmentRegion</key><string>en</string>
+      <key>LSMinimumSystemVersion</key><string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+      <key>NSPrincipalClass</key><string>NSApplication</string>
+      <key>NSHighResolutionCapable</key><true/>
+      <key>NSMicrophoneUsageDescription</key><string>{{NAME}} listens to your microphone.</string>
+      <key>NSSpeechRecognitionUsageDescription</key><string>{{NAME}} turns your speech into text.</string>
+      <key>NSCameraUsageDescription</key><string>{{NAME}} uses your camera.</string>
+      <key>NSCalendarsFullAccessUsageDescription</key><string>{{NAME}} reads and adds calendar events.</string>
+      <key>NSRemindersFullAccessUsageDescription</key><string>{{NAME}} reads and adds reminders.</string>
+      <key>NSContactsUsageDescription</key><string>{{NAME}} looks up people in your contacts.</string>
+      <key>NSAppleEventsUsageDescription</key><string>{{NAME}} reads your email and drafts replies through Mail.</string>
     </dict></plist>
 
     """

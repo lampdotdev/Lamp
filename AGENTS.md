@@ -252,6 +252,28 @@ what the gateway would with the provider directly (chat completions with the JSO
 decisions, images). The prompt's fencing and dates are made in the library either way. What's spent this
 way isn't recorded in Lamp, and `/ai/computer` says it needs the Mac.
 
+## Apps for both the Mac and the iPhone
+
+An app can be made for both (`Platform.universal`, the "Mac and iPhone" choice beside Mac, iPhone and iPad), as
+Xcode's multiplatform apps are: one code, with what differs under `#if os(macOS)` and `#if os(iOS)`, built for
+one place at a time. Where it opens is `LampProject.destination`: a Mac app's is always the Mac and an iPhone
+app's always iOS, and an app for both goes where Try On last put it (`chosen`, `target` in `meta.json`; "My Mac"
+in `TryOnChoices`, `Store.setMac`, and the simulator and phone choices move it to iOS). Everything about running,
+looking and using branches on `destination` (`onIOS`); what an app could have, such as the Try On menu or the
+phone's away-from-the-Mac keys, branches on `Platform.hasIOS` / `hasMac`. Its scaffold and owned files are
+their own (`Template.universalAppSwift`, `universalPackageSwift` listing both platforms, `universalBuildSh`,
+which takes `mac` or `ios`), and `Store.build` passes the destination; the destination is part of
+`Runtime.fingerprint`, so moving the app rebuilds it. The iOS build is the iPhone app's. The Mac build is Xcode's,
+from the same project the phone uses (`Template.writeDeviceProject`, with `universalPbxproj`: one target for
+`iphoneos iphonesimulator macosx`, the Mac's own `Info-macOS.plist`), signed with automatic signing for the team
+in Settings → Building, so the app can use what Apple ties to a team, which Lamp's own certificate can't give it
+(see `Template.WidgetSharing` for why). Without a team the build stops with the fix, and the setup check
+(`PhoneSetup`, `requiresTeam`) asks for one before the first request. Its bundle id carries the team on both
+platforms (`LampProject.bundleID`), and `Store.deploy` seals what it adds (icon, assets, Info.plist) with the
+team's certificate and the entitlements Xcode gave it (`Devices.signingIdentity`), never Lamp's. The agent gets
+both kinds' rules, each marked for its half, after one rule on sharing the code (`Agent.universalPrompt`). An app
+for both has no widget and can't be shared as a `.lampapp` yet.
+
 ## Generated apps
 
 Lamp owns three files in every app and never trusts what's in them: `Sources/LampSupport.swift`, `build.sh`

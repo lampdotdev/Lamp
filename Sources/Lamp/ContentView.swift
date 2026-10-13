@@ -424,7 +424,7 @@ struct AppMenu: View {
             .disabled(busy)
         Button("Quit") { Task { await store.quitApp(project) } }
             .disabled(!store.openApps.contains(project.id))
-        if project.platform == .iphone {
+        if project.platform.hasIOS {
             // Which simulator the app opens in (it's built for both), or which of the person's own phones.
             Menu("Try On") { TryOnChoices(project: project) }
                 .disabled(busy)
@@ -982,17 +982,18 @@ struct ProjectView: View {
                 .help(made ? "Open the app (right-click it in the sidebar to rebuild)" : "Describe the app first; Lamp opens it once it's built")
             }
         }
-        if project.platform == .iphone {
+        if project.platform.hasIOS {
             ToolbarItem {
                 // Which simulator the app opens in, beside the Play button where Xcode keeps its destination.
                 Menu {
                     TryOnChoices(project: project)
                 } label: {
                     let device = store.devices.first { $0.udid == project.device }
-                    Label(store.tryOnName(project), systemImage: (device?.family ?? project.family) == .ipad ? "ipad" : "iphone")
+                    Label(store.tryOnName(project), systemImage: !project.onIOS ? "laptopcomputer" : (device?.family ?? project.family) == .ipad ? "ipad" : "iphone")
                 }
                 .disabled(busy)
-                .help("Where the app opens: a simulator, or your own iPhone or iPad")
+                .help(project.platform == .universal ? "Where the app opens: this Mac, a simulator, or your own iPhone or iPad"
+                      : "Where the app opens: a simulator, or your own iPhone or iPad")
             }
         }
         gap
@@ -1234,7 +1235,7 @@ struct AppInfoView: View {
                 ForEach(Capability.allCases) { capability in
                     answerRow(capability.title, AppAI.resolve(capability, for: project))
                 }
-                if project.platform == .iphone {
+                if project.platform.hasIOS {
                     // Away from the Mac a phone answers only through the OpenRouter key: without one, one row says so.
                     if Provider.hasKey {
                         ForEach(Capability.allCases) { capability in
@@ -1975,7 +1976,15 @@ private struct TryOnChoices: View {
     @State private var olderPhones: [PhoneTools.OlderPhone] = []
 
     var body: some View {
-        Picker("Simulator", selection: Binding(get: { project.device == nil ? project.family : nil },
+        if project.platform == .universal {
+            // An app for both: this Mac is a place to open it too, beside the simulators and phones.
+            Picker("This Mac", selection: Binding(get: { project.onIOS ? nil : Destination.mac },
+                                                  set: { if $0 != nil { store.setMac(project) } })) {
+                Label("My Mac", systemImage: "laptopcomputer").tag(Optional(Destination.mac))
+            }
+            .pickerStyle(.inline)
+        }
+        Picker("Simulator", selection: Binding(get: { project.device == nil && project.onIOS ? project.family : nil },
                                                set: { if let family = $0 { store.setSimulator(project, family) } })) {
             Label("iPhone", systemImage: "iphone").tag(Optional(DeviceFamily.iphone))
             Label("iPad", systemImage: "ipad").tag(Optional(DeviceFamily.ipad))
@@ -1983,7 +1992,7 @@ private struct TryOnChoices: View {
         .pickerStyle(.inline)
         do {
             let paired = store.devices.filter(\.paired), unpaired = store.devices.filter { !$0.paired }
-            Picker("Your Devices", selection: Binding(get: { project.device }, set: { chosen in
+            Picker("Your Devices", selection: Binding(get: { project.onIOS ? project.device : nil }, set: { chosen in
                 store.choosePreparedDevice(project, chosen)
             })) {
                 ForEach(paired) { device in

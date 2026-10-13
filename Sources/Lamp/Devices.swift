@@ -66,6 +66,23 @@ enum Devices {
         return teams
     }
 
+    /// The certificate that signs for a team on this Mac, as codesign takes it (its SHA-1 fingerprint, which
+    /// names one certificate where the common name may not), or nil when there is none: Xcode makes one the
+    /// first time it builds for the team.
+    static func signingIdentity(for team: String) -> String? {
+        guard team.count == 10 else { return nil }
+        var found: CFTypeRef?
+        let query: [String: Any] = [kSecClass as String: kSecClassCertificate,
+                                   kSecMatchSubjectContains as String: "Apple Development",
+                                   kSecMatchLimit as String: kSecMatchLimitAll, kSecReturnRef as String: true]
+        guard SecItemCopyMatching(query as CFDictionary, &found) == errSecSuccess,
+              let certificates = found as? [SecCertificate] else { return nil }
+        for certificate in certificates where certificateTeam(certificate)?.id == team.uppercased() {
+            return Insecure.SHA1.hash(data: SecCertificateCopyData(certificate) as Data).map { String(format: "%02X", $0) }.joined()
+        }
+        return nil
+    }
+
     /// The common name's parenthesised ID identifies the developer, not necessarily their team. The
     /// certificate's subject organizational unit is the signing Team ID, as Xcode writes into projects.
     static func certificateTeam(_ certificate: SecCertificate) -> (id: String, name: String)? {
