@@ -26,7 +26,7 @@ profiles, sign-ins or signing keys into the guest.
    compatible installed SDK through `SDKROOT` when necessary, and install its
    generated app. Fixture views are predefined; no model conversation is involved.
 4. In `chrome://extensions`, enable Developer mode, choose Load unpacked and this
-   folder's `extension` directory. Optional toolbar pinning makes it easier to find.
+   folder's `extension` directory. Pin the toolbar icon to use the task recorder.
 5. Open `http://127.0.0.1:8765` and sign into the fictional demo account. The second
    origin is `http://localhost:8765`, with its own browser session cookie.
 6. In an app, choose the site, then **Ask for site access**. Click the extension
@@ -41,7 +41,8 @@ profiles, sign-ins or signing keys into the guest.
 ## Behavior and boundaries
 
 - Chrome gets optional HTTPS host permissions, plus loopback HTTP for the demo.
-  There is no `activeTab`, `tabs`, cookies or management permission. Chrome host
+  `activeTab` supplies the task recorder's site suggestion on a toolbar click;
+  there is no `tabs`, cookies or management permission. Chrome host
   permissions are extension-wide and technically permit read/write; the code
   deliberately offers only bounded text capture. Lamp enforces app/site grants.
 - Open background tabs are readable without activating them. Exact URL matches
@@ -70,9 +71,11 @@ profiles, sign-ins or signing keys into the guest.
   Removing Chrome permission also removes the corresponding Lamp grants. Failure
   to save revocation still blocks it in memory and reports failed persistence;
   removing Chrome site access additionally prevents reads after a relaunch.
-- There are no external-message handlers or content scripts accepting page
-  messages. Only the extension's own management and diagnostic pages can issue
-  internal commands. Text extraction skips field values, editable/hidden content
+- There are no external-message handlers or listeners for website `postMessage`.
+  Standing-access commands come from the extension's own pages. The task recorder
+  additionally accepts its injected content script's bounded observations and
+  Stop/Discard, checking sender origin, frame and recording identity.
+  Standing-access text extraction skips field values, editable/hidden content
   and frames, capped at 24,000 UTF-16 units / 100,000 UTF-8 bytes. It is not a
   complete website export; page text is untrusted data.
 - `inspect.html` displays live permission state and Chrome's
@@ -95,4 +98,64 @@ The main/article-first text approach was informed by
 
 Keep screenshots, recordings, runtime grants, generated apps, test output and
 independent adversarial proof outside git. Remove the two Store hooks,
-BrowserPrototype.swift and this folder to discard the experiment.
+BrowserPrototype.swift, BrowserTaskPrototype.swift and this folder to discard
+the experiment.
+
+## Show Lamp this task
+
+The toolbar now opens the task recorder. **Manage app access** still reaches the
+standing-access view. Task-recording site approvals are separate from app grants.
+The person selects approved sites, pins the extension, and starts a task lasting
+up to ten minutes. A REC badge stays in Chrome's toolbar, and approved pages have
+an on-page recording bar with one-click Stop and Discard. Unpinning or removing
+site permission discards the active recording. Only foreground top-level pages
+on the selected origins send events; this is not desktop or video capture.
+
+The captured record is deliberately small:
+
+- Page origin and path, with query strings and fragments removed, page title,
+  event kind, and relative time when Lamp receives the batch.
+- Trusted clicks on links/buttons and field changes, with sanitized control
+  labels. No entered field values or keyboard stream.
+- Up to 1,500 characters of rendered page text per event, from main/article or
+  the body. Input/select/textarea values, editable areas, hidden elements,
+  `data-private` areas, scripts, styles, frames and the recording bar are skipped.
+  Excerpts can still include sensitive business text shown by an approved site.
+- No cookies, local storage, screenshots, audio, downloaded-file contents,
+  Finder actions or other applications. Closed/background tabs are not observed
+  by this task recorder, even though the earlier connector can read them.
+
+Chrome holds a maximum 30-event pending batch in memory. `storage.session` keeps
+only recording metadata; profile identity remains in `storage.local`. The
+native bridge writes one current trace to
+`Edition.supportFolder/BrowserPrototype/Tasks/recording.json`, in a private
+user-owned folder. Stop freezes the trace and sends its events to Lamp's text AI
+through OpenRouter; the start screen states this before recording begins. The
+AI returns editable steps and exactly one app idea. Its answer and a small
+model/cost receipt stay beside the trace. Discard stops capture, cancels any
+pending analysis and deletes these local files; failed deletion is reported.
+It cannot retract data already sent to the AI provider.
+
+**Build** is the next explicit action. It creates a normal Lamp draft and sends
+the reviewed request through `Store.send`, with a copy of the trace under the
+new project's Attachments. This uses Lamp's existing builder/approvals/build
+conversation for every engine. The source trace can be discarded later, but
+the approved app's attachment and conversation remain with that app. The
+inferred idea explicitly avoids browser connectors or continued observation;
+the person supplies/imports data to the resulting standalone app.
+
+For the fictional demonstration, `/task` offers insurance policy details and a
+renewal shortlist. `/unapproved` is a second-origin exclusion canary. These are
+made-up task fixtures, not recorded responses from an outside service. Analysis
+and the normal build can use a real OpenRouter key in an isolated guest only
+with explicit permission. Never commit or print a key, trace, AI reply or build
+artifact. Environment flags, unpacked loading and VM-installed ad-hoc bundles
+remain development workarounds; observation itself uses supported Chrome
+scripting, messaging, host permission and action APIs.
+
+The recorder does not resume a trace after Lamp/browser restart, does not infer
+Finder work, and does not replay actions. It is an observation-to-build
+experiment. Long-run recovery, shadow DOM, complex SPAs, account selection,
+full-screen indicator behavior, onward AI-provider retention and hostile
+same-user native apps need separate work. Plain prototype copy/layout is left
+for a later design pass.

@@ -1,0 +1,8 @@
+<!doctype html><meta charset="utf-8"><title>Show Lamp this task</title>
+<style>body{max-width:680px;margin:32px auto;padding:24px;background:#faf8f4;color:#222;font:15px system-ui}h1{font-size:25px}p{line-height:1.5}button,input{font:inherit;padding:9px 12px;margin:5px 8px 5px 0}button{border:1px solid #aaa;border-radius:7px;background:white}#stop{background:#ad331c;color:white}label{display:block;margin:12px 0}#controls{border-top:1px solid #bbb;padding-top:18px}</style>
+<h1>Show Lamp this task</h1>
+<p>Record action labels, addresses and short page excerpts on approved sites for up to ten minutes; Stop sends them to Lamp’s AI through OpenRouter. Typed values, password fields, screenshots and cookies are excluded, but page text may be sensitive.</p>
+<label>Site to approve <input id="site" aria-label="Site to approve"></label><button id="approveSite">Approve site for this task</button>
+<div id="sites"></div><p id="status">Connecting to Lamp…</p>
+<div id="controls"><button id="start">Start recording</button><button id="stop" hidden>Stop and show Lamp</button><button id="discard" hidden>Discard recording</button></div>
+<p><a href="access.html">Manage app access</a></p><script src="recorder-ui.js"></script>
