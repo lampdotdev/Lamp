@@ -10,20 +10,21 @@ enum PhoneTools {
 
     /// Store's synchronous creation guard immediately follows the UI preflight. Reuse that result so it
     /// doesn't run the same Xcode commands again on the main thread. Explicit rechecks never use the cache.
-    static func checked(family: DeviceFamily = .iphone, phone: String? = nil, requiresTeam: Bool = false, useCache: Bool = false) -> Report {
+    static func checked(family: DeviceFamily = .iphone, phone: String? = nil, requiresTeam: Bool = false,
+                        requiresPaidTeam: Bool = false, useCache: Bool = false) -> Report {
         let active = ProcessInfo.processInfo.environment["DEVELOPER_DIR"]
         if useCache, phone == nil, !requiresTeam, let previous = cacheLock.withLock({ cached[family] }),
            previous.developer == active, Date().timeIntervalSince(previous.date) < 10 {
             return previous.report
         }
-        let report = check(family: family, phone: phone, requiresTeam: requiresTeam)
+        let report = check(family: family, phone: phone, requiresTeam: requiresTeam, requiresPaidTeam: requiresPaidTeam)
         if phone == nil { cacheLock.withLock { cached[family] = (active, Date(), report) } }
         return report
     }
 
     enum Step: CaseIterable { case xcode, tools, firstLaunch, platform, runtime, simulator, account, phone }
 
-    enum Action { case installXcode, useXcode, openXcode, components, simulator, settings, updatePhone, retry }
+    enum Action { case installXcode, useXcode, openXcode, components, simulator, settings, membership, updatePhone, retry }
     /// The message names the setup window's buttons, so each one says them exactly as `button` does.
     struct Issue {
         let step: Step
@@ -38,6 +39,7 @@ enum PhoneTools {
             case .components: return "Open Xcode"
             case .simulator: return "Open Simulator"
             case .settings: return "Open Settings"
+            case .membership: return "See Membership"
             case .updatePhone: return "How to Update"
             case .retry: return "Check Again"
             }
@@ -66,6 +68,7 @@ enum PhoneTools {
         }
         var hasViewer: (String) -> Bool = { viewer(in: $0) != nil }
         var teams: () -> [(id: String, name: String)] = xcodeTeams
+        var freeTeams: () -> Set<String> = { xcodeFreeTeams() }
         var team: () -> String = { (UserDefaults.standard.string(forKey: teamPreference) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased() }
         var chooseTeam: (String) -> Void = { UserDefaults.standard.set($0, forKey: teamPreference) }
 
@@ -116,6 +119,21 @@ enum PhoneTools {
             }
         }
         return teams.sorted { $0.name < $1.name }
+    }
+
+    /// Those of Xcode's teams that come with a free Apple Account rather than a membership of the Apple
+    /// Developer Program, as Xcode marks them. Apple gives these no iCloud, so an app that keeps data there
+    /// can't be signed for one. A team Xcode says nothing about is taken to be a paid one: the build finds
+    /// out, where this would turn away someone whose membership is fine.
+    static func xcodeFreeTeams(in accounts: [String: Any] = UserDefaults(suiteName: "com.apple.dt.Xcode")?
+        .dictionary(forKey: "IDEProvisioningTeamByIdentifier") ?? [:]) -> Set<String> {
+        var free = Set<String>()
+        for case let list as [[String: Any]] in accounts.values {
+            for team in list where team["isFreeProvisioningTeam"] as? Bool == true {
+                if let id = team["teamID"] as? String { free.insert(id) }
+            }
+        }
+        return free
     }
 
     static func isXcode(_ developer: String) -> Bool {
@@ -191,7 +209,7 @@ enum PhoneTools {
     /// Stop at the first failed check: later commands often fail only because an earlier step is missing.
     /// A simulator is needed even for a real phone, because that's where Lamp's agent tries the app.
     static func check(family: DeviceFamily = .iphone, phone: String? = nil, requiresTeam: Bool = false,
-                      probe: Probe = Pretend.isMissing("xcode") ? .pretending : Probe()) -> Report {
+                      requiresPaidTeam: Bool = false, probe: Probe = Pretend.isMissing("xcode") ? .pretending : Probe()) -> Report {
         var report = Report()
         func stop(_ step: Step, _ title: String, _ message: String, _ action: Action) -> Report {
             report.issue = Issue(step: step, title: title, message: message, action: action)
@@ -261,13 +279,29 @@ enum PhoneTools {
             let what = phone != nil ? "Putting an app on your own iPhone or iPad" : "An app for both the Mac and the iPhone"
             let teams = probe.teams()
             guard !teams.isEmpty else {
-                return stop(.account, "Sign in to Xcode", "\(what) needs an Apple Account signed in to Xcode; a free one will do. Click Open Xcode, choose Xcode → Settings from the menu bar, click Accounts, then click + and sign in. Come back to Lamp and click Check Again.", .openXcode)
+                // A free account is turned away below, so it isn't offered here to an app it can't sign.
+                let account = requiresPaidTeam ? "This app keeps its data in iCloud, so it needs an Apple Account with a paid Apple Developer membership signed in to Xcode."
+                    : "\(what) needs an Apple Account signed in to Xcode; a free one will do."
+                return stop(.account, "Sign in to Xcode", "\(account) Click Open Xcode, choose Xcode → Settings from the menu bar, click Accounts, then click + and sign in. Come back to Lamp and click Check Again.", .openXcode)
             }
-            if !teams.contains(where: { $0.id == probe.team() }) {
+            var team = probe.team()
+            if !teams.contains(where: { $0.id == team }) {
                 guard teams.count == 1 else {
                     return stop(.account, "Choose your Apple team", "Xcode is signed in with more than one team, and Lamp needs to know which one signs your apps. Click Open Settings and choose it under Building, then click Check Again.", .settings)
                 }
-                probe.chooseTeam(teams[0].id)
+                team = teams[0].id
+                probe.chooseTeam(team)
+            }
+            // Apple gives iCloud only to members of its Developer Program. A free account's team would pass
+            // everything here and then fail when Xcode signs the app, so it stops now, with the ways on.
+            if requiresPaidTeam {
+                let free = probe.freeTeams()
+                if free.contains(team) {
+                    guard !teams.contains(where: { !free.contains($0.id) }) else {
+                        return stop(.account, "Choose your paid Apple team", "This app keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership, and the team chosen in Lamp is a free one. Click Open Settings and choose your paid team under Building, then click Check Again.", .settings)
+                    }
+                    return stop(.account, "This app needs a paid Apple membership", "This app keeps its data in iCloud, which Apple allows only with a paid Apple Developer membership. The account signed in to Xcode is a free one. Click See Membership to join on Apple's website, then click Check Again. To keep working without one, click Cancel and choose a simulator under Try On.", .membership)
+                }
             }
             report.passed.append(.account)
         }

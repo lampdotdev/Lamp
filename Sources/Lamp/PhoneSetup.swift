@@ -14,6 +14,8 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         var requiresPhoneTools = true
         /// An app for both: its Mac build is signed for the person's team, so the team is checked with the rest.
         var requiresTeam = false
+        /// An app that keeps data in iCloud, about to be signed for the team: Apple signs those only for a paid one.
+        var requiresPaidTeam = false
     }
     private struct Request {
         let id = UUID()
@@ -46,9 +48,11 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
 
     nonisolated private static func inspect(_ context: Context) async -> PhoneTools.Report {
         await Task.detached {
-            let preferred = PhoneTools.checked(family: context.family, phone: context.phone, requiresTeam: context.requiresTeam)
+            let preferred = PhoneTools.checked(family: context.family, phone: context.phone, requiresTeam: context.requiresTeam,
+                                               requiresPaidTeam: context.requiresPaidTeam)
             if context.eitherSimulator, preferred.issue?.step == .simulator {
-                let other = PhoneTools.checked(family: context.family == .iphone ? .ipad : .iphone, phone: context.phone, requiresTeam: context.requiresTeam)
+                let other = PhoneTools.checked(family: context.family == .iphone ? .ipad : .iphone, phone: context.phone, requiresTeam: context.requiresTeam,
+                                               requiresPaidTeam: context.requiresPaidTeam)
                 if other.ready { return other }
             }
             return preferred
@@ -79,8 +83,7 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         guard current.platform.hasIOS else { then(current); return }
         perform(resolve: {
             guard let current = store.current(project) else { return nil }
-            return Context(family: current.family, phone: current.onIOS ? current.device : nil,
-                           requiresPhoneTools: current.platform.hasIOS, requiresTeam: current.platform == .universal)
+            return Context(for: current, phone: current.onIOS ? current.device : nil)
         }, cancelled: cancelled) {
             if let current = store.current(project) { then(current) }
             else { cancelled() }
@@ -272,6 +275,8 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         case .settings:
             UserDefaults.standard.set("building", forKey: "settingsTab")
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        case .membership:
+            open(URL(string: "https://developer.apple.com/programs/")!)
         case .updatePhone:
             open(URL(string: "https://support.apple.com/118575")!)
         case .retry:
@@ -457,6 +462,21 @@ struct PhoneSetupView: View {
     }
 }
 
+extension PhoneSetup.Context {
+    /// What an app needs checked before it is built for where it opens, `phone` being the person's own
+    /// device when it opens there. The simulator's copy isn't signed for a team, so there an account is asked
+    /// for only by an app for both, and a paid one by nothing.
+    init(for project: LampProject, phone: String?) {
+        self.init(family: project.family, phone: phone, requiresPhoneTools: project.platform.hasIOS,
+                  requiresTeam: project.platform == .universal,
+                  requiresPaidTeam: (phone != nil || (project.platform == .universal && !project.onIOS)) && Self.usesICloud(project))
+    }
+
+    static func usesICloud(_ project: LampProject) -> Bool {
+        Template.Capabilities.load(project).container(for: project) != nil
+    }
+}
+
 @MainActor
 extension Store {
     func openPrepared(_ project: LampProject) {
@@ -465,7 +485,9 @@ extension Store {
     func choosePreparedDevice(_ project: LampProject, _ phone: String?) {
         PhoneSetup.shared.perform(resolve: {
             guard let current = self.current(project) else { return nil }
-            return PhoneSetup.Context(family: current.family, phone: phone)
+            var context = PhoneSetup.Context(family: current.family, phone: phone)
+            context.requiresPaidTeam = phone != nil && PhoneSetup.Context.usesICloud(current)
+            return context
         }, isReady: {
             guard let current = self.current(project) else { return false }
             return !self.busy.contains(current.id)
