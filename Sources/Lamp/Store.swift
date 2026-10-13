@@ -3564,23 +3564,20 @@ final class Store: ObservableObject {
         let fm = FileManager.default
         let resources = project.builtURL.appendingPathComponent("Contents/Resources")
         try fm.createDirectory(at: resources, withIntermediateDirectories: true)
-        // Without these, macOS kills the app the moment it uses the mic, speech recognition or camera. The last
-        // is for the question macOS asks when an app first opens the print panel, which looks for printers on
-        // the network: without it the question gives no reason.
-        // Added here rather than in build.sh so apps made before this change get them too.
-        _ = await Shell.run("""
+        // Every usage description, from the one list: without its reason macOS kills the app the moment it
+        // asks for the microphone, photos and the rest. Added here as well as in build.sh so apps made before
+        // a reason was added get it too.
+        var plist = """
             P="$LAMP_APP/Contents/Info.plist"
-            plutil -replace CFBundleName -string "$LAMP_NAME" "$P" && \
-            plutil -replace CFBundleDisplayName -string "$LAMP_NAME" "$P" && \
-            plutil -replace NSMicrophoneUsageDescription -string "$LAMP_NAME listens to your microphone." "$P" && \
-            plutil -replace NSSpeechRecognitionUsageDescription -string "$LAMP_NAME turns your speech into text." "$P" && \
-            plutil -replace NSCameraUsageDescription -string "$LAMP_NAME uses your camera." "$P" && \
-            plutil -replace NSCalendarsFullAccessUsageDescription -string "$LAMP_NAME reads and adds calendar events." "$P" && \
-            plutil -replace NSRemindersFullAccessUsageDescription -string "$LAMP_NAME reads and adds reminders." "$P" && \
-            plutil -replace NSContactsUsageDescription -string "$LAMP_NAME looks up people in your contacts." "$P" && \
-            plutil -replace NSAppleEventsUsageDescription -string "$LAMP_NAME reads your email and drafts replies through Mail." "$P" && \
-            plutil -replace NSLocalNetworkUsageDescription -string "$LAMP_NAME looks for printers and other devices on your network." "$P"
-            """, cwd: project.dir, env: ["LAMP_APP": project.builtURL.path, "LAMP_NAME": project.name]) { _ in }
+            plutil -replace CFBundleName -string "$LAMP_NAME" "$P" && \\
+            plutil -replace CFBundleDisplayName -string "$LAMP_NAME" "$P"
+
+            """
+        for (key, text) in Template.macUsageDescriptions {
+            let reason = text.replacingOccurrences(of: "{{NAME}}", with: project.name).replacingOccurrences(of: "'", with: "'\\''")
+            plist += "plutil -replace \(key) -string '\(reason)' \"$P\"\n"
+        }
+        _ = await Shell.run(plist, cwd: project.dir, env: ["LAMP_APP": project.builtURL.path, "LAMP_NAME": project.name]) { _ in }
         if fm.fileExists(atPath: Icons.icnsURL(project).path) {
             try? fm.removeItem(at: resources.appendingPathComponent("AppIcon.icns"))
             try fm.copyItem(at: Icons.icnsURL(project), to: resources.appendingPathComponent("AppIcon.icns"))

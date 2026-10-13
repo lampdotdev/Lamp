@@ -304,6 +304,13 @@ app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_
 string: after editing it, extract and type-check it (`swiftc -typecheck`), and bump anything that detects
 an outdated app (`Store.open` rebuilds apps built by an older Lamp).
 
+A Mac app's reasons for its permissions are one list, `Template.macUsageDescriptions`, written by build.sh, the
+Mac half of an app for both (`universalMacInfoPlist`) and `Store.deploy`: macOS kills an app that asks for
+the photo library, Bluetooth, the camera and the like without one. A new one goes in that list and nowhere
+else, only for something macOS refuses without it (location and music are asked about with none), and is
+named in the prompt's `{{EXTRA_PERMISSIONS}}`. The list is part of `BuildStamp`, so apps built before a
+reason was added are rebuilt when next opened.
+
 `use_app` on a Mac app is carried out by the app itself (`LampDriver`, reached by a distributed notification
 signed with the app's token, `Store.use`), so no Accessibility permission is needed. With every picture the
 app writes its front window as text (`LampScreen` in LampSupport.swift, `.lamp/runtime/screen.txt`): one line

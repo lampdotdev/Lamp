@@ -113,6 +113,7 @@ enum Template {
     private static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
         let contents = template
             .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
+            .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name))
             .replacingOccurrences(of: "{{NAME}}", with: project.name)
             .replacingOccurrences(of: "{{EXE}}", with: project.exe)
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
@@ -367,8 +368,30 @@ enum Template {
     ]
 
     /// The usage descriptions as Info.plist lines, with the app's name in.
-    static func iosUsagePlistLines(name: String) -> String {
-        iosUsageDescriptions.map { "  <key>\($0.key)</key><string>\($0.text.replacingOccurrences(of: "{{NAME}}", with: name).xmlEscaped)</string>" }
+    static func iosUsagePlistLines(name: String) -> String { usagePlistLines(iosUsageDescriptions, name: name) }
+
+    /// The same for a Mac app: macOS kills an app that asks for one of these without its reason (microphone,
+    /// speech, camera, photos, calendar, reminders, contacts, Bluetooth, Mail), and asks about the network
+    /// with no reason given. Location and music are asked about without one, so they have none here.
+    /// One list for build.sh, the Mac half of an app for both, and what `Store.deploy` puts in every build.
+    static let macUsageDescriptions: [(key: String, text: String)] = [
+        ("NSMicrophoneUsageDescription", "{{NAME}} listens to your microphone."),
+        ("NSSpeechRecognitionUsageDescription", "{{NAME}} turns your speech into text."),
+        ("NSCameraUsageDescription", "{{NAME}} uses your camera."),
+        ("NSPhotoLibraryUsageDescription", "{{NAME}} uses your photos."),
+        ("NSPhotoLibraryAddUsageDescription", "{{NAME}} saves pictures to your photos."),
+        ("NSCalendarsFullAccessUsageDescription", "{{NAME}} reads and adds calendar events."),
+        ("NSRemindersFullAccessUsageDescription", "{{NAME}} reads and adds reminders."),
+        ("NSContactsUsageDescription", "{{NAME}} looks up people in your contacts."),
+        ("NSBluetoothAlwaysUsageDescription", "{{NAME}} connects to Bluetooth devices."),
+        ("NSAppleEventsUsageDescription", "{{NAME}} reads your email and drafts replies through Mail."),
+        ("NSLocalNetworkUsageDescription", "{{NAME}} looks for printers and other devices on your network."),
+    ]
+
+    static func macUsagePlistLines(name: String) -> String { usagePlistLines(macUsageDescriptions, name: name) }
+
+    private static func usagePlistLines(_ descriptions: [(key: String, text: String)], name: String) -> String {
+        descriptions.map { "  <key>\($0.key)</key><string>\($0.text.replacingOccurrences(of: "{{NAME}}", with: name).xmlEscaped)</string>" }
             .joined(separator: "\n")
     }
 
@@ -616,6 +639,7 @@ enum Template {
         for (path, template) in files {
             let contents = template
                 .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
+                .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name))
                 .replacingOccurrences(of: "{{BACKGROUND}}", with: capabilities.backgroundPlistLine)
                 .replacingOccurrences(of: "{{ICLOUD}}", with: capabilities.icloudPlistLine(for: project))
                 .replacingOccurrences(of: "{{EXE}}", with: project.exe)
@@ -763,13 +787,7 @@ enum Template {
       <key>LSMinimumSystemVersion</key><string>$(MACOSX_DEPLOYMENT_TARGET)</string>
       <key>NSPrincipalClass</key><string>NSApplication</string>
       <key>NSHighResolutionCapable</key><true/>
-      <key>NSMicrophoneUsageDescription</key><string>{{NAME}} listens to your microphone.</string>
-      <key>NSSpeechRecognitionUsageDescription</key><string>{{NAME}} turns your speech into text.</string>
-      <key>NSCameraUsageDescription</key><string>{{NAME}} uses your camera.</string>
-      <key>NSCalendarsFullAccessUsageDescription</key><string>{{NAME}} reads and adds calendar events.</string>
-      <key>NSRemindersFullAccessUsageDescription</key><string>{{NAME}} reads and adds reminders.</string>
-      <key>NSContactsUsageDescription</key><string>{{NAME}} looks up people in your contacts.</string>
-      <key>NSAppleEventsUsageDescription</key><string>{{NAME}} reads your email and drafts replies through Mail.</string>
+    {{MAC_USAGE}}
     {{ICLOUD}}
     </dict></plist>
 
@@ -6526,13 +6544,7 @@ enum Template {
       <key>LSMinimumSystemVersion</key><string>14.0</string>
       <key>NSPrincipalClass</key><string>NSApplication</string>
       <key>NSHighResolutionCapable</key><true/>
-      <key>NSMicrophoneUsageDescription</key><string>{{NAME}} listens to your microphone.</string>
-      <key>NSSpeechRecognitionUsageDescription</key><string>{{NAME}} turns your speech into text.</string>
-      <key>NSCameraUsageDescription</key><string>{{NAME}} uses your camera.</string>
-      <key>NSCalendarsFullAccessUsageDescription</key><string>{{NAME}} reads and adds calendar events.</string>
-      <key>NSRemindersFullAccessUsageDescription</key><string>{{NAME}} reads and adds reminders.</string>
-      <key>NSContactsUsageDescription</key><string>{{NAME}} looks up people in your contacts.</string>
-      <key>NSAppleEventsUsageDescription</key><string>{{NAME}} reads your email and drafts replies through Mail.</string>
+    {{MAC_USAGE}}
     </dict></plist>
     PLIST
     codesign --force -s - "$APP"
