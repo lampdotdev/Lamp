@@ -606,6 +606,29 @@ struct StatusGroup: View {
     }
 }
 
+/// Under the chat while Lamp waits for an app that was asked to quit and isn't responding: it may be stuck,
+/// or busy with something long, and only the person can say which. One click ends it, at the cost the line
+/// names, and what was waiting goes on.
+struct UnresponsiveNotice: View {
+    let name: String
+    let forceQuit: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Label {
+                Text(ErrorMessages.notResponding(name)).lineSpacing(2)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            }
+            Spacer(minLength: 0)
+            Button("Force Quit", action: forceQuit)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
 /// A command the agent ran without asking ("Ran: git clone …"). The chat says that it happened; the command
 /// itself is a click away, for anyone who wants to see it.
 struct RanCommand: View {

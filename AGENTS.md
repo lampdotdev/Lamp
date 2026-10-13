@@ -364,6 +364,22 @@ stepper takes a number or a step, and what has no action of its own, or isn't li
 is clicked at a point, pixels in the picture. Lamp tells an app built before the list existed by a line of the
 heading in its binary (`Store.screenTextMarker`): such an app is told to be rebuilt when a target is used.
 
+A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
+about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
+"cancelled" when the person keeps the app open and doesn't come while the question is still up. Until then Lamp
+waits, with the app in front and "Waiting for … to close…" in the chat. Kept open, the app isn't replaced: the
+chat says so, the build waits like a held icon (`HeldInstalls`) and goes in when the app closes, and a look tells
+the agent that what's on screen isn't its change and `use_app` is refused (`Turn.keptOpen`,
+`Runtime.holdsBuild`); a turn asks the app once. Lamp ends an app itself in one case only: it agreed to quit and
+is still there. One that doesn't answer may be stuck or in the middle of a long save, and from outside the two
+look the same, so Lamp never ends it: a copy that answers Lamp's "still there?" (`LampRuntime` answers on the
+main thread, and says it listens by leaving its process id in its runtime folder) is asked that before it is
+asked to quit, and when it doesn't answer the chat says so beside a Force Quit button (`UnresponsiveNotice`,
+`Store.notResponding`), with what the click costs: anything unsaved in that app. The click is the only thing
+that ends it. A build that waits for an app for both
+goes in only while Try On points at this Mac. Don't add a time limit after which an app is ended anyway: that
+is what lost people's work.
+
 `capabilities.json` at an app's root is where the agent declares what the app needs beyond its code
 (`Template.Capabilities`): for an iPhone app the entitlements and background work described above, for a Mac
 app what Finder may hand it, `{"opens": ["folder", "png", "public.image"]}` ("folder", "file", extensions,

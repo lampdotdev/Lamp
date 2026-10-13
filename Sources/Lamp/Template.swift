@@ -1801,6 +1801,16 @@ enum Template {
                 let signature = note.userInfo?["lampUseAppSignature"] as? String
                 MainActor.assumeIsolated { LampDriver.perform(actions, id: id, signature: signature) }
             }
+            // ...and, before it asks the app to quit for a rebuild, whether it still answers, so it can tell the
+            // person when an app isn't responding rather than wait in silence. Answered on the main thread,
+            // since that's the one a stuck app has lost. The file says this copy listens.
+            let pid = String(ProcessInfo.processInfo.processIdentifier)
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("{{NOTE}}stillThere.{{SLUG}}"), object: nil, queue: .main) { _ in
+                DistributedNotificationCenter.default().postNotificationName(
+                    Notification.Name("{{NOTE}}here.{{SLUG}}"), object: pid, userInfo: nil, deliverImmediately: true)
+            }
+            try? pid.write(to: folder.appendingPathComponent("listening"), atomically: true, encoding: .utf8)
             let log = folder.appendingPathComponent("log.txt")
             let previous = folder.appendingPathComponent("previous-log.txt")
             try? fm.removeItem(at: previous)

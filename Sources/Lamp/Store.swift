@@ -356,6 +356,9 @@ final class Store: ObservableObject {
         /// The Mac app built but the last install couldn't put it in place or open it: logged, not a crash, so
         /// the turn still counts as a change. Kept so a new app's first run isn't counted when it never opened.
         var didNotOpen = false
+        /// The person kept the app open when this turn's build asked it to quit: it isn't asked a second time
+        /// in the turn, and the agent isn't shown the copy on screen as its work.
+        var keptOpen = false
         /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
         var phoneReady: Bool?
         var allowAll = false                // "Allow all for this turn"
@@ -1816,7 +1819,14 @@ final class Store: ObservableObject {
         let watching = Template.isWidgetOnly(project) && isRunning(project)
         if watching { await quit(project) }
         guard heldInstalls.mayInstall(project.id, running: isRunning(project)) else { return false }
-        try? await deploy(project)
+        do {
+            try await deploy(project)
+            // A build that waited for the app to close goes in the same way, and is the app's stamp from now on.
+            if Runtime.holdsBuild(project) {
+                Runtime.releaseBuild(project)
+                stamps[project.id] = BuildStamp.read(project.installedURL)
+            }
+        } catch {}
         if watching { await watchWidget(of: project) }
         return true
     }
@@ -1830,7 +1840,9 @@ final class Store: ObservableObject {
         // with nothing to install would go round for ever.
         let due = heldInstalls.due(amongClosed: candidates) { id in
             guard let project = projects.first(where: { $0.id == id }) else { return false }
-            return !isRunning(project) && FileManager.default.fileExists(atPath: project.builtURL.path)
+            // Not while an app for both points at iOS: its build there isn't the Mac app's, and what waits is
+            // for the Mac. It stays waiting, and goes in when Try On is back on this Mac.
+            return !project.onIOS && !isRunning(project) && FileManager.default.fileExists(atPath: project.builtURL.path)
         }
         for project in projects where due.contains(project.id) {
             guard begin(project) != nil else { continue }
@@ -1984,7 +1996,8 @@ final class Store: ObservableObject {
             }
             if committed {
                 link(asked, to: head, in: project)
-                if crash == nil { keepPicture(of: project, version: head) }
+                // Not of a copy the person kept open: it's the version before this one.
+                if crash == nil, !owner.keptOpen { keepPicture(of: project, version: head) }
                 titleVersions(project, limit: 1)
             }
             versionsRevision += 1
@@ -2275,7 +2288,11 @@ final class Store: ObservableObject {
     func delete(_ project: LampProject) async {
         stop(project)
         iconDesigns.removeValue(forKey: project.id)?.cancel()
-        await quit(project)
+        guard await quit(project) else {
+            log(project, .status, ErrorMessages.notDeleted(project.name))
+            return
+        }
+        stop(project)   // anything begun while the app was asking about unsaved work
         // Its widget's process too: in the Trash it would go on running, and answer for an app made later
         // under the same name.
         await WidgetProcess.end(for: project)
@@ -2452,9 +2469,15 @@ final class Store: ObservableObject {
             let shown = await acknowledged.wait(seconds: 1.5)
             guard !running.isTerminated else { return }   // it's relaunching itself (LampWindows.relaunch)
             guard !shown, !Self.hasWindow(running.processIdentifier) else { return noteOpened(true, for: project) }
-            running.terminate()
-            for _ in 0..<30 where !running.isTerminated { try? await Task.sleep(for: .milliseconds(100)) }
-            if !running.isTerminated { running.forceTerminate() }
+            // Only if it goes when asked: one that doesn't may hold something, and is left as it is.
+            let asked = Date()
+            guard await AppQuit.close(running, id: project.id, runtime: Runtime.folder(project),
+                                      stopped: { Date().timeIntervalSince(asked) > 15 }) else { return }
+        }
+        // A build that waited for the app to close, and didn't get in then (Lamp wasn't running): it goes in now.
+        if Runtime.holdsBuild(project) {
+            await run(project)
+            return
         }
         guard FileManager.default.fileExists(atPath: project.installedURL.path),
               !(project.platform == .universal && Runtime.sourcesChanged(project)) else {
@@ -2484,6 +2507,8 @@ final class Store: ObservableObject {
             return (400, ["error": "use_app needs a list of actions."])
         }
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
+        // Not in the copy the person kept open: what it holds is theirs, and it isn't the agent's change.
+        if Runtime.holdsBuild(project), isRunning(project) { return (409, ["error": Self.keptOpenNote]) }
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
@@ -3268,13 +3293,27 @@ final class Store: ObservableObject {
             upgradeIconArt(project)
             return problem
         }
-        await quit(project)
+        // Asked once in a turn: a second build in it leaves the app the person kept open alone.
+        let asked = owner?.keptOpen == true && isRunning(project)
+        guard !asked, await quit(project, for: owner) else {
+            // The person kept the app open, with whatever it holds. It isn't replaced under them (HeldInstalls
+            // says what that breaks, too): the build waits, and goes in when the app closes.
+            Runtime.holdBuild(project)
+            _ = heldInstalls.mayInstall(project.id, running: true)
+            if !asked { log(project, .status, ErrorMessages.stayedOpen(project.name)) }
+            owner?.keptOpen = true
+            owner?.didNotOpen = true
+            noteOpened(false, for: project)
+            refreshOpenApps()
+            return nil
+        }
         guard exists(project) else { return nil }   // deleted while its old copy was quitting
         owner?.didNotOpen = false
         do {
             WidgetCard.forget(project)
             try await deploy(project)
             heldInstalls.installed(project.id)
+            Runtime.releaseBuild(project)
         } catch {
             log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
             owner?.didNotOpen = true
@@ -3996,6 +4035,10 @@ final class Store: ObservableObject {
     /// so it's also checked whenever Lamp comes to the front and after Lamp opens or quits one.
     private func watchOpenApps() {
         refreshOpenApps()
+        // Builds that were waiting for their app to close when Lamp was last quit: still waiting, and one
+        // whose app has closed since goes in now.
+        for project in projects where Runtime.holdsBuild(project) { _ = heldInstalls.mayInstall(project.id, running: true) }
+        installHeldIcons(for: heldInstalls.waiting)
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             workspace.addObserver(forName: name, object: nil, queue: .main) { note in
@@ -4035,13 +4078,29 @@ final class Store: ObservableObject {
         if !closed.isEmpty { installHeldIcons(for: closed) }
     }
 
-    /// Quits the app, for the Stop button. Asks it nicely first, then insists.
+    /// Quits the app, for the Stop button. It's asked, and its answer is waited for: an app asking about
+    /// unsaved work stays open until the person has said what to do with it.
     func quitApp(_ project: LampProject) async {
         await quit(project)
         refreshOpenApps()
     }
 
-    private func quit(_ project: LampProject) async {
+    /// Apps that were asked to quit and aren't responding, with the process that isn't: the chat offers to
+    /// force it to quit while this holds. Lamp never does that itself.
+    @Published private(set) var notResponding: [String: pid_t] = [:]
+
+    /// The person's click on Force Quit: ends the copy that isn't responding, and whatever was waiting for
+    /// it to close (a build, Lamp's Quit, Delete) goes on.
+    func forceQuit(_ project: LampProject) {
+        guard let pid = notResponding.removeValue(forKey: project.id),
+              let app = NSRunningApplication(processIdentifier: pid), app.bundleIdentifier == project.bundleID else { return }
+        app.forceTerminate()
+    }
+
+    /// Asks the app to quit (AppQuit says how its answer is read). False when its Mac copy stays open: the
+    /// person kept it, at its question about unsaved work, or `owner`'s turn was stopped while it was asking.
+    @discardableResult
+    private func quit(_ project: LampProject, for owner: Turn? = nil) async -> Bool {
         // An app for both may be open in both places (Try On moved it): each copy is quit.
         if project.platform.hasIOS {
             if let attached = deviceApps[project.id] {
@@ -4055,15 +4114,31 @@ final class Store: ObservableObject {
             }
             simulatorApps[project.id] = nil
             refreshOpenApps()
-            if !project.platform.hasMac { return }
+            if !project.platform.hasMac { return true }
         }
+        // Nobody is waiting once the turn is stopped or over. Not `stopped`, which the agent's exit clears.
+        let stopped = { owner.map { self.turns[project.id] !== $0 || $0.wasStopped } ?? false }
+        var closed = true
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID) {
-            app.terminate()
-            for _ in 0..<30 where !app.isTerminated {
-                try? await Task.sleep(for: .milliseconds(100))
-            }
-            if !app.isTerminated { app.forceTerminate() }
+            let gone = await AppQuit.close(app, id: project.id, runtime: Runtime.folder(project), stopped: stopped, asking: {
+                // Its question may be behind Lamp's window: in front, the person sees what is being waited for,
+                // and a build says in the chat that it's waiting.
+                app.activate()
+                if owner != nil { self.log(project, .status, "Waiting for \(project.name) to close…") }
+            }, silent: { silent in
+                // Stuck, or in the middle of something long: Lamp can't tell which, so ending it is theirs to
+                // do, from the chat (`UnresponsiveNotice`). The app isn't brought in front of that.
+                if !silent {
+                    if self.notResponding[project.id] == app.processIdentifier { self.notResponding[project.id] = nil }
+                    return
+                }
+                self.notResponding[project.id] = app.processIdentifier
+                NSApp.requestUserAttention(.informationalRequest)
+                if owner != nil { self.log(project, .status, "Waiting for \(project.name) to close…") }
+            })
+            if !gone { closed = false }
         }
+        return closed
     }
 
     // MARK: - AI gateway for generated apps
@@ -4564,6 +4639,14 @@ final class Store: ObservableObject {
         Privacy.sharesPictures ? pictures.map { Previews.forAgent($0, in: project).path } : []
     }
 
+    /// What a look says when the person kept the earlier build open (`Turn.keptOpen`).
+    private static let keptOpenNote = """
+        The app built, but the person has the version from before open and chose to keep it open (it may hold \
+        work they haven't saved), so Lamp didn't replace it. What's on screen isn't your change, so don't look \
+        or use the app again in this request. Finish, and tell them in a sentence that the new version opens \
+        once they close the app.
+        """
+
     /// The agent's `look_at_app` tool: builds what it has written so far, opens the app behind the
     /// user's windows, and reports what happened. The pictures are sent as file paths for pi to read.
     private func look(at project: LampProject) async -> (Int, [String: Any]) {
@@ -4622,8 +4705,12 @@ final class Store: ObservableObject {
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
             return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
         }
+        // The copy on screen is an earlier build the person kept open: not shown as the agent's work, and not
+        // asked to quit again at every look.
+        if turn.keptOpen, isRunning(project) { return (200, ["text": Self.keptOpenNote]) }
         var since = Date()
-        if !changed, NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first != nil {
+        // A copy kept open in an earlier request is older than the build too: it's asked to quit, once.
+        if !changed, !Runtime.holdsBuild(project), NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first != nil {
             // Nothing to rebuild and the app is open: ask it for fresh pictures instead of relaunching it.
             let asked = Date()
             since = asked
@@ -4637,6 +4724,7 @@ final class Store: ObservableObject {
             let launched = Date()
             since = launched
             let crash = await install(project, inFront: false)
+            if turn.keptOpen { return (200, ["text": Self.keptOpenNote]) }
             turn.look.installed = true
             turn.look.crash = crash
             if let crash {
