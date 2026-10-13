@@ -36,6 +36,43 @@ final class PhoneSetupTests: XCTestCase {
         XCTAssertFalse(model.hasRequest)
     }
 
+    func testAMessageSentDuringTheCheckGoesAheadOfTheStoppedBuildToo() async {
+        var issue = PhoneTools.Issue(step: .account, title: "Needs a paid membership", message: "Join", action: .membership)
+        issue.needsPaidTeam = true
+        let stopped = PhoneTools.Report(issue: issue)
+        var release: CheckedContinuation<PhoneTools.Report, Never>?
+        let model = PhoneSetup(presentsWindow: false) { context in
+            guard context.requiresPaidTeam else { return self.ready() }
+            return await withCheckedContinuation { release = $0 }
+        }
+        var built = false, buildCancelled = false, sent = false
+        // The first check, and Check Again once the window is up: a message sent during either.
+        model.perform(resolve: { .init(requiresTeam: true, requiresPaidTeam: true) }, cancelled: { buildCancelled = true }) { built = true }
+        while release == nil { await Task.yield() }
+        model.perform(resolve: { .init(requiresTeam: true) }) { sent = true }
+        release?.resume(returning: stopped)
+        await settle(model)
+        XCTAssertTrue(sent)
+        XCTAssertTrue(buildCancelled)
+        XCTAssertFalse(built)
+
+        (release, sent, buildCancelled) = (nil, false, false)
+        model.perform(resolve: { .init(requiresTeam: true, requiresPaidTeam: true) }, cancelled: { buildCancelled = true }) { built = true }
+        while release == nil { await Task.yield() }
+        release?.resume(returning: stopped)
+        await settle(model)
+        release = nil
+        model.refresh()
+        while release == nil { await Task.yield() }
+        model.perform(resolve: { .init(requiresTeam: true) }) { sent = true }
+        release?.resume(returning: stopped)
+        await settle(model)
+        XCTAssertTrue(sent)
+        XCTAssertTrue(buildCancelled)
+        XCTAssertFalse(built)
+        XCTAssertFalse(model.hasRequest)
+    }
+
     func testEveryActionRunsWhenSubmittedDuringAnotherCheck() async {
         var release: CheckedContinuation<PhoneTools.Report, Never>?
         var calls = 0

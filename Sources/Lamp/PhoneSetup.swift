@@ -75,6 +75,7 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         pending.append(Request(resolve: resolve, then: then, cancelled: cancelled, isReady: isReady))
         // A build stopped for a paid membership isn't about to go ahead, and what the person does next, a
         // message asking for iCloud to be taken out above all, must not wait behind it or be closed with it.
+        // Mid-check, the same is done when the answer comes (`refresh`).
         if !checking, active?.waiting == true, report?.issue?.needsPaidTeam == true { cancelActive() }
         else { startNext() }
     }
@@ -132,6 +133,8 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
                 guard current == context else { refresh(); return }
                 report = result
                 if result.ready && !request.waiting { completeActive() }
+                // Something asked while this was being checked goes ahead of it too.
+                else if result.issue?.needsPaidTeam == true, !pending.isEmpty { cancelActive() }
                 else { active?.waiting = true; present() }
             } else {
                 // An action submitted during an automatic recheck still gets its own context and result.
