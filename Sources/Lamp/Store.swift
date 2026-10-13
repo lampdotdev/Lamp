@@ -3512,7 +3512,7 @@ final class Store: ObservableObject {
             }
         }
         let entitlements = project.dir.appendingPathComponent(".lamp/entitlements.plist")
-        try? capabilities.entitlementsPlist(for: project).write(to: entitlements, atomically: true, encoding: .utf8)
+        try? capabilities.entitlementsPlist(for: project, platform: .ios).write(to: entitlements, atomically: true, encoding: .utf8)
         // The container's name, for LampSync to read; taken back when no longer declared.
         if let container = capabilities.container(for: project) {
             script += "plutil -replace LampICloudContainer -string '\(container.replacingOccurrences(of: "'", with: "'\\''"))' \"$P\"\n"

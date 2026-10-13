@@ -438,20 +438,27 @@ enum Template {
         }
 
         /// The iCloud container an app keeps its data in, or nil when it has none: iCloud declared, and an
-        /// iPhone half, so Apple signs it for a team (Lamp's own Mac signature can't carry iCloud).
+        /// iPhone half, so Apple signs it for a team (Lamp's own Mac signature can't carry iCloud). Named
+        /// after the id the app is signed with, team and all: containers are global, so one named after
+        /// the plain id would be taken by whichever team made an app of that name first.
         func container(for project: LampProject) -> String? {
-            icloud == true && project.platform.hasIOS ? "iCloud." + project.bundleID : nil
+            icloud == true && project.platform.hasIOS ? "iCloud." + project.deviceBundleID(team: Devices.team) : nil
         }
 
         /// The entitlements plist for codesign and for Xcode's automatic signing, which registers each
-        /// capability with Apple. Empty when nothing is declared.
-        func entitlementsPlist(for project: LampProject) -> String { entitlementsPlist(container: container(for: project)) }
+        /// capability with Apple. Empty when nothing is declared. iCloud brings push with it: CloudKit's
+        /// sync engine hears of changes made elsewhere through notifications, whose entitlement is spelled
+        /// differently on each platform.
+        func entitlementsPlist(for project: LampProject, platform: Destination = .ios) -> String {
+            entitlementsPlist(container: container(for: project), platform: platform)
+        }
 
-        func entitlementsPlist(container: String?) -> String {
+        func entitlementsPlist(container: String?, platform: Destination = .ios) -> String {
             var lines: [String] = []
             if let container {
                 lines.append("  <key>com.apple.developer.icloud-container-identifiers</key><array><string>\(container.xmlEscaped)</string></array>")
                 lines.append("  <key>com.apple.developer.icloud-services</key><array><string>CloudKit</string></array>")
+                lines.append("  <key>\(platform == .mac ? "com.apple.developer.aps-environment" : "aps-environment")</key><string>development</string>")
             }
             if healthkit == true {
                 lines.append("  <key>com.apple.developer.healthkit</key><true/>")
@@ -473,6 +480,8 @@ enum Template {
         /// and the identifiers background tasks may register under. A dictionary of key to names.
         var lists: [String: [String]] {
             var lists: [String: [String]] = [:]
+            // iCloud's notifications of changes made elsewhere reach the app in the background through this mode.
+            let modes = icloud == true && !modes.contains("remote-notification") ? modes + ["remote-notification"] : modes
             if !modes.isEmpty { lists["UIBackgroundModes"] = modes }
             if !services.isEmpty { lists["NSBonjourServices"] = services }
             if !tasks.isEmpty { lists["BGTaskSchedulerPermittedIdentifiers"] = tasks }
@@ -591,7 +600,7 @@ enum Template {
         let capabilities = Capabilities.load(project)
         var files: [(String, String)] = [
             ("\(project.exe).xcodeproj/project.pbxproj", universal ? universalPbxproj : devicePbxproj),
-            ("App.entitlements", capabilities.entitlementsPlist(for: project)),
+            ("App.entitlements", capabilities.entitlementsPlist(for: project, platform: .ios)),
             ("\(project.exe).xcodeproj/xcshareddata/xcschemes/\(project.exe).xcscheme", deviceScheme),
             ("Info.plist", deviceInfoPlist),
             ("Assets.xcassets/Contents.json", #"{ "info": { "author": "xcode", "version": 1 } }"#),
@@ -600,7 +609,10 @@ enum Template {
                 : #"{ "images": [ { "idiom": "universal", "platform": "ios", "size": "1024x1024" } ], "info": { "author": "xcode", "version": 1 } }"#),
         ]
         // The Mac half has its own Info.plist, and its icon comes from Lamp when the app is installed (Store.deploy), as every Mac app's does.
-        if universal { files.append(("Info-macOS.plist", universalMacInfoPlist)) }
+        if universal {
+            files.append(("Info-macOS.plist", universalMacInfoPlist))
+            files.append(("App-macOS.entitlements", capabilities.entitlementsPlist(for: project, platform: .mac)))
+        }
         for (path, template) in files {
             let contents = template
                 .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
@@ -726,7 +738,7 @@ enum Template {
     		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Assets in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
     		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = 14.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = auto; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
-    		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {"ASSETCATALOG_COMPILER_APPICON_NAME[sdk=iphone*]" = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; "INFOPLIST_FILE[sdk=macosx*]" = "Info-macOS.plist"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); "LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = ("$(inherited)", "@executable_path/../Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+    		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {"ASSETCATALOG_COMPILER_APPICON_NAME[sdk=iphone*]" = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "App-macOS.entitlements"; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; "INFOPLIST_FILE[sdk=macosx*]" = "Info-macOS.plist"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); "LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = ("$(inherited)", "@executable_path/../Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
     		A00000000000000000000010 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
     		A0000000000000000000000C /* Build configuration list for PBXNativeTarget */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
     	};
@@ -3250,11 +3262,15 @@ enum Template {
             engine.state.add(pendingRecordZoneChanges: changes)
         }
 
-        /// The record to send for a change: the item's JSON on the record iCloud knows, or on a new one.
+        /// The record to send for a change: the item's JSON on the record iCloud knows, or on a new one, with
+        /// the time the item was changed here, so a conflict is settled by when the edits were made and not
+        /// by when they happened to be sent.
         private func record(for recordID: CKRecord.ID) -> CKRecord? {
             guard let (collection, id) = Self.parse(recordName: recordID.recordName),
-                  let json = LampStore.query("SELECT json FROM forge_items WHERE collection = ? AND id = ?", Self.prefix + collection, id).first?["json"] as? String
+                  let row = LampStore.query("SELECT json, updated FROM forge_items WHERE collection = ? AND id = ?", Self.prefix + collection, id).first,
+                  let json = row["json"] as? String
             else { return nil }   // deleted here since: nothing to send
+            let modified = (row["updated"] as? Double).map { Date(timeIntervalSince1970: $0) } ?? Date()
             let record: CKRecord
             if let data = known[recordID.recordName], let unarchiver = try? NSKeyedUnarchiver(forReadingFrom: data),
                let kept = CKRecord(coder: unarchiver) {
@@ -3264,16 +3280,24 @@ enum Template {
             }
             record["collection"] = collection as CKRecordValue
             record["json"] = json as CKRecordValue
-            record["modified"] = Date() as CKRecordValue
+            record["modified"] = modified as CKRecordValue
             return record
         }
 
-        /// A record from iCloud, taken as this device's copy of the item.
+        /// A record from iCloud, taken as this device's copy of the item, unless this device has a newer
+        /// edit of it still to be sent: that one stays, and goes up as a change to the record iCloud has.
         private func apply(_ record: CKRecord) {
             guard let (collection, id) = Self.parse(recordName: record.recordID.recordName),
                   let json = record["json"] as? String else { return }
+            let theirs = record["modified"] as? Date ?? Date()
+            if let engine, engine.state.pendingRecordZoneChanges.contains(.saveRecord(record.recordID)),
+               let updated = LampStore.query("SELECT updated FROM forge_items WHERE collection = ? AND id = ?", Self.prefix + collection, id).first?["updated"] as? Double,
+               Date(timeIntervalSince1970: updated) > theirs {
+                remember(record)
+                return
+            }
             LampStore.execute("INSERT OR REPLACE INTO forge_items (collection, id, json, updated) VALUES (?, ?, ?, ?)",
-                              Self.prefix + collection, id, json, (record["modified"] as? Date ?? Date()).timeIntervalSince1970)
+                              Self.prefix + collection, id, json, theirs.timeIntervalSince1970)
             collections[collection]?.reload(id: id)
             remember(record)
         }
