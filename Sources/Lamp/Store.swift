@@ -2,10 +2,21 @@ import SwiftUI
 import CryptoKit
 import AppKit
 
-/// What an app is for: a Mac app that installs beside the user's others, or an iPhone app that runs in the
-/// iOS Simulator on this Mac (putting one on a real iPhone needs Apple's developer program; not yet).
+/// What an app is for: a Mac app that installs beside the user's others, an iPhone app that runs in the
+/// iOS Simulator on this Mac or on the person's own phone, or one app for both, as Xcode's multiplatform
+/// apps are: one code, built for whichever is chosen under Try On (`LampProject.destination`).
 enum Platform: String, Codable {
-    case mac, iphone   // "iphone" is the iOS kind: iPhone and iPad apps alike (see DeviceFamily)
+    case mac, iphone, universal   // "iphone" is the iOS kind: iPhone and iPad apps alike (see DeviceFamily)
+
+    var hasMac: Bool { self != .iphone }
+    var hasIOS: Bool { self != .mac }
+}
+
+/// Where an app is built for and opened: this Mac, or iOS (a simulator, or the person's phone, by
+/// `LampProject.family` and `device`). A Mac app or an iPhone app has one; an app for both has the one
+/// Try On last chose.
+enum Destination: String, Codable {
+    case mac, ios
 }
 
 /// Which simulator an iOS app opens on. The app itself is built for both.
@@ -15,21 +26,33 @@ enum DeviceFamily: String, Codable {
 }
 
 /// What a new app is made as, chosen before its first message: in the welcome and in a new app's intro.
-/// iPhone and iPad are the same kind of app to Lamp; the choice is which simulator it opens in.
+/// iPhone and iPad are one kind of app, as Apple has it; which simulator it opens in is Try On's choice.
+/// The names are what the intro's sentence says ("Describe the iPhone & iPad app you wish you had").
 enum AppKind: String, CaseIterable {
-    case mac = "Mac", iphone = "iPhone", ipad = "iPad"
+    case mac = "Mac", phone = "iPhone & iPad", universal = "Mac, iPhone & iPad"
 
-    init(_ project: LampProject) { self = project.platform == .mac ? .mac : project.family == .ipad ? .ipad : .iphone }
-    var platform: Platform { self == .mac ? .mac : .iphone }
-    var family: DeviceFamily { self == .ipad ? .ipad : .iphone }
-    /// For the prompts that describe the app to a model: "a Mac app", "an iPhone app".
-    var phrase: String { self == .mac ? "a Mac app" : "an \(rawValue) app" }
+    init(_ project: LampProject) {
+        self = switch project.platform {
+        case .mac: .mac
+        case .universal: .universal
+        case .iphone: .phone
+        }
+    }
+    var platform: Platform { self == .mac ? .mac : self == .universal ? .universal : .iphone }
+    /// For the prompts that describe the app to a model: "a Mac app", "an iPhone and iPad app".
+    var phrase: String {
+        switch self {
+        case .mac: "a Mac app"
+        case .phone: "an iPhone and iPad app"
+        case .universal: "an app for the Mac and the iPhone, one code for both"
+        }
+    }
     /// The device's picture where the kind is chosen.
     var symbol: String {
         switch self {
         case .mac: "laptopcomputer"
-        case .iphone: "iphone"
-        case .ipad: "ipad"
+        case .phone: "iphone"
+        case .universal: "laptopcomputer.and.iphone"
         }
     }
 }
@@ -51,11 +74,31 @@ struct LampProject: Identifiable, Hashable {
     var family: DeviceFamily = .iphone
     /// The person's own iPhone or iPad that Play puts the app on (Devices), instead of the simulator.
     var device: String?
-    var bundleID: String { Edition.appBundlePrefix + id }
+    /// For an app made for both: where Try On last put it. Meaningless for the other kinds, which have one place.
+    var chosen: Destination = .mac
+    /// Where the app is built for and opened now.
+    var destination: Destination {
+        switch platform {
+        case .mac: .mac
+        case .iphone: .ios
+        case .universal: chosen
+        }
+    }
+    /// On iOS now: the simulator, or the person's phone. The rest of Lamp's phone work follows this, and an
+    /// app for both goes through it only while that's where it opens.
+    var onIOS: Bool { destination == .ios }
+    /// An app for both is registered with Apple under the person's team on the Mac too, so its one id
+    /// carries the team everywhere, as a phone build's does (`deviceBundleID`).
+    var bundleID: String {
+        let plain = Edition.appBundlePrefix + id
+        guard platform == .universal, !Devices.team.isEmpty else { return plain }
+        return plain + "." + Devices.team.lowercased()
+    }
     /// On a phone the app is registered with Apple under the person's team, so the id carries the team:
     /// another team may have registered the plain one for the same app name.
-    func deviceBundleID(team: String) -> String { bundleID + "." + team.lowercased() }
-    var builtURL: URL { dir.appendingPathComponent("build/\(exe).app") }
+    func deviceBundleID(team: String) -> String { platform == .universal ? bundleID : bundleID + "." + team.lowercased() }
+    /// An app for both keeps a build for each place, so checking one half never replaces the other's.
+    var builtURL: URL { dir.appendingPathComponent(platform == .universal && onIOS ? "build/iOS/\(exe).app" : "build/\(exe).app") }
     /// Every successful build is copied here so it shows up in Spotlight and Launchpad.
     var installedURL: URL { Store.installDir.appendingPathComponent("\(name).app") }
     /// What the app is called on screen. An unnamed one has only a stand-in name on disk ("Untitled", which
@@ -73,6 +116,7 @@ struct ProjectMeta: Codable {
     var platform: Platform?   // nil in apps made before iPhone apps existed: a Mac app
     var family: DeviceFamily?  // iOS apps: which simulator they open on; nil means iPhone
     var device: String?        // iOS apps: the person's own phone (its udid) that Play puts the app on, if any
+    var target: Destination?   // apps for both: where Try On last put it; nil means the Mac
     var instance: String?      // LampProject.instance
     var wish: Bool?            // LampProject.fromWish
 }
@@ -428,7 +472,7 @@ final class Store: ObservableObject {
         startGateway()
         watchOpenApps()
         // Asking for phones runs devicectl, so only for someone with iPhone apps; Try On asks again when it's opened.
-        if projects.contains(where: { $0.platform == .iphone }) { refreshDevices() }
+        if projects.contains(where: { $0.platform.hasIOS }) { refreshDevices() }
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
@@ -529,7 +573,7 @@ final class Store: ObservableObject {
                                 instance: meta.instance ?? dir.lastPathComponent,
                                 untitled: meta.untitled ?? false, fromWish: meta.wish ?? false,
                                 platform: meta.platform ?? .mac, family: meta.family ?? .iphone,
-                                device: meta.device)
+                                device: meta.device, chosen: meta.target ?? .mac)
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
@@ -842,18 +886,16 @@ final class Store: ObservableObject {
     /// The kind chosen in a new app's intro: a draft only says what it will be, so this is a change to that.
     /// Quietly, as nothing in the chat would make sense of it.
     func setKind(_ project: LampProject, _ kind: AppKind) {
-        let platform = kind.platform, family = kind.family
+        let platform = kind.platform
         guard !project.scaffolded, !busy.contains(project.id),
               let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
         var changed = projects[index]
         changed.platform = platform
-        if platform == .iphone {
-            // Choosing what to make doesn't need installed tools. Send checks the selected simulator
-            // before building and explains the next setup action without blocking this draft's picker.
-            changed.family = family
-        } else {
-            changed.device = nil
-        }
+        // Choosing what to make doesn't need installed tools. Send checks the selected simulator
+        // before building and explains the next setup action without blocking this draft's picker.
+        if !platform.hasIOS { changed.device = nil }
+        // An app for both starts on the Mac, where its first build is seen; Try On moves it.
+        changed.chosen = .mac
         guard changed != projects[index], (try? Template.saveMeta(changed)) != nil else { return }
         projects[index] = changed
     }
@@ -868,35 +910,68 @@ final class Store: ObservableObject {
     /// so the other device gets a fresh launch.
     /// Which of the person's own phones Play puts the app on, or nil for the simulator. The agent keeps
     /// looking at the simulator either way, since the phone's screen can't be photographed from here.
-    func setDevice(_ project: LampProject, _ udid: String?) {
-        guard project.platform == .iphone, project.device != udid, begin(project) != nil else { return }
+    /// Which of the person's own phones Play puts the app on, or nil for a simulator, of `family` when given:
+    /// one change, so a choice made from the Mac or from the other simulator lands whole. The app is quit
+    /// when it has to be opened afresh elsewhere: on the other simulator, or, for an app for both leaving
+    /// the Mac, so its Mac copy stops writing its pictures over the iPhone's.
+    func setDevice(_ project: LampProject, _ udid: String?, family: DeviceFamily? = nil) {
+        let family = family ?? project.family
+        let moving = project.platform == .universal && project.chosen != .ios
+        guard project.platform.hasIOS, project.device != udid || project.family != family || moving,
+              begin(project) != nil else { return }
         clearPhoneRetry(project)
         var changed = project
         changed.device = udid
+        changed.family = family
+        changed.chosen = .ios
         try? Template.saveMeta(changed)
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
         syncLocalNetwork()
         let name = devices.first(where: { $0.udid == udid })?.name
-        log(changed, .status, name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
-                               ?? "\(changed.name) will open on the \(changed.family.name) simulator from now on.")
-        finish(changed)
+        let said = name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
+            ?? "\(changed.name) will open on the \(changed.family.name) simulator from now on."
+        guard moving || (udid == nil && project.family != family) else {
+            log(changed, .status, said)
+            finish(changed)
+            return
+        }
+        Task {
+            await quit(changed)
+            log(changed, .status, said)
+            finish(changed)
+        }
     }
 
     /// Back to a simulator from a phone, as one change: the family is set on the project as it is after
     /// the phone is forgotten, not on the copy the menu held.
     func setSimulator(_ project: LampProject, _ family: DeviceFamily) {
-        setDevice(project, nil)
-        if let current = projects.first(where: { $0.id == project.id }) { setFamily(current, family) }
+        setDevice(project, nil, family: family)
     }
 
     /// The person's paired iPhones and iPads, for Try On. Looked up when the list is wanted (opening the
     /// menu) and at startup; a phone that's gone stays chosen, and Play says so.
     @Published var devices: [Devices.Device] = []
 
-    /// What Try On shows beside Play: the simulator's kind, or the chosen phone's name.
+    /// What Try On shows beside Play: the simulator's kind, or the chosen phone's name, or this Mac.
     func tryOnName(_ project: LampProject) -> String {
+        guard project.onIOS else { return "My Mac" }
         guard let udid = project.device else { return project.family.name }
         return devices.first(where: { $0.udid == udid })?.name ?? "Your phone"
+    }
+
+    /// An app for both, back on this Mac: Try On's "My Mac". Its next open is a Mac build; the iOS copy is quit.
+    func setMac(_ project: LampProject) {
+        guard project.platform == .universal, project.chosen != .mac, begin(project) != nil else { return }
+        var changed = project
+        changed.chosen = .mac
+        try? Template.saveMeta(changed)
+        if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
+        syncLocalNetwork()
+        Task {
+            await quit(changed)
+            log(changed, .status, "\(changed.name) will open on this Mac from now on.")
+            finish(changed)
+        }
     }
 
     /// Pairs a plugged-in phone that hasn't trusted this Mac yet, then lists again. Told in the app's chat,
@@ -937,21 +1012,6 @@ final class Store: ObservableObject {
         Task {
             let found = await Devices.list()
             if found != devices { devices = found }
-        }
-    }
-
-    func setFamily(_ project: LampProject, _ family: DeviceFamily) {
-        guard project.platform == .iphone, project.family != family, begin(project) != nil else { return }
-        var changed = project
-        changed.family = family
-        try? Template.saveMeta(changed)
-        // In the list straight away, so nothing that starts meanwhile sees the old choice; the app itself is
-        // quit so its next open is a fresh launch on the other device.
-        if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
-        Task {
-            await quit(changed)
-            log(changed, .status, "\(changed.name) will open on the \(family.name) simulator from now on.")
-            finish(changed)
         }
     }
 
@@ -996,7 +1056,7 @@ final class Store: ObservableObject {
 
         let fm = FileManager.default
         let renamed = LampProject(id: current.id, name: unique, exe: current.exe, dir: current.dir, instance: current.instance,
-                                  platform: current.platform, family: current.family, device: current.device)
+                                  platform: current.platform, family: current.family, device: current.device, chosen: current.chosen)
         try? Template.saveMeta(renamed)
         if fm.fileExists(atPath: current.installedURL.path) {
             try? fm.moveItem(at: current.installedURL, to: renamed.installedURL)
@@ -1044,7 +1104,7 @@ final class Store: ObservableObject {
         let slug = Template.freeSlug(for: exe, in: root)
         let copy = LampProject(id: slug, name: name, exe: exe, dir: root.appendingPathComponent(slug),
                                instance: UUID().uuidString, platform: project.platform, family: project.family,
-                               device: project.device)
+                               device: project.device, chosen: project.chosen)
         do {
             try fm.createDirectory(at: copy.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
             // Everything at the top but what a build makes again (Lamp's own files are rewritten before it).
@@ -1134,7 +1194,7 @@ final class Store: ObservableObject {
         let exe = Template.identifier(from: name)
         let slug = exe.lowercased() == old.id ? old.id : Template.freeSlug(for: exe, in: root)
         let project = LampProject(id: slug, name: name, exe: exe, dir: root.appendingPathComponent(slug), instance: old.instance,
-                                  platform: old.platform, family: old.family, device: old.device)
+                                  platform: old.platform, family: old.family, device: old.device, chosen: old.chosen)
         do {
             if slug != old.id { try FileManager.default.moveItem(at: old.dir, to: project.dir) }
             try Template.saveMeta(project)
@@ -2349,11 +2409,14 @@ final class Store: ObservableObject {
     /// Opens the installed app, or brings it to the front if it's running. Only builds when there's
     /// nothing installed yet (or the installed copy was deleted).
     func open(_ project: LampProject) async {
-        if project.platform == .iphone {
+        if project.onIOS {
             // Running already: bring the simulator forward. Otherwise build (if needed) and launch.
             let toSimulator = project.device == nil
             if toSimulator, let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id { await Simulator.show(running.udid); return }
-            if FileManager.default.fileExists(atPath: project.builtURL.path), stamps[project.id]?.isOutdated != true {
+            // An app for both reuses a build only when it was made for this place from this code (the
+            // place is part of the fingerprint), else it's built again.
+            if FileManager.default.fileExists(atPath: project.builtURL.path), stamps[project.id]?.isOutdated != true,
+               !(project.platform == .universal && Runtime.sourcesChanged(project)) {
                 guard begin(project) != nil else { return }
                 defer { finish(project) }
                 await installReportingCrash(project)
@@ -2385,7 +2448,8 @@ final class Store: ObservableObject {
             for _ in 0..<30 where !running.isTerminated { try? await Task.sleep(for: .milliseconds(100)) }
             if !running.isTerminated { running.forceTerminate() }
         }
-        guard FileManager.default.fileExists(atPath: project.installedURL.path) else {
+        guard FileManager.default.fileExists(atPath: project.installedURL.path),
+              !(project.platform == .universal && Runtime.sourcesChanged(project)) else {
             await run(project)
             return
         }
@@ -2411,7 +2475,7 @@ final class Store: ObservableObject {
               let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
             return (400, ["error": "use_app needs a list of actions."])
         }
-        if project.platform == .iphone { return await useOnSimulator(project, actions: actions, json: json) }
+        if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
@@ -2715,7 +2779,7 @@ final class Store: ObservableObject {
             return (400, ["error": "`capability` must be text, decisions or pictures."])
         }
         let away = arguments["away"] as? Bool == true
-        guard !away || project.platform == .iphone else {
+        guard !away || project.platform.hasIOS else {
             return (400, ["error": "`away` is only for iPhone apps."])
         }
         let why = (arguments["why"] as? String)?.trimmed ?? ""
@@ -3137,7 +3201,15 @@ final class Store: ObservableObject {
         // Taken before the build, so an edit made while it runs still counts as a change afterwards.
         let fingerprint = Runtime.fingerprint(project)
         var output: [String] = []
-        let status = await Shell.run(Shell.compatibleSDK + "./build.sh", cwd: project.dir,
+        // An app for both is built for where Try On points; its Mac build is Xcode's, signed for the team.
+        let universal = project.platform == .universal
+        if universal, !project.onIOS, Devices.team.isEmpty {
+            let problem = "The Mac build of an app for both is signed for your Apple team, and none is chosen yet. Choose it in Settings → Building, then try again."
+            log(project, .error, problem)
+            return problem
+        }
+        let command = universal ? "./build.sh \(project.onIOS ? "ios" : "mac")" : "./build.sh"
+        let status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: universal ? ["LAMP_TEAM": Devices.team] : [:],
                                      started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
         turns[project.id]?.build = nil
         guard exists(project) else { return "The app was deleted." }
@@ -3166,7 +3238,7 @@ final class Store: ObservableObject {
         // and start the next one's, which must not inherit this launch.
         let owner = turns[project.id]
         await prepareIcon(project)
-        if project.platform == .iphone {
+        if project.onIOS {
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
             // The person's own phone gets the app when they press Play or a change is finished; the agent's
             // looks (not in front) stay on the simulator, which is the only screen Lamp can see.
@@ -3555,9 +3627,17 @@ final class Store: ObservableObject {
         let entitlements = project.dir.appendingPathComponent(".lamp/widget-entitlements.plist")
         if hasWidget { try Template.widgetEntitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8) }
         var signingEnv = ["LAMP_APP": project.builtURL.path, "LAMP_WIDGET": widget.path, "LAMP_WIDGET_ENTITLEMENTS": entitlements.path]
-        let identity = await AppSigning.identity()
+        // An app for both was signed by Xcode for the person's team; what was put in since is sealed with the
+        // same certificate and the same entitlements, never Lamp's own, which could carry neither.
+        let identity = project.platform == .universal ? (await Devices.signingIdentity(for: Devices.team) ?? "-") : await AppSigning.identity()
         var signed = false
-        if identity != "-" {
+        if project.platform == .universal, identity != "-" {
+            var output: [String] = []
+            signed = await Shell.run("codesign --force --preserve-metadata=entitlements -s \"$LAMP_IDENTITY\" \"$LAMP_APP\" 2>&1",
+                                     cwd: project.dir, env: signingEnv.merging(["LAMP_IDENTITY": identity]) { $1 }) { output.append($0) } == 0
+                && AppSigning.isCertificateSigned(project.builtURL)
+            if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
+        } else if identity != "-" {
             var output: [String] = []
             signingEnv["LAMP_IDENTITY"] = identity
             signingEnv["LAMP_KEYCHAIN"] = AppSigning.keychain
@@ -3918,9 +3998,11 @@ final class Store: ObservableObject {
 
     private func refreshOpenApps() {
         let prefix = Edition.appBundlePrefix
+        // By the app's whole id first: an app for both carries the team in its id, which isn't its folder's name.
+        let byBundle = Dictionary(projects.map { ($0.bundleID, $0.id) }, uniquingKeysWith: { first, _ in first })
         var ids = NSWorkspace.shared.runningApplications
             .compactMap { $0.isTerminated ? nil : $0.bundleIdentifier }
-            .filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
+            .compactMap { byBundle[$0] ?? ($0.hasPrefix(prefix) ? String($0.dropFirst(prefix.count)) : nil) }
         simulatorApps = simulatorApps.filter { Simulator.isRunning(pid: $0.value.pid) }
         ids += simulatorApps.keys
         deviceApps = deviceApps.filter { $0.value.isRunning }
@@ -3937,7 +4019,8 @@ final class Store: ObservableObject {
     }
 
     private func quit(_ project: LampProject) async {
-        if project.platform == .iphone {
+        // An app for both may be open in both places (Try On moved it): each copy is quit.
+        if project.platform.hasIOS {
             if let attached = deviceApps[project.id] {
                 if attached.isRunning { attached.terminate() }
                 deviceApps[project.id] = nil
@@ -3949,7 +4032,7 @@ final class Store: ObservableObject {
             }
             simulatorApps[project.id] = nil
             refreshOpenApps()
-            return
+            if !project.platform.hasMac { return }
         }
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID) {
             app.terminate()
@@ -3966,7 +4049,7 @@ final class Store: ObservableObject {
         let gateway = Gateway { request in await Store.shared.handleAI(request) }
         do {
             try gateway.start()
-            gateway.setLocalNetwork(projects.contains { $0.platform == .iphone && $0.device != nil })
+            gateway.setLocalNetwork(projects.contains { $0.platform.hasIOS && $0.device != nil })
             self.gateway = gateway
         } catch {
             NSLog("Lamp AI gateway failed to start: \(error)")
@@ -3976,7 +4059,7 @@ final class Store: ObservableObject {
     /// The gateway answers on the local network only while an app is set to open on the person's own phone:
     /// kept in step with the list of apps (Try On, deletion, rename, reload).
     func syncLocalNetwork() {
-        gateway?.setLocalNetwork(projects.contains { $0.platform == .iphone && $0.device != nil })
+        gateway?.setLocalNetwork(projects.contains { $0.platform.hasIOS && $0.device != nil })
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
@@ -4252,7 +4335,7 @@ final class Store: ObservableObject {
     /// `AppAI.resolve` has them for `.phoneAway`. Only for iPhone apps; a Mac app
     /// or the simulator never needs it, and the key stays in the phone's Keychain, put there by the app itself.
     private func keysForPhone(_ project: LampProject) -> (Int, [String: Any]) {
-        guard project.platform == .iphone else { return (403, ["error": "Not for this app."]) }
+        guard project.platform.hasIOS else { return (403, ["error": "Not for this app."]) }
         guard AppAI.resolve(.text, for: project, in: .phoneAway).tier != .none, let key = KeyStore.openRouterKey else {
             return (404, ["error": "There's no OpenRouter key to keep."])
         }
@@ -4478,7 +4561,7 @@ final class Store: ObservableObject {
         }
         var note = "The app built and is running."
         var screenshots: [URL] = []
-        if project.platform == .iphone {
+        if project.onIOS {
             // The simulator photographs the screen; nothing in the app has to cooperate.
             // Open, and the device still this app's: otherwise it's opened again (which takes the device back).
             let running = simulatorApps[project.id].map { Simulator.isRunning(pid: $0.pid) && simulatorLeases[$0.udid] == project.id } ?? false
@@ -4553,7 +4636,7 @@ final class Store: ObservableObject {
     /// shell can open with but can't see, and which moves when the app is renamed. Given the copy in build/
     /// or the bundle id instead, macOS starts that copy beside the one Lamp opened.
     nonisolated static func handingHint(for project: LampProject) -> String {
-        guard project.platform != .iphone, !Template.Capabilities.load(project).kinds.isEmpty else { return "" }
+        guard !project.onIOS, !Template.Capabilities.load(project).kinds.isEmpty else { return "" }
         return "\n\nTo hand it a file or folder as Finder would, run `open -g -a \(Sandbox.quoted(project.installedURL.path)) <path>`, " +
             "then `use_app` with a wait to see the result. Use that path, not the copy in build/ or the bundle id: those start a second copy."
     }

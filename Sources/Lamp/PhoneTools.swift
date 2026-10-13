@@ -10,13 +10,13 @@ enum PhoneTools {
 
     /// Store's synchronous creation guard immediately follows the UI preflight. Reuse that result so it
     /// doesn't run the same Xcode commands again on the main thread. Explicit rechecks never use the cache.
-    static func checked(family: DeviceFamily = .iphone, phone: String? = nil, useCache: Bool = false) -> Report {
+    static func checked(family: DeviceFamily = .iphone, phone: String? = nil, requiresTeam: Bool = false, useCache: Bool = false) -> Report {
         let active = ProcessInfo.processInfo.environment["DEVELOPER_DIR"]
-        if useCache, phone == nil, let previous = cacheLock.withLock({ cached[family] }),
+        if useCache, phone == nil, !requiresTeam, let previous = cacheLock.withLock({ cached[family] }),
            previous.developer == active, Date().timeIntervalSince(previous.date) < 10 {
             return previous.report
         }
-        let report = check(family: family, phone: phone)
+        let report = check(family: family, phone: phone, requiresTeam: requiresTeam)
         if phone == nil { cacheLock.withLock { cached[family] = (active, Date(), report) } }
         return report
     }
@@ -190,7 +190,8 @@ enum PhoneTools {
 
     /// Stop at the first failed check: later commands often fail only because an earlier step is missing.
     /// A simulator is needed even for a real phone, because that's where Lamp's agent tries the app.
-    static func check(family: DeviceFamily = .iphone, phone: String? = nil, probe: Probe = Pretend.isMissing("xcode") ? .pretending : Probe()) -> Report {
+    static func check(family: DeviceFamily = .iphone, phone: String? = nil, requiresTeam: Bool = false,
+                      probe: Probe = Pretend.isMissing("xcode") ? .pretending : Probe()) -> Report {
         var report = Report()
         func stop(_ step: Step, _ title: String, _ message: String, _ action: Action) -> Report {
             report.issue = Issue(step: step, title: title, message: message, action: action)
@@ -252,21 +253,25 @@ enum PhoneTools {
             return stop(.simulator, "Finish installing Xcode", "The simulator is the iPhone or iPad that appears on your Mac's screen, and the Xcode on this Mac is missing the app that shows it. Click Open Xcode, choose Xcode → Settings from the menu bar, then click Components and make sure iOS and its simulator are installed. If they are, reinstall Xcode from the App Store. Come back to Lamp when it has finished.", .components)
         }
         report.passed.append(.simulator)
-        if let phone {
+        if phone != nil || requiresTeam {
             // Xcode signs the app for the phone with an account signed in to it, for the team chosen in
             // Settings → Building; without those the build would only fail later, after the phone is paired.
+            // The Mac build of an app for both is signed the same way, so it needs the team too.
             // One signed-in team is chosen by itself, as Settings does.
+            let what = phone != nil ? "Putting an app on your own iPhone or iPad" : "An app for both the Mac and the iPhone"
             let teams = probe.teams()
             guard !teams.isEmpty else {
-                return stop(.account, "Sign in to Xcode", "Putting an app on your own iPhone or iPad needs an Apple Account signed in to Xcode; a free one will do. Click Open Xcode, choose Xcode → Settings from the menu bar, click Accounts, then click + and sign in. Come back to Lamp and click Check Again.", .openXcode)
+                return stop(.account, "Sign in to Xcode", "\(what) needs an Apple Account signed in to Xcode; a free one will do. Click Open Xcode, choose Xcode → Settings from the menu bar, click Accounts, then click + and sign in. Come back to Lamp and click Check Again.", .openXcode)
             }
             if !teams.contains(where: { $0.id == probe.team() }) {
                 guard teams.count == 1 else {
-                    return stop(.account, "Choose your Apple team", "Xcode is signed in with more than one team, and Lamp needs to know which one signs apps for your phone. Click Open Settings and choose it under Building, then click Check Again.", .settings)
+                    return stop(.account, "Choose your Apple team", "Xcode is signed in with more than one team, and Lamp needs to know which one signs your apps. Click Open Settings and choose it under Building, then click Check Again.", .settings)
                 }
                 probe.chooseTeam(teams[0].id)
             }
             report.passed.append(.account)
+        }
+        if let phone {
             let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-phone-version-\(UUID().uuidString).json")
             defer { try? FileManager.default.removeItem(at: file) }
             let result = probe.run("/usr/bin/xcrun", ["devicectl", "list", "devices", "--timeout", "5", "--json-output", file.path], env)

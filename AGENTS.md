@@ -178,9 +178,9 @@ Xcode, the person's own Claude Code and Codex or tools from the PATH; a new chec
 
 ## iPhone apps
 
-A new app's intro (`NewAppIntro`) and the welcome's first-app step (`IdeaStep`) have Mac / iPhone / iPad radio buttons (`AppKind`, `Store.setKind`), and the starter ideas follow the choice (`Ideas.phonePool`). New App makes a draft, a folder with only `.lamp/meta.json`
+A new app's intro (`NewAppIntro`) and the welcome's first-app step (`IdeaStep`) have a row of kinds to pick from, Mac / iPhone & iPad / Mac, iPhone & iPad (`AppKind`, `Store.setKind`), and the starter ideas follow the choice (`Ideas.phonePool`). New App makes a draft, a folder with only `.lamp/meta.json`
 (`Template.draft`), so its kind and name are just that file; the scaffold is written and committed when it first
-builds (`Store.materialize`, in the first turn after naming and in `run`), and `LampProject.scaffolded` tells the two apart. An iOS app is one app for both devices, as Apple has it; the radio buttons and the app's right-click menu's **Try On** pick which simulator it opens in (`LampProject.family`). It runs in the iPhone or iPad simulator on this Mac (`LampProject.platform == .iphone`,
+builds (`Store.materialize`, in the first turn after naming and in `run`), and `LampProject.scaffolded` tells the two apart. An iOS app is one app for both devices, as Apple has it; **Try On** (in the toolbar and the app's right-click menu) picks which simulator it opens in (`LampProject.family`, iPhone to begin with). It runs in the iPhone or iPad simulator on this Mac (`LampProject.platform == .iphone`,
 kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools: `Simulator`
 (`Sources/Lamp/Simulator.swift`) picks a booted or available iPhone with `simctl`, installs the built bundle,
 launches it with its output going to the app's log, and photographs the screen for `look_at_app`. The
@@ -253,6 +253,28 @@ phone's Keychain; when it doesn't, `LampDirect.handle` does
 what the gateway would with the provider directly (chat completions with the JSON retry, systemone
 decisions, images). The prompt's fencing and dates are made in the library either way. What's spent this
 way isn't recorded in Lamp, and `/ai/computer` says it needs the Mac.
+
+## Apps for both the Mac and the iPhone
+
+An app can be made for both (`Platform.universal`, the "Mac, iPhone & iPad" choice beside Mac and iPhone & iPad), as
+Xcode's multiplatform apps are: one code, with what differs under `#if os(macOS)` and `#if os(iOS)`, built for
+one place at a time. Where it opens is `LampProject.destination`: a Mac app's is always the Mac and an iPhone
+app's always iOS, and an app for both goes where Try On last put it (`chosen`, `target` in `meta.json`; "My Mac"
+in `TryOnChoices`, `Store.setMac`, and the simulator and phone choices move it to iOS). Everything about running,
+looking and using branches on `destination` (`onIOS`); what an app could have, such as the Try On menu or the
+phone's away-from-the-Mac keys, branches on `Platform.hasIOS` / `hasMac`. Its scaffold and owned files are
+their own (`Template.universalAppSwift`, `universalPackageSwift` listing both platforms, `universalBuildSh`,
+which takes `mac` or `ios`), and `Store.build` passes the destination; the destination is part of
+`Runtime.fingerprint`, so moving the app rebuilds it. The iOS build is the iPhone app's. The Mac build is Xcode's,
+from the same project the phone uses (`Template.writeDeviceProject`, with `universalPbxproj`: one target for
+`iphoneos iphonesimulator macosx`, the Mac's own `Info-macOS.plist`), signed with automatic signing for the team
+in Settings → Building, so the app can use what Apple ties to a team, which Lamp's own certificate can't give it
+(see `Template.WidgetSharing` for why). Without a team the build stops with the fix, and the setup check
+(`PhoneSetup`, `requiresTeam`) asks for one before the first request. Its bundle id carries the team on both
+platforms (`LampProject.bundleID`), and `Store.deploy` seals what it adds (icon, assets, Info.plist) with the
+team's certificate and the entitlements Xcode gave it (`Devices.signingIdentity`), never Lamp's. The agent gets
+both kinds' rules, each marked for its half, after one rule on sharing the code (`Agent.universalPrompt`). An app
+for both has no widget and can't be shared as a `.lampapp` yet.
 
 ## Generated apps
 

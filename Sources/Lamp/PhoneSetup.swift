@@ -12,6 +12,8 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         var phone: String?
         var eitherSimulator = false
         var requiresPhoneTools = true
+        /// An app for both: its Mac build is signed for the person's team, so the team is checked with the rest.
+        var requiresTeam = false
     }
     private struct Request {
         let id = UUID()
@@ -44,9 +46,9 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
 
     nonisolated private static func inspect(_ context: Context) async -> PhoneTools.Report {
         await Task.detached {
-            let preferred = PhoneTools.checked(family: context.family, phone: context.phone)
+            let preferred = PhoneTools.checked(family: context.family, phone: context.phone, requiresTeam: context.requiresTeam)
             if context.eitherSimulator, preferred.issue?.step == .simulator {
-                let other = PhoneTools.checked(family: context.family == .iphone ? .ipad : .iphone, phone: context.phone)
+                let other = PhoneTools.checked(family: context.family == .iphone ? .ipad : .iphone, phone: context.phone, requiresTeam: context.requiresTeam)
                 if other.ready { return other }
             }
             return preferred
@@ -73,11 +75,12 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
     func perform(for project: LampProject, in store: Store, cancelled: @escaping () -> Void = {},
                  then: @escaping (LampProject) -> Void) {
         guard let current = store.current(project) else { cancelled(); return }
-        guard current.platform == .iphone else { then(current); return }
+        // An app for both needs Xcode wherever it opens: its Mac build is Xcode's too (Template.universalBuildSh).
+        guard current.platform.hasIOS else { then(current); return }
         perform(resolve: {
             guard let current = store.current(project) else { return nil }
-            return Context(family: current.family, phone: current.device,
-                           requiresPhoneTools: current.platform == .iphone)
+            return Context(family: current.family, phone: current.onIOS ? current.device : nil,
+                           requiresPhoneTools: current.platform.hasIOS, requiresTeam: current.platform == .universal)
         }, cancelled: cancelled) {
             if let current = store.current(project) { then(current) }
             else { cancelled() }

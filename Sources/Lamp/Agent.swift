@@ -188,12 +188,44 @@ enum Agent {
     /// The rules for the app's kind. Most are the same for a Mac app and an iPhone app, and each kind adds the
     /// blocks only it has, so a building block given to one is described to both in one place.
     static func systemPrompt(for project: LampProject) -> String {
-        project.platform == .iphone ? iPhonePrompt(for: project.family) : systemPrompt
+        switch project.platform {
+        case .mac: systemPrompt
+        case .iphone: iPhonePrompt(for: project.family)
+        case .universal: universalPrompt(for: project.family)
+        }
     }
 
     static let systemPrompt = prompt(platform: .mac, device: "Mac")
 
     static func iPhonePrompt(for family: DeviceFamily) -> String { prompt(platform: .iphone, device: family.name) }
+
+    /// An app for both gets both kinds' rules, each said to be for its half, after one rule on how the halves
+    /// share one code: so a block or a design given to one kind is given to the pair in the same place.
+    static func universalPrompt(for family: DeviceFamily) -> String {
+        func half(_ place: String, _ rule: String) -> String {
+            let lines = rule.split(separator: "\n", omittingEmptySubsequences: false)
+            guard let first = lines.firstIndex(where: { $0.hasPrefix("- ") }) else { return rule }
+            var changed = Array(lines)
+            changed[first] = "- \(place): " + changed[first].dropFirst(2)
+            return changed.joined(separator: "\n")
+        }
+        let onMac = "On the Mac", onPhone = "On iPhone and iPad"
+        let rules = [Rules.edit, Rules.ask, Rules.shell, Rules.universal, Rules.universalFrameworks,
+                     half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks),
+                     half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
+                     Rules.script, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
+                     half(onPhone, Rules.iPhoneHardware), Rules.store, Rules.kinds(mac: true),
+                     half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
+                     Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
+                     Rules.universalTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
+        return (Rules.universalHeader + "\n\nRules:\n" + rules.joined())
+            .replacingOccurrences(of: "{{DEVICE}}", with: family.name)
+            .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac or an iPhone")
+            .replacingOccurrences(of: "{{IMAGE}}", with: "LampImage")
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: "builds it and opens it where Try On points")
+            .replacingOccurrences(of: "{{TRANSLATION_OS}}", with: "macOS 15 and iOS 18")
+            .replacingOccurrences(of: "{{EXTRA_PERMISSIONS}}", with: "and calendars, reminders, contacts, photos and Mail")
+    }
 
     private static func prompt(platform: Platform, device: String) -> String {
         let mac = platform == .mac
@@ -224,6 +256,40 @@ enum Agent {
         static let macHeader = """
         You are Lamp's builder agent. The current directory is a standalone macOS SwiftUI app \
         (Swift Package, Swift 5.9 language mode, macOS 14+, no Xcode project). Read APP.md first for context.
+        """
+
+        static let universalHeader = """
+        You are Lamp's builder agent. The current directory is a standalone SwiftUI app for the Mac and for iPhone and \
+        iPad, one code for both (a Swift Package, Swift 5.9 language mode, macOS 14+ and iOS 17+; Lamp keeps an Xcode \
+        project of its own for the builds). Lamp opens it on the user's Mac or in the {{DEVICE}} simulator, whichever \
+        Try On points at, and that is what the user sees. Read APP.md first for context.
+        """
+
+        static let universal = """
+        - One code for both. Everything that can be shared is shared: the model, the data, the views; what differs \
+        goes under `#if os(macOS)` and `#if os(iOS)`, kept small and close to where it differs (a scene's \
+        `.commands`, a toolbar's placement, a menu bar item, a gesture). Never two apps side by side, never a file \
+        per platform when a block will do. The rules below marked "On the Mac" apply inside the Mac's blocks and \
+        the rest of the Mac's code; those marked "On iPhone and iPad" inside iOS's. The Mac-only building blocks \
+        (folders, shortcuts that work in every app, the menu bar, the clipboard watcher, Mail, other apps, the \
+        permission screens, opening at login) exist only under `#if os(macOS)`; `LampMotion` only under \
+        `#if os(iOS)`; `LampImage` is NSImage on the Mac and UIImage on iOS. This app has no widget. Check both \
+        halves compile before a look: `swift build` for the Mac's, `./build.sh ios` for iOS's (it builds into build/iOS, beside the Mac's build).
+        """
+
+        static let universalFrameworks = """
+        - Write code that compiles first time on both: only Apple frameworks, no third-party packages, APIs \
+        available on macOS 14 and iOS 17, AppKit only under `#if os(macOS)` and UIKit only under `#if os(iOS)`. \
+        One `WindowGroup`. Package.swift and build.sh belong to Lamp and are written afresh before every build, so an \
+        edit to either is lost: no dependencies, plugins, compiler flags or build steps; everything the app needs \
+        goes in Sources/.
+        """
+
+        static let universalTry = """
+        - `look_at_app` builds the app for where Try On points (this Mac, or the {{DEVICE}} simulator) and shows you \
+        it there; `use_app` works on the same. You can't move it yourself: when a change is for the other half, say \
+        so plainly and ask the user to switch under Try On if they want you to try it there, and check that half \
+        by building it instead. Everything the Mac and iPhone rules say about trying an app holds for its half.
         """
 
         static let iPhoneHeader = """
