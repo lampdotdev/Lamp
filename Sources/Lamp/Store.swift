@@ -120,7 +120,13 @@ struct AskCardPayload: Codable, Equatable {
             guard second.isLowercase || second.isWhitespace else { return text }
             return first.lowercased() + text.dropFirst()
         }
-        return "Use \(fragment(answer)) instead of \(fragment(question.chosen ?? "the current choice"))."
+        let mark = question.question.last.map { ".?!".contains($0) } == true ? "" : "?"
+        return "\(question.question)\(mark) Use \(fragment(answer)) instead of \(fragment(question.chosen ?? "the current choice"))."
+    }
+
+    mutating func reopen() {
+        answers = nil
+        dismissed = nil
     }
 }
 
@@ -212,6 +218,8 @@ struct QueuedMessage: Identifiable {
     var replaces: String? = nil
     /// Every request that left the chat when this one was sent, oldest first.
     var tookBack: [String] = []
+    /// The ask card this message answers. Removing the queued message reopens that card.
+    var ask: UUID? = nil
 }
 
 @MainActor
@@ -1479,17 +1487,20 @@ final class Store: ObservableObject {
 
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
     /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
-    func send(_ prompt: String, attachments: [URL] = [], to project: LampProject) {
+    func send(_ prompt: String, attachments: [URL] = [], to project: LampProject, answering ask: UUID? = nil) {
         // A composer message is the answer to an open question card, even if it has to wait behind the
         // current turn. Fold the card as soon as Send is pressed rather than when that queued turn starts.
-        if let index = logs[project.id]?.lastIndex(where: { $0.kind == .ask && $0.ask?.isAssumption == false && $0.ask?.isReadOnly == false }) {
+        var answeredAsk = ask
+        if answeredAsk == nil,
+           let index = logs[project.id]?.lastIndex(where: { $0.kind == .ask && $0.ask?.isAssumption == false && $0.ask?.isReadOnly == false }) {
             logs[project.id]?[index].ask?.dismissed = true
+            answeredAsk = logs[project.id]?[index].id
             saveChat(project)
         }
         // Waiting for setup can outlast this run, and the files may be temporary (a pasted screenshot):
         // keep copies, so the request still has them after a relaunch.
         let files = setup.ready ? attachments : keepForLater(attachments)
-        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files))
+        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, ask: answeredAsk))
         startQueued(project)
         saveWaiting()
     }
@@ -1513,7 +1524,11 @@ final class Store: ObservableObject {
 
     private func saveWaiting() {
         let waiting = setup.ready ? [:] : queued.filter { !$0.value.isEmpty }.mapValues { messages in
-            messages.map { ["text": $0.text, "attachments": $0.attachments.map(\.path)] as [String: Any] }
+            messages.map { message in
+                var saved = ["text": message.text, "attachments": message.attachments.map(\.path)] as [String: Any]
+                if let ask = message.ask { saved["ask"] = ask.uuidString }
+                return saved
+            }
         }
         if waiting.isEmpty {
             UserDefaults.standard.removeObject(forKey: Self.waitingKey)
@@ -1531,7 +1546,8 @@ final class Store: ObservableObject {
                 queued[id] = messages.map { message in
                     let files = (message["attachments"] as? [String] ?? []).filter { FileManager.default.fileExists(atPath: $0) }
                     kept.formUnion(files.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path })
-                    return QueuedMessage(text: message["text"] as? String ?? "", attachments: files.map(URL.init(fileURLWithPath:)))
+                    let ask = (message["ask"] as? String).flatMap(UUID.init(uuidString:))
+                    return QueuedMessage(text: message["text"] as? String ?? "", attachments: files.map(URL.init(fileURLWithPath:)), ask: ask)
                 }
             }
         }
@@ -1578,6 +1594,10 @@ final class Store: ObservableObject {
 
     func unqueue(_ message: QueuedMessage, from project: LampProject) {
         queued[project.id]?.removeAll { $0.id == message.id }
+        if let ask = message.ask, let index = logs[project.id]?.firstIndex(where: { $0.id == ask }) {
+            logs[project.id]?[index].ask?.reopen()
+            saveChat(project)
+        }
         saveWaiting()
     }
 
@@ -2607,7 +2627,7 @@ final class Store: ObservableObject {
         payload.dismissed = true
         logs[project.id]?[index].ask = payload
         saveChat(project)
-        send(message, to: project)
+        send(message, to: project, answering: line)
     }
 
     /// `make_art`: a picture for the app to show, painted in its icon's style and saved in Assets/, the folder

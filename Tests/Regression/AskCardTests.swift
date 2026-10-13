@@ -33,7 +33,19 @@ final class AskCardTests: XCTestCase {
                                    options: ["One list", "A pipeline board"], chosen: "One list")
 
         XCTAssertEqual(AskCardPayload.assumptionMessage(question: question, answer: "A pipeline board"),
-                       "Use a pipeline board instead of one list.")
+                       "How should deals be organised? Use a pipeline board instead of one list.")
+    }
+
+    func testRemovingAQueuedAnswerCanReopenItsCard() {
+        var payload = AskCardPayload(questions: [
+            AskQuestion(question: "Who is it for?", options: ["Just me", "My team"], chosen: nil),
+        ], answers: ["My team"], dismissed: true)
+
+        payload.reopen()
+
+        XCTAssertNil(payload.answers)
+        XCTAssertNil(payload.dismissed)
+        XCTAssertFalse(payload.isReadOnly)
     }
 
     func testTheToolReadsNaturallyFromClaudeCodeAndCodex() {
