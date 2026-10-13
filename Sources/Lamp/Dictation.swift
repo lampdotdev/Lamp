@@ -181,9 +181,9 @@ final class Dictation: ObservableObject {
     /// pause. Shown as they come, each pause would wipe everything said before it, so a phrase is kept once
     /// it's over and the next is joined on.
     ///
-    /// A marked phrase can come again, its words revised ("if if" becoming "if"): the same span of time, or a
-    /// long result starting the way the phrase did (a new phrase starts with a word or two), is that phrase,
-    /// not a new one. Every other result revises the phrase, rewording any of it, and replaces it. Should a
+    /// A marked phrase can come again, its words revised ("if if" becoming "if"): the same span of time, or,
+    /// for a result without times, a long one starting the way the phrase did (a new phrase starts with a word
+    /// or two), is that phrase, not a new one. Every other result revises the phrase, rewording any of it, and replaces it. Should a
     /// phrase go unmarked, it's over when a result arrives with less than half of it, starting differently:
     /// revising never takes away that much, and a new phrase starts with a word.
     struct Transcript {
@@ -199,8 +199,10 @@ final class Dictation: ObservableObject {
             guard !text.isEmpty else { return Self.join(earlier, phrase) }
             if phraseEnded {
                 // After its mark, the recognizer starts again from the next word; it doesn't carry the phrase on.
-                let sameTime = span != nil && phraseSpan != nil && span!.overlaps(phraseSpan!)
-                if sameTime || Self.resembles(text, phrase) {
+                // Two marked results carry their real times, and those decide: the same words said again later
+                // are a phrase of their own. Without them, the words have to.
+                let saidAgain = if let span, let phraseSpan { span.overlaps(phraseSpan) } else { Self.resembles(text, phrase) }
+                if saidAgain {
                     // Said again: phraseEnded stays.
                 } else {
                     earlier = Self.join(earlier, phrase)

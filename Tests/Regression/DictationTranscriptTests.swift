@@ -37,6 +37,14 @@ final class DictationTranscriptTests: XCTestCase {
         XCTAssertEqual(transcript.phrases, 3)
     }
 
+    func testALongPhraseSaidAgainLaterIsKept() {
+        var transcript = Dictation.Transcript()
+        let said = "Make a timer with a big start button."
+        _ = transcript.take(said, endsPhrase: true, span: 0...4)
+        XCTAssertEqual(transcript.take(said, endsPhrase: true, span: 8...12), said + " " + said)
+        XCTAssertEqual(transcript.phrases, 2)
+    }
+
     /// A correction to a phrase's first word, with no pause, replaces it.
     func testCorrectingTheFirstWordReplacesThePhrase() {
         var transcript = Dictation.Transcript()
