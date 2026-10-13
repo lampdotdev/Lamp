@@ -467,10 +467,10 @@ private struct IdeaStep: View {
         dictated = true
         Analytics.capture(.welcomeDictation)
         Task {
-            await dictation.start { heard in
+            await dictation.start { heard, before in
                 if dictation.phrase != undoPhrase {
                     undoPhrase = dictation.phrase
-                    registerUndo(restoring: prompt)
+                    registerUndo(restoring: before.isEmpty ? typed : typed + separator + before)
                 }
                 prompt = typed + separator + heard
             }

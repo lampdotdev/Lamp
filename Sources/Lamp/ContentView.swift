@@ -474,6 +474,7 @@ struct ProjectView: View {
     @State private var focusRequest = 0
     @State private var dropTargeted = false
     @StateObject private var dictation = Dictation()
+    @State private var dictationUndo = Composer.DictationUndo()
     @AppStorage("showDetails") private var showDetails = false
     @AppStorage("showInfo") private var showInfo = false
     @State private var iconPreview: URL?
@@ -670,7 +671,7 @@ struct ProjectView: View {
                      suggestion: replacing == nil ? shownSuggestion : nil,
                      onDismissSuggestion: { dismissedSuggestion = suggestion },
                      onEscape: replacing == nil ? nil : putBack,
-                     isEnabled: true, focusRequest: focusRequest, dictationPhrase: dictation.phrase,
+                     isEnabled: true, focusRequest: focusRequest, dictationUndo: dictationUndo,
                      onDictationUndo: { dictation.cancel() },
                      onSubmit: send, onFiles: attach)
                 .frame(height: composerHeight)
@@ -1007,7 +1008,11 @@ struct ProjectView: View {
         focusRequest += 1
         Task {
             guard !submissionPending else { return }
-            await dictation.start { if !submissionPending { draft = typed + separator + $0 } }
+            await dictation.start { heard, before in
+                guard !submissionPending else { return }
+                dictationUndo = .init(phrase: dictation.phrase, restoring: before.isEmpty ? typed : typed + separator + before)
+                draft = typed + separator + heard
+            }
         }
     }
 

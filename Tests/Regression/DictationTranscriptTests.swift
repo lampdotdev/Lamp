@@ -10,6 +10,7 @@ final class DictationTranscriptTests: XCTestCase {
         XCTAssertEqual(transcript.take("Make a timer with a big start button."), "Make a timer with a big start button.")
         // The pause: the next result holds only the new words.
         XCTAssertEqual(transcript.take("It"), "Make a timer with a big start button. It")
+        XCTAssertEqual(transcript.beforePhrase, "Make a timer with a big start button.")
         // The recognizer marks the end of a phrase: the next one is new however it starts.
         XCTAssertEqual(transcript.take("It should beep at the end.", endsPhrase: true),
                        "Make a timer with a big start button. It should beep at the end.")
@@ -55,6 +56,8 @@ final class DictationTranscriptTests: XCTestCase {
         _ = transcript.take(second)
         XCTAssertEqual(transcript.take(second, endsPhrase: true, span: 8...12), first + " " + second)
         XCTAssertEqual(transcript.phrases, 2)
+        // The second phrase's Undo puts back the first as it was said, not the stand-in that hid it.
+        XCTAssertEqual(transcript.beforePhrase, first)
     }
 
     /// The same, sent again without times and then marked at the same time: the revision stands.

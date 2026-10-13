@@ -27,8 +27,9 @@ final class Dictation: ObservableObject {
     /// What's been heard since `start`, kept across the recognizer's pauses.
     private var transcript = Transcript()
 
-    /// Starts listening; `onText` receives the full transcription so far, every time it changes.
-    func start(onText: @escaping (String) -> Void) async {
+    /// Starts listening; `onText` receives the full transcription so far, every time it changes, and what was
+    /// heard before the phrase being said: what that phrase's Undo puts back.
+    func start(onText: @escaping (_ heard: String, _ beforePhrase: String) -> Void) async {
         guard !isListening else { return }
         let startingSession = session
         if let denied = await Self.authorize() {
@@ -152,7 +153,7 @@ final class Dictation: ObservableObject {
     }
 
     nonisolated private static func deliver(
-        to dictation: Dictation, session: Int, onText: @escaping (String) -> Void
+        to dictation: Dictation, session: Int, onText: @escaping (String, String) -> Void
     ) -> (SFSpeechRecognitionResult?, Error?) -> Void {
         { [weak dictation] result, error in
             let text = result?.bestTranscription.formattedString
@@ -168,7 +169,7 @@ final class Dictation: ObservableObject {
                     let begun = dictation.transcript.phrases
                     let whole = dictation.transcript.take(text, endsPhrase: endsPhrase, span: endsPhrase ? span : nil)
                     if dictation.transcript.phrases != begun { dictation.phrase += 1 }
-                    onText(whole)
+                    onText(whole, dictation.transcript.beforePhrase)
                 }
                 if done { dictation.finished(error) }
             }
@@ -188,6 +189,9 @@ final class Dictation: ObservableObject {
     /// revising never takes away that much, and a new phrase starts with a word.
     struct Transcript {
         private var earlier = ""
+        /// What was heard before the phrase being said. While a result stands in for a finished phrase, that's
+        /// still the finished phrase as marked, not the stand-in: a phrase's Undo never brings back words it lost.
+        var beforePhrase: String { earlier }
         private var phrase = ""
         private var phraseEnded = false
         /// When the phrase was said, from its marked result.

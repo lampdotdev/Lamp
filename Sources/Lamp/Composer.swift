@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 /// A `suggestion` replaces the placeholder while the composer is empty: Tab accepts it, Escape dismisses it.
 /// `onEscape`, when there is one, gets Escape first: it's how a request taken back from the chat is put back.
 /// Text set from outside isn't typing, so it has no Undo of its own; dictation's does, one step per phrase:
-/// when `dictationPhrase` changes, the box as it was just before is what Undo brings back.
+/// when `dictationUndo`'s phrase changes, Undo brings back the text it holds, the box as it was before it.
 struct Composer: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
@@ -19,7 +19,7 @@ struct Composer: NSViewRepresentable {
     var onEscape: (() -> Void)? = nil
     var isEnabled: Bool
     var focusRequest: Int
-    var dictationPhrase = 0
+    var dictationUndo = DictationUndo()
     /// Called when dictation's Undo or Redo changes the box, so listening can stop rather than write over it.
     var onDictationUndo: () -> Void = {}
     var onSubmit: () -> Void
@@ -67,8 +67,8 @@ struct Composer: NSViewRepresentable {
         coordinator.parent = self
         guard let textView = coordinator.textView else { return }
         if textView.string != text {
-            if coordinator.lastDictationPhrase != dictationPhrase {
-                coordinator.registerUndo(restoring: textView.string)
+            if coordinator.lastDictationPhrase != dictationUndo.phrase {
+                coordinator.registerUndo(restoring: dictationUndo.restoring)
             }
             textView.string = text
             coordinator.updateHeight()
@@ -83,11 +83,17 @@ struct Composer: NSViewRepresentable {
         textView.onSubmit = onSubmit
         textView.onFiles = onFiles
         textView.needsDisplay = true
-        coordinator.lastDictationPhrase = dictationPhrase
+        coordinator.lastDictationPhrase = dictationUndo.phrase
         if coordinator.lastFocusRequest != focusRequest {
             coordinator.lastFocusRequest = focusRequest
             DispatchQueue.main.async { textView.window?.makeFirstResponder(textView) }
         }
+    }
+
+    /// The dictated phrase being said (`Dictation.phrase`) and the box as it was before it.
+    struct DictationUndo {
+        var phrase = 0
+        var restoring = ""
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -98,7 +104,7 @@ struct Composer: NSViewRepresentable {
 
         init(_ parent: Composer) {
             self.parent = parent
-            lastDictationPhrase = parent.dictationPhrase
+            lastDictationPhrase = parent.dictationUndo.phrase
         }
 
         /// One Undo step that puts `earlier` back; undoing it registers the Redo.
