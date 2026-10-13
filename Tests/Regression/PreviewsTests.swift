@@ -62,6 +62,19 @@ final class PreviewsTests: XCTestCase {
         XCTAssertEqual(Previews.forAgent(screenshot, in: project), screenshot, "the full picture is given rather than a copy written elsewhere")
         XCTAssertEqual(try fm.contentsOfDirectory(atPath: elsewhere.path), [])
 
+        // A linked ancestor with the folder missing: nothing is made through the link.
+        try fm.removeItem(at: project.dir.appendingPathComponent(".lamp/runtime/previews"))
+        try fm.removeItem(at: project.dir.appendingPathComponent(".lamp/runtime"))
+        try fm.createSymbolicLink(at: project.dir.appendingPathComponent(".lamp/runtime"), withDestinationURL: elsewhere)
+        let outsideShot = elsewhere.appendingPathComponent("screenshot.png")
+        try writePNG(outsideShot, width: 300, height: 200)
+        XCTAssertEqual(Previews.forAgent(project.dir.appendingPathComponent(".lamp/runtime/screenshot.png"), in: project).lastPathComponent, "screenshot.png")
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: elsewhere.path), ["screenshot.png"])
+        try fm.removeItem(at: project.dir.appendingPathComponent(".lamp/runtime"))
+        try fm.removeItem(at: outsideShot)
+        try fm.createDirectory(at: project.dir.appendingPathComponent(".lamp/runtime/previews"), withIntermediateDirectories: true)
+        try writePNG(screenshot, width: 300, height: 200)
+
         // A link in the file's place is replaced, not written through.
         try fm.removeItem(at: project.dir.appendingPathComponent(".lamp/runtime/previews"))
         try fm.createDirectory(at: project.dir.appendingPathComponent(".lamp/runtime/previews"), withIntermediateDirectories: true)

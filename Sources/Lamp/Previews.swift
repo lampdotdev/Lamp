@@ -49,13 +49,24 @@ enum Previews {
     static func destination(for name: String, under folder: String, in project: LampProject) -> URL? {
         let fm = FileManager.default
         let root = project.dir.resolvingSymlinksInPath().standardizedFileURL
+        /// Whether a path inside the app's folder is where it says, with no link along it leading out.
+        func isReal(_ url: URL) -> Bool {
+            let inside = String(url.standardizedFileURL.path.dropFirst(project.dir.standardizedFileURL.path.count))
+            return url.resolvingSymlinksInPath().standardizedFileURL.path == root.path + inside
+        }
         let url = project.dir.appendingPathComponent(folder)
         if let type = (try? fm.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType {
             guard type == .typeDirectory else { return nil }
-        } else if (try? fm.createDirectory(at: url, withIntermediateDirectories: true)) == nil {
-            return nil
+        } else {
+            // Made only under a real folder of the app's: the nearest one that exists is checked first, so the
+            // missing part is never made through a linked ancestor.
+            var existing = url.deletingLastPathComponent()
+            while existing.path.count > project.dir.path.count, !fm.fileExists(atPath: existing.path) {
+                existing = existing.deletingLastPathComponent()
+            }
+            guard isReal(existing), (try? fm.createDirectory(at: url, withIntermediateDirectories: true)) != nil else { return nil }
         }
-        guard url.resolvingSymlinksInPath().standardizedFileURL.path == root.appendingPathComponent(folder).path else { return nil }
+        guard isReal(url) else { return nil }
         let file = url.appendingPathComponent(name)
         if let type = (try? fm.attributesOfItem(atPath: file.path))?[.type] as? FileAttributeType, type != .typeRegular { return nil }
         return file
