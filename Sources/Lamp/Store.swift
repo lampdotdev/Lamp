@@ -1296,10 +1296,12 @@ final class Store: ObservableObject {
     /// Shared apps opened before setup was done get their reviews once the person is through setup, one at a
     /// time in the order they were opened: called when setup becomes ready, when the welcome ends, and when a
     /// review closes.
-    func openWaitingImport() {
-        guard pendingImport == nil, importRequest == nil else { return }
+    /// Whether a shared app is now being looked at, waiting or not.
+    @discardableResult func openWaitingImport() -> Bool {
+        guard pendingImport == nil, importRequest == nil else { return true }
         let file = waitingImport.take(setupReady: setupLook.isDone && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
         if let file { review(file, waited: true) }
+        return file != nil
     }
 
     func cancelImport() {

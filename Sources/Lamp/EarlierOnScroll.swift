@@ -50,6 +50,11 @@ struct EarlierOnScroll: NSViewRepresentable {
     /// There are earlier messages that aren't shown yet.
     let more: Bool
     let follow: ChatFollow
+    /// Goes up for each glide to the end: a request just sent going to the top, gently. SwiftUI's own
+    /// animated scrolling on macOS jumps rather than glides.
+    var glides = 0
+    /// Told when a glide is over.
+    var glided: () -> Void = {}
     /// Set once the scroll view is found: until then the chat offers a button instead.
     @Binding var watching: Bool
     let load: () -> Void
@@ -61,8 +66,16 @@ struct EarlierOnScroll: NSViewRepresentable {
         probe.follow = follow
         probe.load = load
         probe.found = { [binding = $watching] in binding.wrappedValue = true }
+        probe.onGlided = glided
         probe.check()
+        if glides != probe.glided {
+            probe.glided = glides
+            // Once the update that asked for it is laid out, so the end is where it'll be.
+            DispatchQueue.main.async { probe.glideToEnd() }
+        }
     }
+
+    static let glideTime = 0.4
 
     final class Probe: NSView {
         /// How close to the top of what's shown, in points, before more is brought in: a few screens, so
@@ -73,6 +86,13 @@ struct EarlierOnScroll: NSViewRepresentable {
         var follow: ChatFollow?
         var load: (() -> Void)?
         var found: (() -> Void)?
+        var glided = 0
+        var onGlided: (() -> Void)?
+        private var glide: (from: CGFloat, progress: Double, last: CFTimeInterval)?
+        private var frames: CADisplayLink?
+        /// The glide is moving the scroll view itself, so the move is the glide's and not someone scrolling.
+        private var gliding = false
+        private var opened = false
         private weak var scroll: NSScrollView?
         /// The content's height when more was asked for, until it has arrived.
         private var heightBefore: CGFloat?
@@ -92,6 +112,14 @@ struct EarlierOnScroll: NSViewRepresentable {
             NotificationCenter.default.addObserver(self, selector: #selector(resized), name: NSView.frameDidChangeNotification,
                                                    object: content)
             Task { @MainActor in self.found?() }
+            // A chat opens at its end, but SwiftUI leaves it a little short and so not following what's added:
+            // once it's laid out, it goes the rest of the way. Only when it opens, not when it's moved later.
+            guard !opened else { return }
+            opened = true
+            DispatchQueue.main.async { [weak self] in
+                self?.toEnd()
+                self?.follow?.atEnd = true
+            }
         }
 
         @objc private func scrolled() {
@@ -101,7 +129,60 @@ struct EarlierOnScroll: NSViewRepresentable {
                 follow?.moved(to: flipped ? visible.minY : -visible.minY,
                               fromEnd: flipped ? content.frame.height - visible.maxY : visible.minY)
             }
+            // Someone scrolling while a glide is going takes over from it: it doesn't pull them back.
+            if glide != nil, !gliding { stopGliding() }
             check()
+        }
+
+        /// Glides to the end a frame at a time. Not by the clock, as an animation would: a request starting
+        /// keeps the app busy for a moment, and an animation timed by the clock would make up for the frames
+        /// it missed by leaping ahead. Each frame moves on by at most one frame's worth, so a busy moment
+        /// only slows it.
+        func glideToEnd() {
+            guard let scroll else { return onGlided?() ?? () }
+            frames?.invalidate()
+            glide = (scroll.contentView.bounds.minY, 0, CACurrentMediaTime())
+            let link = displayLink(target: self, selector: #selector(step))
+            link.add(to: .main, forMode: .common)
+            frames = link
+        }
+
+        @objc private func step(_ link: CADisplayLink) {
+            guard var glide, let scroll else { return stopGliding() }
+            let now = CACurrentMediaTime()
+            glide.progress = min(1, glide.progress + min(now - glide.last, 1.0 / 60) / EarlierOnScroll.glideTime)
+            glide.last = now
+            self.glide = glide
+            // The end as it is now: it can move while gliding.
+            let end = self.end(of: scroll)
+            let eased = 1 - pow(1 - glide.progress, 3)
+            gliding = true
+            scrollTo(glide.from + (end - glide.from) * eased, in: scroll)
+            gliding = false
+            if glide.progress >= 1 { stopGliding() }
+        }
+
+        private func stopGliding() {
+            frames?.invalidate()
+            frames = nil
+            glide = nil
+            onGlided?()
+        }
+
+        private func end(of scroll: NSScrollView) -> CGFloat {
+            guard let content = scroll.documentView, content.isFlipped else { return 0 }
+            return max(0, content.frame.height - scroll.contentView.bounds.height)
+        }
+
+        private func scrollTo(_ y: CGFloat, in scroll: NSScrollView) {
+            scroll.contentView.scroll(to: NSPoint(x: scroll.contentView.bounds.minX, y: y))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+
+        private func toEnd() {
+            guard let scroll else { return }
+            scroll.layoutSubtreeIfNeeded()
+            scrollTo(end(of: scroll), in: scroll)
         }
 
         /// Asks for more when the top of what's shown is near. One lot at a time: the next is asked for once
@@ -140,3 +221,5 @@ struct EarlierOnScroll: NSViewRepresentable {
         }
     }
 }
+
+
