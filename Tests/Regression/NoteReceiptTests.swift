@@ -34,4 +34,22 @@ final class NoteReceiptTests: XCTestCase {
         line.noted?.undone = true
         XCTAssertEqual(try JSONDecoder().decode(LogLine.self, from: JSONEncoder().encode(line)), line)
     }
+
+    func testUndoingALaterSaveLeavesWhatWasAlreadyTakenBack() {
+        // One save notes a line, a second replaces it, and the person takes the first back, then the second.
+        let first = NoteReceipt(about: "you", before: Memory.Notes(), after: Memory.Notes(summary: "How apps should sound", text: "- No sounds"))
+        let second = NoteReceipt(about: "you", before: first.after, after: Memory.Notes(summary: "How apps should sound", text: "- Quiet sounds"))
+        let afterFirstUndo = first.takenBack(from: second.after)
+        XCTAssertEqual(afterFirstUndo, second.after)
+        XCTAssertTrue(second.takenBack(from: afterFirstUndo, rejected: Set(first.added)).isEmpty)
+    }
+
+    func testEachEngineIsToldWhatWasTakenBack() {
+        var undone = Memory.Undone()
+        undone.add(["No sounds"], about: "you", for: ["pi", "codex"])
+        undone.heard(["you": ["No sounds"]], by: "codex")
+        XCTAssertEqual(undone.waiting, ["pi": ["you": ["No sounds"]]])
+        undone.heard(["you": ["No sounds"]], by: "pi")
+        XCTAssertTrue(undone.waiting.isEmpty)
+    }
 }

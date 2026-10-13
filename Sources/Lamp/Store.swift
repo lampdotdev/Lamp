@@ -2640,7 +2640,11 @@ final class Store: ObservableObject {
               var receipt = logs[project.id]?[index].noted, receipt.undone != true else { return nil }
         let place: Memory.Place = receipt.about == "you" ? .you : .app(project)
         do {
-            try Memory.save(receipt.takenBack(from: Memory.read(place)), in: place)
+            // What was taken back on other receipts stays out: this save may have replaced one of those lines.
+            // The person's notes are shared by every app, so any chat may hold such a receipt.
+            let chats = receipt.about == "you" ? Array(logs.values) : [logs[project.id] ?? []]
+            let rejected = chats.joined().compactMap(\.noted).filter { $0.undone == true && $0.about == receipt.about }.flatMap(\.added)
+            try Memory.save(receipt.takenBack(from: Memory.read(place), rejected: Set(rejected)), in: place)
         } catch {
             return "Lamp couldn't take that back. Try again, or change it in Settings."
         }

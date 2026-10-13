@@ -33,8 +33,18 @@ struct NoteReceipt: Codable, Equatable {
     /// The notes with this save taken back. When nothing has touched them since, that is the notes as they
     /// were. When something has (a later save, the person's own edit in Settings), only this save's lines are
     /// undone: what it added goes, what it removed comes back, and the rest stays.
-    func takenBack(from current: Memory.Notes) -> Memory.Notes {
-        guard current != after else { return before }
+    /// `rejected` are lines the person already took back on other receipts: a later save may have replaced
+    /// one of them, and undoing that save must not bring it back.
+    func takenBack(from current: Memory.Notes, rejected: Set<String> = []) -> Memory.Notes {
+        let notes = current == after ? before : merged(into: current)
+        guard !rejected.isEmpty else { return notes }
+        let kept = notes.text.components(separatedBy: .newlines).filter { !rejected.contains(Self.plain($0)) }
+        guard kept.count < notes.text.components(separatedBy: .newlines).count else { return notes }
+        let text = kept.joined(separator: "\n").trimmed
+        return text.isEmpty ? Memory.Notes() : Memory.Notes(summary: notes.summary, text: text)
+    }
+
+    private func merged(into current: Memory.Notes) -> Memory.Notes {
         let added = Set(added), removed = Set(removed)
         var lines = current.text.components(separatedBy: .newlines).filter { !added.contains(Self.plain($0)) }
         let present = Set(lines.map(Self.plain))
