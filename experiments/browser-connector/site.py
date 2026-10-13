@@ -4,9 +4,15 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from secrets import token_urlsafe
 sessions = set()
 navigation = False
+revision = 1
 class Site(BaseHTTPRequestHandler):
     def do_GET(self):
-        global navigation
+        global navigation, revision
+        if self.path == '/advance':
+            revision += 1
+            self.send_response(200); self.end_headers(); self.wfile.write(str(revision).encode()); return
+        if self.path == '/revision':
+            self.send_response(200); self.send_header('Cache-Control','no-store'); self.end_headers(); self.wfile.write(str(revision).encode()); return
         if self.path == '/arm-navigation':
             navigation = True
             self.send_response(200)
@@ -48,6 +54,8 @@ class Site(BaseHTTPRequestHandler):
         else:
             body = '<h1>Harbor Supply</h1><p>Sign in to see your private orders.</p><a class="button" href="/sign-in">Sign in to demo account</a>'
         html = '<!doctype html><title>Harbor Supply</title><style>body{font:18px system-ui;margin:55px;max-width:850px;background:#f8f5ee;color:#203a42}h1{font-size:38px}h2{margin-top:32px}a{color:#146678}label{display:block;margin:22px 0}input,textarea{display:block;margin:8px 0;padding:10px}.button{display:inline-block;padding:14px;background:#146678;color:white;border-radius:10px}</style>'+body
+        if signed_in:
+            html += '<p id="revision">Live revision: 1</p><script>setInterval(async()=>{document.getElementById("revision").textContent="Live revision: "+await (await fetch("/revision")).text()},1000)</script>'
         if self.path == '/changing':
             html += '<p>This test page can navigate while approval is open.</p><script>setInterval(async()=>{if(await (await fetch("/navigation-state")).text()==="go")location.replace("/orders?changed")},250)</script>'
         self.send_response(200)
