@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-// Chrome launches one instance per popup. The session never comes from a web page.
+// Chrome launches one instance per service-worker connection. The session never comes from a web page.
 let session = UUID().uuidString
 let folder = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
 let config = try JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("config.json"))) as! [String: Any]

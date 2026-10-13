@@ -1,84 +1,40 @@
-const $ = id => document.getElementById(id);
-let port, outstanding, requests, tab, documentID, url, chosen, challenge;
-function native(body) {
-  return new Promise((resolve, reject) => {
-    if (outstanding) return reject(new Error("Please wait for the current step."));
-    outstanding = {resolve, reject};
-    port.postMessage(body);
-  });
+const $=id=>document.getElementById(id);
+let requests=[],chosen,lastState="";
+async function send(body){const value=await chrome.runtime.sendMessage(body);if(value.error)throw new Error(value.error);return value;}
+function choose(){const next=requests.find(r=>r.id===$('destination').value);if(chosen?.id!==next?.id)$('openClosed').checked=false;chosen=next;$('consent').textContent=`Allow ${chosen.name} to read pages on ${chosen.origin} without asking each time? These prototype apps save text locally. Revoke access here at any time.`;}
+async function refresh(){
+  const state=await send({op:'status'});
+  const current=JSON.stringify({requests:state.requests,grants:state.grants});
+  if(current===lastState)return;
+  lastState=current;requests=state.requests;
+  $('destination').replaceChildren();
+  for(const r of requests){const o=document.createElement('option');o.value=r.id;o.textContent=r.name;$('destination').append(o);}
+  $('request').hidden=!requests.length;$('destination').hidden=requests.length<2;
+  if(requests.length)choose();
+  $('grants').replaceChildren();
+  if(!state.grants.length)$('grants').textContent='No apps have standing access.';
+  for(const g of state.grants){
+    const row=document.createElement('div');row.className='grant';
+    const label=document.createElement('p');label.textContent=`${g.name} · ${g.origin}\n${g.openClosed?'May open a background tab.':'Reads only an already open page.'}`;
+    const button=document.createElement('button');button.textContent=`Revoke ${g.name}`;
+    button.onclick=async()=>{try{await send({op:'revoke',grant:g.id});$('status').textContent=`Access revoked for ${g.name}. Saved copies in the app remain.`;await refresh();}catch(e){$('status').textContent=e.message;}};
+    row.append(label,button);$('grants').append(row);
+  }
 }
-function showError(error) {
-  $("status").textContent = error.message;
-  $("share").hidden = true;
-  $("cancel").hidden = true;
-}
-async function choose() {
-  chosen = requests.find(r => r.id === $("destination").value);
-  challenge = null;
-  $("share").hidden = true;
-  const result = await native({op:"prepare", id:chosen.id, tab:String(tab.id), document:documentID, url});
-  challenge = result.challenge;
-  $("consent").textContent = `Send visible page text, title and URL to ${result.name}? It stays in that app on this Mac.`;
-  $("status").textContent = "";
-  $("share").textContent = `Share with ${result.name}`;
-  $("share").hidden = false;
-  $("cancel").hidden = false;
-}
-// A fresh native port binds approval to this popup/browser profile. No content-script messages or external listeners.
-async function start() {
-  port = chrome.runtime.connectNative("dev.lamp.prototype");
-  port.onMessage.addListener(value => {
-    const waiting = outstanding; outstanding = null;
-    if (value.error) waiting?.reject(new Error(value.error)); else waiting?.resolve(value);
-  });
-  port.onDisconnect.addListener(() => {
-    const error = new Error(chrome.runtime.lastError?.message || "Lamp disconnected. Reopen this popup.");
-    outstanding?.reject(error); outstanding = null; showError(error);
-  });
-  ({requests} = await native({op:"list"}));
-  if (!requests.length) { $("status").textContent = "Click Get current page in a Lamp-made app first."; return; }
-  [tab] = await chrome.tabs.query({active:true,currentWindow:true});
-  if (!/^https?:/.test(tab.url || "")) throw new Error("Chrome does not let extensions read this page. Open a website first.");
-  const [metadata] = await chrome.scripting.executeScript({target:{tabId:tab.id},func:() => ({url:location.href})});
-  documentID = metadata.documentId; url = metadata.result.url;
-  $("site").textContent = new URL(url).origin;
-  for (const r of requests) { const option = document.createElement("option"); option.value=r.id; option.textContent=r.name; $("destination").append(option); }
-  $("destination").hidden = requests.length < 2;
-  await choose();
-}
-$("destination").onchange = () => choose().catch(showError);
-$("share").onclick = async () => {
-  $("share").disabled = true;
-  $("destination").disabled = true;
-  try {
-    const [capture] = await chrome.scripting.executeScript({target:{tabId:tab.id,documentIds:[documentID]},func:() => {
-      // Local's main/article-first approach, bounded and narrowed to rendered text nodes.
-      // Never read field values, editable drafts, cookie/storage APIs or other frames.
-      const read = root => {
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-        const parts=[]; let count=0, n;
-        while ((n=walker.nextNode()) && count<24000) {
-          const el=n.parentElement;
-          if (!el || el.closest('input,textarea,select,script,style,noscript,iframe,[contenteditable]:not([contenteditable="false"]),[hidden],[aria-hidden="true"]')) continue;
-          if (!el.checkVisibility({checkOpacity:true,checkVisibilityCSS:true})) continue;
-          const text=n.textContent.replace(/\s+/g," ").trim();
-          if (text) { parts.push(text); count+=text.length+1; }
-        }
-        return parts.join("\n").slice(0,24000);
-      };
-      const main=document.querySelector('main,article,[role="main"]');
-      let text=read(main || document.body);
-      if (main && text.length<500) text=read(document.body);
-      return {url:location.href,title:document.title.slice(0,1000),text};
-    }});
-    if (capture.documentId !== documentID || capture.result.url !== url) throw new Error("The page changed. Open the extension again.");
-    const result = await native({op:"deliver", id:chosen.id, challenge, tab:String(tab.id), document:documentID, page:capture.result});
-    $("status").textContent = `Shared with ${result.name}.`;
-    $("share").hidden = true; $("cancel").hidden = true;
-  } catch (error) { showError(error); }
+$('destination').onchange=choose;
+$('approve').onclick=async()=>{
+  const request={...chosen}, openClosed=$('openClosed').checked;
+  $('destination').disabled=true;$('openClosed').disabled=true;$('approve').disabled=true;
+  try{
+    // Invoke directly inside this click, before an async message can lose the user gesture.
+    const granted=await chrome.permissions.request({origins:[request.origin+'/*']});
+    if(!granted){$('status').textContent='Chrome permission declined. No app grant was created.';return;}
+    await send({op:'grant',id:request.id,origin:request.origin,openClosed});
+    $('status').textContent=`Approved ${request.name}. Future reads need no extension click.`;
+    await refresh();
+  }catch(e){$('status').textContent=e.message;}
+  finally{$('destination').disabled=false;$('openClosed').disabled=false;$('approve').disabled=false;}
 };
-$("cancel").onclick = async () => {
-  try { await native({op:"cancel",id:chosen.id,challenge}); $("status").textContent="Nothing shared."; $("share").hidden=true; $("cancel").hidden=true; }
-  catch (error) { showError(error); }
-};
-start().catch(showError);
+refresh().then(()=>{$('status').textContent=requests.length?'Choose the access you want to allow.':'Ask for access from a Lamp-made app.';}).catch(e=>{$('status').textContent=e.message;});
+window.addEventListener('focus',()=>{refresh().catch(e=>{$('status').textContent=e.message;});});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh().catch(e=>{$('status').textContent=e.message;});});
