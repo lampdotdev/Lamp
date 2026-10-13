@@ -19,6 +19,9 @@ enum ErrorMessages {
     static let versionNotSaved = "Lamp couldn't save this change as a version. It's in your app, and your next change will save both."
 
     static func openFailed(_ detail: String) -> String { openFailedPrefix + detail }
+    /// A build that found the app open, where the person chose to keep it open rather than lose what it held.
+    static func stayedOpen(_ app: String) -> String { app + " stayed open, so it's still the earlier version. Close it to get the new one." }
+    static func notDeleted(_ app: String) -> String { app + " stayed open, so it wasn't deleted." }
     static func installFailed(_ detail: String) -> String { installFailedPrefix + detail }
     static func aiFailed(_ detail: String) -> String { aiFailedPrefix + detail }
     static func authenticationFailed(_ provider: String) -> String { "Your " + provider + authenticationFailedSuffix }

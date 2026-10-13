@@ -1780,6 +1780,16 @@ enum Template {
                 let signature = note.userInfo?["lampUseAppSignature"] as? String
                 MainActor.assumeIsolated { LampDriver.perform(actions, id: id, signature: signature) }
             }
+            // ...and, of an app it asked to quit that hasn't gone, whether it still answers: one that does may
+            // be asking about unsaved work and is waited for, one that has stopped is stuck. Answered on the
+            // main thread, since that's the one a stuck app has lost. The file says this copy listens.
+            let pid = String(ProcessInfo.processInfo.processIdentifier)
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("{{NOTE}}stillThere.{{SLUG}}"), object: nil, queue: .main) { _ in
+                DistributedNotificationCenter.default().postNotificationName(
+                    Notification.Name("{{NOTE}}here.{{SLUG}}"), object: pid, userInfo: nil, deliverImmediately: true)
+            }
+            try? pid.write(to: folder.appendingPathComponent("listening"), atomically: true, encoding: .utf8)
             let log = folder.appendingPathComponent("log.txt")
             let previous = folder.appendingPathComponent("previous-log.txt")
             try? fm.removeItem(at: previous)

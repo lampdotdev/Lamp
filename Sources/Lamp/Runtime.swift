@@ -17,6 +17,17 @@ enum Runtime {
         try? Data(fingerprint.utf8).write(to: builtURL(project))
     }
 
+    /// A build that hasn't been installed because the person kept the app open when it was asked to quit. The
+    /// copy that's open, and the one in the apps folder, are older than the build until it closes. Kept on
+    /// disk, so the build still goes in after Lamp itself has been quit and opened again.
+    private static func heldURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("held-build") }
+    static func holdBuild(_ project: LampProject) {
+        try? FileManager.default.createDirectory(at: folder(project), withIntermediateDirectories: true)
+        try? Data().write(to: heldURL(project))
+    }
+    static func releaseBuild(_ project: LampProject) { try? FileManager.default.removeItem(at: heldURL(project)) }
+    static func holdsBuild(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: heldURL(project).path) }
+
     /// What the app is built from, as one hash: the contents of Sources, its widget's folder, Package.swift and the icon design,
     /// and the attached files the app itself uses (they're copied into the bundle, so a new picture for the
     /// app needs a build; a screenshot attached for the agent to look at doesn't). Not file dates, which move
