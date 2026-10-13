@@ -1,5 +1,22 @@
 import Foundation
 
+/// The words for a request the model's provider refused as too big: the pictures in a conversation add up
+/// (Anthropic takes 30 MB of them in one request).
+extension Agent {
+    static let droppingPictures = "The conversation holds more pictures than the AI can take in at once, so Lamp is dropping the older ones and trying again."
+    static let conversationTooLarge = "The conversation had grown too large for the AI to take in at once, so Lamp has started a fresh one for this app. Send your request again."
+
+    /// Whether an engine's failure is the provider refusing the request for its size (HTTP 413, Anthropic's
+    /// payload_too_large, OpenAI's request_too_large, and Claude Code's own words for it), as against the
+    /// context window, which the engines handle themselves by compacting.
+    static func isRequestTooLarge(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        if ["payload_too_large", "request_too_large", "payload too large", "request too large", "request entity too large",
+            "pushed the request over the limit"].contains(where: lower.contains) { return true }
+        return lower.contains("413") && (lower.contains("too large") || lower.contains("cannot exceed"))
+    }
+}
+
 enum AgentEvent {
     case text(String)
     case textPiece(String) // a piece of the message the model is writing, as it streams in; `.text` follows with the whole

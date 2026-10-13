@@ -2028,6 +2028,17 @@ final class Store: ObservableObject {
             guard let self else { return }
             for event in Agent.parseLine(line) {
                 if case .raw = event {} else if case .failed = event {} else { answered = true }
+                // The model carrying on after a failed attempt means the engine recovered from it (pi sends again
+                // after a dropped connection, after compacting a conversation that overflowed, and after its
+                // extension drops the pictures of a request that was too big: lamp-tools.ts), so that attempt is
+                // no longer the turn's failure. Lamp's own reasons for stopping the model stand: the process is
+                // being ended, and what it had already printed can still arrive.
+                if let text = failure, !text.hasPrefix("The model ") {
+                    switch event {
+                    case .text, .textPiece, .tool, .step: failure = nil
+                    default: break
+                    }
+                }
                 switch event {
                 case .textPiece(let piece):
                     write(piece, for: project)
@@ -2073,7 +2084,11 @@ final class Store: ObservableObject {
                         if let process = turn.agent { Subprocess.terminateTree(process) }
                     }
                 case .cost(let amount): cost += amount
-                case .failed(let text): failure = text
+                case .failed(let text):
+                    if engine == .pi, Agent.isRequestTooLarge(text), failure.map(Agent.isRequestTooLarge) != true {
+                        log(project, .status, Agent.droppingPictures)
+                    }
+                    failure = text
                 case .raw(let text): log(project, .detail, text)
                 case .session(let id):
                     if engine == .claude { turn.claudeSession = id }
@@ -2115,8 +2130,26 @@ final class Store: ObservableObject {
             log(project, .status, "Claude Code's auto mode isn't available, so Lamp will ask before every command.")
             return await runAgent(prompt, files: files, on: project)
         }
+        // A request too big to send, which the engine couldn't shrink (Claude Code and Codex don't in Lamp's
+        // non-interactive runs; pi's extension drops pictures and tries once more before this is reached):
+        // every later request would be too big too, so the conversation ends here and the next request starts
+        // a fresh one. The notes (Memory) and the app's AI status are told again to the new conversation.
+        if Agent.isRequestTooLarge(failure) {
+            Self.forgetConversation(of: project, engine: engine)
+            log(project, .error, Agent.conversationTooLarge)
+            return false
+        }
         log(project, .error, Provider.friendlyError(failure, from: Provider.name(of: engine)))
         return false
+    }
+
+    /// Ends the engine's conversation for an app: the next request starts a new one, and is told what every
+    /// new conversation is told.
+    private static func forgetConversation(of project: LampProject, engine: Engine) {
+        let file = engine == .pi ? project.dir.appendingPathComponent(".lamp/pi-session") : sessionFile(for: project, engine: engine)
+        try? FileManager.default.removeItem(at: file)
+        Memory.compacted(project)
+        AIStatus.compacted(project)
     }
 
     /// One pi conversation per app, so the agent remembers earlier requests, including ones that were undone.
@@ -2380,7 +2413,7 @@ final class Store: ObservableObject {
             : "\n\n" + Privacy.picturesOff
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
-        return (200, ["text": text, "screenshots": Privacy.sharesPictures ? Runtime.pictures(of: project).map(\.path) : []])
+        return (200, ["text": text, "screenshots": Self.agentPictures(Runtime.pictures(of: project), in: project)])
     }
 
     /// `use_app` for an iPhone app: Lamp drives the simulator through the Mac's accessibility system
@@ -2443,7 +2476,7 @@ final class Store: ObservableObject {
             : "\n\n" + Privacy.picturesOff
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
-        return (200, ["text": text, "screenshots": Privacy.sharesPictures ? [picture.path] : []])
+        return (200, ["text": text, "screenshots": Self.agentPictures([picture], in: project)])
     }
 
     /// `look_at_app` and `use_app` for agents that take tools over MCP (Claude Code and Codex): one streamable-HTTP
@@ -2507,7 +2540,7 @@ final class Store: ObservableObject {
             var content: [[String: Any]] = [["type": "text", "text": answer["text"] as? String ?? ""]]
             for path in answer["screenshots"] as? [String] ?? [] {
                 if let data = try? Data(contentsOf: URL(fileURLWithPath: path)) {
-                    content.append(["type": "image", "data": data.base64EncodedString(), "mimeType": "image/png"])
+                    content.append(["type": "image", "data": data.base64EncodedString(), "mimeType": Previews.mimeType(of: path)])
                 }
             }
             return reply(["content": content])
@@ -2710,7 +2743,7 @@ final class Store: ObservableObject {
             let size = NSBitmapImageRep(data: png).map { " (\($0.pixelsWide)×\($0.pixelsHigh) pixels)" } ?? ""
             let around = scene ? "" : ", transparent around the object"
             return (200, ["text": "Saved Assets/\(name)\(size)\(around). Show it with LampAssets.image(\"\(name)\"). It follows.",
-                          "screenshots": [url.path]])
+                          "screenshots": [Previews.forAgent(url, in: project).path]])
         } catch let failure as AppAI.Failure where failure.needs == .pictures {
             offerSetup(project, SetupOffer(capability: .pictures), because: because)
             return (200, ["text": unavailable])
@@ -4358,6 +4391,13 @@ final class Store: ObservableObject {
         }
     }
 
+    /// The pictures a tool's reply shows the agent, as the paths it reads: small copies of the screenshots or
+    /// the art (`Previews.forAgent`), so a conversation holds many before a request is too big to send; none
+    /// when the person keeps pictures from the model. The files given are left as they are.
+    static func agentPictures(_ pictures: [URL], in project: LampProject) -> [String] {
+        Privacy.sharesPictures ? pictures.map { Previews.forAgent($0, in: project).path } : []
+    }
+
     /// The agent's `look_at_app` tool: builds what it has written so far, opens the app behind the
     /// user's windows, and reports what happened. The pictures are sent as file paths for pi to read.
     private func look(at project: LampProject) async -> (Int, [String: Any]) {
@@ -4411,7 +4451,7 @@ final class Store: ObservableObject {
                 }
             }
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
-            return (200, ["text": text, "screenshots": Privacy.sharesPictures ? screenshots.map(\.path) : []])
+            return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
         }
         if !changed, NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first != nil {
             // Nothing to rebuild and the app is open: ask it for fresh pictures instead of relaunching it.
@@ -4439,7 +4479,7 @@ final class Store: ObservableObject {
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         text += Self.handingHint(for: project)
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
-        return (200, ["text": text, "screenshots": Privacy.sharesPictures ? screenshots.map(\.path) : []])
+        return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
     }
 
     /// For an app that declares what it opens (`opens` in capabilities.json): the command that hands this
