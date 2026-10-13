@@ -30,7 +30,7 @@ enum Memory {
         var words: String { self == .you ? "about the person" : "about this app" }
     }
 
-    struct Notes: Equatable {
+    struct Notes: Codable, Equatable {
         /// A line saying what the notes cover: all the agent sees of them until it opens them.
         var summary = ""
         var text = ""
@@ -129,7 +129,12 @@ enum Memory {
     /// conversation began with when it's resumed, so anything that changed since would never arrive. A
     /// conversation is told once; after that a request carries nothing, unless notes were changed by someone
     /// other than the agent it goes to (another engine, another app, the person), and then only their line.
+    /// What the person took back in the chat since (`tookBack`) follows, in its own words.
     static func brief(for project: LampProject, engine: Engine, session: String?) -> String {
+        summaries(for: project, engine: engine, session: session) + (isOn ? takenBack(in: project) : "")
+    }
+
+    private static func summaries(for project: LampProject, engine: Engine, session: String?) -> String {
         // The conversation being resumed, if Lamp has a record of what it was told. One recorded before its
         // engine named it ("") is the one being resumed now.
         let known = session.flatMap { session in
@@ -237,11 +242,61 @@ enum Memory {
             pending[project.id]?.session = session
         }
         let shown = pending[project.id]
+        let heard = told[project.id] ?? [:]
+        told[project.id] = nil
         lock.unlock()
+        if !heard.isEmpty {
+            // Only what the request carried: something taken back while the agent worked waits for the next one.
+            var left = undone(in: project)
+            for (about, lines) in heard { left[about]?.removeAll { lines.contains($0) } }
+            writeUndone(left, in: project)
+        }
         guard let shown else { return }
         var all = allShown(in: project)
         all[shown.engine] = shown
         try? JSONEncoder().encode(all).write(to: shownFile(project), options: .atomic)
+    }
+
+    // MARK: What the person took back
+
+    /// Notes the person took back with Undo in the chat (`NoteReceipt`), until the agent has been told. The
+    /// conversation that noted them still holds what it learned, and is asked to consider saving at the end
+    /// of every request: untold, it would note the same thing again.
+    private static func undoneFile(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/notes-undone.json") }
+
+    private static func undone(in project: LampProject) -> [String: [String]] {
+        (try? Data(contentsOf: undoneFile(project))).flatMap { try? JSONDecoder().decode([String: [String]].self, from: $0) } ?? [:]
+    }
+
+    private static func writeUndone(_ lines: [String: [String]], in project: LampProject) {
+        let lines = lines.filter { !$0.value.isEmpty }
+        if lines.isEmpty {
+            try? FileManager.default.removeItem(at: undoneFile(project))
+        } else {
+            try? JSONEncoder().encode(lines).write(to: undoneFile(project), options: .atomic)
+        }
+    }
+
+    /// What `brief` last said was taken back, per app, until its request is known to have arrived.
+    nonisolated(unsafe) private static var told: [String: [String: [String]]] = [:]
+
+    static func tookBack(_ lines: [String], from place: Place, in project: LampProject) {
+        guard !lines.isEmpty else { return }
+        var all = undone(in: project)
+        all[place.name, default: []] += lines.filter { !(all[place.name] ?? []).contains($0) }
+        writeUndone(all, in: project)
+    }
+
+    private static func takenBack(in project: LampProject) -> String {
+        let all = undone(in: project)
+        lock.lock()
+        told[project.id] = all
+        lock.unlock()
+        guard !all.isEmpty else { return "" }
+        let places: [Place] = [.you, .app(project)]
+        return "\n\n---\nLamp's notes (not part of the request above): the person took back what you noted. "
+            + "Don't note it again unless they ask:\n"
+            + places.flatMap { place in (all[place.name] ?? []).map { "- \(place.words): “\($0)”" } }.joined(separator: "\n")
     }
 
     // MARK: The agent's tools
@@ -277,7 +332,7 @@ enum Memory {
         lock.unlock()
     }
 
-    private static func place(_ arguments: [String: Any], _ project: LampProject) -> Place? {
+    static func place(_ arguments: [String: Any], _ project: LampProject) -> Place? {
         switch (arguments["about"] as? String ?? "").lowercased() {
         case "you": .you
         case "app": .app(project)
