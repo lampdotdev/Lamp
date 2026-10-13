@@ -293,7 +293,16 @@ The data goes through `LampSync` in LampSupport.swift, the one building block fo
 CloudKit's own `CKSyncEngine` in a zone of the app's in the private database, one record per item carrying its
 JSON. The later change to an item wins; a sign-in or a zone deleted in iCloud sends everything up again. The
 agent is told in `Agent.Rules.icloud` (iPhone and both-kind prompts) when to use it and that the simulator is
-usually not signed in. The team must be in the Developer Program: a free account's build fails at signing.
+usually not signed in. The team must be in the Developer Program: a free account's build fails at signing, so Lamp
+says so first, wherever the app is about to be signed for the team: on the person's phone, or as the Mac half
+of an app for both (`PhoneTools.xcodeFreeTeams` reads which teams are free). Before Open and Rebuild & Open
+and when a phone is chosen it is the setup check (`PhoneSetup.Context.requiresPaidTeam`); a message is never
+held for it, since asking the agent is how iCloud is taken out again, so after a request it is one line in
+the chat where the build would start (`Devices.membershipProblem`, in `Store.installOnDevice` and
+`Store.build`), not sent to the agent as an error to fix. On a phone the turn's change is already built for
+the simulator and saved; on the Mac half that build is the turn's only one, so the change stays in the app's
+files unsaved, as after any build that fails. In the simulator nothing is signed for a team, so a free
+account goes on working there.
 
 ## Apple Health
 

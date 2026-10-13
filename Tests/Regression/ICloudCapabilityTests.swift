@@ -72,6 +72,50 @@ final class ICloudCapabilityTests: XCTestCase {
         XCTAssertFalse(try text("App.entitlements").contains("icloud"))
     }
 
+    func testAMessageIsNeverHeldForAPaidTeam() throws {
+        let both = try app(.universal)
+        try #"{"icloud": true}"#.write(to: both.dir.appendingPathComponent("capabilities.json"), atomically: true, encoding: .utf8)
+        // What a send checks: the Mac half, and the person's phone. Asking to take iCloud out is a message too.
+        XCTAssertFalse(PhoneSetup.Context(for: both, phone: nil).requiresPaidTeam)
+        var phone = both; phone.platform = .iphone; phone.device = "made-up-phone"
+        XCTAssertFalse(PhoneSetup.Context(for: phone, phone: "made-up-phone").requiresPaidTeam)
+        // The team itself is still asked for, as before iCloud.
+        XCTAssertTrue(PhoneSetup.Context(for: both, phone: nil).requiresTeam)
+    }
+
+    func testTheBuildSaysAFreeAccountCannotSignAnAppThatKeepsDataInICloud() throws {
+        let both = try app(.universal)
+        let free: Set<String> = ["ABCDE12345"]
+        // Without iCloud a free account builds as ever.
+        XCTAssertNil(Devices.membershipProblem(for: both, on: "this Mac", team: "ABCDE12345", free: free))
+        try #"{"icloud": true}"#.write(to: both.dir.appendingPathComponent("capabilities.json"), atomically: true, encoding: .utf8)
+        let problem = try XCTUnwrap(Devices.membershipProblem(for: both, on: "this Mac", team: "ABCDE12345", free: free))
+        XCTAssertTrue(problem.contains("paid Apple Developer membership"))
+        XCTAssertTrue(problem.contains("Cloud Notes"))
+        XCTAssertTrue(problem.contains("this Mac"))
+        XCTAssertNil(Devices.membershipProblem(for: both, on: "this Mac", team: "ABCDE12345", free: []))
+        XCTAssertNil(Devices.membershipProblem(for: both, on: "this Mac", team: "FGHIJ67890", free: free))
+    }
+
+    func testThePaidTeamIsAskedForWhereTheAppIsSignedForATeam() throws {
+        var both = try app(.universal)
+        func context(_ project: LampProject) -> PhoneSetup.Context { .init(for: project, phone: project.onIOS ? project.device : nil, building: true) }
+        // Without iCloud nothing asks for a paid team, wherever the app opens.
+        XCTAssertFalse(context(both).requiresPaidTeam)
+        XCTAssertTrue(context(both).requiresTeam)
+        try #"{"icloud": true}"#.write(to: both.dir.appendingPathComponent("capabilities.json"), atomically: true, encoding: .utf8)
+        // The Mac half is Xcode's, signed for the team.
+        XCTAssertFalse(both.onIOS)
+        XCTAssertTrue(context(both).requiresPaidTeam)
+        var phone = both; phone.platform = .iphone
+        XCTAssertTrue(phone.onIOS)
+        // The simulator's copy isn't signed for a team, so a free account goes on working there.
+        XCTAssertFalse(context(phone).requiresPaidTeam)
+        phone.device = "made-up-phone"
+        XCTAssertTrue(context(phone).requiresPaidTeam)
+        XCTAssertEqual(context(phone).phone, "made-up-phone")
+    }
+
     func testTheAgentIsToldForAppsWithAnIPhoneHalfOnly() throws {
         let both = try app(.universal)
         XCTAssertTrue(Agent.systemPrompt(for: both).contains("LampSync.collection("))

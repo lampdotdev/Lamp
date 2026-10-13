@@ -14,6 +14,7 @@ final class PhoneToolsChecks {
         var p = probeWithoutAccount(fail: fail, phoneVersion: phoneVersion, runtime: runtime, commands: commands)
         p.hasViewer = { _ in true }
         p.teams = { fail == .account ? [] : [(id: "ABCDE12345", name: "Test Team")] }
+        p.freeTeams = { [] }
         p.team = { "ABCDE12345" }
         p.chooseTeam = { _ in }
         return p
@@ -167,6 +168,53 @@ final class PhoneToolsChecks {
         // The chosen team among several: fine as it is.
         p.team = { "FGHIJ67890" }
         expectTrue(PhoneTools.check(phone: "phone", probe: p).ready)
+    }
+
+    func testAnAppThatKeepsDataInICloudIsNotReadyWithAFreeAccount() {
+        var p = probe()
+        p.freeTeams = { ["ABCDE12345"] }
+        // On the person's phone and as the Mac half of an app for both: told before anything is built.
+        for report in [PhoneTools.check(phone: "phone", requiresPaidTeam: true, probe: p),
+                       PhoneTools.check(requiresTeam: true, requiresPaidTeam: true, probe: p)] {
+            expectEqual(report.issue?.step, .account)
+            expectEqual(report.issue?.action, .membership)
+            expectEqual(report.issue?.needsPaidTeam, true)
+            expectTrue(report.issue?.message.contains("paid Apple Developer membership") == true)
+            expectFalse(report.passed.contains(.account))
+        }
+        // The same account still passes for an app that doesn't use iCloud, and nothing looks up which teams are free.
+        var asked = false
+        p.freeTeams = { asked = true; return ["ABCDE12345"] }
+        expectTrue(PhoneTools.check(phone: "phone", probe: p).ready)
+        expectTrue(PhoneTools.check(requiresTeam: true, probe: p).ready)
+        expectTrue(PhoneTools.check(probe: p).ready)
+        expectFalse(asked)
+        // A paid team passes.
+        p.freeTeams = { [] }
+        expectTrue(PhoneTools.check(phone: "phone", requiresPaidTeam: true, probe: p).ready)
+        // A free team chosen while a paid one is signed in too: the fix is choosing the other.
+        p.teams = { [(id: "ABCDE12345", name: "Test Person"), (id: "FGHIJ67890", name: "Test Company")] }
+        p.freeTeams = { ["ABCDE12345"] }
+        expectEqual(PhoneTools.check(phone: "phone", requiresPaidTeam: true, probe: p).issue?.action, .settings)
+        expectEqual(PhoneTools.check(phone: "phone", requiresPaidTeam: true, probe: p).issue?.needsPaidTeam, true)
+        p.team = { "FGHIJ67890" }
+        expectTrue(PhoneTools.check(phone: "phone", requiresPaidTeam: true, probe: p).ready)
+        // Nobody signed in: a free account isn't offered to an app it can't sign.
+        let none = PhoneTools.check(phone: "phone", requiresPaidTeam: true, probe: probe(fail: .account))
+        expectEqual(none.issue?.title, "Sign in to Xcode")
+        expectEqual(none.issue?.needsPaidTeam, false)
+        expectFalse(none.issue?.message.contains("a free one will do") == true)
+        expectTrue(PhoneTools.check(phone: "phone", probe: probe(fail: .account)).issue?.message.contains("a free one will do") == true)
+    }
+
+    func testXcodeSaysWhichTeamsAreFree() {
+        // What Xcode 27 keeps for a signed-in free account, read on 2026-10-13 with the account, team ID and
+        // name replaced. No paid team's record has been captured: the second one only lacks the mark.
+        let accounts: [String: Any] = ["ACCOUNT": [
+            ["isFreeProvisioningTeam": true, "teamID": "ABCDE12345", "teamName": "Test Person", "teamType": "Personal Team"],
+            ["teamID": "FGHIJ67890", "teamName": "Test Company"],
+        ]]
+        expectEqual(PhoneTools.xcodeFreeTeams(in: accounts), ["ABCDE12345"])
     }
 
     func testReadyForBothFamiliesAndDoesNotNeedAPhysicalPhone() {
