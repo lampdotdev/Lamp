@@ -157,12 +157,16 @@ final class Dictation: ObservableObject {
         { [weak dictation] result, error in
             let text = result?.bestTranscription.formattedString
             let endsPhrase = result?.speechRecognitionMetadata != nil
+            let segments = result?.bestTranscription.segments ?? []
+            let span = segments.first.map { first in
+                first.timestamp...max(first.timestamp, segments.last!.timestamp + segments.last!.duration)
+            }
             let done = error != nil || result?.isFinal == true
             Task { @MainActor in
                 guard let dictation, dictation.session == session else { return }
                 if let text {
                     let begun = dictation.transcript.phrases
-                    let whole = dictation.transcript.take(text, endsPhrase: endsPhrase)
+                    let whole = dictation.transcript.take(text, endsPhrase: endsPhrase, span: endsPhrase ? span : nil)
                     if dictation.transcript.phrases != begun { dictation.phrase += 1 }
                     onText(whole)
                 }
@@ -172,37 +176,64 @@ final class Dictation: ObservableObject {
     }
 
     /// The whole of what was said, from results that may cover only part of it. When the speaker pauses,
-    /// recognition on the Mac starts again, and from then on its results hold only the words since the pause.
-    /// Shown as they come, each pause would wipe everything said before it, so a phrase is kept once it's over:
-    /// when the recognizer marks its last result (it gives that one metadata), or, failing that, when a result
-    /// arrives that has lost it (shorter, and not starting the way it did). A result that only revises the
-    /// phrase's words keeps most of its beginning, so it replaces the phrase instead.
+    /// recognition on the Mac sends the phrase once more, marked as its last result (it has metadata and the
+    /// phrase's real timings), then starts again, and from then on its results hold only the words since the
+    /// pause. Shown as they come, each pause would wipe everything said before it, so a phrase is kept once
+    /// it's over and the next is joined on.
+    ///
+    /// A marked phrase can come again, its words revised ("if if" becoming "if"): the same span of time, or a
+    /// long result starting the way the phrase did (a new phrase starts with a word or two), is that phrase,
+    /// not a new one. Unmarked, a phrase is over when a result arrives that has lost it: shorter, and not
+    /// starting the way it did. A result that only revises the phrase's words replaces it.
     struct Transcript {
         private var earlier = ""
         private var phrase = ""
         private var phraseEnded = false
+        /// When the phrase was said, from its marked result.
+        private var phraseSpan: ClosedRange<TimeInterval>?
         /// How many phrases have begun.
         private(set) var phrases = 0
 
-        mutating func take(_ text: String, endsPhrase: Bool = false) -> String {
+        mutating func take(_ text: String, endsPhrase: Bool = false, span: ClosedRange<TimeInterval>? = nil) -> String {
             guard !text.isEmpty else { return Self.join(earlier, phrase) }
-            let continues = text.lowercased().hasPrefix(phrase.lowercased())
-            if phraseEnded ? !continues : Self.startsAgain(text, after: phrase) {
-                earlier = Self.join(earlier, phrase)
-                phrases += 1
-            } else if phrase.isEmpty {
-                phrases += 1
+            if phraseEnded {
+                let extends = text.count > phrase.count && text.lowercased().hasPrefix(phrase.lowercased())
+                let sameTime = span != nil && phraseSpan != nil && span!.overlaps(phraseSpan!)
+                if extends {
+                    phraseEnded = endsPhrase
+                } else if sameTime || Self.resembles(text, phrase) {
+                    // Said again: phraseEnded stays.
+                } else {
+                    earlier = Self.join(earlier, phrase)
+                    phrases += 1
+                    phraseEnded = endsPhrase
+                }
+            } else {
+                if Self.startsAgain(text, after: phrase) {
+                    earlier = Self.join(earlier, phrase)
+                    phrases += 1
+                } else if phrase.isEmpty {
+                    phrases += 1
+                }
+                phraseEnded = endsPhrase
             }
             phrase = text
-            phraseEnded = endsPhrase
+            if endsPhrase, let span { phraseSpan = span }
             return Self.join(earlier, phrase)
         }
 
+        private static func shared(_ a: String, _ b: String) -> Int {
+            zip(a.lowercased(), b.lowercased()).prefix { $0 == $1 }.count
+        }
+
         private static func startsAgain(_ text: String, after phrase: String) -> Bool {
-            let old = Array(phrase.lowercased()), new = Array(text.lowercased())
-            guard new.count < old.count else { return false }
-            let shared = zip(old, new).prefix { $0 == $1 }.count
-            return shared * 2 < new.count
+            text.count < phrase.count && shared(text, phrase) * 2 < text.count
+        }
+
+        /// A finished phrase sent again: beginning the same way for at least half its length. A short phrase
+        /// isn't judged this way, since a new one could start with the same words.
+        private static func resembles(_ text: String, _ phrase: String) -> Bool {
+            phrase.count >= 20 && shared(text, phrase) * 2 >= phrase.count
         }
 
         private static func join(_ a: String, _ b: String) -> String {

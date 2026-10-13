@@ -33,6 +33,28 @@ final class DictationTranscriptTests: XCTestCase {
         XCTAssertEqual(transcript.take("Make a timer. Make it blue."), "Make a timer. Make it blue.")
     }
 
+    /// Seen dictating: the recognizer marked a phrase finished, then sent it again with a word fixed.
+    func testAFinishedPhraseSentAgainRevisedIsntRepeated() {
+        var transcript = Dictation.Transcript()
+        let said = "Hi, is this working? I just wanna see if if I'm able to pause."
+        let fixed = "Hi, is this working? I just wanna see if I'm able to pause."
+        _ = transcript.take(said)
+        _ = transcript.take(said, endsPhrase: true, span: 0...6)
+        XCTAssertEqual(transcript.take(fixed), fixed)
+        XCTAssertEqual(transcript.take(fixed, endsPhrase: true, span: 0...6), fixed)
+        // The next phrase is still a phrase of its own.
+        XCTAssertEqual(transcript.take("And"), fixed + " And")
+        XCTAssertEqual(transcript.take("And then more.", endsPhrase: true, span: 8...10), fixed + " And then more.")
+        XCTAssertEqual(transcript.phrases, 2)
+    }
+
+    func testAFinishedPhraseSentAgainWithItsFirstWordChangedIsKnownByItsTime() {
+        var transcript = Dictation.Transcript()
+        _ = transcript.take("Hi, is this working?", endsPhrase: true, span: 0...2)
+        XCTAssertEqual(transcript.take("Hey, is this working?", endsPhrase: true, span: 0...2), "Hey, is this working?")
+        XCTAssertEqual(transcript.phrases, 1)
+    }
+
     func testAnEmptyResultLosesNothing() {
         var transcript = Dictation.Transcript()
         _ = transcript.take("Make a timer.", endsPhrase: true)
