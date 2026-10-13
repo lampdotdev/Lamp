@@ -21,8 +21,8 @@ enum ErrorMessages {
     static func openFailed(_ detail: String) -> String { openFailedPrefix + detail }
     /// A build that found the app open, where the person chose to keep it open rather than lose what it held.
     static func stayedOpen(_ app: String) -> String { app + " stayed open, so it's still the earlier version. Close it to get the new one." }
-    /// A build waiting on an app that doesn't answer. Ends in "…": it's what the build is doing, until the app goes.
-    static func notResponding(_ app: String) -> String { "Waiting for " + app + ", which isn't responding. If it's stuck, force it to quit from the Apple menu…" }
+    /// Beside Force Quit, for an app that was asked to quit and doesn't answer: what the click costs.
+    static func notResponding(_ app: String) -> String { app + " isn't responding. Forcing it to quit loses anything unsaved in it." }
     static func notDeleted(_ app: String) -> String { app + " stayed open, so it wasn't deleted." }
     static func installFailed(_ detail: String) -> String { installFailedPrefix + detail }
     static func aiFailed(_ detail: String) -> String { aiFailedPrefix + detail }

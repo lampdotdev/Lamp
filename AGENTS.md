@@ -358,8 +358,9 @@ the agent that what's on screen isn't its change and `use_app` is refused (`Turn
 is still there. One that doesn't answer may be stuck or in the middle of a long save, and from outside the two
 look the same, so Lamp never ends it: a copy that answers Lamp's "still there?" (`LampRuntime` answers on the
 main thread, and says it listens by leaving its process id in its runtime folder) is asked that before it is
-asked to quit, and when it doesn't answer the chat says it isn't responding and that the person can force it to
-quit. A build that waits for an app for both
+asked to quit, and when it doesn't answer the chat says so beside a Force Quit button (`UnresponsiveNotice`,
+`Store.notResponding`), with what the click costs: anything unsaved in that app. The click is the only thing
+that ends it. A build that waits for an app for both
 goes in only while Try On points at this Mac. Don't add a time limit after which an app is ended anyway: that
 is what lost people's work.
 

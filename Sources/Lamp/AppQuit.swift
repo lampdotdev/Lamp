@@ -8,7 +8,7 @@ import AppKit
 /// Lamp sends the request itself and reads the reply, where `NSRunningApplication.terminate()` throws it away.
 /// Nothing here ends an app that hasn't agreed to go: it might be asking, or saving. One that doesn't answer
 /// at all looks the same from outside whether it is stuck or in the middle of a long save, so Lamp says it
-/// isn't responding and leaves ending it to the person.
+/// isn't responding and leaves ending it to the person, who can do it there with one click.
 enum AppQuit {
     /// The app's answer to the request.
     enum Reply: Equatable { case agreed, refused }
@@ -146,29 +146,31 @@ enum AppQuit {
 
     /// Asks the app to quit and waits for it to go, however long the person takes over its question. False
     /// when it stays open: the person cancelled, or `stopped` says nobody is waiting any more.
-    /// `asking` is called once, when the app seems to have a question up; `silent` once instead, when a copy
-    /// that answers Lamp (`listens`) didn't, before it was asked to quit: it's stuck, or busy with something
-    /// long. It is asked all the same, and waited for.
+    /// `asking` is called once, when the app seems to have a question up. `silent(true)` is called instead
+    /// when a copy that answers Lamp (`listens`) didn't, before it was asked to quit: it's stuck, or busy with
+    /// something long. It is asked all the same, and waited for; `silent(false)` follows if it answers after
+    /// all, and whenever the wait ends.
     @MainActor
     static func close(_ app: NSRunningApplication, id: String, runtime: URL, stopped: () -> Bool = { false },
-                      asking: () -> Void = {}, silent: () -> Void = {}) async -> Bool {
+                      asking: () -> Void = {}, silent: (Bool) -> Void = { _ in }) async -> Bool {
         guard !app.isTerminated else { return true }
         let pid = app.processIdentifier
-        var quiet = false
+        var quiet = false, pulse: Pulse?, lastPulse = Date.distantPast
+        defer { if quiet { silent(false) } }
         // Asked "still there?" before it's asked to quit: afterwards an app with a question up, or saving
         // on the answer, is quiet too, and that says nothing.
         if listens(pid, runtime: runtime), !Request.isWaiting(pid) {
-            let pulse = Pulse(app: id, pid: pid)
-            var lastPulse = Date.distantPast
-            while !pulse.state.heard, !quiet {
+            let asked = Pulse(app: id, pid: pid)
+            pulse = asked
+            while !asked.state.heard, !quiet {
                 if app.isTerminated { return true }
                 if stopped() { return false }
-                if pulse.state.missed > patience {
+                if asked.state.missed > patience {
                     quiet = true
-                    silent()
+                    silent(true)
                 } else if Date().timeIntervalSince(lastPulse) >= 1 {
                     lastPulse = Date()
-                    pulse.ask()
+                    asked.ask()
                 }
                 try? await Task.sleep(for: .milliseconds(20))
             }
@@ -192,6 +194,16 @@ enum AppQuit {
             case .wait: break
             }
             if stopped() { return false }
+            // Still asked while it's quiet, so Lamp stops saying it isn't responding once it is.
+            if quiet, let pulse {
+                if pulse.state.heard {
+                    quiet = false
+                    silent(false)
+                } else if Date().timeIntervalSince(lastPulse) >= 1 {
+                    lastPulse = Date()
+                    pulse.ask()
+                }
+            }
             if !told, !quiet, answered?.reply == nil, Date().timeIntervalSince(began) > Self.asking {
                 told = true
                 asking()

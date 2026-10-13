@@ -4085,6 +4085,18 @@ final class Store: ObservableObject {
         refreshOpenApps()
     }
 
+    /// Apps that were asked to quit and aren't responding, with the process that isn't: the chat offers to
+    /// force it to quit while this holds. Lamp never does that itself.
+    @Published private(set) var notResponding: [String: pid_t] = [:]
+
+    /// The person's click on Force Quit: ends the copy that isn't responding, and whatever was waiting for
+    /// it to close (a build, Lamp's Quit, Delete) goes on.
+    func forceQuit(_ project: LampProject) {
+        guard let pid = notResponding.removeValue(forKey: project.id),
+              let app = NSRunningApplication(processIdentifier: pid), app.bundleIdentifier == project.bundleID else { return }
+        app.forceTerminate()
+    }
+
     /// Asks the app to quit (AppQuit says how its answer is read). False when its Mac copy stays open: the
     /// person kept it, at its question about unsaved work, or `owner`'s turn was stopped while it was asking.
     @discardableResult
@@ -4113,10 +4125,16 @@ final class Store: ObservableObject {
                 // and a build says in the chat that it's waiting.
                 app.activate()
                 if owner != nil { self.log(project, .status, "Waiting for \(project.name) to close…") }
-            }, silent: {
-                // Stuck, or in the middle of something long: Lamp can't tell which, so ending it is theirs to do.
-                app.activate()
-                if owner != nil { self.log(project, .status, ErrorMessages.notResponding(project.name)) }
+            }, silent: { silent in
+                // Stuck, or in the middle of something long: Lamp can't tell which, so ending it is theirs to
+                // do, from the chat (`UnresponsiveNotice`). The app isn't brought in front of that.
+                if !silent {
+                    if self.notResponding[project.id] == app.processIdentifier { self.notResponding[project.id] = nil }
+                    return
+                }
+                self.notResponding[project.id] = app.processIdentifier
+                NSApp.requestUserAttention(.informationalRequest)
+                if owner != nil { self.log(project, .status, "Waiting for \(project.name) to close…") }
             })
             if !gone { closed = false }
         }

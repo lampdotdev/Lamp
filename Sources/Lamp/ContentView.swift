@@ -713,6 +713,9 @@ struct ProjectView: View {
             transcript(lines, busy: busy, progressShown: progress != nil, pin: pin)
             if let progress { ActivityRow(progress: progress).padding(.top, 12) }
         }
+        if store.notResponding[project.id] != nil {
+            UnresponsiveNotice(name: project.name) { store.forceQuit(project) }.padding(.top, 12)
+        }
         ForEach(queued) { message in
             QueuedRow(message: message) { store.unqueue(message, from: project) }
                 .padding(.top, lines.isEmpty ? 0 : 32)
