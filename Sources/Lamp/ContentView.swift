@@ -670,7 +670,8 @@ struct ProjectView: View {
                      suggestion: replacing == nil ? shownSuggestion : nil,
                      onDismissSuggestion: { dismissedSuggestion = suggestion },
                      onEscape: replacing == nil ? nil : putBack,
-                     isEnabled: true, focusRequest: focusRequest,
+                     isEnabled: true, focusRequest: focusRequest, dictationPhrase: dictation.phrase,
+                     onDictationUndo: { dictation.cancel() },
                      onSubmit: send, onFiles: attach)
                 .frame(height: composerHeight)
             if hasMicrophone {

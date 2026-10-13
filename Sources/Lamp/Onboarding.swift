@@ -279,6 +279,9 @@ private struct IdeaStep: View {
     /// What the idea came from, for `Analytics`: the tile last picked (even if then changed), and dictation.
     @State private var picked = false
     @State private var dictated = false
+    /// The dictated phrase the box last gave an Undo step to (`Dictation.phrase`).
+    @State private var undoPhrase = 0
+    @Environment(\.undoManager) private var undoManager
 
     var body: some View {
         VStack(spacing: 0) {
@@ -463,7 +466,27 @@ private struct IdeaStep: View {
         let separator = typed.isEmpty ? "" : " "
         dictated = true
         Analytics.capture(.welcomeDictation)
-        Task { await dictation.start { prompt = typed + separator + $0 } }
+        Task {
+            await dictation.start { heard in
+                if dictation.phrase != undoPhrase {
+                    undoPhrase = dictation.phrase
+                    registerUndo(restoring: prompt)
+                }
+                prompt = typed + separator + heard
+            }
+        }
+    }
+
+    /// Each dictated phrase is one Undo step, as in the chat's message box (`Composer`): it puts back the box
+    /// as it was before the phrase, and stops listening so the next words don't write over it.
+    private func registerUndo(restoring earlier: String) {
+        guard let undoManager else { return }
+        undoManager.registerUndo(withTarget: dictation) { dictation in
+            dictation.cancel()
+            registerUndo(restoring: prompt)
+            prompt = earlier
+        }
+        undoManager.setActionName("Dictation")
     }
 }
 

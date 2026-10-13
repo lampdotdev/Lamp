@@ -16,12 +16,16 @@ final class Dictation: ObservableObject {
 
     @Published private(set) var isListening = false
     @Published var problem: Problem?
+    /// Goes up as each spoken phrase begins, so the message box can give every phrase its own Undo step.
+    @Published private(set) var phrase = 0
 
     private let engine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     /// Bumped on every start and cancel, so late callbacks from an old session are ignored.
     private var session = 0
+    /// What's been heard since `start`, kept across the recognizer's pauses.
+    private var transcript = Transcript()
 
     /// Starts listening; `onText` receives the full transcription so far, every time it changes.
     func start(onText: @escaping (String) -> Void) async {
@@ -62,6 +66,7 @@ final class Dictation: ObservableObject {
         self.request = request
         isListening = true
         session += 1
+        transcript = Transcript()
         task = recognizer.recognitionTask(with: request, resultHandler: Self.deliver(to: self, session: session, onText: onText))
     }
 
@@ -151,12 +156,58 @@ final class Dictation: ObservableObject {
     ) -> (SFSpeechRecognitionResult?, Error?) -> Void {
         { [weak dictation] result, error in
             let text = result?.bestTranscription.formattedString
+            let endsPhrase = result?.speechRecognitionMetadata != nil
             let done = error != nil || result?.isFinal == true
             Task { @MainActor in
                 guard let dictation, dictation.session == session else { return }
-                if let text { onText(text) }
+                if let text {
+                    let begun = dictation.transcript.phrases
+                    let whole = dictation.transcript.take(text, endsPhrase: endsPhrase)
+                    if dictation.transcript.phrases != begun { dictation.phrase += 1 }
+                    onText(whole)
+                }
                 if done { dictation.finished(error) }
             }
+        }
+    }
+
+    /// The whole of what was said, from results that may cover only part of it. When the speaker pauses,
+    /// recognition on the Mac starts again, and from then on its results hold only the words since the pause.
+    /// Shown as they come, each pause would wipe everything said before it, so a phrase is kept once it's over:
+    /// when the recognizer marks its last result (it gives that one metadata), or, failing that, when a result
+    /// arrives that has lost it (shorter, and not starting the way it did). A result that only revises the
+    /// phrase's words keeps most of its beginning, so it replaces the phrase instead.
+    struct Transcript {
+        private var earlier = ""
+        private var phrase = ""
+        private var phraseEnded = false
+        /// How many phrases have begun.
+        private(set) var phrases = 0
+
+        mutating func take(_ text: String, endsPhrase: Bool = false) -> String {
+            guard !text.isEmpty else { return Self.join(earlier, phrase) }
+            let continues = text.lowercased().hasPrefix(phrase.lowercased())
+            if phraseEnded ? !continues : Self.startsAgain(text, after: phrase) {
+                earlier = Self.join(earlier, phrase)
+                phrases += 1
+            } else if phrase.isEmpty {
+                phrases += 1
+            }
+            phrase = text
+            phraseEnded = endsPhrase
+            return Self.join(earlier, phrase)
+        }
+
+        private static func startsAgain(_ text: String, after phrase: String) -> Bool {
+            let old = Array(phrase.lowercased()), new = Array(text.lowercased())
+            guard new.count < old.count else { return false }
+            let shared = zip(old, new).prefix { $0 == $1 }.count
+            return shared * 2 < new.count
+        }
+
+        private static func join(_ a: String, _ b: String) -> String {
+            let a = a.trimmingCharacters(in: .whitespaces), b = b.trimmingCharacters(in: .whitespaces)
+            return a.isEmpty ? b : b.isEmpty ? a : a + " " + b
         }
     }
 

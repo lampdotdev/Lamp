@@ -8,6 +8,8 @@ import UniformTypeIdentifiers
 /// files or images (e.g. a screenshot) attaches them instead of inserting text.
 /// A `suggestion` replaces the placeholder while the composer is empty: Tab accepts it, Escape dismisses it.
 /// `onEscape`, when there is one, gets Escape first: it's how a request taken back from the chat is put back.
+/// Text set from outside isn't typing, so it has no Undo of its own; dictation's does, one step per phrase:
+/// when `dictationPhrase` changes, the box as it was just before is what Undo brings back.
 struct Composer: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
@@ -17,6 +19,9 @@ struct Composer: NSViewRepresentable {
     var onEscape: (() -> Void)? = nil
     var isEnabled: Bool
     var focusRequest: Int
+    var dictationPhrase = 0
+    /// Called when dictation's Undo or Redo changes the box, so listening can stop rather than write over it.
+    var onDictationUndo: () -> Void = {}
     var onSubmit: () -> Void
     var onFiles: ([URL]) -> Void
 
@@ -62,6 +67,9 @@ struct Composer: NSViewRepresentable {
         coordinator.parent = self
         guard let textView = coordinator.textView else { return }
         if textView.string != text {
+            if coordinator.lastDictationPhrase != dictationPhrase {
+                coordinator.registerUndo(restoring: textView.string)
+            }
             textView.string = text
             coordinator.updateHeight()
         }
@@ -75,6 +83,7 @@ struct Composer: NSViewRepresentable {
         textView.onSubmit = onSubmit
         textView.onFiles = onFiles
         textView.needsDisplay = true
+        coordinator.lastDictationPhrase = dictationPhrase
         if coordinator.lastFocusRequest != focusRequest {
             coordinator.lastFocusRequest = focusRequest
             DispatchQueue.main.async { textView.window?.makeFirstResponder(textView) }
@@ -85,8 +94,29 @@ struct Composer: NSViewRepresentable {
         var parent: Composer
         weak var textView: ComposerTextView?
         var lastFocusRequest = Int.min
+        var lastDictationPhrase: Int
 
-        init(_ parent: Composer) { self.parent = parent }
+        init(_ parent: Composer) {
+            self.parent = parent
+            lastDictationPhrase = parent.dictationPhrase
+        }
+
+        /// One Undo step that puts `earlier` back; undoing it registers the Redo.
+        func registerUndo(restoring earlier: String) {
+            guard let textView, let undoManager = textView.undoManager else { return }
+            textView.breakUndoCoalescing()
+            undoManager.registerUndo(withTarget: self) { $0.restore(earlier) }
+            undoManager.setActionName("Dictation")
+        }
+
+        private func restore(_ earlier: String) {
+            guard let textView else { return }
+            registerUndo(restoring: textView.string)
+            textView.string = earlier
+            parent.text = earlier
+            parent.onDictationUndo()
+            updateHeight()
+        }
 
         func textDidChange(_ notification: Notification) {
             guard let textView else { return }
