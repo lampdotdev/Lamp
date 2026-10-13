@@ -5,6 +5,24 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.13.0
+
+- Building with your Claude or ChatGPT subscription no longer needs their apps or a command-line install:
+  choose the agent and Lamp fetches its own copy, checked against the maker's signature, and keeps it up to
+  date. A Claude Code or Codex already on your Mac is used as it is, with its sign-in.
+- The welcome asks what you wish your Mac did, and a wish written on lamp.dev arrives in Lamp without
+  pasting. The starter ideas are real situations instead of app categories.
+- Duplicate an app to try a variation: the copy has the same code, history and icon on a new colour,
+  with an empty chat and its own data.
+- Your apps appear in Finder's Applications folder, and they open the files they're for: drop a file on an
+  app's icon, or choose it under Open With.
+- When an app uses your other apps, you can watch it happen: a glow follows the window in use and a cursor
+  shows each step, with approval beside the action and a Stop button. It's on by default with a Claude Code
+  or ChatGPT sign-in or an OpenRouter key.
+- Permission screens have one place to drag the app from, and Open System Settings always brings the
+  panel back.
+- The build card no longer says Ready over an app that couldn't be installed or opened.
+
 ## 0.12.0
 
 - Mac apps can have a desktop widget. Ask for one and the agent builds it into the app; add it from the
