@@ -371,3 +371,6 @@ export const IDEAS: Idea[] = [
     wish: "The restaurants near us where my son can eat safely with his nut allergy, what he ordered and how it went, and a photo of a menu checked for what to ask about.",
   },
 ];
+
+/** The name of an idea's pictures in src/assets/ideas/ (icons/<slug>.png, thumbs/<slug>.jpg). */
+export const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");

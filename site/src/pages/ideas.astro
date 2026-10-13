@@ -1,8 +1,26 @@
 ---
+import { Image, getImage } from "astro:assets";
+import type { ImageMetadata } from "astro";
 import Base from "../layouts/Base.astro";
 import DownloadButton from "../components/DownloadButton.astro";
-import { CATEGORIES, IDEAS } from "../lib/ideas";
+import { CATEGORIES, IDEAS, slug } from "../lib/ideas";
 import { together } from "../lib/text";
+
+// Each idea's icon, on Lamp's own tile as Lamp makes them, and a picture of it in use, both drawn by an image
+// model from a short brief (see scripts/idea-art/README.md). An idea without one shows without it.
+const icons = import.meta.glob<ImageMetadata>("../assets/ideas/icons/*.png", { eager: true, import: "default" });
+const thumbs = import.meta.glob<ImageMetadata>("../assets/ideas/thumbs/*.jpg", { eager: true, import: "default" });
+const iconOf = (name: string) => icons[`../assets/ideas/icons/${slug(name)}.png`];
+const thumbOf = (name: string) => thumbs[`../assets/ideas/thumbs/${slug(name)}.jpg`];
+// The larger picture for an opened wish.
+const large = Object.fromEntries(await Promise.all(IDEAS.map(async (idea) => {
+  const thumb = thumbOf(idea.name);
+  return [idea.name, thumb ? (await getImage({ src: thumb, width: 1200, format: "webp" })).src : ""];
+})));
+const iconURL = Object.fromEntries(await Promise.all(IDEAS.map(async (idea) => {
+  const icon = iconOf(idea.name);
+  return [idea.name, icon ? (await getImage({ src: icon, width: 128, format: "webp" })).src : ""];
+})));
 
 const colour = Object.fromEntries(CATEGORIES.map((category) => [category.id, category.colour]));
 const title = Object.fromEntries(CATEGORIES.map((category) => [category.id, category.title]));
@@ -53,20 +71,39 @@ const description = "Wishes for software nobody else would make: for the office,
               <li data-category={idea.category} class="flex">
                 <button
                   type="button"
-                  data-idea={JSON.stringify({ ...idea, title: title[idea.category], colour: colour[idea.category] })}
-                  class="group flex w-full flex-col items-start rounded-[22px] bg-page p-6 text-left shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-black/[0.04] transition duration-300 hover:-translate-y-0.5 hover:shadow-[0_14px_34px_-14px_rgba(0,0,0,0.22)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-graphite"
+                  data-idea={JSON.stringify({ ...idea, title: title[idea.category], colour: colour[idea.category], picture: large[idea.name], icon: iconURL[idea.name] })}
+                  class="group flex w-full flex-col overflow-hidden rounded-[22px] bg-page text-left shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-black/[0.04] transition duration-300 hover:-translate-y-0.5 hover:shadow-[0_14px_34px_-14px_rgba(0,0,0,0.22)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-graphite"
                 >
-                  <span class="flex w-full items-center justify-between gap-3 text-[13px]">
-                    <span class="flex items-center gap-1.5 font-semibold" style={`color: ${colour[idea.category]}`}>
-                      <span aria-hidden="true" class="size-2 rounded-full" style={`background: ${colour[idea.category]}`} />
-                      {title[idea.category]}
+                  {thumbOf(idea.name) ? (
+                    <Image
+                      src={thumbOf(idea.name)}
+                      alt=""
+                      widths={[400, 700, 1000]}
+                      sizes="(min-width: 1152px) 352px, (min-width: 1024px) 31vw, (min-width: 640px) 48vw, 100vw"
+                      loading="lazy"
+                      class="aspect-[3/2] w-full object-cover"
+                    />
+                  ) : (
+                    <span aria-hidden="true" class="aspect-[3/2] w-full" style={`background: linear-gradient(160deg, ${colour[idea.category]}22, ${colour[idea.category]}44)`} />
+                  )}
+                  <span class="flex flex-1 flex-col items-start px-6 pb-6">
+                    <span class="flex w-full items-end justify-between gap-3">
+                      {iconOf(idea.name) ? (
+                        <Image src={iconOf(idea.name)} alt="" width={72} height={72} densities={[1, 2]} class="-mt-9 size-18 drop-shadow-[0_8px_14px_rgba(0,0,0,0.2)]" />
+                      ) : (
+                        <span class="h-6" />
+                      )}
+                      <span class="flex items-center gap-1.5 pb-1 text-[13px] font-semibold" style={`color: ${colour[idea.category]}`}>
+                        <span aria-hidden="true" class="size-2 rounded-full" style={`background: ${colour[idea.category]}`} />
+                        {title[idea.category]}
+                        <span class="font-normal text-muted">· {idea.form}</span>
+                      </span>
                     </span>
-                    <span class="rounded-full bg-panel px-2.5 py-0.5 text-muted">{idea.form}</span>
+                    <span class="mt-3 font-display text-2xl font-bold tracking-tight">{idea.name}</span>
+                    <span class="mt-1 text-[15px] text-muted">{idea.who}</span>
+                    <span class="mt-4 text-[16px] leading-relaxed text-ink/85">“{together(idea.wish)}”</span>
+                    <span class="mt-auto pt-5 text-[15px] font-semibold text-[#b04e0a] opacity-70 transition group-hover:opacity-100">Make this wish →</span>
                   </span>
-                  <span class="mt-4 font-display text-2xl font-bold tracking-tight">{idea.name}</span>
-                  <span class="mt-1 text-[15px] text-muted">{idea.who}</span>
-                  <span class="mt-4 text-[16px] leading-relaxed text-ink/85">“{together(idea.wish)}”</span>
-                  <span class="mt-auto pt-5 text-[15px] font-semibold text-[#b04e0a] opacity-70 transition group-hover:opacity-100">Make this wish →</span>
                 </button>
               </li>
             ))
@@ -94,19 +131,25 @@ const description = "Wishes for software nobody else would make: for the office,
   <dialog
     data-wish
     aria-labelledby="wish-name"
-    class="m-auto w-[min(36rem,calc(100vw-2rem))] rounded-[28px] bg-page p-0 text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)] backdrop:bg-black/40 backdrop:backdrop-blur-sm"
+    class="m-auto max-h-[calc(100dvh-2rem)] w-[min(36rem,calc(100vw-2rem))] overflow-y-auto rounded-[28px] bg-page p-0 text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)] backdrop:bg-black/40 backdrop:backdrop-blur-sm"
   >
+    <img data-picture alt="" class="aspect-[3/2] w-full object-cover" hidden />
     <div class="relative p-6 sm:p-8">
       <button
         type="button"
         data-close
         aria-label="Close"
-        class="absolute top-4 right-4 grid size-8 place-items-center rounded-full bg-panel text-muted transition hover:text-ink focus-visible:outline-2 focus-visible:outline-graphite"
+        class="absolute top-4 right-4 grid size-8 place-items-center rounded-full bg-panel/90 text-muted backdrop-blur transition hover:text-ink focus-visible:outline-2 focus-visible:outline-graphite"
       >
         <svg aria-hidden="true" viewBox="0 0 16 16" class="size-3.5 fill-none stroke-current stroke-2 [stroke-linecap:round]"><path d="M4 4l8 8M12 4l-8 8" /></svg>
       </button>
-      <p data-kind class="flex items-center gap-1.5 text-[13px] font-semibold"></p>
-      <h2 id="wish-name" data-name class="mt-3 pr-10 font-display text-3xl font-bold tracking-tight"></h2>
+      <div class="flex items-center gap-4">
+        <img data-icon alt="" width="64" height="64" class="size-16 drop-shadow-[0_6px_12px_rgba(0,0,0,0.18)]" hidden />
+        <div>
+          <p data-kind class="flex items-center gap-1.5 text-[13px] font-semibold"></p>
+          <h2 id="wish-name" data-name class="mt-1 pr-10 font-display text-3xl font-bold tracking-tight"></h2>
+        </div>
+      </div>
       <p data-who class="mt-1 text-[15px] text-muted"></p>
       <label for="wish-text" class="mt-6 mb-2.5 block text-[15px] font-semibold">Make it yours, then give it to Lamp:</label>
       <textarea
@@ -174,7 +217,9 @@ const description = "Wishes for software nobody else would make: for the office,
   const fit = () => { text.style.height = "auto"; text.style.height = `${text.scrollHeight + 2}px`; };
   text.addEventListener("input", fit);
 
-  type Idea = { name: string; who: string; wish: string; title: string; colour: string };
+  type Idea = { name: string; who: string; wish: string; title: string; colour: string; picture: string; icon: string };
+  const picture = dialog.querySelector<HTMLImageElement>("[data-picture]")!;
+  const icon = dialog.querySelector<HTMLImageElement>("[data-icon]")!;
   let current: Idea | null = null;
   document.querySelectorAll<HTMLButtonElement>("[data-idea]").forEach((card) =>
     card.addEventListener("click", () => {
@@ -185,6 +230,10 @@ const description = "Wishes for software nobody else would make: for the office,
       dot.style.background = current.colour;
       kind.append(dot, current.title);
       kind.style.color = current.colour;
+      picture.hidden = !current.picture;
+      if (current.picture) picture.src = current.picture;
+      icon.hidden = !current.icon;
+      if (current.icon) icon.src = current.icon;
       name.textContent = current.name;
       who.textContent = current.who;
       text.value = current.wish;
