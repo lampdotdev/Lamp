@@ -1,0 +1,9 @@
+office|a classic tan leather briefcase with a brass clasp and a short carry handle, standing upright
+mac|a laptop next to a large monitor, with tidy window rectangles on its screen
+home|a bucket of popcorn with a small film clapper
+play|a classic arcade joystick with a glossy red ball on top of a short black stick, on a small rounded base with two round red buttons
+trades|a classic red metal toolbox with a carry handle, its lid slightly open showing a wrench and a screwdriver
+school|a school satchel with a calendar page tucked in
+money|an envelope with a small paperclip and a tick
+hobbies|a ball of yarn with knitting needles
+friends|a wrapped gift box with a question mark tag
