@@ -26,7 +26,6 @@ const iconURL = Object.fromEntries(await Promise.all(IDEAS.map(async (idea) => {
   return [idea.name, icon ? (await getImage({ src: icon, width: 128, format: "webp" })).src : ""];
 })));
 
-const title = Object.fromEntries(CATEGORIES.map((category) => [category.id, category.title]));
 // In the categories' order, so "All" reads as the categories one after another.
 const ideas = CATEGORIES.flatMap((category) => IDEAS.filter((idea) => idea.category === category.id));
 const description = "Wishes for software nobody else would make: for the office, your Mac, your family and your weekends. Find one that's nearly yours, and Lamp makes it yours.";
@@ -96,7 +95,7 @@ const description = "Wishes for software nobody else would make: for the office,
               <li data-category={idea.category} class="flex">
                 <button
                   type="button"
-                  data-idea={JSON.stringify({ ...idea, platform: platform(idea), title: title[idea.category], picture: large[idea.name], icon: iconURL[idea.name] })}
+                  data-idea={JSON.stringify({ ...idea, picture: large[idea.name], icon: iconURL[idea.name] })}
                   class="group flex w-full cursor-pointer flex-col overflow-hidden rounded-[22px] bg-page text-left shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-black/[0.04] transition duration-300 hover:-translate-y-0.5 hover:shadow-[0_14px_34px_-14px_rgba(0,0,0,0.22)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-graphite"
                 >
                   {thumbOf(idea.name) ? (
@@ -150,10 +149,15 @@ const description = "Wishes for software nobody else would make: for the office,
   <dialog
     data-wish
     aria-labelledby="wish-name"
-    class="m-auto max-h-[calc(100dvh-2rem)] w-[min(36rem,calc(100vw-2rem))] overflow-y-auto rounded-[28px] bg-page p-0 text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)] backdrop:bg-black/40 backdrop:backdrop-blur-sm"
+    class="m-auto max-h-[calc(100dvh-2rem)] w-[min(36rem,calc(100vw-2rem))] overflow-y-auto rounded-[28px] bg-page p-0 text-ink shadow-[0_30px_80px_-20px_rgba(0,0,0,0.45)] backdrop:bg-black/40 backdrop:backdrop-blur-sm lg:w-[min(70rem,calc(100vw-4rem))] lg:grid-cols-[1.3fr_1fr] lg:overflow-hidden lg:open:grid"
   >
-    <img data-picture alt="" class="aspect-[3/2] w-full object-cover" hidden />
-    <div class="relative p-6 sm:p-8">
+    <!-- The picture: across the top on narrower screens; from lg, the left of two columns, shown whole on a soft,
+         blurred copy of itself however tall the wish beside it is. -->
+    <div data-stage class="relative overflow-hidden lg:flex lg:items-center">
+      <img data-backdrop alt="" class="absolute inset-0 hidden size-full scale-125 object-cover opacity-80 blur-2xl lg:block" />
+      <img data-picture alt="" class="relative aspect-[3/2] w-full object-cover lg:shadow-[0_20px_50px_-20px_rgba(0,0,0,0.35)]" />
+    </div>
+    <div class="relative p-6 sm:p-8 lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto lg:p-10">
       <button
         type="button"
         data-close
@@ -162,22 +166,21 @@ const description = "Wishes for software nobody else would make: for the office,
       >
         <svg aria-hidden="true" viewBox="0 0 16 16" class="size-3.5 fill-none stroke-current stroke-2 [stroke-linecap:round]"><path d="M4 4l8 8M12 4l-8 8" /></svg>
       </button>
-      <div class="flex items-center gap-4">
-        <img data-icon alt="" width="64" height="64" class="size-16 drop-shadow-[0_6px_12px_rgba(0,0,0,0.18)]" hidden />
-        <div>
-          <p data-kind class="flex items-center gap-1.5 text-[13px] font-medium text-muted"></p>
-          <h2 id="wish-name" data-name class="mt-1 pr-10 font-display text-3xl font-bold tracking-tight"></h2>
+      <div class="flex items-start gap-4">
+        <img data-icon alt="" width="64" height="64" class="size-16 shrink-0 drop-shadow-[0_6px_12px_rgba(0,0,0,0.18)]" hidden />
+        <div class="pt-1">
+          <h2 id="wish-name" data-name class="pr-10 font-display text-3xl leading-tight font-bold tracking-tight"></h2>
+          <p data-about class="mt-1.5 text-[15px] leading-snug text-muted"></p>
         </div>
       </div>
-      <p data-about class="mt-2 text-[15px] leading-snug text-muted"></p>
       <label for="wish-text" class="mt-6 mb-2.5 block text-[15px] font-semibold">Make it yours, then give it to Lamp:</label>
       <textarea
         id="wish-text"
         data-text
         rows="5"
-        class="w-full resize-none rounded-xl bg-panel/70 p-3.5 text-[17px] leading-relaxed ring-1 ring-rule transition focus:bg-page focus:ring-2 focus:ring-[#cf620c]/40 focus:outline-none"
+        class="w-full resize-none rounded-xl bg-page p-3.5 text-[17px] leading-relaxed ring-1 ring-[#d2d2d7] transition focus:ring-2 focus:ring-[#cf620c]/40 focus:outline-none"
       ></textarea>
-      <div data-finish class="mt-6 flex flex-col items-center">
+      <div data-finish class="mt-6 flex flex-col items-center lg:items-start lg:[&>div]:items-start">
         <DownloadButton place="ideas" />
         <button
           type="button"
@@ -195,8 +198,6 @@ const description = "Wishes for software nobody else would make: for the office,
 <script>
   import { copyWish, wishLink } from "../../lib/wish.js";
   import { track } from "../lib/analytics";
-  import { platformIcon } from "../lib/platform-icons";
-  import type { Platform } from "../lib/ideas";
 
   // ---------- The filters, and the wishes coming and going ----------
   const filters = [...document.querySelectorAll<HTMLButtonElement>("[data-filter]")];
@@ -287,14 +288,14 @@ const description = "Wishes for software nobody else would make: for the office,
 
   // ---------- A wish, opened ----------
   const dialog = document.querySelector<HTMLDialogElement>("[data-wish]")!;
-  const kind = dialog.querySelector<HTMLElement>("[data-kind]")!;
   const name = dialog.querySelector<HTMLElement>("[data-name]")!;
   const about = dialog.querySelector<HTMLElement>("[data-about]")!;
   const text = dialog.querySelector<HTMLTextAreaElement>("[data-text]")!;
   const go = dialog.querySelector<HTMLAnchorElement>("[data-finish] a")!;
   const requirement = dialog.querySelector<HTMLElement>("[data-finish] p");
   const open = dialog.querySelector<HTMLButtonElement>("[data-open]")!;
-  const usual = requirement?.textContent ?? "";
+  // The line under the button says which Macs Lamp runs on everywhere else on the site; here it only says what
+  // happens next, once Download has been pressed.
   go.textContent = "Download Lamp";
   // A page can't tell whether Lamp is installed, so the Mac that has it gets its own way in, beside Download.
   open.hidden = !(/Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2);
@@ -302,26 +303,40 @@ const description = "Wishes for software nobody else would make: for the office,
   const fit = () => { text.style.height = "auto"; text.style.height = `${text.scrollHeight + 2}px`; };
   text.addEventListener("input", fit);
 
-  type Idea = { name: string; about: string; wish: string; platform: Platform; title: string; picture: string; icon: string };
+  type Idea = { name: string; about: string; wish: string; picture: string; icon: string };
+  const stage = dialog.querySelector<HTMLElement>("[data-stage]")!;
   const picture = dialog.querySelector<HTMLImageElement>("[data-picture]")!;
+  const backdrop = dialog.querySelector<HTMLImageElement>("[data-backdrop]")!;
   const icon = dialog.querySelector<HTMLImageElement>("[data-icon]")!;
   let current: Idea | null = null;
   document.querySelectorAll<HTMLButtonElement>("[data-idea]").forEach((card) =>
     card.addEventListener("click", () => {
       current = JSON.parse(card.dataset.idea!) as Idea;
-      kind.innerHTML = platformIcon(current.platform, "size-4");
-      kind.append(current.title);
-      picture.hidden = !current.picture;
-      if (current.picture) picture.src = current.picture;
+      // The card's own picture straight away, already loaded, so the last wish's never lingers; the larger one
+      // takes its place once it has arrived.
+      stage.hidden = !current.picture;
+      const shown = card.querySelector("img")?.currentSrc ?? "";
+      picture.src = backdrop.src = shown || current.picture;
+      if (current.picture && current.picture !== shown) {
+        const wanted = current.picture, sharper = new Image();
+        sharper.onload = () => { if (current?.picture === wanted) picture.src = wanted; };
+        sharper.src = wanted;
+      }
       icon.hidden = !current.icon;
       if (current.icon) icon.src = current.icon;
       name.textContent = current.name;
       about.textContent = current.about;
       text.value = current.wish;
       go.textContent = "Download Lamp";
-      if (requirement) requirement.textContent = usual;
+      if (requirement) requirement.hidden = true;
       dialog.showModal();
       fit();
+      // Ready to change straight away, with the cursor at the end, where there's a pointer and a keyboard; on a
+      // touch screen the keyboard would cover the wish before it's been read.
+      if (matchMedia("(hover: hover) and (pointer: fine)").matches) {
+        text.focus({ preventScroll: true });
+        text.setSelectionRange(text.value.length, text.value.length);
+      }
       track("idea_opened", { idea: current.name });
     }),
   );
@@ -335,6 +350,7 @@ const description = "Wishes for software nobody else would make: for the office,
     // The download leaves this page where it is, so the copy finishes and the card can say what happens next.
     copyWish(text.value).then((copied) => {
       go.textContent = "Downloading…";
+      if (requirement) requirement.hidden = false;
       if (requirement) requirement.textContent = copied === "marked" ? "Open Lamp when it's ready. Your wish will be there."
         : copied === "plain" ? "Your wish is copied. Paste it into Lamp when it's ready."
         : "Copy your wish, and paste it into Lamp when it's ready.";
