@@ -3,7 +3,7 @@ import SwiftUI
 /// A tool call as logged by the engines ("Read App.swift", "Bash: ./build.sh", "Run: ls"), split into
 /// what the agent did and what it did it to.
 struct ToolCall {
-    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, remember, art, offer, other }
+    enum Action { case read, write, edit, delete, run, search, list, web, plan, delegate, look, use, recall, remember, art, offer, ask, other }
 
     let name: String
     let argument: String
@@ -36,6 +36,7 @@ struct ToolCall {
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
         "look_at_app": .look, "use_app": .use, "read_notes": .recall, "save_notes": .remember, "make_art": .art, "offer_setup": .offer,
+        "ask": .ask,
     ]
 
     var icon: String {
@@ -56,6 +57,7 @@ struct ToolCall {
         case .remember: "square.and.pencil"
         case .art: "paintbrush"
         case .offer: "sparkles"
+        case .ask: "questionmark.bubble"
         case .other: "wrench.adjustable"
         }
     }
@@ -78,6 +80,7 @@ struct ToolCall {
         case .remember: "Updated its notes"
         case .art: "Painted a picture"
         case .offer: "Suggested a setup"
+        case .ask: "Offered choices"
         case .other: name
         }
     }
@@ -102,6 +105,7 @@ struct ToolCall {
         case .remember: "updated its notes"
         case .art: "painted \(n("picture", "pictures"))"
         case .offer: "suggested a setup"
+        case .ask: "offered choices"
         case .other: n("step", "steps")
         }
     }
@@ -419,6 +423,8 @@ struct LogRow: View, Equatable {
             }
         case .needsKey, .offer:
             if let offer = line.setupOffer { SetupCard(offer: offer, reason: line.text, dir: dir) }
+        case .ask:
+            AskCard(line: line, dir: dir)
         case .drawIcon:
             if let project = Store.shared.projects.first(where: { $0.dir == dir }) { DrawIconLine(project: project) }
         case .widget:

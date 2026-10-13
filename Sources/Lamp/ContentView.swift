@@ -541,7 +541,11 @@ struct ProjectView: View {
     }
     private var queued: [QueuedMessage] { store.queued[project.id] ?? [] }
     /// The finished agent turn a suggestion follows up on. Nil while working, so none shows mid-turn.
-    private var suggestionTurn: UUID? { busy ? nil : NextStep.turn(in: store.logs[project.id] ?? []) }
+    private var suggestionTurn: UUID? {
+        let lines = store.logs[project.id] ?? []
+        return busy || lines.contains(where: { $0.kind == .ask && $0.ask?.isAssumption == false && $0.ask?.isReadOnly == false })
+            ? nil : NextStep.turn(in: lines)
+    }
     private var shownSuggestion: String? {
         guard suggestionTurn != nil, let suggestion, suggestion != dismissedSuggestion else { return nil }
         return suggestion

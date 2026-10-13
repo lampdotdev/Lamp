@@ -277,6 +277,7 @@ extension Agent {
             env["LAMP_VERSIONS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/versions"
             env["LAMP_MEMORY_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/memory"
             env["LAMP_SETUP_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/setup"
+            env["LAMP_ASK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/ask"
             env["LAMP_ART_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/art"
             env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve"
             env["LAMP_TOKEN"] = token
@@ -289,7 +290,7 @@ extension Agent {
             // Lamp's (EngineInstall): --restricted ignores settings files (hooks, permission rules, plugins) while
             // keeping Lamp's --settings; --strict-mcp-config
             // skips their MCP servers and --disable-slash-commands their skills. --tools then lists exactly
-            // what the agent gets.
+            // what the agent gets; in particular, it omits Claude Code's interactive AskUserQuestion tool.
             // Shell commands go through a PreToolUse hook that asks Lamp and waits for the user's answer; Lamp
             // replies in Claude Code's hook format. If Lamp can't be reached the hook fails and the command is denied.
             env["LAMP_TOKEN"] = token
@@ -317,7 +318,7 @@ extension Agent {
                         "command": "curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
             }
             var permissionMode = "acceptEdits"
-            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__offer_setup"
+            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__offer_setup,mcp__lamp__ask"
             if Memory.isOn { allowed += ",mcp__lamp__read_notes,mcp__lamp__save_notes" }
             // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
             // it the only server. The config is a file that reads the token from the environment, so the
@@ -378,7 +379,8 @@ extension Agent {
         case .codex:
             // Isolated from the user's own Codex setup, whether this is their copy (with their sign-in) or Lamp's
             // (EngineInstall): --ignore-user-config --ignore-rules keep out any model, MCP servers, features and
-            // rules set there. Lamp's rules go in as developer instructions.
+            // rules set there. Lamp's rules go in as developer instructions. `codex exec` is non-interactive and
+            // does not expose its interactive question tool; the rules direct every question to Lamp's `ask`.
             env["LAMP_TOOL"] = EngineInstall.path(for: .codex) ?? "codex"
             env.merge(EngineInstall.environment(for: .codex)) { $1 }
             env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions=" + Self.tomlString(systemPrompt(for: project) + tryRules + Self.codexNote + sandboxNote)

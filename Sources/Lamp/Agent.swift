@@ -22,14 +22,16 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,ask"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
     /// Lamp's own tools for pi (Resources/lamp-tools.ts): `look_at_app` has Lamp build and open the app
     /// mid-turn and shows the agent the result; `plan` is the checklist on the build card; `delete_file`
     /// removes a file, which pi's own tools can't; the version tools list, name and restore the app's saved
-    /// versions; `make_art` paints a picture for the app; `offer_setup` shows a setup card in the chat; `read_notes` and `save_notes` are Lamp's notes (Memory). Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
+    /// versions; `make_art` paints a picture for the app; `offer_setup` shows a setup card in the chat; `ask`
+    /// shows questions or changeable assumptions; `read_notes` and `save_notes` are Lamp's notes (Memory).
+    /// Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
     static var lampTools: URL? {
         let url = Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.ts")
         return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
@@ -197,11 +199,13 @@ enum Agent {
 
         static let ask = """
         - When a request for a new app or a big change is too vague to build well, ask before writing code: \
-        reply with up to three short questions, each with two or three likely answers to pick from (e.g. "Who \
-        is it for: just you, or your team?"), and change no files; Lamp then waits for the answers. Only ask \
+        call `ask` with up to three short questions and likely answers to pick from, and change no files; Lamp \
+        shows the choices and waits for the answers. End the turn as soon as the tool says the questions are \
+        showing, without writing them again. Never use an engine's built-in question tool. Only ask \
         when the answers would really change what you build. Most requests, including short ones, are clear \
-        enough: build a good first version with sensible choices, and end by naming the main assumptions so \
-        the user can correct them ("I assumed one list of deals; say if you'd rather have a pipeline board"). \
+        enough: build a good first version with sensible choices. At the end, if you made assumptions the user \
+        might plausibly want to change, call `ask` with `chosen` for up to three of them. Don't name those \
+        assumptions again in prose. \
         Never ask about things you can decide yourself, like layout, colors or names.
         """
 
@@ -320,7 +324,8 @@ enum Agent {
         Lamp shows the user a card that says how to add the widget and when it's on their desktop, so never \
         explain how to add it, and never say you couldn't see it. When the request was for a widget, what \
         you say once it's made is two sentences at most, on what the widget shows: no list of sizes or \
-        options, no assumptions, no "it's ready", no question at the end. A widget they placed stays through \
+        options, no assumptions in prose, no "it's ready", no question at the end. If a choice about what it \
+        does is plausibly changeable, show it with `ask` and `chosen` like any other build. A widget they placed stays through \
         your changes and shows them by itself. To take the widget away, delete the files in Widget/.
         """
 
