@@ -6,9 +6,9 @@ import AppKit
 /// macOS carries the answer back on the quit request itself: the request is answered when the app has decided,
 /// with "cancelled" when it stays open, and isn't answered at all while the question is still on screen. So
 /// Lamp sends the request itself and reads the reply, where `NSRunningApplication.terminate()` throws it away.
-/// Nothing here ends an app that might still be asking, or saving because of the answer: only one that agreed
-/// to quit and then didn't, or one whose main thread is stuck, which is found out before it is asked to quit
-/// at all, so it has no question up and no answer to act on.
+/// Nothing here ends an app that hasn't agreed to go: it might be asking, or saving. One that doesn't answer
+/// at all looks the same from outside whether it is stuck or in the middle of a long save, so Lamp says it
+/// isn't responding and leaves ending it to the person.
 enum AppQuit {
     /// The app's answer to the request.
     enum Reply: Equatable { case agreed, refused }
@@ -16,7 +16,7 @@ enum AppQuit {
     enum Step: Equatable {
         /// Nothing to do yet: the app is deciding, or the person is.
         case wait
-        /// The app won't close by itself and isn't waiting on anyone: end it.
+        /// The app said it would quit and hasn't: end it.
         case force
         /// It has quit.
         case closed
@@ -26,26 +26,21 @@ enum AppQuit {
 
     /// How long an app that agreed to quit gets to finish closing.
     static let closing: TimeInterval = 5
-    /// How many of Lamp's "still there?", a second apart, an app that says it answers them may miss before it's
-    /// taken for stuck. Counted in questions, not seconds: a Mac that slept, or a Lamp that was held up, asked
-    /// nothing meanwhile. More than macOS takes to call an app unresponsive, when it can't be saved from either.
+    /// How many of Lamp's "still there?", a second apart, an app that says it answers them may miss before
+    /// Lamp says it isn't responding. Counted in questions, not seconds: a Mac that slept, or a Lamp that was
+    /// held up, asked nothing meanwhile.
     static let patience = 10
     /// How long a request goes unanswered before Lamp takes it that the app is asking the person something.
     static let asking: TimeInterval = 2
 
-    /// What to do about an app that is to quit.
-    /// `sinceReply`: how long ago it answered the request. `missed`: how many "still there?" in a row it left
-    /// unanswered before it was asked to quit; none once it has been asked, since the questions stop there.
-    ///
-    /// An app that says it answers Lamp (`listens`) is asked to quit only once it has answered: from then on
-    /// it has the request, and if it goes quiet it may be saving, on the person's answer or before it asks,
-    /// for as long as that takes. So after the request nothing but the app's own reply ends the wait.
-    static func step(terminated: Bool, reply: Reply?, sinceReply: TimeInterval, missed: Int) -> Step {
+    /// What to do about an app that was asked to quit. `sinceReply`: how long ago it answered.
+    /// Without an answer there is only waiting, however long: no silence is taken for the app being stuck.
+    static func step(terminated: Bool, reply: Reply?, sinceReply: TimeInterval) -> Step {
         if terminated { return .closed }
         switch reply {
         case .refused: return .kept
         case .agreed: return sinceReply > closing ? .force : .wait
-        case nil: return missed > patience ? .force : .wait
+        case nil: return .wait
         }
     }
 
@@ -151,25 +146,27 @@ enum AppQuit {
 
     /// Asks the app to quit and waits for it to go, however long the person takes over its question. False
     /// when it stays open: the person cancelled, or `stopped` says nobody is waiting any more.
-    /// `asking` is called once, when the app seems to have a question up.
+    /// `asking` is called once, when the app seems to have a question up; `silent` once instead, when a copy
+    /// that answers Lamp (`listens`) didn't, before it was asked to quit: it's stuck, or busy with something
+    /// long. It is asked all the same, and waited for.
     @MainActor
-    static func close(_ app: NSRunningApplication, id: String, runtime: URL,
-                      stopped: () -> Bool = { false }, asking: () -> Void = {}) async -> Bool {
+    static func close(_ app: NSRunningApplication, id: String, runtime: URL, stopped: () -> Bool = { false },
+                      asking: () -> Void = {}, silent: () -> Void = {}) async -> Bool {
         guard !app.isTerminated else { return true }
         let pid = app.processIdentifier
-        // A copy that answers Lamp is asked to quit only after it has answered. One that doesn't answer was
-        // stuck before anything was asked of it; one that does is never ended for going quiet afterwards.
+        var quiet = false
+        // Asked "still there?" before it's asked to quit: afterwards an app with a question up, or saving
+        // on the answer, is quiet too, and that says nothing.
         if listens(pid, runtime: runtime), !Request.isWaiting(pid) {
             let pulse = Pulse(app: id, pid: pid)
             var lastPulse = Date.distantPast
-            while !pulse.state.heard {
-                switch step(terminated: app.isTerminated, reply: nil, sinceReply: 0, missed: pulse.state.missed) {
-                case .closed: return true
-                case .force: return await end(app)
-                case .kept, .wait: break
-                }
+            while !pulse.state.heard, !quiet {
+                if app.isTerminated { return true }
                 if stopped() { return false }
-                if Date().timeIntervalSince(lastPulse) >= 1 {
+                if pulse.state.missed > patience {
+                    quiet = true
+                    silent()
+                } else if Date().timeIntervalSince(lastPulse) >= 1 {
                     lastPulse = Date()
                     pulse.ask()
                 }
@@ -188,14 +185,14 @@ enum AppQuit {
                 app.terminate()
             }
             switch step(terminated: app.isTerminated, reply: answered?.reply,
-                        sinceReply: answered.map { Date().timeIntervalSince($0.at) } ?? 0, missed: 0) {
+                        sinceReply: answered.map { Date().timeIntervalSince($0.at) } ?? 0) {
             case .closed: return true
             case .kept: return false
             case .force: return await end(app)
             case .wait: break
             }
             if stopped() { return false }
-            if !told, answered?.reply == nil, Date().timeIntervalSince(began) > Self.asking {
+            if !told, !quiet, answered?.reply == nil, Date().timeIntervalSince(began) > Self.asking {
                 told = true
                 asking()
             }

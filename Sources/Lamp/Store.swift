@@ -4108,12 +4108,16 @@ final class Store: ObservableObject {
         let stopped = { owner.map { self.turns[project.id] !== $0 || $0.wasStopped } ?? false }
         var closed = true
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID) {
-            let gone = await AppQuit.close(app, id: project.id, runtime: Runtime.folder(project), stopped: stopped) {
+            let gone = await AppQuit.close(app, id: project.id, runtime: Runtime.folder(project), stopped: stopped, asking: {
                 // Its question may be behind Lamp's window: in front, the person sees what is being waited for,
                 // and a build says in the chat that it's waiting.
                 app.activate()
                 if owner != nil { self.log(project, .status, "Waiting for \(project.name) to close…") }
-            }
+            }, silent: {
+                // Stuck, or in the middle of something long: Lamp can't tell which, so ending it is theirs to do.
+                app.activate()
+                if owner != nil { self.log(project, .status, ErrorMessages.notResponding(project.name)) }
+            })
             if !gone { closed = false }
         }
         return closed

@@ -15,28 +15,25 @@ final class AppQuitTests: XCTestCase {
         XCTAssertNil(AppQuit.reply(errorNumber: -1708))
     }
 
-    /// Once an app has been asked to quit, only its own answer ends the wait: it may be asking the person,
-    /// or saving with its main thread busy, before it asks or after the answer, for as long as that takes.
-    func testAnAppThatWasAskedIsWaitedForHoweverLongItTakes() {
-        XCTAssertEqual(AppQuit.step(terminated: false, reply: nil, sinceReply: 0, missed: 0), .wait)
+    /// Only the app's own answer ends the wait: it may be asking the person, or saving with its main thread
+    /// busy, for as long as that takes. There is no input for how long it has been, or how quiet.
+    func testAnAppThatHasNotAnsweredIsWaitedFor() {
+        XCTAssertEqual(AppQuit.step(terminated: false, reply: nil, sinceReply: 0), .wait)
     }
 
     func testAnAppThePersonKeptOpenIsKept() {
-        XCTAssertEqual(AppQuit.step(terminated: false, reply: .refused, sinceReply: 3600, missed: 0), .kept)
+        XCTAssertEqual(AppQuit.step(terminated: false, reply: .refused, sinceReply: 3600), .kept)
     }
 
     func testAnAppThatQuitIsClosed() {
-        XCTAssertEqual(AppQuit.step(terminated: true, reply: nil, sinceReply: 0, missed: 0), .closed)
-        XCTAssertEqual(AppQuit.step(terminated: true, reply: .refused, sinceReply: 0, missed: 0), .closed)
+        XCTAssertEqual(AppQuit.step(terminated: true, reply: nil, sinceReply: 0), .closed)
+        XCTAssertEqual(AppQuit.step(terminated: true, reply: .refused, sinceReply: 0), .closed)
     }
 
-    func testOnlyAnAppWithNoQuestionLeftIsEnded() {
-        // It agreed to quit and is still there: the person has had their say.
-        XCTAssertEqual(AppQuit.step(terminated: false, reply: .agreed, sinceReply: 1, missed: 0), .wait)
-        XCTAssertEqual(AppQuit.step(terminated: false, reply: .agreed, sinceReply: AppQuit.closing + 1, missed: 0), .force)
-        // It says it answers Lamp and doesn't, before anything was asked of it: it's stuck, with no question up.
-        XCTAssertEqual(AppQuit.step(terminated: false, reply: nil, sinceReply: 0, missed: AppQuit.patience), .wait)
-        XCTAssertEqual(AppQuit.step(terminated: false, reply: nil, sinceReply: 0, missed: AppQuit.patience + 1), .force)
+    /// It agreed to quit and is still there: the person has had their say.
+    func testOnlyAnAppThatAgreedToQuitIsEnded() {
+        XCTAssertEqual(AppQuit.step(terminated: false, reply: .agreed, sinceReply: 1), .wait)
+        XCTAssertEqual(AppQuit.step(terminated: false, reply: .agreed, sinceReply: AppQuit.closing + 1), .force)
     }
 
     func testOnlyTheCopyThatSaidItListensIsTakenAtItsWord() throws {
