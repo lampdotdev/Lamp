@@ -20,7 +20,7 @@ final class ChatFollow {
     /// in view.
     func moved(to y: CGFloat, fromEnd: CGFloat) {
         // The chat's own doing: whichever way the scroll view goes meanwhile, it's still following.
-        if movingItself || settling.map({ Date() < $0 }) == true {
+        if let settling, Date() < settling {
             place = y
             return
         }
@@ -41,42 +41,6 @@ final class ChatFollow {
         settling = Date().addingTimeInterval(0.6)
     }
 
-    /// The chat is moving the scroll view to its end, so the move isn't the person scrolling.
-    private var movingItself = false
-
-    /// Runs a move of the scroll view that is the chat's own. Going to the end can be a move up, when the
-    /// chat has just got shorter, and read as the person's it would stop the following for the rest of the turn.
-    func byItself(_ move: () -> Void) {
-        movingItself = true
-        move()
-        movingItself = false
-    }
-
-    /// The agent's questions waiting for their answer, and when they arrived.
-    private var asked: (id: UUID, at: Date)?
-
-    /// How long after the questions arrive the chat still follows its end: long enough for their card to be
-    /// laid out and come into view whole.
-    static let arrival: TimeInterval = 0.6
-
-    /// The agent's questions that are waiting changed: these arrived, or (nil) the last were answered.
-    func waiting(for questions: UUID?, at now: Date = Date()) {
-        if let questions {
-            if asked?.id != questions { asked = (questions, now) }
-        } else {
-            asked = nil
-            followThroughSettling()
-        }
-    }
-
-    /// Whether what's added at the end is followed now. Not once the agent's questions are in view: anything
-    /// added under them would slide the answers out from under the pointer.
-    func followsEnd(at now: Date = Date()) -> Bool {
-        guard atEnd else { return false }
-        guard let asked else { return true }
-        return now < asked.at.addingTimeInterval(Self.arrival)
-    }
-
     /// The scroll view is another one, or the same one somewhere new: where it was says nothing now.
     func forgetPlace() { place = nil }
 
@@ -95,18 +59,13 @@ final class ChatFollow {
 
 /// Brings in a chat's earlier messages as someone scrolls up towards them, and keeps what they're reading
 /// where it is while the messages arrive above it. It also notes whether the chat is at its end (see
-/// `ChatFollow`), and keeps it there as the chat grows. Sits inside the scroll view's content, which is how
-/// it finds the scroll view. SwiftUI on macOS 14 can't say how far a scroll view has scrolled, nor hold it
-/// still while rows are added above, so this works with the scroll view underneath.
+/// `ChatFollow`). Sits inside the scroll view's content, which is how it finds the scroll view. SwiftUI on
+/// macOS 14 can't say how far a scroll view has scrolled, nor hold it still while rows are added above, so
+/// this works with the scroll view underneath.
 struct EarlierOnScroll: NSViewRepresentable {
     /// There are earlier messages that aren't shown yet.
     let more: Bool
     let follow: ChatFollow
-    /// Goes up each time the chat is to go to its end wherever it is: a message was sent.
-    var ends = 0
-    /// A request just sent is going to the top, or about to: the chat glides there, and nothing else takes
-    /// it to its end meanwhile, which would be the same place at once.
-    var glideDue = false
     /// Goes up for each glide to the end: a request just sent going to the top, gently. SwiftUI's own
     /// animated scrolling on macOS jumps rather than glides.
     var glides = 0
@@ -125,20 +84,10 @@ struct EarlierOnScroll: NSViewRepresentable {
         probe.found = { [binding = $watching] in binding.wrappedValue = true }
         probe.onGlided = glided
         probe.check()
-        let wasDue = probe.glideDue
-        probe.glideDue = glideDue
-        if ends != probe.ends {
-            probe.ends = ends
-            follow.atEnd = true
-            probe.followEnd(whatever: true)
-        }
         if glides != probe.glided {
             probe.glided = glides
             // Once the update that asked for it is laid out, so the end is where it'll be.
             DispatchQueue.main.async { probe.glideToEnd() }
-        } else if wasDue, !glideDue {
-            // The glide is over: wherever the end went meanwhile, the chat is following it again.
-            probe.followEnd()
         }
     }
 
@@ -153,8 +102,6 @@ struct EarlierOnScroll: NSViewRepresentable {
         var follow: ChatFollow?
         var load: (() -> Void)?
         var found: (() -> Void)?
-        var ends = 0
-        var glideDue = false
         var glided = 0
         var onGlided: (() -> Void)?
         private var glide: (from: CGFloat, progress: Double, last: CFTimeInterval)?
@@ -176,23 +123,18 @@ struct EarlierOnScroll: NSViewRepresentable {
             follow?.forgetPlace()
             scroll.contentView.postsBoundsChangedNotifications = true
             content.postsFrameChangedNotifications = true
-            scroll.contentView.postsFrameChangedNotifications = true
             NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification,
                                                    object: scroll.contentView)
             NotificationCenter.default.addObserver(self, selector: #selector(resized), name: NSView.frameDidChangeNotification,
                                                    object: content)
-            // The chat area changing size (the message box growing a line, the window resized) keeps the end
-            // in view too.
-            NotificationCenter.default.addObserver(self, selector: #selector(areaResized), name: NSView.frameDidChangeNotification,
-                                                   object: scroll.contentView)
             Task { @MainActor in self.found?() }
-            // A chat opens at its end, and following it. SwiftUI leaves it a little short: once it's laid
-            // out, it goes the rest of the way. Only when it opens, not when it's moved later.
+            // A chat opens at its end, but SwiftUI leaves it a little short and so not following what's added:
+            // once it's laid out, it goes the rest of the way. Only when it opens, not when it's moved later.
             guard !opened else { return }
             opened = true
             DispatchQueue.main.async { [weak self] in
+                self?.toEnd()
                 self?.follow?.atEnd = true
-                self?.followEnd()
             }
         }
 
@@ -206,22 +148,6 @@ struct EarlierOnScroll: NSViewRepresentable {
             // Someone scrolling while a glide is going takes over from it: it doesn't pull them back.
             if glide != nil, !gliding { stopGliding() }
             check()
-        }
-
-        @objc private func areaResized() { followEnd() }
-
-        /// Goes to the end of the chat if it's following it. Here and not with SwiftUI's own scrolling, for
-        /// two reasons. This runs as the chat is laid out, whatever made it grow, so nothing added at the end
-        /// arrives out of sight for want of having been thought of. And the move is known to be the chat's:
-        /// SwiftUI's comes a frame later, and one that went up, after the chat got shorter, was taken for the
-        /// person scrolling away and stopped the following until the next message was sent.
-        /// `whatever` goes there even past the agent's waiting questions: a message was sent.
-        /// Not while a request just sent glides to the top: the end is where the glide is going.
-        func followEnd(whatever: Bool = false) {
-            guard let follow, whatever || follow.followsEnd(), !glideDue, glide == nil, let scroll,
-                  let end = end(of: scroll) else { return }
-            guard abs(end - scroll.contentView.bounds.minY) > 0.5 else { return }
-            follow.byItself { scrollTo(end, in: scroll) }
         }
 
         /// Glides to the end a frame at a time. Not by the clock, as an animation would: a request starting
@@ -244,10 +170,10 @@ struct EarlierOnScroll: NSViewRepresentable {
             glide.last = now
             self.glide = glide
             // The end as it is now: it can move while gliding.
-            let end = self.end(of: scroll) ?? glide.from
+            let end = self.end(of: scroll)
             let eased = 1 - pow(1 - glide.progress, 3)
             gliding = true
-            follow?.byItself { scrollTo(glide.from + (end - glide.from) * eased, in: scroll) }
+            scrollTo(glide.from + (end - glide.from) * eased, in: scroll)
             gliding = false
             if glide.progress >= 1 { stopGliding() }
         }
@@ -259,18 +185,20 @@ struct EarlierOnScroll: NSViewRepresentable {
             onGlided?()
         }
 
-        /// Where the chat is at its end, as the scroll view has it, which keeps a chat shorter than its area
-        /// at the top. Nil before the chat area has its size: the end isn't anywhere yet.
-        private func end(of scroll: NSScrollView) -> CGFloat? {
-            let clip = scroll.contentView
-            guard let content = scroll.documentView, content.isFlipped, clip.bounds.height > 0 else { return nil }
-            return clip.constrainBoundsRect(NSRect(x: clip.bounds.minX, y: content.frame.height - clip.bounds.height,
-                                                   width: clip.bounds.width, height: clip.bounds.height)).minY
+        private func end(of scroll: NSScrollView) -> CGFloat {
+            guard let content = scroll.documentView, content.isFlipped else { return 0 }
+            return max(0, content.frame.height - scroll.contentView.bounds.height)
         }
 
         private func scrollTo(_ y: CGFloat, in scroll: NSScrollView) {
             scroll.contentView.scroll(to: NSPoint(x: scroll.contentView.bounds.minX, y: y))
             scroll.reflectScrolledClipView(scroll.contentView)
+        }
+
+        private func toEnd() {
+            guard let scroll else { return }
+            scroll.layoutSubtreeIfNeeded()
+            scrollTo(end(of: scroll), in: scroll)
         }
 
         /// Asks for more when the top of what's shown is near. One lot at a time: the next is asked for once
@@ -291,14 +219,13 @@ struct EarlierOnScroll: NSViewRepresentable {
             }
         }
 
-        /// The content changed height. If it grew and that's the earlier messages arriving, they went in
-        /// above, so everything below moved down by their height. Scrolling by the same amount, before it's
-        /// drawn, leaves what was on screen where it was. Anything else is the chat changing at its end,
-        /// which it follows.
+        /// The content grew: if that's the earlier messages arriving, they went in above, so everything
+        /// below moved down by their height. Scrolling by the same amount, before it's drawn, leaves what
+        /// was on screen where it was.
         @objc private func resized() {
-            guard let before = heightBefore, let scroll, let content = scroll.documentView else { return followEnd() }
+            guard let before = heightBefore, let scroll, let content = scroll.documentView else { return }
             let grown = content.frame.height - before
-            guard grown > 0 else { return followEnd() }
+            guard grown > 0 else { return }
             heightBefore = nil
             if content.isFlipped {
                 var origin = scroll.contentView.bounds.origin
@@ -311,18 +238,4 @@ struct EarlierOnScroll: NSViewRepresentable {
     }
 }
 
-/// A chat opens at its end, with no scrolling to get there. Keeping it there as it grows is `EarlierOnScroll`'s:
-/// SwiftUI would keep it there through everything, the agent's waiting questions included. Before macOS 15
-/// the two can't be told apart, and SwiftUI does both.
-struct OpensAtEnd: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(macOS 15, *) {
-            // The nearer of the two wins for growing: everything else is as the plain one has it.
-            content
-                .defaultScrollAnchor(nil, for: .sizeChanges)
-                .defaultScrollAnchor(.bottom)
-        } else {
-            content.defaultScrollAnchor(.bottom)
-        }
-    }
-}
+
