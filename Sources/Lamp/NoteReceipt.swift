@@ -115,7 +115,9 @@ struct NoteCard: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "note.text").frame(width: 16)
-                            Text(Self.title(receipt, app: project?.name ?? "this app")).fixedSize()
+                            // The title is given room before the notes beside it, and a long app name is cut
+                            // short rather than pushing Undo out of the chat.
+                            Text(Self.title(receipt, app: project?.name ?? "this app")).lineLimit(1).layoutPriority(1)
                             // Closed, the line says what the notes are as far as it has room.
                             if !expanded && !undone {
                                 Text((receipt.added.isEmpty ? receipt.removed : receipt.added).joined(separator: " "))
@@ -135,6 +137,7 @@ struct NoteCard: View {
                     if !undone, let project {
                         Button("Undo") { problem = store.undoNote(line.id, in: project) }
                             .buttonStyle(.borderless)
+                            .fixedSize()
                             .help("Lamp forgets this. Everything it remembers is in Settings, under Memory.")
                     }
                 }
