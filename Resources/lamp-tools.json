@@ -286,45 +286,6 @@
     }
   },
   {
-    "name": "ask",
-    "label": "Ask",
-    "description": "Shows 1–3 questions as choices. Without chosen, ask only when the answers would materially change the build, then end the turn. With chosen, show changeable assumptions after building. Don't use for choices you can sensibly make yourself.",
-    "inputSchema": {
-      "additionalProperties": false,
-      "properties": {
-        "questions": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "question": {
-                "description": "Short question in the person's language",
-                "type": "string"
-              },
-              "options": {
-                "description": "Two to four short choices in the person's language",
-                "items": { "type": "string" },
-                "maxItems": 4,
-                "minItems": 2,
-                "type": "array"
-              },
-              "chosen": {
-                "description": "The option assumed while building; omit for a question",
-                "type": "string"
-              }
-            },
-            "required": ["question", "options"],
-            "type": "object"
-          },
-          "maxItems": 3,
-          "minItems": 1,
-          "type": "array"
-        }
-      },
-      "required": ["questions"],
-      "type": "object"
-    }
-  },
-  {
     "name": "offer_setup",
     "label": "Offer setup",
     "description": "Shows the person a card in the chat offering to set up a kind of AI this app can't use yet, or can use only a slower way: a key, a download, or a sign-in, which they choose. The end of a request says what the app has. Call it once, when a feature you're building needs it or would be clearly better with it, instead of mentioning keys or settings in your reply; build the feature anyway, so it works once it's set up. Not when it's already set up, or the person said Not Now.",
@@ -354,6 +315,165 @@
         "why"
       ],
       "type": "object"
+    }
+  },
+  {
+    "name": "ask",
+    "label": "Ask",
+    "description": "Asks the person something as a card in the chat that they answer with a click, instead of questions written in your reply. Each question comes with 2 to 4 likely answers, each with a `symbol` that pictures it; the person can also type their own, or leave it to you. `layout` is how it's shown: `steps` is one question at a time (the usual choice); `together` puts short questions on one card with their answers as chips, for two or three quick picks that don't depend on each other. Asking ends your turn: change nothing and call nothing after it. The answer is the next message, each question followed by its answer.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "questions"
+      ],
+      "properties": {
+        "layout": {
+          "type": "string",
+          "enum": [
+            "steps",
+            "together"
+          ],
+          "description": "How the questions are shown. Defaults to steps."
+        },
+        "questions": {
+          "type": "array",
+          "description": "1 to 4 questions, most important first",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "question",
+              "options"
+            ],
+            "properties": {
+              "question": {
+                "type": "string",
+                "description": "The question, under ten words, in everyday words and the person's language"
+              },
+              "options": {
+                "type": "array",
+                "description": "2 to 4 likely answers",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "title"
+                  ],
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "description": "The answer, one to four words"
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "A few words on what it means, when the title needs them. Not with `together`."
+                    },
+                    "symbol": {
+                      "type": "string",
+                      "description": "An SF Symbol name that pictures it, e.g. fork.knife"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "show_result",
+    "label": "Show result",
+    "description": "Shows the person what this request came to, as a card in the chat once the app is built and open: its picture, one sentence, then rows. It is your whole ending: after calling it write nothing more. Two uses. After a change that gives them something new to find (a button, menu, page, shortcut or new way of doing something), whether or not you tried it: `news`, a row per new thing with where it is, plus `untried` if there's something you didn't try. After a new app, or a big change in which you chose things for them: `guesses`, each with a button for the other way, and maybe an `idea`. Not for a small change or a fix they'll see at once (bigger text, a color, a bug gone), and not for an answer: those get one sentence.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "summary"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "What they now have, in one plain sentence, without the app's name or “is ready”: “A week of dinners and one shared grocery list.”"
+        },
+        "guesses": {
+          "type": "array",
+          "description": "Up to 3 choices you made that they're most likely to want the other way. Each is a real either/or; something to add goes in `idea`, not here.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "guess",
+              "instead",
+              "request"
+            ],
+            "properties": {
+              "guess": {
+                "type": "string",
+                "description": "What you chose: “One grocery list for everyone”"
+              },
+              "instead": {
+                "type": "string",
+                "description": "The button: the choice you didn't make, in two to four words. It replaces the guess, it never adds to it: “A list per person”, not “Add reminders too”."
+              },
+              "request": {
+                "type": "string",
+                "description": "What clicking sends you, as the person would say it: “Give each person their own grocery list.”"
+              }
+            }
+          }
+        },
+        "idea": {
+          "type": "object",
+          "description": "One thing worth adding that they haven't asked for or turned down, such as something their device can do on its own",
+          "additionalProperties": false,
+          "required": [
+            "title",
+            "request"
+          ],
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "The idea in a few words: “Read recipes from a photo”"
+            },
+            "detail": {
+              "type": "string",
+              "description": "One short line on why it's easy or useful"
+            },
+            "request": {
+              "type": "string",
+              "description": "What clicking Add It sends you"
+            }
+          }
+        },
+        "news": {
+          "type": "array",
+          "description": "Up to 4 new things this change added, a row each: what they can now do and wouldn't find by themselves. Not how you built it.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "what",
+              "where"
+            ],
+            "properties": {
+              "what": {
+                "type": "string",
+                "description": "The new thing, two to five words: “Save a meal”"
+              },
+              "where": {
+                "type": "string",
+                "description": "Where to find it, a few words: “The star beside its name”"
+              }
+            }
+          }
+        },
+        "untried": {
+          "type": "string",
+          "description": "What you built and didn't try in the running app, in a few words: “Saving and picking a favorite”. Shown with a Try It button that asks you to try it. Leave it out when you tried everything."
+        }
+      }
     }
   }
 ]

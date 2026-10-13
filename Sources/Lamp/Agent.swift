@@ -39,16 +39,14 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,ask"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,ask,show_result"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
     /// Lamp's own tools for pi (Resources/lamp-tools.ts): `look_at_app` has Lamp build and open the app
     /// mid-turn and shows the agent the result; `plan` is the checklist on the build card; `delete_file`
     /// removes a file, which pi's own tools can't; the version tools list, name and restore the app's saved
-    /// versions; `make_art` paints a picture for the app; `offer_setup` shows a setup card in the chat; `ask`
-    /// shows questions or changeable assumptions; `read_notes` and `save_notes` are Lamp's notes (Memory).
-    /// Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
+    /// versions; `make_art` paints a picture for the app; `offer_setup` shows a setup card in the chat; `read_notes` and `save_notes` are Lamp's notes (Memory). Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
     static var lampTools: URL? {
         let url = Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.ts")
         return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
@@ -56,7 +54,7 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static var tryRules: String { lookRules + planRules + artRules + setupRules + (Memory.isOn ? memoryRules : "") }
+    static var tryRules: String { talkRules + lookRules + planRules + artRules + setupRules + (Memory.isOn ? memoryRules : "") }
 
     /// For the engines whose shell commands run confined (Sandbox): what the shell can and can't reach.
     static let sandboxNote = """
@@ -87,16 +85,17 @@ enum Agent {
     the person, over whatever they're doing, whether the app may look for devices on their network. Check \
     what would be printed from the code or another screen, and say that printing itself wasn't tried.
     - A new app's first build is the user's to see first. Build it, call `look_at_app` once to be sure it \
-    opens and looks right (fix what you see), and stop there: don't `use_app` it. End by telling them it's \
-    ready and asking whether they'd like you to try it out ("Want me to test it out, or is there something \
-    you'd like changed first?"); they're probably already clicking around in it, and your clicks would get in \
-    their way. If they say yes, walk through it as below.
+    opens and looks right (fix what you see), and stop there: don't `use_app` it; they're probably already \
+    clicking around in it, and your clicks would get in their way. `show_result` is how you tell them it's \
+    ready: don't also say so in your reply, and don't describe the app there. If they ask you to try it \
+    out, walk through it as below.
     - Try a change before you say it works. After changing what the app does (a button's effect, sorting, a \
     form, a flow between screens, saving and loading), walk through the main things the user asked for with \
     `use_app` as they would: add an item and see it appear, fill the form and submit it, quit and reopen to \
-    see what was kept. Fix what you find and try again. Then tell the user, in one plain sentence, what you \
-    tried and what happened ("I added three tasks, ticked one off and reopened the app: they were all still \
-    there"), and say honestly if something couldn't be tried. Don't try trivial changes (a label, a color) or \
+    see what was kept. Fix what you find and try again. Be honest about what couldn't be tried: when the \
+    change ends on `show_result` that is its `untried`, and what worked needs no words; otherwise say in one \
+    plain sentence what you tried and what happened ("I added three tasks, ticked one off and reopened the \
+    app: they were all still there"). Don't try trivial changes (a label, a color) or \
     a change you watched work already.
     """
 
@@ -119,6 +118,20 @@ enum Agent {
 
     /// The pictures an app's kind calls for (companion, collection, game), painted while building rather than
     /// drawn in code, in the icon's style so they match it.
+    /// The pieces the agent talks with (Talk): what each is for is in its tool's description, so this says only
+    /// that they come before prose, and how an answer returns.
+    private static let talkRules = """
+
+    - You talk to the person in a sentence or two and in cards, never in paragraphs or lists. Your pieces: \
+    `ask` for anything you need to ask (they click an answer, type their own, or leave it to you); \
+    `show_result` for what a new app or a big change came to, with your guesses as buttons, and for what an \
+    ordinary change added, with the new things as rows; `plan` for what \
+    you're building; `offer_setup` for setting up AI. When a piece fits, use it instead of writing the same \
+    thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
+    message, the same as something typed. If they type something that isn't one of your options, that's their \
+    answer: follow it.
+    """
+
     private static let artRules = """
 
     - `make_art` paints a picture into the app's Assets/ folder, in the same style as its icon: one object on a \
@@ -220,14 +233,15 @@ enum Agent {
         """
 
         static let ask = """
-        - When a request for a new app or a big change is too vague to build well, ask before writing code: \
-        call `ask` with up to three short questions and likely answers to pick from, and change no files; Lamp \
-        shows the choices and waits for the answers. End the turn as soon as the tool says the questions are \
-        showing, without writing them again. Never use an engine's built-in question tool. Only ask \
+        - When a request for a new app or a big change is too vague to build well, ask before writing code, \
+        with `ask`, never as questions written out in your reply and never with a question tool built into \
+        your engine: up to three short questions, each with \
+        two to four likely answers to pick from (e.g. "Who is it for?": "Just me", "My team"), and change no \
+        files; Lamp then waits for the answers. Only ask \
         when the answers would really change what you build. Most requests, including short ones, are clear \
-        enough: build a good first version with sensible choices. At the end, if you made assumptions the user \
-        might plausibly want to change, call `ask` with `chosen` for up to three of them. Don't name those \
-        assumptions again in prose. \
+        enough: build a good first version with sensible choices, and name the main assumptions with \
+        `show_result` so the user can correct them (you assumed one list of deals; the button offers a \
+        pipeline board). \
         Never ask about things you can decide yourself, like layout, colors or names.
         """
 
@@ -349,8 +363,7 @@ enum Agent {
         Lamp shows the user a card that says how to add the widget and when it's on their desktop, so never \
         explain how to add it, and never say you couldn't see it. When the request was for a widget, what \
         you say once it's made is two sentences at most, on what the widget shows: no list of sizes or \
-        options, no assumptions in prose, no "it's ready", no question at the end. If a choice about what it \
-        does is plausibly changeable, show it with `ask` and `chosen` like any other build. A widget they placed stays through \
+        options, no assumptions, no "it's ready", no question at the end. A widget they placed stays through \
         your changes and shows them by itself. To take the widget away, delete the files in Widget/.
         """
 
@@ -740,7 +753,17 @@ enum Agent {
         """
 
         static let finish = """
-        - Finish with one or two plain sentences describing what changed. Users often don't know what {{A_DEVICE}} can \
+        - How you finish depends on what was asked, and it is one thing, never two. A question: answer it in a \
+        sentence or two. A small change or a fix they'll see at once (bigger text, a color, a bug gone): one \
+        plain sentence, and one more only if something couldn't be tried. A change that gives them something \
+        new to find (a button, a menu, a page, a shortcut, a new way to do something): call `show_result` with \
+        `news`, a row for each new thing and where it is, and write nothing after it. Try the change first, as \
+        the rule on trying says: what you saw working then needs no words, and `untried` is only for what you \
+        really couldn't try, never a way to skip trying. A new app, or a big change in which \
+        you chose things for the person: `show_result` with `guesses`, your main assumptions, each with the \
+        other way as a button, and a suggestion like the one below as its `idea`; again nothing after it. \
+        Whichever it is: no list, no bold labels, no headings, no walk through of how to use what you made and \
+        no account of each thing you clicked. Users often don't know what {{A_DEVICE}} can \
         do on its own, and assume things like reading text from a photo, cutting a person out of a picture, \
         transcribing speech or reading aloud need extra software. When one of the on-device abilities above would \
         clearly make this app better, and the user hasn't asked for it or turned it down, you may add one short \
