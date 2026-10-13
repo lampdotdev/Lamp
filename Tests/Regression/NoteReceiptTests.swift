@@ -26,7 +26,8 @@ final class NoteReceiptTests: XCTestCase {
         let later = Memory.Notes(summary: "Look, sound and wording", text: after.text + "\n- Plain words, no jargon")
         let undone = receipt.takenBack(from: later)
         XCTAssertEqual(NoteReceipt.lines(undone.text), ["Dark backgrounds", "Plain words, no jargon", "Dates as 13 Oct"])
-        XCTAssertEqual(undone.summary, "Look, sound and wording")
+        // The summary in place was written for notes that held the lines now gone, so it is made again.
+        XCTAssertEqual(undone.summary, "Dark backgrounds; Plain words, no jargon; Dates as 13 Oct")
     }
 
     func testAReceiptSurvivesTheChatBeingSaved() throws {
@@ -49,6 +50,24 @@ final class NoteReceiptTests: XCTestCase {
         let other = NoteReceipt(about: "you", before: Memory.Notes(), after: Memory.Notes(summary: "How apps should look", text: "- Dark backgrounds"))
         let now = Memory.Notes(summary: "Look and sound", text: "- Dark backgrounds\n- No sounds")
         XCTAssertEqual(NoteReceipt.lines(other.takenBack(from: now, rejected: ["No sounds"]).text), ["No sounds"])
+    }
+
+    func testAfterAPartialUndoTheSummarySaysWhatIsLeft() {
+        // A save notes one line with its summary, the person adds a line of their own, then takes the save back.
+        let save = NoteReceipt(about: "you", before: Memory.Notes(),
+                               after: Memory.Notes(summary: "The main number should be huge in every app",
+                                                   text: "In every app, the main number should be huge."))
+        let now = Memory.Notes(summary: save.after.summary, text: save.after.text + "\nPrefers changes not to be tested.")
+        let left = save.takenBack(from: now)
+        XCTAssertEqual(left.text, "Prefers changes not to be tested.")
+        XCTAssertEqual(left.summary, "Prefers changes not to be tested")
+    }
+
+    func testASummaryMadeFromManyLinesStaysALine() {
+        let lines = (1...12).map { "Likes thing number \($0) done a particular way." }
+        let summary = NoteReceipt.summary(of: lines.joined(separator: "\n"))
+        XCTAssertLessThanOrEqual(summary.count, Memory.summaryLimit)
+        XCTAssertTrue(summary.hasPrefix("Likes thing number 1 done a particular way; Likes thing number 2"))
     }
 
     func testEachEngineIsToldWhatWasTakenBack() {

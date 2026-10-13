@@ -23,6 +23,27 @@ struct NoteReceipt: Codable, Equatable {
         return String(line).trimmed
     }
 
+    /// A summary made from the notes themselves, for when no summary anyone wrote describes them: their
+    /// lines one after another, as many as fit in a line. It is what the person sees in Settings and all the
+    /// agent is told of the notes, so it has to be true of what is there.
+    static func summary(of text: String) -> String {
+        var parts = lines(text).map { line in
+            var line = Substring(line)
+            while let last = line.last, ".;,".contains(last) { line = line.dropLast() }
+            return String(line)
+        }.filter { !$0.isEmpty }
+        guard let first = parts.first else { return "" }
+        guard first.count <= Memory.summaryLimit else { return String(first.prefix(Memory.summaryLimit - 1)) + "…" }
+        var summary = first
+        parts.removeFirst()
+        for part in parts {
+            // Room is kept for the mark that says there is more.
+            guard summary.count + 2 + part.count <= Memory.summaryLimit - 1 else { return summary + "…" }
+            summary += "; " + part
+        }
+        return summary
+    }
+
     /// The lines this save added, and the ones it removed or replaced.
     var added: [String] { let old = Set(Self.lines(before.text)); return Self.lines(after.text).filter { !old.contains($0) } }
     var removed: [String] { let new = Set(Self.lines(after.text)); return Self.lines(before.text).filter { !new.contains($0) } }
@@ -36,27 +57,28 @@ struct NoteReceipt: Codable, Equatable {
     /// `rejected` are lines the person already took back on other receipts: a later save may have replaced
     /// one of them, and undoing that save must not bring it back. One that is in the notes now stays.
     func takenBack(from current: Memory.Notes, rejected: Set<String> = []) -> Memory.Notes {
-        let notes = current == after ? before : merged(into: current)
+        var lines = (current == after ? before.text : merged(into: current)).components(separatedBy: .newlines)
         // Only what this Undo would bring back: a line that is in the notes now is there by a later choice.
         let returning = rejected.subtracting(Self.lines(current.text))
-        guard !returning.isEmpty else { return notes }
-        let all = notes.text.components(separatedBy: .newlines)
-        let kept = all.filter { !returning.contains(Self.plain($0)) }
-        guard kept.count < all.count else { return notes }
-        let text = kept.joined(separator: "\n").trimmed
-        return text.isEmpty ? Memory.Notes() : Memory.Notes(summary: notes.summary, text: text)
+        lines.removeAll { returning.contains(Self.plain($0)) }
+        let text = lines.joined(separator: "\n").trimmed
+        if text.isEmpty { return Memory.Notes() }
+        // A summary goes with the notes it was written for. Those as they were before this save, or as they
+        // are now, keep theirs; anything between has lines neither summary was written for, or lacks some it
+        // was, so its summary is made from the lines themselves.
+        if text == before.text { return before }
+        if text == current.text { return current }
+        return Memory.Notes(summary: Self.summary(of: text), text: text)
     }
 
-    private func merged(into current: Memory.Notes) -> Memory.Notes {
+    private func merged(into current: Memory.Notes) -> String {
         let added = Set(added), removed = Set(removed)
         var lines = current.text.components(separatedBy: .newlines).filter { !added.contains(Self.plain($0)) }
         let present = Set(lines.map(Self.plain))
         lines += before.text.components(separatedBy: .newlines).filter {
             removed.contains(Self.plain($0)) && !present.contains(Self.plain($0))
         }
-        let text = lines.joined(separator: "\n").trimmed
-        if text.isEmpty { return Memory.Notes() }
-        return text == before.text ? before : Memory.Notes(summary: current.summary, text: text)
+        return lines.joined(separator: "\n").trimmed
     }
 }
 
