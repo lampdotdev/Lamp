@@ -4018,9 +4018,9 @@ enum Template {
         /// What's been asked to run: a watcher waiting on the person's answer starts only if it still is.
         private var wantsMoves = false
         private var wantsVisits = false
-        /// iOS asks for Always once; after that the question can't be asked again, and nothing would answer.
-        /// Kept only once the question was really shown: iOS ignores it while the person allowed just once.
-        private static let askedAlwaysKey = "LampLocation.askedAlways"
+        /// Asking for Always: iOS shows that question once, ignores it after (and while the person allowed
+        /// just once), and says nothing when it does. Nothing is remembered about it: a question that takes
+        /// the app out of the foreground is answered when the app is back, and one that doesn't, at once.
         private var askingAlways = false
         private var shownWhileAsking = false
         private let kept = LampStore.collection("location.visits", of: Visit.self)
@@ -4043,13 +4043,11 @@ enum Template {
                 MainActor.assumeIsolated { LampLocation.shared.settle() }
             }
             #if os(iOS)
-            // The question for Always takes the app out of the foreground while it shows: then it was asked.
+            // The question for Always takes the app out of the foreground while it shows: then wait for the answer.
             NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated {
                     let me = LampLocation.shared
-                    guard me.askingAlways else { return }
-                    me.shownWhileAsking = true
-                    UserDefaults.standard.set(true, forKey: LampLocation.askedAlwaysKey)
+                    if me.askingAlways { me.shownWhileAsking = true }
                 }
             }
             #endif
@@ -4063,7 +4061,6 @@ enum Template {
             if status == .denied || status == .restricted { return false }
             #if os(iOS)
             if always ? status == .authorizedAlways : Self.allowed(status) { return true }
-            if always, status == .authorizedWhenInUse, UserDefaults.standard.bool(forKey: askedAlwaysKey) { return false }
             #else
             if Self.allowed(status) { return true }
             #endif
@@ -4074,7 +4071,7 @@ enum Template {
                     me.askingAlways = true
                     me.shownWhileAsking = false
                     me.manager.requestAlwaysAuthorization()
-                    // Not shown (iOS ignores it under Allow Once): nothing will answer, so answer now.
+                    // Not shown (asked before, or under Allow Once): nothing will answer, so answer now.
                     Task { @MainActor in
                         try? await Task.sleep(for: .seconds(1.5))
                         guard me.askingAlways, !me.shownWhileAsking else { return }
