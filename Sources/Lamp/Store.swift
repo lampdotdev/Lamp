@@ -3406,7 +3406,14 @@ final class Store: ObservableObject {
             }
         }
         // What the agent declared in capabilities.json, as the simulator's bundle gets its own (finishSimulatorBundle).
-        Template.Capabilities.load(project).apply(to: project.builtURL)
+        let capabilities = Template.Capabilities.load(project)
+        capabilities.apply(to: project.builtURL)
+        // Told once: from now on the app opens at login and keeps running, which is the person's to undo.
+        let told = project.dir.appendingPathComponent(".lamp/background-told")
+        if capabilities.background == true, !FileManager.default.fileExists(atPath: told.path) {
+            FileManager.default.createFile(atPath: told.path, contents: nil)
+            log(project, .status, "\(project.name) works in the background: it opens when you log in and keeps running after you close its windows. To stop that, turn off Open at Login in its settings, or in System Settings → General → Login Items.")
+        }
         // Signed from Lamp's own keychain, which the script unlocks, so nobody is asked for keychain access.
         // Files copied into the bundle (attachments, icon artwork, an edited Info.plist) can carry Finder
         // metadata and resource forks. codesign accepts those for an ad hoc signature but refuses them for a
