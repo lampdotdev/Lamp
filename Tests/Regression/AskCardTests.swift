@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import Lamp
 
 /// The question card across engines, relaunches and the shape it was first saved in.
@@ -90,5 +91,18 @@ final class AskCardTests: XCTestCase {
         guard case .failure = Talk.ask(from: ["questions": [
             ["question": "Who is it for?", "options": [["title": "Me"], ["title": "Me"]]],
         ]]) else { return XCTFail("Two options that say the same were taken") }
+    }
+}
+
+/// Typing an answer of one's own beside a question's chips: the chips stay where they are.
+final class OwnAnswerLayoutTests: XCTestCase {
+    @MainActor
+    func testTheChipsStayPutHoweverLongTheTypedAnswer() {
+        func height(typing text: String) -> CGFloat {
+            let row = ChipRow(options: [.init(title: "A fixed list", symbol: "list.bullet"), .init(title: "I make my own", symbol: "plus.circle")],
+                              chosen: nil, own: .constant(text)) { _ in }
+            return NSHostingController(rootView: row).sizeThatFits(in: CGSize(width: 540, height: 2000)).height
+        }
+        XCTAssertEqual(height(typing: "Start with Work and Personal, and let me add more"), height(typing: ""))
     }
 }

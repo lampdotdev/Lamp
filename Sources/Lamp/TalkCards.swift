@@ -171,14 +171,24 @@ struct AskSteps: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
                 .onSubmit { if !progress.typed.trimmed.isEmpty { pick(progress.typed.trimmed) } }
             HStack(spacing: 16) {
-                Button(Talk.youDecide) { pick(Talk.youDecide) }
-                if step > 0 {
-                    Button("Back") { progress.step -= 1 }
+                Group {
+                    Button(Talk.youDecide) { pick(Talk.youDecide) }
+                    if step > 0 {
+                        Button("Back") { progress.step -= 1 }
+                    }
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
                 Spacer()
+                // What's typed is sent from here as well as with Return. Its place is kept while there's
+                // nothing typed, so the card is the same height before and after the first letter.
+                let typed = progress.typed.trimmed
+                Button(step < count - 1 ? "Next" : "Send") { pick(typed) }
+                    .buttonStyle(.borderedProminent)
+                    .opacity(typed.isEmpty ? 0 : 1)
+                    .allowsHitTesting(!typed.isEmpty)
+                    .accessibilityHidden(typed.isEmpty)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
             .allowsHitTesting(armed)
         }
         .padding(16)
@@ -263,7 +273,7 @@ private struct OptionTile: View {
 }
 
 /// A question's answers as chips on one line, or stacked when the card is too narrow for them.
-private struct ChipRow: View {
+struct ChipRow: View {
     let options: [Talk.Option]
     let chosen: String?
     /// The person's own answer, typed beside the chips. Nil where there is nothing to type: a choice
@@ -285,7 +295,9 @@ private struct ChipRow: View {
             TextField("Something else…", text: own)
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 12).padding(.vertical, 6)
-                .frame(minWidth: 140)
+                // As wide as the row has left, and asking for the same whatever is typed: a field that
+                // asked for the width of its words would push the chips onto lines of their own mid-answer.
+                .frame(minWidth: 140, idealWidth: 140, maxWidth: .infinity)
                 .background(Color(nsColor: .textBackgroundColor), in: Capsule())
                 .overlay(Capsule().strokeBorder(typed ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary), lineWidth: typed ? 2 : 1))
         }
