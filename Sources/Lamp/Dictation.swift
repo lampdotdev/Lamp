@@ -192,6 +192,9 @@ final class Dictation: ObservableObject {
         private var phraseEnded = false
         /// When the phrase was said, from its marked result.
         private var phraseSpan: ClosedRange<TimeInterval>?
+        /// The finished phrase as marked, while a result without times that looks like it sent again stands in
+        /// its place: should a mark at another time show that was a new phrase, these words come back before it.
+        private var held: String?
         /// How many phrases have begun.
         private(set) var phrases = 0
 
@@ -201,11 +204,16 @@ final class Dictation: ObservableObject {
                 // After its mark, the recognizer starts again from the next word; it doesn't carry the phrase on.
                 // Two marked results carry their real times, and those decide: the same words said again later
                 // are a phrase of their own. Without them, the words have to.
-                let saidAgain = if let span, let phraseSpan { span.overlaps(phraseSpan) } else { Self.resembles(text, phrase) }
+                let timed = span != nil && phraseSpan != nil
+                let saidAgain = timed ? span!.overlaps(phraseSpan!) : Self.resembles(text, phrase)
                 if saidAgain {
-                    // Said again: phraseEnded stays.
+                    // Said again: phraseEnded stays, and only a mark at the same time settles it.
+                    held = timed ? nil : held ?? phrase
                 } else {
-                    earlier = Self.join(earlier, phrase)
+                    // A new phrase. One marked at another time shows a result standing in for the finished phrase
+                    // was this one, so the finished phrase is kept as marked.
+                    earlier = Self.join(earlier, timed ? held ?? phrase : phrase)
+                    held = nil
                     phrases += 1
                     phraseEnded = endsPhrase
                 }

@@ -45,6 +45,30 @@ final class DictationTranscriptTests: XCTestCase {
         XCTAssertEqual(transcript.phrases, 2)
     }
 
+    /// A result without times that looks like the finished phrase sent again, then marked at another time: it
+    /// was a new phrase, and the finished one is kept as it was.
+    func testALookalikeMarkedLaterDoesntReplaceTheFinishedPhrase() {
+        var transcript = Dictation.Transcript()
+        let first = "Make a timer with a big start button."
+        let second = "Make a timer with a small stop button."
+        _ = transcript.take(first, endsPhrase: true, span: 0...4)
+        _ = transcript.take(second)
+        XCTAssertEqual(transcript.take(second, endsPhrase: true, span: 8...12), first + " " + second)
+        XCTAssertEqual(transcript.phrases, 2)
+    }
+
+    /// The same, sent again without times and then marked at the same time: the revision stands.
+    func testALookalikeMarkedAtTheSameTimeReplacesTheFinishedPhrase() {
+        var transcript = Dictation.Transcript()
+        let said = "Hi, is this working? I just wanna see if if I'm able to pause."
+        let fixed = "Hi, is this working? I just wanna see if I'm able to pause."
+        _ = transcript.take(said, endsPhrase: true, span: 0...6)
+        _ = transcript.take(fixed)
+        XCTAssertEqual(transcript.take(fixed, endsPhrase: true, span: 0...6), fixed)
+        XCTAssertEqual(transcript.take("And"), fixed + " And")
+        XCTAssertEqual(transcript.phrases, 2)
+    }
+
     /// A correction to a phrase's first word, with no pause, replaces it.
     func testCorrectingTheFirstWordReplacesThePhrase() {
         var transcript = Dictation.Transcript()
