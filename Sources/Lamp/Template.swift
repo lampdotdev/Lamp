@@ -3662,12 +3662,19 @@ enum Template {
     enum LampLoginItem {
         static var isEnabled: Bool {
             get { SMAppService.mainApp.status == .enabled }
-            set {
-                do {
-                    if newValue { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-                } catch {
-                    print("LampLoginItem: \(error.localizedDescription)")
-                }
+            set { _ = set(newValue) }
+        }
+
+        /// Turns opening at login on or off. False when macOS refused; true when it took, which for turning
+        /// on includes macOS wanting the person's approval in System Settings (the item is there, switched off).
+        @discardableResult static func set(_ on: Bool) -> Bool {
+            do {
+                if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+                return true
+            } catch {
+                if on, SMAppService.mainApp.status == .requiresApproval { return true }
+                print("LampLoginItem: \(error.localizedDescription)")
+                return false
             }
         }
     }
@@ -3682,8 +3689,8 @@ enum Template {
 
         static let start: Void = {
             guard isDeclared, !UserDefaults.standard.bool(forKey: "lampBackground.registered") else { return }
-            LampLoginItem.isEnabled = true
-            UserDefaults.standard.set(true, forKey: "lampBackground.registered")
+            // Remembered only once it took, so a launch where macOS refused tries again next time.
+            if LampLoginItem.set(true) { UserDefaults.standard.set(true, forKey: "lampBackground.registered") }
         }()
     }
 
@@ -3700,6 +3707,8 @@ enum Template {
         private let work: () async -> Void
         private var timer: Timer?
         private var observer: NSObjectProtocol?
+        /// The run under way, if any: a wake or a timer during it doesn't start another; it's rearmed when done.
+        private var running: Task<Void, Never>?
 
         static func daily(_ name: String, hour: Int, minute: Int = 0, _ work: @escaping () async -> Void) -> LampSchedule {
             LampSchedule(name: name, interval: nil, time: (hour, minute), work: work)
@@ -3744,6 +3753,7 @@ enum Template {
         }
 
         private func arm() {
+            guard running == nil else { return }
             timer?.invalidate()
             let delay = max(0, due.timeIntervalSinceNow)
             timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in self?.fire() }
@@ -3751,9 +3761,12 @@ enum Template {
         }
 
         private func fire() {
+            guard running == nil else { return }
             UserDefaults.standard.set(Date(), forKey: lastRunKey)
-            Task { @MainActor in
+            running = Task { @MainActor [weak self] in
+                guard let self else { return }
                 await work()
+                running = nil
                 arm()
             }
         }

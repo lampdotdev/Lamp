@@ -524,6 +524,14 @@ extension Sharing {
         var id: String { label }
     }
 
+    static let startsAtLogin = Capability(label: "Starts at login", icon: "power", level: .powerful, patterns: ["LampLoginItem"])
+
+    private static func capabilitiesJSON(_ capabilities: Template.Capabilities) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return String(decoding: try encoder.encode(capabilities), as: UTF8.self)
+    }
+
     static let checklist: [Capability] = [
         Capability(label: "Uses AI (your OpenRouter credit)", icon: "sparkles", level: .ordinary, patterns: ["LampAI."]),
         Capability(label: "Connects to the internet", icon: "network", level: .ordinary,
@@ -542,7 +550,7 @@ extension Sharing {
                    patterns: ["AVCaptureDevice", "AVCaptureSession", "AVAudioRecorder", "AVAudioEngine", "SFSpeechRecognizer", "SpeechAnalyzer"]),
         Capability(label: "Captures the screen", icon: "rectangle.dashed.badge.record", level: .powerful,
                    patterns: ["CGWindowListCreateImage", "ScreenCaptureKit", "SCScreenshotManager"]),
-        Capability(label: "Starts at login", icon: "power", level: .powerful, patterns: ["LampLoginItem"]),
+        startsAtLogin,
         Capability(label: "Starts itself automatically or installs background items", icon: "gearshape.arrow.triangle.2.circlepath", level: .sensitive,
                    patterns: ["SMAppService", "LaunchAgents", "LaunchDaemons", "SMLoginItem"]),
         Capability(label: "Watches what you copy", icon: "doc.on.clipboard", level: .powerful, patterns: ["LampClipboardWatcher"]),
@@ -662,6 +670,10 @@ extension Sharing {
         other people's data deserve a word), where else it sends data, what it deletes or changes, whether it \
         does more than its description says, and whether anything is obscured.
 
+        An app may declare things in capabilities.json, which Lamp acts on for it: "background": true means Lamp \
+        opens the app at login and keeps it running after its windows close (what a watcher needs; say so, and \
+        weigh it against what the app does while it runs), and "opens" lists what Finder may hand it. \
+
         An app may come with a desktop widget: the files under Widget/. That is a second small program, which \
         macOS shows on the desktop and runs by itself, also while the app is closed. It is sandboxed: it can't \
         read the reader's files or other apps, but it can connect to the internet, and it gets from the app \
@@ -775,7 +787,15 @@ extension Sharing {
         }
         found.about = try? String(contentsOf: package.folder.appendingPathComponent("APP.md"), encoding: .utf8)
         if let about = found.about { everything += about }
+        // What the app declares (capabilities.json, through the checks) is judged with its code: the reviewer
+        // sees it as a file, and a background app is listed as starting at login whether or not its code says so.
+        if !package.capabilities.isEmpty, let json = try? capabilitiesJSON(package.capabilities) {
+            found.files.append((Template.Capabilities.file, json))
+        }
         found.detected = checklist.filter { item in item.patterns.contains { everything.contains($0) } }
+        if package.capabilities.background == true, !found.detected.contains(where: { $0.label == startsAtLogin.label }) {
+            found.detected.append(startsAtLogin)
+        }
         if unreadable { found.detected.append(unreadableCode) }
         return found
     }
