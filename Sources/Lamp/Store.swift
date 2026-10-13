@@ -1799,8 +1799,11 @@ final class Store: ObservableObject {
         // Nothing is committed when the agent changed no files.
         let label = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n").nilIfEmpty
             ?? Self.label(attachments: saved)
-        var committed = await Versions.git("git add -A && \(Self.commit) -qm \"$LAMP_PROMPT\"", cwd: project.dir,
-                                        env: ["LAMP_PROMPT": label]) { _ in } == 0
+        let saving = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: project.dir, env: ["LAMP_PROMPT": label])
+        var committed = saving == .saved
+        // The change is in the app either way. Without a version of its own it can't be gone back to by
+        // itself, and the person should know that rather than find it out from Undo.
+        if saving == .failed { log(project, .error, ErrorMessages.versionNotSaved) }
         let edited = changed || committed
         var crash: String?
         if changed {
@@ -1828,7 +1831,7 @@ final class Store: ObservableObject {
                                  on: project),
                   await buildFixingErrors(project) else { return TurnResult(end: .failed, watched: watched) }
             let commit = committed ? "-q --amend --no-edit" : "-qm 'Fix a crash on launch'"
-            if await Versions.git("git add -A && \(Self.commit) \(commit)", cwd: project.dir) { _ in } == 0 { committed = true }
+            if await Versions.commitAll(commit, in: project.dir) == .saved { committed = true }
             crash = await install(project)
         }
         if crash != nil {
@@ -3241,7 +3244,9 @@ final class Store: ObservableObject {
         let fm = FileManager.default
         let resources = project.builtURL.appendingPathComponent("Contents/Resources")
         try fm.createDirectory(at: resources, withIntermediateDirectories: true)
-        // Without these, macOS kills the app the moment it uses the mic, speech recognition or camera.
+        // Without these, macOS kills the app the moment it uses the mic, speech recognition or camera. The last
+        // is for the question macOS asks when an app first opens the print panel, which looks for printers on
+        // the network: without it the question gives no reason.
         // Added here rather than in build.sh so apps made before this change get them too.
         _ = await Shell.run("""
             P="$LAMP_APP/Contents/Info.plist"
@@ -3253,7 +3258,8 @@ final class Store: ObservableObject {
             plutil -replace NSCalendarsFullAccessUsageDescription -string "$LAMP_NAME reads and adds calendar events." "$P" && \
             plutil -replace NSRemindersFullAccessUsageDescription -string "$LAMP_NAME reads and adds reminders." "$P" && \
             plutil -replace NSContactsUsageDescription -string "$LAMP_NAME looks up people in your contacts." "$P" && \
-            plutil -replace NSAppleEventsUsageDescription -string "$LAMP_NAME reads your email and drafts replies through Mail." "$P"
+            plutil -replace NSAppleEventsUsageDescription -string "$LAMP_NAME reads your email and drafts replies through Mail." "$P" && \
+            plutil -replace NSLocalNetworkUsageDescription -string "$LAMP_NAME looks for printers and other devices on your network." "$P"
             """, cwd: project.dir, env: ["LAMP_APP": project.builtURL.path, "LAMP_NAME": project.name]) { _ in }
         if fm.fileExists(atPath: Icons.icnsURL(project).path) {
             try? fm.removeItem(at: resources.appendingPathComponent("AppIcon.icns"))

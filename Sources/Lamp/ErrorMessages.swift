@@ -15,6 +15,9 @@ enum ErrorMessages {
     static let crashAfterLaunchSuffix = " crashes when it opens. Ask me to fix the crash, or press Undo."
     static let quitsAfterLaunchSuffix = " still quits right after opening. Try describing the change differently, or press Undo."
 
+    /// A turn's change that was made but couldn't be saved as a version.
+    static let versionNotSaved = "Lamp couldn't save this change as a version. It's in your app, and your next change will save both."
+
     static func openFailed(_ detail: String) -> String { openFailedPrefix + detail }
     static func installFailed(_ detail: String) -> String { installFailedPrefix + detail }
     static func aiFailed(_ detail: String) -> String { aiFailedPrefix + detail }

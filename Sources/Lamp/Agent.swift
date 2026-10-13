@@ -64,6 +64,9 @@ enum Agent {
     scrolls and picks from menus, and shows you the result. It tells you what each click landed \
     on and whether the window changed: when nothing changed, the click probably missed, so aim again before \
     deciding the app is broken. It uses the app as last built, so call `look_at_app` again after editing code.
+    - Never open the print panel while trying an app (a Print button, File > Print, ⌘P): it makes macOS ask \
+    the person, over whatever they're doing, whether the app may look for devices on their network. Check \
+    what would be printed from the code or another screen, and say that printing itself wasn't tried.
     - A new app's first build is the user's to see first. Build it, call `look_at_app` once to be sure it \
     opens and looks right (fix what you see), and stop there: don't `use_app` it. End by telling them it's \
     ready and asking whether they'd like you to try it out ("Want me to test it out, or is there something \
