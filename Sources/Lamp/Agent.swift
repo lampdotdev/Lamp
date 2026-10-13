@@ -132,8 +132,13 @@ enum Agent {
     - Lamp keeps notes about the person and about this app between requests (`read_notes`, `save_notes`), and \
     tells you in a line what they cover. Read them before you build a new app or a new screen, and whenever \
     a request touches what they cover; not otherwise, since reading costs the person. Follow them, but what \
-    the person asks now wins: do that and correct the note. Don't mention them unless asked: the person sees \
-    them in Lamp's Settings, under Memory.
+    the person asks now wins: do that and correct the note. Before you finish each request, ask yourself \
+    whether it showed you something that should hold next time: they corrected you, said what they like or \
+    don't, turned something down, or put it as general (“in anything I use”, “I can't stand…”). If so, save \
+    it then; they needn't say "remember". How to go about this one request (“don't test it”, “be quick”) is \
+    not that: it is an instruction for now, not a taste, and isn't noted about them or the app. If nothing \
+    lasting came up, save nothing. \
+    Lamp shows the person in the chat what you noted, so don't mention the notes yourself unless asked.
     """
 
     /// pi ships inside Lamp.app (see build.sh).
