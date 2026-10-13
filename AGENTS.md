@@ -355,11 +355,13 @@ waits, with the app in front and "Waiting for … to close…" in the chat. Kept
 chat says so, the build waits like a held icon (`HeldInstalls`) and goes in when the app closes, and a look tells
 the agent that what's on screen isn't its change and `use_app` is refused (`Turn.keptOpen`,
 `Runtime.holdsBuild`); a turn asks the app once. Lamp ends an app itself in two cases only: it agreed to quit and
-is still there, or it was already stuck when it was asked, which is one that says it answers Lamp's "still
-there?" (`LampRuntime` answers on the main thread, and a copy says it listens by leaving its process id in its
-runtime folder) and hasn't answered once since. An app that never said it listens is never taken for stuck, nor
-is one that answered and then went quiet: it may be saving. Don't add a time limit after which an app is ended
-anyway: that is what lost people's work.
+is still there, or it is stuck, which Lamp finds out before asking it to quit at all: a copy that says it
+answers Lamp's "still there?" (`LampRuntime` answers on the main thread, and a copy says it listens by leaving
+its process id in its runtime folder) is sent the quit request only once it has answered, and one that doesn't
+answer is ended. An app that never said it listens is never taken for stuck, and nothing but its own reply
+ends the wait for an app that has the request: quiet, it may be saving. A build that waits for an app for both
+goes in only while Try On points at this Mac. Don't add a time limit after which an app is ended anyway: that
+is what lost people's work.
 
 `capabilities.json` at an app's root is where the agent declares what the app needs beyond its code
 (`Template.Capabilities`): for an iPhone app the entitlements and background work described above, for a Mac

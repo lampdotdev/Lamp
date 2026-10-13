@@ -1840,7 +1840,9 @@ final class Store: ObservableObject {
         // with nothing to install would go round for ever.
         let due = heldInstalls.due(amongClosed: candidates) { id in
             guard let project = projects.first(where: { $0.id == id }) else { return false }
-            return !isRunning(project) && FileManager.default.fileExists(atPath: project.builtURL.path)
+            // Not while an app for both points at iOS: its build there isn't the Mac app's, and what waits is
+            // for the Mac. It stays waiting, and goes in when Try On is back on this Mac.
+            return !project.onIOS && !isRunning(project) && FileManager.default.fileExists(atPath: project.builtURL.path)
         }
         for project in projects where due.contains(project.id) {
             guard begin(project) != nil else { continue }
@@ -4033,6 +4035,10 @@ final class Store: ObservableObject {
     /// so it's also checked whenever Lamp comes to the front and after Lamp opens or quits one.
     private func watchOpenApps() {
         refreshOpenApps()
+        // Builds that were waiting for their app to close when Lamp was last quit: still waiting, and one
+        // whose app has closed since goes in now.
+        for project in projects where Runtime.holdsBuild(project) { _ = heldInstalls.mayInstall(project.id, running: true) }
+        installHeldIcons(for: heldInstalls.waiting)
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             workspace.addObserver(forName: name, object: nil, queue: .main) { note in

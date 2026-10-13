@@ -7,8 +7,8 @@ import AppKit
 /// with "cancelled" when it stays open, and isn't answered at all while the question is still on screen. So
 /// Lamp sends the request itself and reads the reply, where `NSRunningApplication.terminate()` throws it away.
 /// Nothing here ends an app that might still be asking, or saving because of the answer: only one that agreed
-/// to quit and then didn't, or one whose main thread was already stuck when it was asked, which never saw the
-/// request and has no question the person could answer.
+/// to quit and then didn't, or one whose main thread is stuck, which is found out before it is asked to quit
+/// at all, so it has no question up and no answer to act on.
 enum AppQuit {
     /// The app's answer to the request.
     enum Reply: Equatable { case agreed, refused }
@@ -33,19 +33,19 @@ enum AppQuit {
     /// How long a request goes unanswered before Lamp takes it that the app is asking the person something.
     static let asking: TimeInterval = 2
 
-    /// What to do about an app that was asked to quit.
-    /// `sinceReply`: how long ago it answered. `answers`: this copy of the app said, when it started, that it
-    /// answers Lamp's "still there?" (`listens`). `heard`: it has answered one since it was asked to quit.
-    /// `missed`: how many it has left unanswered in a row.
+    /// What to do about an app that is to quit.
+    /// `sinceReply`: how long ago it answered the request. `missed`: how many "still there?" in a row it left
+    /// unanswered before it was asked to quit; none once it has been asked, since the questions stop there.
     ///
-    /// An app that answered after being asked got the request: if it then goes quiet it may be saving, on the
-    /// person's answer, for as long as that takes, and is left to it.
-    static func step(terminated: Bool, reply: Reply?, sinceReply: TimeInterval, answers: Bool, heard: Bool, missed: Int) -> Step {
+    /// An app that says it answers Lamp (`listens`) is asked to quit only once it has answered: from then on
+    /// it has the request, and if it goes quiet it may be saving, on the person's answer or before it asks,
+    /// for as long as that takes. So after the request nothing but the app's own reply ends the wait.
+    static func step(terminated: Bool, reply: Reply?, sinceReply: TimeInterval, missed: Int) -> Step {
         if terminated { return .closed }
         switch reply {
         case .refused: return .kept
         case .agreed: return sinceReply > closing ? .force : .wait
-        case nil: return answers && !heard && missed > patience ? .force : .wait
+        case nil: return missed > patience ? .force : .wait
         }
     }
 
@@ -83,6 +83,9 @@ enum AppQuit {
         /// The request an app hasn't answered yet, by process: an app asked again while its question is up
         /// (a turn that was stopped, then the next build) isn't sent a second request on top of the first.
         @MainActor private static var waiting: [pid_t: Request] = [:]
+
+        /// Whether the app has a request it hasn't answered: it was answering Lamp when that was sent.
+        @MainActor static func isWaiting(_ pid: pid_t) -> Bool { waiting[pid].map { $0.answered == nil } ?? false }
 
         @MainActor static func to(_ app: NSRunningApplication) -> Request {
             let pid = app.processIdentifier
@@ -154,11 +157,28 @@ enum AppQuit {
                       stopped: () -> Bool = { false }, asking: () -> Void = {}) async -> Bool {
         guard !app.isTerminated else { return true }
         let pid = app.processIdentifier
-        let answers = listens(pid, runtime: runtime)
-        let pulse = answers ? Pulse(app: id, pid: pid) : nil
+        // A copy that answers Lamp is asked to quit only after it has answered. One that doesn't answer was
+        // stuck before anything was asked of it; one that does is never ended for going quiet afterwards.
+        if listens(pid, runtime: runtime), !Request.isWaiting(pid) {
+            let pulse = Pulse(app: id, pid: pid)
+            var lastPulse = Date.distantPast
+            while !pulse.state.heard {
+                switch step(terminated: app.isTerminated, reply: nil, sinceReply: 0, missed: pulse.state.missed) {
+                case .closed: return true
+                case .force: return await end(app)
+                case .kept, .wait: break
+                }
+                if stopped() { return false }
+                if Date().timeIntervalSince(lastPulse) >= 1 {
+                    lastPulse = Date()
+                    pulse.ask()
+                }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+        }
         let request = Request.to(app)
         let began = Date()
-        var askedPlainly = false, told = false, lastPulse = Date.distantPast
+        var askedPlainly = false, told = false
         while true {
             let answered = request.answered
             // The request never reached the app as sent: asked the ordinary way, its answer can't be read,
@@ -168,14 +188,10 @@ enum AppQuit {
                 app.terminate()
             }
             switch step(terminated: app.isTerminated, reply: answered?.reply,
-                        sinceReply: answered.map { Date().timeIntervalSince($0.at) } ?? 0,
-                        answers: answers, heard: pulse?.state.heard ?? false, missed: pulse?.state.missed ?? 0) {
+                        sinceReply: answered.map { Date().timeIntervalSince($0.at) } ?? 0, missed: 0) {
             case .closed: return true
             case .kept: return false
-            case .force:
-                app.forceTerminate()
-                for _ in 0..<30 where !app.isTerminated { try? await Task.sleep(for: .milliseconds(100)) }
-                return app.isTerminated
+            case .force: return await end(app)
             case .wait: break
             }
             if stopped() { return false }
@@ -183,11 +199,13 @@ enum AppQuit {
                 told = true
                 asking()
             }
-            if let pulse, Date().timeIntervalSince(lastPulse) >= 1 {
-                lastPulse = Date()
-                pulse.ask()
-            }
             try? await Task.sleep(for: .milliseconds(100))
         }
+    }
+
+    @MainActor private static func end(_ app: NSRunningApplication) async -> Bool {
+        app.forceTerminate()
+        for _ in 0..<30 where !app.isTerminated { try? await Task.sleep(for: .milliseconds(100)) }
+        return app.isTerminated
     }
 }

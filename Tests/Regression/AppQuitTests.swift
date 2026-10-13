@@ -15,35 +15,28 @@ final class AppQuitTests: XCTestCase {
         XCTAssertNil(AppQuit.reply(errorNumber: -1708))
     }
 
-    func testAnAppThatIsAskingIsWaitedForHoweverLongItTakes() {
-        // Built before apps said whether they answer Lamp: nothing shows it's stuck, so it's never ended.
-        XCTAssertEqual(AppQuit.step(terminated: false, reply: nil, sinceReply: 0, answers: false, heard: false, missed: 3600), .wait)
-        // One that answers Lamp, and is answering: its question is up, and the person hasn't decided.
-        XCTAssertEqual(AppQuit.step(terminated: false, reply: nil, sinceReply: 0, answers: true, heard: true, missed: 0), .wait)
-    }
-
-    /// The person answered Save and the app is writing, with its main thread busy for as long as that takes:
-    /// it answered Lamp after it was asked to quit, so going quiet now isn't taken for being stuck.
-    func testAnAppThatWentQuietAfterItWasAskedIsLeftToFinish() {
-        XCTAssertEqual(AppQuit.step(terminated: false, reply: nil, sinceReply: 0, answers: true, heard: true, missed: 3600), .wait)
+    /// Once an app has been asked to quit, only its own answer ends the wait: it may be asking the person,
+    /// or saving with its main thread busy, before it asks or after the answer, for as long as that takes.
+    func testAnAppThatWasAskedIsWaitedForHoweverLongItTakes() {
+        XCTAssertEqual(AppQuit.step(terminated: false, reply: nil, sinceReply: 0, missed: 0), .wait)
     }
 
     func testAnAppThePersonKeptOpenIsKept() {
-        XCTAssertEqual(AppQuit.step(terminated: false, reply: .refused, sinceReply: 3600, answers: true, heard: false, missed: 3600), .kept)
+        XCTAssertEqual(AppQuit.step(terminated: false, reply: .refused, sinceReply: 3600, missed: 0), .kept)
     }
 
     func testAnAppThatQuitIsClosed() {
-        XCTAssertEqual(AppQuit.step(terminated: true, reply: nil, sinceReply: 0, answers: false, heard: false, missed: 0), .closed)
-        XCTAssertEqual(AppQuit.step(terminated: true, reply: .refused, sinceReply: 0, answers: false, heard: false, missed: 0), .closed)
+        XCTAssertEqual(AppQuit.step(terminated: true, reply: nil, sinceReply: 0, missed: 0), .closed)
+        XCTAssertEqual(AppQuit.step(terminated: true, reply: .refused, sinceReply: 0, missed: 0), .closed)
     }
 
     func testOnlyAnAppWithNoQuestionLeftIsEnded() {
         // It agreed to quit and is still there: the person has had their say.
-        XCTAssertEqual(AppQuit.step(terminated: false, reply: .agreed, sinceReply: 1, answers: false, heard: false, missed: 0), .wait)
-        XCTAssertEqual(AppQuit.step(terminated: false, reply: .agreed, sinceReply: AppQuit.closing + 1, answers: false, heard: false, missed: 0), .force)
-        // It answers Lamp and hasn't once since it was asked: it was stuck already and never saw the request.
-        XCTAssertEqual(AppQuit.step(terminated: false, reply: nil, sinceReply: 0, answers: true, heard: false, missed: AppQuit.patience), .wait)
-        XCTAssertEqual(AppQuit.step(terminated: false, reply: nil, sinceReply: 0, answers: true, heard: false, missed: AppQuit.patience + 1), .force)
+        XCTAssertEqual(AppQuit.step(terminated: false, reply: .agreed, sinceReply: 1, missed: 0), .wait)
+        XCTAssertEqual(AppQuit.step(terminated: false, reply: .agreed, sinceReply: AppQuit.closing + 1, missed: 0), .force)
+        // It says it answers Lamp and doesn't, before anything was asked of it: it's stuck, with no question up.
+        XCTAssertEqual(AppQuit.step(terminated: false, reply: nil, sinceReply: 0, missed: AppQuit.patience), .wait)
+        XCTAssertEqual(AppQuit.step(terminated: false, reply: nil, sinceReply: 0, missed: AppQuit.patience + 1), .force)
     }
 
     func testOnlyTheCopyThatSaidItListensIsTakenAtItsWord() throws {

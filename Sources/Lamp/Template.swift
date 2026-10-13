@@ -1780,9 +1780,9 @@ enum Template {
                 let signature = note.userInfo?["lampUseAppSignature"] as? String
                 MainActor.assumeIsolated { LampDriver.perform(actions, id: id, signature: signature) }
             }
-            // ...and, of an app it asked to quit that hasn't gone, whether it still answers: one that does may
-            // be asking about unsaved work and is waited for, one that has stopped is stuck. Answered on the
-            // main thread, since that's the one a stuck app has lost. The file says this copy listens.
+            // ...and, before it asks the app to quit for a rebuild, whether it still answers: one that does is
+            // asked, and waited for while it asks about unsaved work; one that doesn't is stuck. Answered on
+            // the main thread, since that's the one a stuck app has lost. The file says this copy listens.
             let pid = String(ProcessInfo.processInfo.processIdentifier)
             DistributedNotificationCenter.default().addObserver(
                 forName: Notification.Name("{{NOTE}}stillThere.{{SLUG}}"), object: nil, queue: .main) { _ in
