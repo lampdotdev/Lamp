@@ -26,7 +26,7 @@ profiles, sign-ins or signing keys into the guest.
    compatible installed SDK through `SDKROOT` when necessary, and install its
    generated app. Fixture views are predefined; no model conversation is involved.
 4. In `chrome://extensions`, enable Developer mode, choose Load unpacked and this
-   folder's `extension` directory. Pin the toolbar icon to use the task recorder.
+   folder's `extension` directory. Pin the toolbar icon (Lamp) to use the task recorder.
 5. Open `http://127.0.0.1:8765` and sign into the fictional demo account. The second
    origin is `http://localhost:8765`, with its own browser session cookie.
 6. In an app, choose the site, then **Ask for site access**. Click the extension
@@ -103,12 +103,27 @@ the experiment.
 
 ## Show Lamp this task
 
-The toolbar now opens the task recorder. **Manage app access** still reaches the
-standing-access view. Task-recording site approvals are separate from app grants.
-The person selects approved sites, pins the extension, and starts a task lasting
-up to ten minutes. A REC badge stays in Chrome's toolbar, and approved pages have
-an on-page recording bar with one-click Stop and Discard. Unpinning or removing
-site permission discards the active recording. Only foreground top-level pages
+The toolbar button opens a popup, the task recorder. **Apps that can read pages**
+at its foot still reaches the standing-access view. Task-recording site approvals
+are separate from app grants. The popup has one thing to do at a time:
+
+- On a site Lamp may not watch yet, **Let Lamp Watch This Site**. Chrome's own
+  question closes the popup, so the worker finishes the approval for the site that
+  was asked about (`task-asking`, `permissions.onAdded`) and opens the popup again.
+  Chrome asks only the first time it is asked about a site; after that it allows
+  the site again without a question, even after **Remove**.
+- With a site approved, what is noted, what never is, and that Stop sends the
+  notes to Lamp's AI and can't be undone, above **Start Recording**. Only the site
+  in front starts ticked. Start shows only once the extension is pinned.
+- While recording, the time, **Stop and Show Lamp** and **Discard**.
+
+**Remove** beside a site ends Lamp's approval and Chrome's permission for it,
+unless an approved app still reads that site. A task lasts up to ten minutes and
+then stops as if Stop had been pressed, which the popup says before recording.
+A REC badge stays in Chrome's toolbar, and approved pages have a floating
+recording bar (a closed shadow root, so a page's styles can't hide it) with the
+time and one-click Stop and Discard. Unpinning or removing site permission
+discards the active recording. Only foreground top-level pages
 on the selected origins send events; this is not desktop or video capture.
 
 The captured record is deliberately small:
@@ -130,13 +145,15 @@ only recording metadata; profile identity remains in `storage.local`. The
 native bridge writes one current trace to
 `Edition.supportFolder/BrowserPrototype/Tasks/recording.json`, in a private
 user-owned folder. Stop freezes the trace and sends its events to Lamp's text AI
-through OpenRouter; the start screen states this before recording begins. The
-AI returns editable steps and exactly one app idea. Its answer and a small
+through OpenRouter; the popup says before recording begins that the notes go to
+Lamp's AI and can't be taken back, without naming the service. The
+AI returns editable steps and exactly one app idea, shown in Lamp as a numbered
+list and a card for the idea, with the request Lamp would be given folded under it. Its answer and a small
 model/cost receipt stay beside the trace. Discard stops capture, cancels any
 pending analysis and deletes these local files; failed deletion is reported.
 It cannot retract data already sent to the AI provider.
 
-**Build** is the next explicit action. It creates a normal Lamp draft and sends
+**Build This App** is the next explicit action. It creates a normal Lamp draft and sends
 the reviewed request through `Store.send`, with a copy of the trace under the
 new project's Attachments. This uses Lamp's existing builder/approvals/build
 conversation for every engine. The source trace can be discarded later, but
@@ -157,5 +174,5 @@ The recorder does not resume a trace after Lamp/browser restart, does not infer
 Finder work, and does not replay actions. It is an observation-to-build
 experiment. Long-run recovery, shadow DOM, complex SPAs, account selection,
 full-screen indicator behavior, onward AI-provider retention and hostile
-same-user native apps need separate work. Plain prototype copy/layout is left
-for a later design pass.
+same-user native apps need separate work. The standing-access view
+(`access.html`) still has its first plain layout.

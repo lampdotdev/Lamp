@@ -125,13 +125,4 @@ chrome.alarms.create('reconnect',{periodInMinutes:0.5});
 setInterval(pump,1000);
 void pump();
 
-chrome.action.onClicked.addListener(async(tab)=>{
-  let candidate='';
-  try { if(tab?.url && /^https?:/.test(tab.url))candidate=new URL(tab.url).origin; } catch {}
-  if(candidate)await chrome.storage.session.set({taskCandidate:candidate});
-  const url=chrome.runtime.getURL('recorder.html');
-  const pages=await chrome.tabs.query({url});
-  if(pages.length)await chrome.tabs.update(pages[0].id,{active:true});
-  else await chrome.tabs.create({url});
-});
 importScripts('recorder-worker.js');

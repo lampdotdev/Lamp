@@ -1,4 +1,4 @@
-let taskRecording=null, taskBuffer=[], taskFlushPromise=null, taskSyncing=false, taskFinishing=false, taskChecks=new Set(), taskEnding=null;
+let taskAsking=null, taskRecording=null, taskBuffer=[], taskFlushPromise=null, taskSyncing=false, taskFinishing=false, taskChecks=new Set(), taskEnding=null;
 const taskStateReady=chrome.storage.session.get('taskRecording').then(s=>{taskRecording=s.taskRecording||null;});
 const taskURL=url=>{const u=new URL(url);return u.origin+u.pathname;};
 async function taskStatus(){
@@ -10,7 +10,7 @@ async function taskClear(){
  taskRecording=null;taskBuffer=[];
  await chrome.storage.session.remove('taskRecording');
  await chrome.action.setBadgeText({text:''});
- await chrome.action.setTitle({title:'Lamp Page Connector'});
+ await chrome.action.setTitle({title:'Lamp'});
  for(const tab of await chrome.tabs.query({})){if(tab.incognito||!tab.url||!/^https?:/.test(tab.url))continue;
   try{await chrome.scripting.executeScript({target:{tabId:tab.id},func:()=>{window.__lampTaskCapture?.stop();}});}catch{}
  }
@@ -32,7 +32,7 @@ async function taskFinish(discard){
   const ending=taskEnding;ending.discarded=true;
   await taskClear();await native({op:'taskDiscard',id:ending.id});return;
  }
- if(!taskRecording)throw new Error('No active recording. Discard the stopped task in Lamp.');
+ if(!taskRecording)throw new Error('Nothing is recording. If a task is waiting, switch to Lamp.');
  if(taskFinishing)throw new Error('The recording is already stopping.');
  taskFinishing=true;const session=taskRecording,epoch=permissionEpoch;taskEnding=session;
  try{
@@ -52,7 +52,7 @@ async function taskInject(tab){
  const site=new URL(tab.url).origin;
  if(!taskRecording.origins.includes(site)||!await chrome.permissions.contains({origins:[pattern(site)]}))return;
  await chrome.scripting.executeScript({target:{tabId:tab.id},files:['task-capture.js']});
- await chrome.scripting.executeScript({target:{tabId:tab.id},args:[taskRecording.id,site],func:(id,site)=>window.__lampTaskCapture?.start(id,site)});
+ await chrome.scripting.executeScript({target:{tabId:tab.id},args:[taskRecording.id,site,taskRecording.started],func:(id,site,started)=>window.__lampTaskCapture?.start(id,site,started)});
 }
 async function taskSync(){
  await taskStateReady;
@@ -85,23 +85,29 @@ chrome.runtime.onMessage.addListener((msg,sender,reply)=>{
  (async()=>{
   await taskStateReady;
   if(msg.op==='task-status')return taskStatus();
+  if(msg.op==='task-asking'){taskAsking={origin:msg.origin,until:Date.now()+120000};return {};}
   if(msg.op==='task-approve'){
-   if(!await chrome.permissions.contains({origins:[pattern(msg.origin)]}))throw new Error('Approve the site in Chrome first.');
+   if(!await chrome.permissions.contains({origins:[pattern(msg.origin)]}))throw new Error('Chrome hasn’t allowed that site yet.');
    return native({op:'taskApprove',origin:msg.origin});
   }
-  if(msg.op==='task-revoke')return native({op:'taskRevoke',origin:msg.origin});
+  if(msg.op==='task-revoke'){
+   const result=await native({op:'taskRevoke',origin:msg.origin});
+   // Removing a site takes Chrome's permission with it, unless an app the person approved still reads that site.
+   if(!(await status()).grants.some(g=>g.origin===msg.origin))await chrome.permissions.remove({origins:[pattern(msg.origin)]});
+   return result;
+  }
   if(msg.op==='task-start'){
    const setting=await chrome.action.getUserSettings();
-   if(!setting.isOnToolbar)throw new Error('Pin Lamp Page Connector in Chrome before recording so REC stays visible.');
+   if(!setting.isOnToolbar)throw new Error('Pin Lamp to Chrome’s toolbar first, so you can always see when it’s recording.');
    const allowed=await taskStatus();
-   if(!msg.origins?.length||!msg.origins.every(x=>allowed.sites.includes(x)))throw new Error('Approve and select sites first.');
-   for(const site of msg.origins)if(!await chrome.permissions.contains({origins:[pattern(site)]}))throw new Error('Chrome site permission is missing.');
+   if(!msg.origins?.length||!msg.origins.every(x=>allowed.sites.includes(x)))throw new Error('Choose at least one site for Lamp to watch.');
+   for(const site of msg.origins)if(!await chrome.permissions.contains({origins:[pattern(site)]}))throw new Error('Chrome no longer allows Lamp on that site. Allow it again.');
    const result=await native({op:'taskStart',origins:msg.origins});
    taskRecording={id:result.id,origins:msg.origins,started:Date.now()};
    await chrome.storage.session.set({taskRecording});
    await chrome.action.setBadgeBackgroundColor({color:'#b42916'});
    await chrome.action.setBadgeText({text:'REC'});
-   await chrome.action.setTitle({title:'Recording for Lamp — open to stop or discard'});
+   await chrome.action.setTitle({title:'Lamp is recording. Click to stop or discard.'});
    await taskSync();return result;
   }
   if(msg.op==='task-stop'){await taskFinish(false);return {stopped:true};}
@@ -112,3 +118,10 @@ chrome.runtime.onMessage.addListener((msg,sender,reply)=>{
 chrome.tabs.onUpdated.addListener((id,change,tab)=>{if(change.status==='complete')void taskInject(tab).catch(()=>{});});
 chrome.permissions.onRemoved.addListener(()=>{const session=taskRecording||taskEnding;if(session)void(async()=>{await taskClear();await native({op:'taskDiscard',id:session.id}).catch(()=>{});})();});
 setInterval(()=>taskSync().catch(()=>{}),1000);
+// Chrome's own question can close the window that asked, taking the rest of the approval with it. The site
+// the person was asked about is finished here, and the window is brought back to show what happens next.
+chrome.permissions.onAdded.addListener(added=>{
+ const asking=taskAsking;taskAsking=null;
+ if(!asking||Date.now()>asking.until||!(added.origins||[]).includes(pattern(asking.origin)))return;
+ void native({op:'taskApprove',origin:asking.origin}).then(()=>chrome.action.openPopup()).catch(()=>{});
+});
