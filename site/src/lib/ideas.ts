@@ -18,15 +18,15 @@ export type Category = { id: string; title: string };
 export type Idea = { category: string; name: string; about: string; form: Form; wish: string };
 
 // In the order the page shows them: office work first, as most people who find Lamp spend their days at a desk.
-// Their names are a word or two, to fit ten to a row on a laptop and five to a row on a phone.
+// Their names are short, to fit ten to a row on a laptop and five to a row on a phone; a longer one wraps.
 export const CATEGORIES: Category[] = [
-  { id: "office", title: "Office" },
+  { id: "office", title: "At the office" },
+  { id: "trades", title: "On the job" },
   { id: "mac", title: "Your Mac" },
-  { id: "home", title: "Home" },
-  { id: "play", title: "Fun" },
-  { id: "trades", title: "Hands-on" },
-  { id: "school", title: "School" },
   { id: "money", title: "Paperwork" },
+  { id: "home", title: "Home" },
+  { id: "school", title: "School" },
+  { id: "play", title: "Fun" },
   { id: "hobbies", title: "Hobbies" },
   { id: "friends", title: "Friends" },
 ];
