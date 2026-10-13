@@ -190,11 +190,14 @@ struct OnboardingView: View {
             // Once Lamp's own view is in, so the welcome's fixed size doesn't hold the window back.
             try? await Task.sleep(for: .seconds(0.05))
             if let window { Chrome.restore(window, to: Onboarding.appSize) }
-            store.openWaitingImport()
-            guard !idea.isEmpty else { return }
+            let importing = store.openWaitingImport()
+            // Skipping the idea still leaves Lamp on a new app, ready for one, unless a shared app is
+            // being opened instead: that's what the person came for.
+            if idea.isEmpty && importing { return }
             store.create(fromWelcome: true)
             guard let project = store.selected else { return }
             store.setKind(project, kind)
+            guard !idea.isEmpty else { return }
             // An iPhone or iPad app needs Xcode and a simulator first, checked as the chat's Send does, and the
             // idea is kept the same way while that runs: in the message box (so it's on disk if Lamp quits) and
             // as a pending submission (so the new app isn't discarded as unused). Cancelled, it stays there.
