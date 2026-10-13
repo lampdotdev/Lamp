@@ -3,9 +3,9 @@ import { Image, getImage } from "astro:assets";
 import type { ImageMetadata } from "astro";
 import Base from "../layouts/Base.astro";
 import DownloadButton from "../components/DownloadButton.astro";
-import { CATEGORIES, IDEAS, slug } from "../lib/ideas";
+import { CATEGORIES, IDEAS, platform, slug } from "../lib/ideas";
 import { together } from "../lib/text";
-import { formIcon } from "../lib/form-icons";
+import { platformIcon } from "../lib/platform-icons";
 
 // Each idea's icon, on Lamp's own tile as Lamp makes them, and a picture of it in use, both drawn by an image
 // model from a short brief (see scripts/idea-art/README.md). An idea without one shows without it.
@@ -96,7 +96,7 @@ const description = "Wishes for software nobody else would make: for the office,
               <li data-category={idea.category} class="flex">
                 <button
                   type="button"
-                  data-idea={JSON.stringify({ ...idea, title: title[idea.category], picture: large[idea.name], icon: iconURL[idea.name] })}
+                  data-idea={JSON.stringify({ ...idea, platform: platform(idea), title: title[idea.category], picture: large[idea.name], icon: iconURL[idea.name] })}
                   class="group flex w-full cursor-pointer flex-col overflow-hidden rounded-[22px] bg-page text-left shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-black/[0.04] transition duration-300 hover:-translate-y-0.5 hover:shadow-[0_14px_34px_-14px_rgba(0,0,0,0.22)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-graphite"
                 >
                   {thumbOf(idea.name) ? (
@@ -118,12 +118,10 @@ const description = "Wishes for software nobody else would make: for the office,
                       ) : (
                         <span class="h-6" />
                       )}
-                      <span class="pb-1 text-muted" set:html={formIcon(idea.form)} />
+                      <span class="pb-1 text-muted" set:html={platformIcon(platform(idea))} />
                     </span>
                     <span class="mt-3 font-display text-2xl font-bold tracking-tight">{idea.name}</span>
-                    <span class="mt-1 text-[15px] text-muted">{idea.who}</span>
-                    <span class="mt-4 text-[16px] leading-relaxed text-ink/85">“{together(idea.wish)}”</span>
-                    <span class="mt-auto pt-5 text-[15px] font-semibold text-[#b04e0a] opacity-70 transition group-hover:opacity-100">Make this wish →</span>
+                    <span class="mt-1 text-[15px] leading-snug text-muted">{together(idea.about)}</span>
                   </span>
                 </button>
               </li>
@@ -171,7 +169,7 @@ const description = "Wishes for software nobody else would make: for the office,
           <h2 id="wish-name" data-name class="mt-1 pr-10 font-display text-3xl font-bold tracking-tight"></h2>
         </div>
       </div>
-      <p data-who class="mt-1 text-[15px] text-muted"></p>
+      <p data-about class="mt-2 text-[15px] leading-snug text-muted"></p>
       <label for="wish-text" class="mt-6 mb-2.5 block text-[15px] font-semibold">Make it yours, then give it to Lamp:</label>
       <textarea
         id="wish-text"
@@ -197,8 +195,8 @@ const description = "Wishes for software nobody else would make: for the office,
 <script>
   import { copyWish, wishLink } from "../../lib/wish.js";
   import { track } from "../lib/analytics";
-  import { formIcon } from "../lib/form-icons";
-  import type { Form } from "../lib/ideas";
+  import { platformIcon } from "../lib/platform-icons";
+  import type { Platform } from "../lib/ideas";
 
   // ---------- The filters, and the wishes coming and going ----------
   const filters = [...document.querySelectorAll<HTMLButtonElement>("[data-filter]")];
@@ -291,7 +289,7 @@ const description = "Wishes for software nobody else would make: for the office,
   const dialog = document.querySelector<HTMLDialogElement>("[data-wish]")!;
   const kind = dialog.querySelector<HTMLElement>("[data-kind]")!;
   const name = dialog.querySelector<HTMLElement>("[data-name]")!;
-  const who = dialog.querySelector<HTMLElement>("[data-who]")!;
+  const about = dialog.querySelector<HTMLElement>("[data-about]")!;
   const text = dialog.querySelector<HTMLTextAreaElement>("[data-text]")!;
   const go = dialog.querySelector<HTMLAnchorElement>("[data-finish] a")!;
   const requirement = dialog.querySelector<HTMLElement>("[data-finish] p");
@@ -304,21 +302,21 @@ const description = "Wishes for software nobody else would make: for the office,
   const fit = () => { text.style.height = "auto"; text.style.height = `${text.scrollHeight + 2}px`; };
   text.addEventListener("input", fit);
 
-  type Idea = { name: string; who: string; wish: string; form: Form; title: string; picture: string; icon: string };
+  type Idea = { name: string; about: string; wish: string; platform: Platform; title: string; picture: string; icon: string };
   const picture = dialog.querySelector<HTMLImageElement>("[data-picture]")!;
   const icon = dialog.querySelector<HTMLImageElement>("[data-icon]")!;
   let current: Idea | null = null;
   document.querySelectorAll<HTMLButtonElement>("[data-idea]").forEach((card) =>
     card.addEventListener("click", () => {
       current = JSON.parse(card.dataset.idea!) as Idea;
-      kind.innerHTML = formIcon(current.form, "size-4");
+      kind.innerHTML = platformIcon(current.platform, "size-4");
       kind.append(current.title);
       picture.hidden = !current.picture;
       if (current.picture) picture.src = current.picture;
       icon.hidden = !current.icon;
       if (current.icon) icon.src = current.icon;
       name.textContent = current.name;
-      who.textContent = current.who;
+      about.textContent = current.about;
       text.value = current.wish;
       go.textContent = "Download Lamp";
       if (requirement) requirement.textContent = usual;
