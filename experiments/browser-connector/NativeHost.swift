@@ -38,7 +38,7 @@ while let length = exact(4) {
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue(Data(HMAC<SHA256>.authenticationCode(for: bytes, using: key)).base64EncodedString(), forHTTPHeaderField: "X-Lamp-Signature")
     let wait = DispatchSemaphore(value: 0)
-    var answer: [String: Any] = ["error": "Open Lamp Dev with the browser prototype enabled."]
+    var answer: [String: Any] = ["error": "Open Lamp on this Mac, then try again."]
     URLSession.shared.dataTask(with: request) { data, _, _ in
         defer { wait.signal() }
         guard let data, let envelope = (try? JSONSerialization.jsonObject(with: data)) as? [String: String],
