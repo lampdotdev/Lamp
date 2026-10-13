@@ -43,7 +43,14 @@ A capability given to one engine must be given to all of them that can take it, 
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
   tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the
   person's next message (`Store.answer`), so a click and a typed answer reach every engine the same way and
-  the message box always answers a card (`Talk.open`). `show_result` is kept on the turn and shown only once
+  the message box always answers a card (`Talk.open`). A click's message carries each question with its
+  answer (`Talk.message`), for an engine that reads the conversation again later; the chat doesn't show it,
+  since the card does (`LogLine.fromCard`, `Talk.shows`). A guess on a result card is two chips, the one
+  chosen and the other way: a click turns it (`Store.switchGuess`) and the card keeps what was picked. An
+  answer that has to wait in line, clicked or typed, folds its card at once and opens it again if it's taken
+  back (`Talk.unqueue`); waiting for setup, it keeps its card across a relaunch (`QueuedMessage.saved`).
+  `Talk.Ask` also reads the shape cards were first saved in (options as plain words, `chosen`, `dismissed`):
+  a chat line that can't be read loses the whole chat. `show_result` is kept on the turn and shown only once
   the app is built and open. While a card waits for its answer nothing above it changes height and the chat
   doesn't follow what's added below: a new app's card goes to its short form as the questions arrive, a
   second `ask` before the answer is turned away, and a one-at-a-time card is laid out for all its questions

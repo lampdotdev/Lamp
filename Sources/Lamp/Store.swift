@@ -184,6 +184,23 @@ struct QueuedMessage: Identifiable {
     var tookBack: [String] = []
 }
 
+extension QueuedMessage {
+    /// A request waiting for setup, as it's kept across a relaunch. The card it answers is kept with it:
+    /// without it the answer would come back as a message of its own under a card that already shows it,
+    /// and taking it back would no longer open the card again.
+    var saved: [String: Any] {
+        var saved: [String: Any] = ["text": text, "attachments": attachments.map(\.path)]
+        if let card { saved["card"] = card.uuidString }
+        return saved
+    }
+
+    /// `ask` is the name the card had in what an earlier Lamp kept.
+    init(saved: [String: Any], attachments: [URL]) {
+        self.init(text: saved["text"] as? String ?? "", attachments: attachments,
+                  card: ((saved["card"] ?? saved["ask"]) as? String).flatMap(UUID.init(uuidString:)))
+    }
+}
+
 @MainActor
 final class Store: ObservableObject {
     static let shared = Store()
@@ -1457,6 +1474,15 @@ final class Store: ObservableObject {
         // Waiting for setup can outlast this run, and the files may be temporary (a pasted screenshot):
         // keep copies, so the request still has them after a relaunch.
         let files = setup.ready ? attachments : keepForLater(attachments)
+        // Typed while a card waits, the message is its answer, even if it has to wait behind the agent's
+        // turn: the card folds as it's sent, so it can't be answered a second time by a click meanwhile.
+        var card = card
+        if card == nil, let open = Talk.open(in: logs[project.id] ?? []),
+           let index = logs[project.id]?.firstIndex(where: { $0.id == open.id }) {
+            logs[project.id]?[index].ask?.typed = true
+            card = open.id
+            saveChat(project)
+        }
         queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card))
         startQueued(project)
         saveWaiting()
@@ -1481,7 +1507,7 @@ final class Store: ObservableObject {
 
     private func saveWaiting() {
         let waiting = setup.ready ? [:] : queued.filter { !$0.value.isEmpty }.mapValues { messages in
-            messages.map { ["text": $0.text, "attachments": $0.attachments.map(\.path)] as [String: Any] }
+            messages.map(\.saved)
         }
         if waiting.isEmpty {
             UserDefaults.standard.removeObject(forKey: Self.waitingKey)
@@ -1499,7 +1525,7 @@ final class Store: ObservableObject {
                 queued[id] = messages.map { message in
                     let files = (message["attachments"] as? [String] ?? []).filter { FileManager.default.fileExists(atPath: $0) }
                     kept.formUnion(files.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path })
-                    return QueuedMessage(text: message["text"] as? String ?? "", attachments: files.map(URL.init(fileURLWithPath:)))
+                    return QueuedMessage(saved: message, attachments: files.map(URL.init(fileURLWithPath:)))
                 }
             }
         }
@@ -1758,7 +1784,7 @@ final class Store: ObservableObject {
         for message in messages {
             let names = message.kept + Attachments.save(message.attachments, to: project)
             log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
-            if message.card != nil, let last = logs[project.id]?.indices.last {
+            if let card = message.card, Talk.shows(logs[project.id]?.first { $0.id == card }), let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].fromCard = true
                 saveChat(project)
             }
@@ -2582,7 +2608,9 @@ final class Store: ObservableObject {
                 // Asked again before the person answered (the agent thought better of its questions): the
                 // card that's showing stays as it is. A card that changed under the pointer would be worse
                 // than a question worded the first way.
-                if Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
+                // The same once the first was answered in words while this turn was still ending: the
+                // agent hasn't had that answer yet, and a new card would be asking over it.
+                if turn.asked || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
                 logs[project.id, default: []].append(LogLine(kind: .ask, text: ask.text, ask: ask))
                 // A new app's card gives up its checklist in the same moment the questions arrive, not when
                 // the turn ends a little later: once there's something to click, nothing above it moves.
@@ -2612,6 +2640,16 @@ final class Store: ObservableObject {
         logs[project.id]?[index].ask = ask
         saveChat(project)
         send(Talk.message(for: ask, answers: answers), answering: line.id, to: project)
+    }
+
+    /// A guess on a result card turned the other way: noted on the card, which shows it, then sent as the
+    /// agent's own words for that request.
+    func switchGuess(_ index: Int, on line: LogLine, in project: LampProject) {
+        guard let result = line.result, result.guesses.indices.contains(index), result.switched == nil,
+              let at = logs[project.id]?.firstIndex(where: { $0.id == line.id }) else { return }
+        logs[project.id]?[at].result?.switched = [index]
+        saveChat(project)
+        send(result.guesses[index].request, answering: line.id, to: project)
     }
 
     /// `offer_setup`: the agent asks Lamp to offer the person a way to set up a capability, with its reason.

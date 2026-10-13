@@ -212,7 +212,8 @@ enum Agent {
 
         static let ask = """
         - When a request for a new app or a big change is too vague to build well, ask before writing code, \
-        with `ask` and never as questions written out in your reply: up to three short questions, each with \
+        with `ask`, never as questions written out in your reply and never with a question tool built into \
+        your engine: up to three short questions, each with \
         two to four likely answers to pick from (e.g. "Who is it for?": "Just me", "My team"), and change no \
         files; Lamp then waits for the answers. Only ask \
         when the answers would really change what you build. Most requests, including short ones, are clear \

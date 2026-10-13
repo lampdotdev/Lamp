@@ -56,9 +56,10 @@ final class TalkTests: XCTestCase {
         XCTAssertEqual(lines[0].ask?.answers, ["A", "B"])
     }
 
-    func testAnswersAreSentOneLineForEachQuestionInOrder() {
-        XCTAssertEqual(Talk.message(for: asked(1).ask!, answers: ["Meals"]), "Meals")
-        XCTAssertEqual(Talk.message(for: asked(2).ask!, answers: ["Meals", Talk.youDecide]), "Meals\nYou decide")
+    func testAnswersAreSentWithTheirQuestionsOneLineForEachInOrder() {
+        XCTAssertEqual(Talk.message(for: asked(1).ask!, answers: ["Meals"]), "Question 0? Meals.")
+        XCTAssertEqual(Talk.message(for: asked(2).ask!, answers: ["Meals", Talk.youDecide]),
+                       "Question 0? Meals.\nQuestion 1? You decide.")
     }
 
     func testQuestionsNeedAnswersToClick() {

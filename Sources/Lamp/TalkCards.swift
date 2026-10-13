@@ -8,6 +8,20 @@ struct AskProgress: Equatable {
     var step = 0
     var answers: [Int: String] = [:]
     var typed = ""
+    /// With every question on one card, what's typed for each instead of picking one of its chips.
+    var own: [Int: String] = [:]
+
+    /// Takes what's typed as a question's answer; emptied, the question is unanswered again.
+    mutating func type(_ text: String, for question: Int) {
+        own[question] = text
+        answers[question] = text.trimmed.nilIfEmpty
+    }
+
+    /// Takes a chip as a question's answer, in place of anything typed for it.
+    mutating func choose(_ answer: String, for question: Int) {
+        own[question] = nil
+        answers[question] = answer
+    }
 
     /// Takes an answer for the question showing. True when that was the last one.
     mutating func take(_ answer: String, of count: Int) -> Bool {
@@ -56,7 +70,10 @@ struct AskCard: View {
                 if index > 0 { Divider() }
                 VStack(alignment: .leading, spacing: 8) {
                     Text(question.question).font(.headline)
-                    ChipRow(options: question.options, chosen: progress.answers[index]) { progress.answers[index] = $0 }
+                    ChipRow(options: question.options, chosen: progress.answers[index],
+                            own: Binding(get: { progress.own[index] ?? "" }, set: { progress.type($0, for: index) })) {
+                        progress.choose($0, for: index)
+                    }
                 }
                 .padding(.horizontal, 16).padding(.vertical, 12)
             }
@@ -249,12 +266,28 @@ private struct OptionTile: View {
 private struct ChipRow: View {
     let options: [Talk.Option]
     let chosen: String?
+    /// The person's own answer, typed beside the chips. Nil where there is nothing to type: a choice
+    /// between the two ways something was built.
+    var own: Binding<String>? = nil
     let pick: (String) -> Void
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) { chips }
-            VStack(alignment: .leading, spacing: 6) { chips }
+            HStack(spacing: 8) { chips; field }
+            VStack(alignment: .leading, spacing: 6) { chips; field }
+        }
+    }
+
+    @ViewBuilder
+    private var field: some View {
+        if let own {
+            let typed = !own.wrappedValue.trimmed.isEmpty
+            TextField("Something else…", text: own)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .frame(minWidth: 140)
+                .background(Color(nsColor: .textBackgroundColor), in: Capsule())
+                .overlay(Capsule().strokeBorder(typed ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary), lineWidth: typed ? 2 : 1))
         }
     }
 
@@ -310,12 +343,24 @@ struct ResultCard: View {
                 ForEach(Array((result.news ?? []).enumerated()), id: \.offset) { _, news in
                     row(news.what, detail: news.place)
                 }
-                if isCurrent {
-                    ForEach(Array(result.guesses.enumerated()), id: \.offset) { _, guess in
-                        row(guess.guess, detail: "Lamp chose this for you.", button: guess.instead) {
-                            store.send(guess.request, to: project)
+                // What the agent chose is the chip that's on, and the other way is the chip beside it: one
+                // click turns it. A guess that was turned stays on the card as what the person chose.
+                ForEach(Array(result.guesses.enumerated()), id: \.offset) { index, guess in
+                    let turned = result.switched?.contains(index) == true
+                    if isCurrent && result.switched == nil {
+                        chosen(guess) { store.switchGuess(index, on: line, in: project) }
+                    } else if turned {
+                        Divider()
+                        Label {
+                            Text(guess.instead).fontWeight(.medium)
+                        } icon: {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                         }
+                        .padding(.horizontal, 14).padding(.vertical, 9)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                }
+                if isCurrent {
                     if let idea = result.idea {
                         row(idea.title, detail: idea.detail, button: "Add It") { store.send(idea.request, to: project) }
                     }
@@ -329,6 +374,17 @@ struct ResultCard: View {
             .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
             .frame(maxWidth: 620, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func chosen(_ guess: Talk.Guess, turn: @escaping () -> Void) -> some View {
+        VStack(spacing: 0) {
+            Divider()
+            ChipRow(options: [Talk.Option(title: guess.guess), Talk.Option(title: guess.instead)], chosen: guess.guess) {
+                if $0 == guess.instead { turn() }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

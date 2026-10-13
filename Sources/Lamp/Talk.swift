@@ -24,6 +24,22 @@ enum Talk {
     struct Question: Codable, Equatable {
         var question: String
         var options: [Option]
+
+        init(question: String, options: [Option]) {
+            self.question = question
+            self.options = options
+        }
+
+        /// A card saved while options were plain words, some with the one the agent had `chosen`, reads too.
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            question = try values.decode(String.self, forKey: .question)
+            if let options = try? values.decode([Option].self, forKey: .options) {
+                self.options = options
+            } else {
+                options = try values.decode([String].self, forKey: .options).map { Option(title: $0) }
+            }
+        }
     }
 
     struct Ask: Codable, Equatable {
@@ -32,6 +48,41 @@ enum Talk {
         /// What was chosen on the card, one for each question, once it was answered there. A typed answer
         /// leaves this nil: the message under the card says it.
         var answers: [String]?
+        /// Answered in the message box instead. Noted as the message is sent, since it may wait in line
+        /// behind the agent's turn: the card folds then, not when the message gets its turn.
+        var typed: Bool?
+
+        init(layout: Layout, questions: [Question], answers: [String]? = nil, typed: Bool? = nil) {
+            self.layout = layout
+            self.questions = questions
+            self.answers = answers
+            self.typed = typed
+        }
+
+        private enum Earlier: String, CodingKey { case questions, dismissed }
+        private struct Chosen: Decodable { var chosen: String? }
+
+        /// Reads the cards of an earlier shape as well: no layout, an answer that could be missing, a mark
+        /// for a card answered in words, and choices the agent had made shown on the same card. Those last
+        /// read as answered with what was chosen: what was decided stays in the chat, folded.
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            let earlier = try decoder.container(keyedBy: Earlier.self)
+            layout = (try? values.decode(Layout.self, forKey: .layout)) ?? .together
+            questions = try values.decode([Question].self, forKey: .questions)
+            typed = try values.decodeIfPresent(Bool.self, forKey: .typed)
+            let chosen = ((try? earlier.decode([Chosen].self, forKey: .questions)) ?? []).map(\.chosen)
+            let given = try values.decodeIfPresent([String?].self, forKey: .answers)
+            let assumed = !chosen.isEmpty && chosen.allSatisfy { $0 != nil }
+            if given != nil || assumed {
+                answers = questions.indices.map { index in
+                    (given.flatMap { $0.indices.contains(index) ? $0[index] : nil })
+                        ?? (chosen.indices.contains(index) ? chosen[index] : nil) ?? Talk.youDecide
+                }
+            } else if (try? earlier.decodeIfPresent(Bool.self, forKey: .dismissed)) == true {
+                typed = true
+            }
+        }
 
         /// The questions as plain words, for everything that reads a chat line's text.
         var text: String {
@@ -72,6 +123,8 @@ enum Talk {
         var untried: String?
         /// The version this request made, for its picture.
         var version: String?
+        /// The guesses the person turned the other way on the card, by their place in `guesses`.
+        var switched: [Int]?
 
         var text: String {
             ([summary] + (news ?? []).map { "- \($0.what): \($0.place)" }
@@ -110,6 +163,9 @@ enum Talk {
                 guard let title = (option["title"] as? String)?.trimmed, !title.isEmpty else { return nil }
                 return Option(title: title, detail: (option["detail"] as? String)?.trimmed.nilIfEmpty,
                               symbol: (option["symbol"] as? String)?.trimmed.nilIfEmpty.flatMap { hasSymbol($0) ? $0 : nil })
+            }
+            guard Set(options.map(\.title)).count == options.count else {
+                return .failure(.message("“\(question)” has the same option twice. Give 2 to \(optionLimit) different ones."))
             }
             guard (2...optionLimit).contains(options.count) else {
                 return .failure(.message("“\(question)” needs 2 to \(optionLimit) options, each with a `title`. The person can always type something else."))
@@ -157,31 +213,51 @@ enum Talk {
     /// What a question is answered with when the person leaves it to Lamp.
     static let youDecide = "You decide"
 
-    /// The message a card's answers make: one line for each question, in the order asked, which is how the
-    /// agent is told to read them. The questions aren't repeated: the card above the message shows them.
+    /// The message a card's answers make: one line for each question, in the order asked, each with the
+    /// question it answers. An engine that reads the conversation again later, or has summed it up, has
+    /// the answers with what they were about. The chat doesn't show the message: the card shows what was chosen.
     static func message(for ask: Ask, answers: [String]) -> String {
-        ask.questions.indices.map { $0 < answers.count ? answers[$0] : youDecide }.joined(separator: "\n")
+        func ended(_ text: String, with mark: String) -> String {
+            text.last.map { ".?!…".contains($0) } == true ? text : text + mark
+        }
+        return ask.questions.indices.map { index in
+            ended(ask.questions[index].question, with: "?") + " " + ended(index < answers.count ? answers[index] : youDecide, with: ".")
+        }.joined(separator: "\n")
     }
 
     /// The card still waiting for its answer: the last one asked, with nothing said by the person since.
     /// A typed message answers it as well as a click does.
     static func open(in lines: [LogLine]) -> LogLine? {
         guard let index = lines.lastIndex(where: { $0.kind == .ask }),
-              lines[index].ask?.answers == nil,
+              lines[index].ask?.answers == nil, lines[index].ask?.typed != true,
               !lines[(index + 1)...].contains(where: { $0.kind == .user }) else { return nil }
         return lines[index]
     }
 
-    /// Takes a message that was waiting to be sent back out of the line. Answers clicked on a card were
-    /// noted on it when they were clicked; taken back before they went out, they were never given, so the
-    /// card waits again. Left folded, nothing would be asking the question any more. True when a card changed.
+    /// Takes a message that was waiting to be sent back out of the line. An answer to a card, clicked or
+    /// typed, was noted on it when it was given; taken back before it went out, it was never given, so the
+    /// card waits again. Left folded, nothing would be asking the question any more. A guess turned the
+    /// other way goes back the same. True when a card changed.
     static func unqueue(_ message: QueuedMessage, from queue: inout [QueuedMessage], lines: inout [LogLine]) -> Bool {
         guard let waiting = queue.firstIndex(where: { $0.id == message.id }) else { return false }
         queue.remove(at: waiting)
-        guard let card = message.card, let index = lines.firstIndex(where: { $0.id == card }),
-              lines[index].ask?.answers != nil else { return false }
-        lines[index].ask?.answers = nil
-        return true
+        guard let card = message.card, let index = lines.firstIndex(where: { $0.id == card }) else { return false }
+        if lines[index].ask?.answers != nil || lines[index].ask?.typed == true {
+            lines[index].ask?.answers = nil
+            lines[index].ask?.typed = nil
+            return true
+        }
+        if lines[index].result?.switched != nil {
+            lines[index].result?.switched = nil
+            return true
+        }
+        return false
+    }
+
+    /// Whether the card shows what a message says, so the chat doesn't say it again under it: answers
+    /// clicked on a question card, or a guess turned the other way. An answer typed instead is its own message.
+    static func shows(_ card: LogLine?) -> Bool {
+        card?.ask?.answers != nil || card?.result?.switched != nil
     }
 
     /// The result whose buttons still mean something: the latest, until the person asks for anything else.
@@ -191,7 +267,7 @@ enum Talk {
         return lines[index]
     }
 
-    static let asked = "The person now sees your questions as a card and answers by clicking or typing. Your turn ends here: change nothing and call nothing more. Their answer is the next message: one line for each question, in the order you asked, or their own words."
+    static let asked = "The person now sees your questions as a card and answers by clicking or typing. Your turn ends here: change nothing and call nothing more. Their answer is the next message: one line for each question, in the order you asked, each question followed by its answer, or their own words."
     static let alreadyAsked = "The person already sees the questions you asked and hasn't answered yet, so these weren't shown. End your reply now with no more words; their answer is the next message."
     static let resultKept = "Lamp shows this when the app is built and open. End your reply now with nothing more: no question, no offer, nothing the card already says."
 }
