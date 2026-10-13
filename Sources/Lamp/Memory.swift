@@ -369,13 +369,55 @@ struct MemorySettings: View {
         let title: String
     }
 
-    /// Every set of notes there could be, the person's first, split by whether it holds anything: `saved` is
-    /// the list, and `empty` is what Add Notes offers, so the person can still start a set Lamp hasn't.
+    /// What the pane shows under the checkbox: the notes that hold something, and what could still be given some.
+    struct Listing: Equatable {
+        struct Saved: Identifiable, Equatable {
+            let row: Row
+            let summary: String
+            var id: String { row.id }
+        }
+
+        var saved: [Saved] = []
+        /// What Add Notes offers, so the person can still start a set Lamp hasn't.
+        var empty: [Row] = []
+
+        /// How Add Notes is shown: a menu is for choosing among several, so one place left is a button
+        /// that says where the notes go.
+        enum Adding: Equatable {
+            case nothing
+            case one(Row)
+            case several([Row])
+        }
+
+        var adding: Adding {
+            switch empty.count {
+            case 0: .nothing
+            case 1: .one(empty[0])
+            default: .several(empty)
+            }
+        }
+    }
+
+    /// Every set of notes there could be, the person's first, split by whether it holds anything. Nil while
+    /// Lamp isn't keeping notes: off, nothing reads them, so the pane doesn't either. Each set is read once.
     /// An app that has no name yet is offered nothing to note.
-    static func rows(apps: [LampProject], holds: (Row) -> Bool) -> (saved: [Row], empty: [Row]) {
-        let all = [Row(id: "", title: "About you")] + apps.map { Row(id: $0.id, title: "About \($0.name)") }
-        let unnamed = Set(apps.filter(\.untitled).map(\.id))
-        return (all.filter(holds), all.filter { !holds($0) && !unnamed.contains($0.id) })
+    static func listing(on: Bool, apps: [LampProject], read: (Row) -> Memory.Notes) -> Listing? {
+        guard on else { return nil }
+        var listing = Listing()
+        for row in [Row(id: "", title: "About you")] + apps.map({ Row(id: $0.id, title: "About \($0.name)") }) {
+            let notes = read(row)
+            if !notes.isEmpty {
+                listing.saved.append(.init(row: row, summary: notes.summary))
+            } else if !apps.contains(where: { $0.id == row.id && $0.untitled }) {
+                listing.empty.append(row)
+            }
+        }
+        return listing
+    }
+
+    /// The button's words when one set of notes is left to start.
+    static func addLabel(_ row: Row) -> String {
+        row.id.isEmpty ? "Add Notes About You…" : "Add Notes \(row.title)…"
     }
 
     private func place(_ row: Row) -> Memory.Place? {
@@ -386,17 +428,16 @@ struct MemorySettings: View {
 
     var body: some View {
         let _ = revision
-        let rows = Self.rows(apps: store.projects) { !notes($0).isEmpty }
         Form {
             Section {
                 SettingsCheckboxes {
                     Toggle("Remember how I like things", isOn: $memory)
                 }
             }
-            // The notes depend on the checkbox: off, nothing reads them, so they aren't listed.
-            if memory {
+            // The notes depend on the checkbox: off, nothing reads them, so they aren't read or listed.
+            if let listing = Self.listing(on: memory, apps: store.projects, read: notes) {
                 Section {
-                    if rows.saved.isEmpty {
+                    if listing.saved.isEmpty {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Nothing yet")
                             Text("Lamp takes notes as you build: how you like things, and what you decided for each app.")
@@ -405,12 +446,12 @@ struct MemorySettings: View {
                         }
                         .foregroundStyle(.secondary)
                     }
-                    ForEach(rows.saved) { row in
-                        Button { editing = row } label: {
+                    ForEach(listing.saved) { saved in
+                        Button { editing = saved.row } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(row.title)
-                                    Text(notes(row).summary)
+                                    Text(saved.row.title)
+                                    Text(saved.summary)
                                         .font(.caption).foregroundStyle(.secondary).lineLimit(2)
                                 }
                                 Spacer()
@@ -424,17 +465,22 @@ struct MemorySettings: View {
                     Text("What Lamp remembers")
                 } footer: {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(rows.saved.isEmpty ? "Notes stay on this Mac." : "Notes stay on this Mac. Click one to read, change or clear it.")
+                        Text(listing.saved.isEmpty ? "Notes stay on this Mac." : "Notes stay on this Mac. Click one to read, change or clear it.")
                             .font(.caption).foregroundStyle(.secondary)
                             .multilineTextAlignment(.leading)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        if !rows.empty.isEmpty {
-                            Menu("Add Notes") {
-                                ForEach(rows.empty) { row in Button(row.title) { editing = row } }
+                        Group {
+                            switch listing.adding {
+                            case .nothing: EmptyView()
+                            case .one(let row): Button(Self.addLabel(row)) { editing = row }
+                            case .several(let rows):
+                                Menu("Add Notes") {
+                                    ForEach(rows) { row in Button(row.title) { editing = row } }
+                                }
                             }
-                            .controlSize(.small)
-                            .fixedSize()
                         }
+                        .controlSize(.small)
+                        .fixedSize()
                     }
                 }
             }
