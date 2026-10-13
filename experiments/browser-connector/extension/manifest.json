@@ -1,16 +1,24 @@
 {
   "manifest_version": 3,
   "name": "Lamp Page Connector",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Throwaway read-only page handoff to Lamp-made apps.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzUkLhjZOuhAXx0NQVvyk7efkGGOH62nU/nAceZW/fRLi2ByLEvFz8YTA9TS1cq6hbRD464SejxqPlrwEI/K3AWTT4rOV4rnaep2V0vh64lH1muUbZF4OKmmyc3aDbT0Kg1X0YiSSurDFVY21bcgbEdVI1OpceS2ZSomQ3FfK2l2BXuhAPMWO6ms54tF6w/9Pc1Cu3q76Nf1SGYMwv91vafzc0B5VBMSFlF9YURmqvT/It7YFhNcwiLOw0z7idjlkW+KpLeOGFmiH181O5Z0G3lRtUNXb0aBgmh+cTA6OlYAmN68hksE4MvJmfwrBkSipprquLGi8CjPEVePp+6xxAQIDAQAB",
   "permissions": [
-    "activeTab",
     "scripting",
-    "nativeMessaging"
+    "nativeMessaging",
+    "storage",
+    "alarms"
   ],
   "action": {
-    "default_popup": "popup.html",
     "default_title": "Lamp Page Connector"
+  },
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "worker.js"
   }
 }

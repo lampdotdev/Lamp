@@ -1,97 +1,98 @@
-# Browser connector experiment
+# Standing browser access experiment
 
-A throwaway Chrome page handoff, disabled unless Lamp Dev starts with
-`LAMP_BROWSER_PROTOTYPE=1`. It is not a release feature. No provider account,
-application registration, API key or pairing code is involved.
+Throwaway Chrome connector, enabled only when Lamp Dev starts with
+`LAMP_BROWSER_PROTOTYPE=1`. One extension serves separate generated apps. No
+service registration, credential paste or pairing code is involved.
 
-The path is Chrome's action popup → native messaging helper → Lamp Dev's existing
-loopback gateway → the requesting generated app. `activeTab` grants access only
-following a browser gesture. The popup names the destination and asks before
-reading rendered text. There are no host permissions, cookie permissions,
-content-script listeners, external-message listeners, page actions or cloud calls.
+A generated app asks for an exact site. The extension's **Browser access** tab
+names that app and site; **Allow this app on this site** requests Chrome's optional
+host permission and saves a separate Lamp app grant. This view is a persistent
+extension tab so a Chrome permission sheet cannot destroy its pending approval.
+Subsequent app requests need no browser gesture or open management view.
 
-The two fixture apps are scaffolded by the real `Template.scaffold`, keep the
-unmodified Lamp-owned support/build/package files, and save received pages with
-`LampStore`. Their custom view contains the prototype client. No model is needed
-to author these predetermined fixtures; this does not exercise the coding-agent
-conversation or constitute a general connector supplied to every generated app.
+## Run in a private VM
 
-## Build and try
+Follow the repository's lampvm workflow. Never copy real settings, browser
+profiles, sign-ins or signing keys into the guest.
 
-Use a private clean lampvm clone as described in the repository's workflow rules.
-Keep the VM held through rebuilds and destroy only that clone after collecting proof.
-Never use real browser sign-ins or copy host application data into it.
+1. Build with `experiments/browser-connector/build.sh` (ad-hoc signed Lamp Dev and
+   its native helper). Install `build/Lamp Dev.app` in the guest.
+2. Copy this folder to guest `/tmp/browser-connector`; run its `site.py` there.
+   Install ordinary Google Chrome in the guest.
+3. Start the guest Lamp Dev executable with `LAMP_BROWSER_PROTOTYPE=1` and
+   `LAMP_BROWSER_FIXTURES=/tmp/browser-connector`. This registers the per-user
+   Chrome native host and scaffolds Page Shelf and Other Shelf through the real
+   `Template.scaffold`. Build each project's unchanged `build.sh`, using a
+   compatible installed SDK through `SDKROOT` when necessary, and install its
+   generated app. Fixture views are predefined; no model conversation is involved.
+4. In `chrome://extensions`, enable Developer mode, choose Load unpacked and this
+   folder's `extension` directory. Optional toolbar pinning makes it easier to find.
+5. Open `http://127.0.0.1:8765` and sign into the fictional demo account. The second
+   origin is `http://localhost:8765`, with its own browser session cookie.
+6. In an app, choose the site, then **Ask for site access**. Click the extension
+   toolbar button and approve. Chrome may ask separately for site permission.
+7. Use **Read page**, or enable **Read every 5 seconds** in the fixture app. Switch
+   to another browser tab to exercise background reads. `/advance` increments the
+   fixture's live revision, which the page updates using its own JavaScript.
+8. Open the extension again to see named grants and **Revoke**. Revocation stops
+   future reads and discards captured results not yet collected by the app. It
+   cannot remove copies already saved in the app.
 
-1. Run `experiments/browser-connector/build.sh` on the build machine. It uses ad-hoc
-   signing, bundles the native helper, and produces `build/Lamp Dev.app`.
-2. Install that app in the guest. Copy this experiment directory to
-   `/tmp/browser-connector` in the guest. Install ordinary Google Chrome there.
-3. Start the fixture website in the guest:
-   `python3 /tmp/browser-connector/site.py`.
-4. Start the guest's Lamp Dev executable with `LAMP_BROWSER_PROTOTYPE=1` and
-   `LAMP_BROWSER_FIXTURES=/tmp/browser-connector`. This writes the per-user native
-   host manifest and creates Page Shelf and Other Shelf under Lamp Dev's Apps
-   folder. It reuses those folders on later starts. The helper/configuration live
-   in `Edition.supportFolder/BrowserPrototype`, outside the signed app bundle.
-5. Build each generated project with its own `build.sh` and install its app in the
-   guest. With Command Line Tools lacking SwiftUI's latest compiler macro, set
-   `SDKROOT` to an installed compatible SDK, as Lamp's build environment does.
-6. In Chrome, open `chrome://extensions`, enable **Developer mode**, click
-   **Load unpacked**, and select `/tmp/browser-connector/extension`.
-7. Visit `http://127.0.0.1:8765` and choose **Sign in to demo account**. The server
-   creates a fictional HttpOnly cookie session; signed-out requests cannot see
-   the private orders. No cookie leaves Chrome through the extension.
-8. Open Page Shelf and click **Get current page**. Return to Chrome, open the
-   extension from the Extensions menu (or pin it), and click **Share with Page
-   Shelf**. The page title, URL, rendered text and capture time appear in the app.
-   Start both apps' requests to try destination selection and separation.
+## Behavior and boundaries
 
-Requests expire after two minutes. Reopening the popup makes a fresh native host
-session. Closing a popup before approving sends nothing; Cancel ends its app
-request. Browser restart needs no new registration. Restarting Lamp intentionally
-loses pending requests; the app can ask again. One-time results are removed when
-read; the destination keeps its own saved copy.
+- Chrome gets optional HTTPS host permissions, plus loopback HTTP for the demo.
+  There is no `activeTab`, `tabs`, cookies or management permission. Chrome host
+  permissions are extension-wide and technically permit read/write; the code
+  deliberately offers only bounded text capture. Lamp enforces app/site grants.
+- Open background tabs are readable without activating them. Exact URL matches
+  are required; duplicate matching tabs are refused instead of choosing an account.
+- Closed pages fail by default. The approval checkbox **Open a background tab if
+  the page is closed** permits `tabs.create({active:false})`, then a capture of
+  that document. It creates an ordinary visible tab, not an invisible browser.
+  A closed browser cannot execute this extension; a missing session still needs
+  normal website sign-in. No promise of permanent authentication is made.
+- The MV3 service worker connects through Chrome native messaging. Its native port
+  uses Chrome's documented keepalive rule. A one-second polling loop requests
+  jobs through the existing Lamp gateway; an alarm can reconnect the worker. The
+  frequent polling and fixed fixture URLs are prototype simplifications.
+- Native requests and responses are authenticated with an automatically generated
+  installation secret. Grants persist with app ID, app instance, exact origin,
+  browser-profile identity and a fresh grant ID. Jobs also bind a native session
+  and one-use challenge. Every capture rechecks the grant/permission, URL and
+  document. Browser permission removal invalidates queued sends synchronously.
+- App tokens still inherit Lamp's existing same-user trust boundary: hostile
+  unsandboxed native apps can read files and impersonate one another. This is not
+  a production runtime isolation design. The local-only consent statement applies
+  only to the fixture apps, which do not send their saved text to a cloud service.
+- Revoking one app preserves other apps' grants. If no grant in this browser uses
+  that origin, the extension removes Chrome's optional permission too. Chrome can
+  remember permission previously accepted; reapproval need not repeat its prompt.
+  Removing Chrome permission also removes the corresponding Lamp grants. Failure
+  to save revocation still blocks it in memory and reports failed persistence;
+  removing Chrome site access additionally prevents reads after a relaunch.
+- There are no external-message handlers or content scripts accepting page
+  messages. Only the extension's own management and diagnostic pages can issue
+  internal commands. Text extraction skips field values, editable/hidden content
+  and frames, capped at 24,000 UTF-16 units / 100,000 UTF-8 bytes. It is not a
+  complete website export; page text is untrusted data.
+- `inspect.html` displays live permission state and Chrome's
+  `getPermissionWarningsByManifest` results for optional access versus a required
+  all-sites manifest. This is diagnostic API output, not a store install dialog.
 
-## Boundaries and workarounds
+**Development workarounds:** Developer mode / unpacked installation, a fixed
+public key for the unpacked ID, ad-hoc bundles installed by lampvm, environment
+flags and predefined fixture scaffolding. No private signing key is committed.
+Native messaging, optional permissions, persistent extension tabs and background
+`tabs.create` are supported Chrome mechanisms. Store distribution, signing,
+installer repair, other browsers and real service compatibility need separate work.
 
-- **Developer mode / unpacked loading is a development workaround.** It is not a
-  measured Chrome Web Store installation. The fixed manifest public key stabilizes
-  the unpacked extension ID; it is not a user-entered credential or production
-  extension identity. There is no private signing key in this repository.
-- **Native messaging is a supported Chrome mechanism.** Per-user registration is
-  automatic here, with no administrator prompt. Shipping needs a stable published
-  extension ID, signed helper packaging, installer/update repair, and store review.
-- The bridge authenticates requests and replies with an installation secret and
-  binds each approval to app/request, exact origin and URL, native connection,
-  tab, document, challenge and expiry. Results and approvals are one-use. Native
-  requests reject browser Origin headers, nonlocal Host headers and the phone
-  listener. An impersonating local HTTP server cannot return an accepted response
-  without the secret.
-- **This retains Lamp's existing bearer-token trust boundary.** Unsandboxed apps
-  running as the same macOS user can read tokens or bridge files. This is not
-  protection from a malicious local app. Production needs a separate decision
-  about process identity and runtime isolation, not merely more popup checks.
-- A destination app can retransmit data. The local-only consent copy is accurate
-  for these two fixture apps only; a general API needs trustworthy disclosure and
-  enforcement of onward use. Page text remains untrusted content.
-- HTTP is accepted only for loopback fixtures; other origins must use HTTPS.
-  The fixture app's requested origin is deliberately fixed. This is not a
-  catalog of service connectors, account discovery or background synchronization.
-- Text extraction excludes form values, editable areas, hidden nodes and frames,
-  capped at 24,000 UTF-16 units / 100,000 UTF-8 bytes. It is not a DOM sanitizer or
-  complete service export. Canvas, shadow DOM, unloaded rows and frame contents
-  need separate evaluation. Same-document changes can occur while a popup is open;
-  consent is to capture the current document when clicked, not a frozen preview.
-- No Safari, Arc, Brave, store distribution, organization policy, real service
-  login, AI generation, phone or scheduled/background access is implied.
-
-The main/article-first extraction approach was informed by
+References: [native messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging),
+[optional permissions](https://developer.chrome.com/docs/extensions/reference/api/permissions),
+[worker lifetime](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle),
+[permission warning API](https://developer.chrome.com/docs/extensions/reference/api/management#method-getPermissionWarningsByManifest).
+The main/article-first text approach was informed by
 [Local's connector](https://github.com/RooCodeInc/local/blob/a64391f3b27535adb91aa12c60955e5514319fdc/browser-extension/background.js).
-Transport and permission references: [Chrome native messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging),
-[activeTab](https://developer.chrome.com/docs/extensions/develop/concepts/activeTab),
-[unpacked development installation](https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world).
 
-Put screenshots, recordings, live logs and review findings in an external proof
-folder. Do not commit browser profiles, captures, generated apps, build output or
-installation secrets. Remove the two Store hooks, BrowserPrototype.swift and this
-folder to discard the experiment.
+Keep screenshots, recordings, runtime grants, generated apps, test output and
+independent adversarial proof outside git. Remove the two Store hooks,
+BrowserPrototype.swift and this folder to discard the experiment.
