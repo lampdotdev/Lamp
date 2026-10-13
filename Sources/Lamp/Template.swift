@@ -4019,7 +4019,10 @@ enum Template {
         private var wantsMoves = false
         private var wantsVisits = false
         /// iOS asks for Always once; after that the question can't be asked again, and nothing would answer.
+        /// Kept only once the question was really shown: iOS ignores it while the person allowed just once.
         private static let askedAlwaysKey = "LampLocation.askedAlways"
+        private var askingAlways = false
+        private var shownWhileAsking = false
         private let kept = LampStore.collection("location.visits", of: Visit.self)
 
         private override init() {
@@ -4039,6 +4042,17 @@ enum Template {
             NotificationCenter.default.addObserver(forName: active, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { LampLocation.shared.settle() }
             }
+            #if os(iOS)
+            // The question for Always takes the app out of the foreground while it shows: then it was asked.
+            NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated {
+                    let me = LampLocation.shared
+                    guard me.askingAlways else { return }
+                    me.shownWhileAsking = true
+                    UserDefaults.standard.set(true, forKey: LampLocation.askedAlwaysKey)
+                }
+            }
+            #endif
         }
 
         /// Asks once (while in use, or always for watching in the background); true when allowed. A question
@@ -4057,8 +4071,16 @@ enum Template {
                 me.waiting.append((always, continuation))
                 #if os(iOS)
                 if always {
-                    UserDefaults.standard.set(true, forKey: askedAlwaysKey)
+                    me.askingAlways = true
+                    me.shownWhileAsking = false
                     me.manager.requestAlwaysAuthorization()
+                    // Not shown (iOS ignores it under Allow Once): nothing will answer, so answer now.
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(1.5))
+                        guard me.askingAlways, !me.shownWhileAsking else { return }
+                        me.askingAlways = false
+                        me.settle(force: true)
+                    }
                 } else if status == .notDetermined {
                     me.manager.requestWhenInUseAuthorization()
                 }
@@ -4069,9 +4091,10 @@ enum Template {
         }
 
         /// Answers everyone waiting, once, from where things stand now, unless the question is still open.
-        private func settle() {
+        private func settle(force: Bool = false) {
             let status = manager.authorizationStatus
-            guard !waiting.isEmpty, status != .notDetermined else { return }
+            guard !waiting.isEmpty, force || status != .notDetermined else { return }
+            askingAlways = false
             let everyone = waiting
             waiting = []
             for waiter in everyone {
