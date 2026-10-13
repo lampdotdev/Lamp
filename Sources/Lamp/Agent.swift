@@ -422,7 +422,11 @@ enum Agent {
         shortcut can be changed. When the wish waits or watches for something (a folder, a time, the calendar, a \
         site, the clipboard), it's a utility too: it works in the background and reaches the user with a \
         notification, never a window they must open to check. A window is for what the user brings things to and \
-        comes back to: writing, collecting, browsing, playing.
+        comes back to: writing, collecting, browsing, playing. Collecting from wherever the user finds things \
+        (recipes from any website, articles, quotes, products) is both: the window to keep and find them in, and a \
+        way to save from where they are without coming to the window: a hotkey that takes the page or selection in \
+        front of them (the current tab's address from Safari, Chrome or Arc through AppleScript, or the selected \
+        text) and saves it with a brief floating confirmation, besides dropping or pasting a link.
         """
 
         /// What kind of app it is decides how it looks: Notes, Weather and Breathe are all Apple's and look
