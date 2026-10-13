@@ -3511,8 +3511,8 @@ final class Store: ObservableObject {
                 script += "plutil -replace \(key) -json '\(text)' \"$P\"\n"
             }
         }
-        let entitlements = project.dir.appendingPathComponent(".lamp/entitlements.plist")
-        try? capabilities.entitlementsPlist(for: project, platform: .ios).write(to: entitlements, atomically: true, encoding: .utf8)
+        // Its entitlements are in the binary already (build.sh), where the simulator reads them: a signature
+        // that claimed them would be refused, so the signature below claims none.
         // The container's name, for LampSync to read; taken back when no longer declared.
         if let container = capabilities.container(for: project) {
             script += "plutil -replace LampICloudContainer -string '\(container.replacingOccurrences(of: "'", with: "'\\''"))' \"$P\"\n"
@@ -3541,8 +3541,8 @@ final class Store: ObservableObject {
         if fm.fileExists(atPath: assets.path) {
             try? fm.copyItem(at: assets, to: app.appendingPathComponent(Sharing.Assets.folder))
         }
-        _ = await Shell.run("xattr -cr \"$LAMP_APP\" && codesign --force -s - --entitlements \"$LAMP_ENTITLEMENTS\" \"$LAMP_APP\"", cwd: project.dir,
-                            env: ["LAMP_APP": app.path, "LAMP_ENTITLEMENTS": entitlements.path]) { _ in }
+        _ = await Shell.run("xattr -cr \"$LAMP_APP\" && codesign --force -s - \"$LAMP_APP\"", cwd: project.dir,
+                            env: ["LAMP_APP": app.path]) { _ in }
     }
 
     /// iPhone apps running in the simulator: which simulator each was launched on, and its process id.
