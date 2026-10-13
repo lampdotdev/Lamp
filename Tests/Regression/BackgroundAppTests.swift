@@ -21,9 +21,10 @@ final class BackgroundAppTests: XCTestCase {
         try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents"), withIntermediateDirectories: true)
         let plist = app.appendingPathComponent("Contents/Info.plist")
         XCTAssertTrue(NSDictionary(dictionary: ["CFBundleIdentifier": "dev.lamp.app.watcher"]).write(to: plist, atomically: true))
-        Template.Capabilities(background: true).apply(to: app)
+        let project = LampProject(id: "watcher", name: "Watcher", exe: "Watcher", dir: root)
+        Template.Capabilities(background: true).apply(to: app, for: project)
         XCTAssertEqual(try XCTUnwrap(NSDictionary(contentsOf: plist))["LampBackground"] as? Bool, true)
-        Template.Capabilities().apply(to: app)
+        Template.Capabilities().apply(to: app, for: project)
         XCTAssertNil(try XCTUnwrap(NSDictionary(contentsOf: plist))["LampBackground"])
     }
 }

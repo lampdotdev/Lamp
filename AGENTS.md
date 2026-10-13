@@ -276,6 +276,21 @@ team's certificate and the entitlements Xcode gave it (`Devices.signingIdentity`
 both kinds' rules, each marked for its half, after one rule on sharing the code (`Agent.universalPrompt`). An app
 for both has no widget and can't be shared as a `.lampapp` yet.
 
+## iCloud
+
+An app with an iPhone half may keep data in iCloud: `{"icloud": true}` in `capabilities.json`
+(`Template.Capabilities.icloud`, and `container(for:)`: "iCloud." and the app's bundle id, so an app for both
+has one container on both platforms). It becomes the CloudKit entitlements everywhere Apple signs the app
+for a team (the phone's and the Mac's `App.entitlements`, the simulator's ad hoc signature in
+`Store.finishSimulatorBundle`) and `LampICloudContainer` in each Info.plist, which is how the app knows it was
+built for iCloud. A Mac app on its own is refused it: Lamp's signature can't carry iCloud (see "Apps for both").
+The data goes through `LampSync` in LampSupport.swift, the one building block for it: collections like
+`LampStore`'s, kept on the device in LampStore as well (under `icloud.<name>`), and sent and fetched by
+CloudKit's own `CKSyncEngine` in a zone of the app's in the private database, one record per item carrying its
+JSON. The later change to an item wins; a sign-in or a zone deleted in iCloud sends everything up again. The
+agent is told in `Agent.Rules.icloud` (iPhone and both-kind prompts) when to use it and that the simulator is
+usually not signed in. The team must be in the Developer Program: a free account's build fails at signing.
+
 ## Generated apps
 
 Lamp owns three files in every app and never trusts what's in them: `Sources/LampSupport.swift`, `build.sh`

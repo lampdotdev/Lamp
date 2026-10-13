@@ -396,6 +396,10 @@ enum Template {
         /// login and keeps running after its last window closes. Declared in Info.plist as LampBackground,
         /// which LampSupport reads at launch (LampBackground).
         var background: Bool?
+        /// The app keeps data in iCloud (LampSync in LampSupport): signed for a CloudKit container of its own,
+        /// named in Info.plist as LampICloudContainer. Only for apps Apple signs for a team: those with an
+        /// iPhone half; a Mac app on its own carries Lamp's signature, which iCloud refuses.
+        var icloud: Bool?
 
         static func load(_ project: LampProject) -> Capabilities { load(project.dir.appendingPathComponent(file)) }
 
@@ -410,7 +414,7 @@ enum Template {
             func some(_ names: [String]) -> [String]? { names.isEmpty ? nil : names }
             return Capabilities(healthkit: healthkit == true ? true : nil, nfc: nfc == true ? true : nil, siri: siri == true ? true : nil,
                                 backgroundModes: some(modes), bonjourServices: some(services), backgroundTasks: some(tasks), opens: some(kinds),
-                                background: background == true ? true : nil)
+                                background: background == true ? true : nil, icloud: icloud == true ? true : nil)
         }
 
         var isEmpty: Bool { checked == Capabilities() }
@@ -433,10 +437,29 @@ enum Template {
             return (backgroundModes ?? []).filter { known.contains($0) }
         }
 
+        /// The iCloud container an app keeps its data in, or nil when it has none: iCloud declared, and an
+        /// iPhone half, so Apple signs it for a team (Lamp's own Mac signature can't carry iCloud). Named
+        /// after the id the app is signed with, team and all: containers are global, so one named after
+        /// the plain id would be taken by whichever team made an app of that name first.
+        func container(for project: LampProject) -> String? {
+            icloud == true && project.platform.hasIOS ? "iCloud." + project.deviceBundleID(team: Devices.team) : nil
+        }
+
         /// The entitlements plist for codesign and for Xcode's automatic signing, which registers each
-        /// capability with Apple. Empty when nothing is declared.
-        var entitlementsPlist: String {
+        /// capability with Apple. Empty when nothing is declared. iCloud brings push with it: CloudKit's
+        /// sync engine hears of changes made elsewhere through notifications, whose entitlement is spelled
+        /// differently on each platform.
+        func entitlementsPlist(for project: LampProject, platform: Destination = .ios) -> String {
+            entitlementsPlist(container: container(for: project), platform: platform)
+        }
+
+        func entitlementsPlist(container: String?, platform: Destination = .ios) -> String {
             var lines: [String] = []
+            if let container {
+                lines.append("  <key>com.apple.developer.icloud-container-identifiers</key><array><string>\(container.xmlEscaped)</string></array>")
+                lines.append("  <key>com.apple.developer.icloud-services</key><array><string>CloudKit</string></array>")
+                lines.append("  <key>\(platform == .mac ? "com.apple.developer.aps-environment" : "aps-environment")</key><string>development</string>")
+            }
             if healthkit == true {
                 lines.append("  <key>com.apple.developer.healthkit</key><true/>")
                 lines.append("  <key>com.apple.developer.healthkit.access</key><array/>")
@@ -457,6 +480,8 @@ enum Template {
         /// and the identifiers background tasks may register under. A dictionary of key to names.
         var lists: [String: [String]] {
             var lists: [String: [String]] = [:]
+            // iCloud's notifications of changes made elsewhere reach the app in the background through this mode.
+            let modes = icloud == true && !modes.contains("remote-notification") ? modes + ["remote-notification"] : modes
             if !modes.isEmpty { lists["UIBackgroundModes"] = modes }
             if !services.isEmpty { lists["NSBonjourServices"] = services }
             if !tasks.isEmpty { lists["BGTaskSchedulerPermittedIdentifiers"] = tasks }
@@ -508,17 +533,18 @@ enum Template {
         }
 
         /// The Info.plist keys a Mac app's capabilities own, each with its value or nil when nothing is declared.
-        var macInfo: [String: Any?] {
+        func macInfo(for project: LampProject) -> [String: Any?] {
             ["CFBundleDocumentTypes": documentTypes.isEmpty ? nil : documentTypes,
-             "LampBackground": background == true ? true : nil]
+             "LampBackground": background == true ? true : nil,
+             "LampICloudContainer": container(for: project)]
         }
 
         /// Declares a Mac app's capabilities in its Info.plist, before it's signed (Store.deploy): written by
         /// Lamp from checked values, never by the build script, and taken back when no longer declared.
-        func apply(to app: URL) {
+        func apply(to app: URL, for project: LampProject) {
             let url = app.appendingPathComponent("Contents/Info.plist")
             guard let info = NSMutableDictionary(contentsOf: url) else { return }
-            for (key, value) in macInfo {
+            for (key, value) in macInfo(for: project) {
                 if let value { info[key] = value } else { info.removeObject(forKey: key) }
             }
             info.write(to: url, atomically: true)
@@ -529,6 +555,11 @@ enum Template {
             lists.sorted { $0.key < $1.key }
                 .map { "  <key>\($0.key)</key><array>" + $0.value.map { "<string>\($0.xmlEscaped)</string>" }.joined() + "</array>" }
                 .joined(separator: "\n")
+        }
+
+        /// The container's name for the app to read, as an Info.plist line, or nothing.
+        func icloudPlistLine(for project: LampProject) -> String {
+            container(for: project).map { "  <key>LampICloudContainer</key><string>\($0.xmlEscaped)</string>" } ?? ""
         }
     }
 
@@ -569,7 +600,7 @@ enum Template {
         let capabilities = Capabilities.load(project)
         var files: [(String, String)] = [
             ("\(project.exe).xcodeproj/project.pbxproj", universal ? universalPbxproj : devicePbxproj),
-            ("App.entitlements", capabilities.entitlementsPlist),
+            ("App.entitlements", capabilities.entitlementsPlist(for: project, platform: .ios)),
             ("\(project.exe).xcodeproj/xcshareddata/xcschemes/\(project.exe).xcscheme", deviceScheme),
             ("Info.plist", deviceInfoPlist),
             ("Assets.xcassets/Contents.json", #"{ "info": { "author": "xcode", "version": 1 } }"#),
@@ -578,11 +609,15 @@ enum Template {
                 : #"{ "images": [ { "idiom": "universal", "platform": "ios", "size": "1024x1024" } ], "info": { "author": "xcode", "version": 1 } }"#),
         ]
         // The Mac half has its own Info.plist, and its icon comes from Lamp when the app is installed (Store.deploy), as every Mac app's does.
-        if universal { files.append(("Info-macOS.plist", universalMacInfoPlist)) }
+        if universal {
+            files.append(("Info-macOS.plist", universalMacInfoPlist))
+            files.append(("App-macOS.entitlements", capabilities.entitlementsPlist(for: project, platform: .mac)))
+        }
         for (path, template) in files {
             let contents = template
                 .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
                 .replacingOccurrences(of: "{{BACKGROUND}}", with: capabilities.backgroundPlistLine)
+                .replacingOccurrences(of: "{{ICLOUD}}", with: capabilities.icloudPlistLine(for: project))
                 .replacingOccurrences(of: "{{EXE}}", with: project.exe)
                 .replacingOccurrences(of: "{{NAME}}", with: project.name)
                 .replacingOccurrences(of: "{{BUNDLE}}", with: universal ? project.bundleID : project.deviceBundleID(team: team))
@@ -671,6 +706,7 @@ enum Template {
       <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
     {{USAGE}}
     {{BACKGROUND}}
+    {{ICLOUD}}
     </dict></plist>
 
     """
@@ -702,7 +738,7 @@ enum Template {
     		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Assets in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
     		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = 14.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = auto; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
-    		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {"ASSETCATALOG_COMPILER_APPICON_NAME[sdk=iphone*]" = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; "INFOPLIST_FILE[sdk=macosx*]" = "Info-macOS.plist"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); "LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = ("$(inherited)", "@executable_path/../Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+    		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {"ASSETCATALOG_COMPILER_APPICON_NAME[sdk=iphone*]" = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "App-macOS.entitlements"; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; "INFOPLIST_FILE[sdk=macosx*]" = "Info-macOS.plist"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); "LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = ("$(inherited)", "@executable_path/../Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
     		A00000000000000000000010 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
     		A0000000000000000000000C /* Build configuration list for PBXNativeTarget */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
     	};
@@ -734,6 +770,7 @@ enum Template {
       <key>NSRemindersFullAccessUsageDescription</key><string>{{NAME}} reads and adds reminders.</string>
       <key>NSContactsUsageDescription</key><string>{{NAME}} looks up people in your contacts.</string>
       <key>NSAppleEventsUsageDescription</key><string>{{NAME}} reads your email and drafts replies through Mail.</string>
+    {{ICLOUD}}
     </dict></plist>
 
     """
@@ -1130,6 +1167,7 @@ enum Template {
     import PDFKit
     import UniformTypeIdentifiers
     import UserNotifications
+    import CloudKit
     @preconcurrency import Vision
     #if os(macOS)
     import AppKit
@@ -3060,6 +3098,301 @@ enum Template {
     }
 
     #endif
+
+
+    // MARK: - iCloud
+
+    /// Keeps the person's data the same on every device signed in to their iCloud account: an app for both
+    /// the Mac and the iPhone shows one list on both, and an iPhone & iPad app the same on each device. Lamp
+    /// signs the app for iCloud when capabilities.json says `{"icloud": true}` (Template.Capabilities writes
+    /// the entitlements and names the container in Info.plist); without that, or with no iCloud account on
+    /// the device, the data stays on the device and `status` says so.
+    ///
+    ///     @StateObject private var notes = LampSync.collection("notes", of: Note.self)
+    ///     notes.items          // [Note]; the view follows changes made here or on another device
+    ///     notes.put(note)      // add, or replace the one with the same id
+    ///     notes.delete(id)
+    ///     LampSync.shared.status   // "Synced with iCloud", or why not, for a settings screen
+    ///
+    /// Each collection is kept on the device in LampStore as well, so the app works offline and before its
+    /// first sync. iCloud's own engine (CKSyncEngine) sends what changed here and brings what changed
+    /// elsewhere, in a zone of the app's own in the person's private database. The same item changed in two
+    /// places at once: the later change wins. An item is a record with its JSON, so adding a property to a
+    /// saved type is safe (decode it with a default) and removing or renaming one is not, as with LampStore.
+    @MainActor
+    final class LampSync: NSObject, ObservableObject, CKSyncEngineDelegate {
+        static let shared = LampSync()
+
+        /// What iCloud is doing for this app, in words for a settings screen.
+        @Published private(set) var status = "Starting iCloud…"
+        /// Whether the app was built for iCloud (capabilities.json) and the device has an account.
+        @Published private(set) var isSyncing = false
+
+        /// The one object for a collection's name, so every view that asks sees the same items.
+        static func collection<T: Codable & Identifiable>(_ name: String, of type: T.Type) -> Collection<T> {
+            if let existing = shared.collections[name] as? Collection<T> { return existing }
+            let collection = Collection<T>(name: name)
+            shared.collections[name] = collection
+            return collection
+        }
+
+        /// A list of one kind of thing, kept here and in iCloud.
+        final class Collection<T: Codable & Identifiable>: ObservableObject, LampSyncedCollection {
+            let name: String
+            @Published private(set) var items: [T] = []
+            private let local: LampStore.Collection<T>
+
+            init(name: String) {
+                self.name = name
+                local = LampStore.collection(LampSync.prefix + name, of: T.self)
+                items = local.all()
+            }
+
+            /// Adds the item, or replaces the one with the same id, here and then everywhere.
+            func put(_ item: T) {
+                local.put(item)
+                replace(item)
+                LampSync.shared.changed(name, id: "\(item.id)", deleted: false)
+            }
+
+            func delete(_ id: T.ID) {
+                local.delete(id)
+                items.removeAll { "\($0.id)" == "\(id)" }
+                LampSync.shared.changed(name, id: "\(id)", deleted: true)
+            }
+
+            func get(_ id: T.ID) -> T? { items.first { "\($0.id)" == "\(id)" } }
+
+            var count: Int { items.count }
+
+            private func replace(_ item: T) {
+                if let index = items.firstIndex(where: { "\($0.id)" == "\(item.id)" }) { items[index] = item } else { items.append(item) }
+            }
+
+            // What the engine needs of a collection whose type it doesn't know.
+            func reload(id: String) {
+                guard let json = LampStore.query("SELECT json FROM forge_items WHERE collection = ? AND id = ?", LampSync.prefix + name, id).first?["json"] as? String,
+                      let data = json.data(using: .utf8), let item = try? LampStore.decoder.decode(T.self, from: data) else { return }
+                replace(item)
+            }
+
+            func forget(id: String) { items.removeAll { "\($0.id)" == id } }
+        }
+
+        // MARK: The engine
+
+        static let prefix = "icloud."
+        private var collections: [String: any LampSyncedCollection] = [:]
+        private var engine: CKSyncEngine?
+        private var container: CKContainer?
+        private let zoneID = CKRecordZone.ID(zoneName: "Lamp", ownerName: CKCurrentUserDefaultName)
+        /// Each record as iCloud last saw it (its system fields, archived), so a change is sent as a change
+        /// to that record and not as a second copy of it.
+        private var known: [String: Data] = [:]
+
+        private override init() {
+            super.init()
+            guard let identifier = Bundle.main.object(forInfoDictionaryKey: "LampICloudContainer") as? String else {
+                status = "Not set up for iCloud: declare {\"icloud\": true} in capabilities.json and build again. The data stays on this device."
+                return
+            }
+            let container = CKContainer(identifier: identifier)
+            self.container = container
+            known = LampStore.load([String: Data].self, from: "icloud.records") ?? [:]
+            let state = LampStore.load(CKSyncEngine.State.Serialization.self, from: "icloud.state")
+            var configuration = CKSyncEngine.Configuration(database: container.privateCloudDatabase, stateSerialization: state, delegate: self)
+            configuration.automaticallySync = true
+            let engine = CKSyncEngine(configuration)
+            self.engine = engine
+            engine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
+            Task {
+                await checkAccount()
+                // Asked for straight away rather than left to the engine's own timing, so a fresh install
+                // shows what's in iCloud as soon as it can.
+                do { try await engine.fetchChanges() } catch { print("LampSync: couldn't fetch from iCloud: \(error)") }
+            }
+        }
+
+        private func checkAccount() async {
+            guard let container else { return }
+            do {
+                let account = try await container.accountStatus()
+                isSyncing = account == .available
+                status = switch account {
+                case .available: "Synced with iCloud"
+                case .noAccount: "Not signed in to iCloud on this device, so the data stays here. Sign in under System Settings to sync it."
+                case .restricted: "iCloud is restricted on this device, so the data stays here."
+                case .temporarilyUnavailable: "iCloud isn't available right now; the data stays here until it is."
+                default: "Couldn't tell whether iCloud is available; the data stays here for now."
+                }
+            } catch {
+                isSyncing = false
+                status = "iCloud isn't reachable: \(error.localizedDescription). The data stays here for now."
+            }
+            print("LampSync: \(status)")
+        }
+
+        /// Something changed here: iCloud is told at its next send.
+        fileprivate func changed(_ collection: String, id: String, deleted: Bool) {
+            guard let engine else { return }
+            let recordID = CKRecord.ID(recordName: Self.recordName(collection, id), zoneID: zoneID)
+            engine.state.add(pendingRecordZoneChanges: [deleted ? .deleteRecord(recordID) : .saveRecord(recordID)])
+            // Sent now, not at the engine's leisure: the other device should see it within moments.
+            Task { do { try await engine.sendChanges() } catch { print("LampSync: couldn't send to iCloud: \(error)") } }
+        }
+
+        /// A record is named by its collection and its id, so one it comes back to can be found.
+        static func recordName(_ collection: String, _ id: String) -> String { collection + "|" + id }
+        static func parse(recordName: String) -> (collection: String, id: String)? {
+            guard let bar = recordName.firstIndex(of: "|") else { return nil }
+            return (String(recordName[..<bar]), String(recordName[recordName.index(after: bar)...]))
+        }
+
+        /// Everything kept here goes up again: after a sign-in, or when the zone in iCloud was deleted.
+        private func resendEverything() {
+            guard let engine else { return }
+            known = [:]
+            LampStore.save(known, to: "icloud.records")
+            engine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
+            let rows = LampStore.query("SELECT collection, id FROM forge_items WHERE collection LIKE ?", Self.prefix + "%")
+            let changes = rows.compactMap { row -> CKSyncEngine.PendingRecordZoneChange? in
+                guard let collection = row["collection"] as? String, let id = row["id"] as? String else { return nil }
+                return .saveRecord(CKRecord.ID(recordName: Self.recordName(String(collection.dropFirst(Self.prefix.count)), id), zoneID: zoneID))
+            }
+            engine.state.add(pendingRecordZoneChanges: changes)
+        }
+
+        /// The record to send for a change: the item's JSON on the record iCloud knows, or on a new one, with
+        /// the time the item was changed here, so a conflict is settled by when the edits were made and not
+        /// by when they happened to be sent.
+        private func record(for recordID: CKRecord.ID) -> CKRecord? {
+            guard let (collection, id) = Self.parse(recordName: recordID.recordName),
+                  let row = LampStore.query("SELECT json, updated FROM forge_items WHERE collection = ? AND id = ?", Self.prefix + collection, id).first,
+                  let json = row["json"] as? String
+            else { return nil }   // deleted here since: nothing to send
+            let modified = (row["updated"] as? Double).map { Date(timeIntervalSince1970: $0) } ?? Date()
+            let record: CKRecord
+            if let data = known[recordID.recordName], let unarchiver = try? NSKeyedUnarchiver(forReadingFrom: data),
+               let kept = CKRecord(coder: unarchiver) {
+                record = kept
+            } else {
+                record = CKRecord(recordType: "LampItem", recordID: recordID)
+            }
+            record["collection"] = collection as CKRecordValue
+            record["json"] = json as CKRecordValue
+            record["modified"] = modified as CKRecordValue
+            return record
+        }
+
+        /// A record from iCloud, taken as this device's copy of the item, unless this device has a newer
+        /// edit of it still to be sent: that one stays, and goes up as a change to the record iCloud has.
+        private func apply(_ record: CKRecord) {
+            guard let (collection, id) = Self.parse(recordName: record.recordID.recordName),
+                  let json = record["json"] as? String else { return }
+            let theirs = record["modified"] as? Date ?? Date()
+            if let engine, engine.state.pendingRecordZoneChanges.contains(.saveRecord(record.recordID)),
+               let updated = LampStore.query("SELECT updated FROM forge_items WHERE collection = ? AND id = ?", Self.prefix + collection, id).first?["updated"] as? Double,
+               Date(timeIntervalSince1970: updated) > theirs {
+                remember(record)
+                return
+            }
+            LampStore.execute("INSERT OR REPLACE INTO forge_items (collection, id, json, updated) VALUES (?, ?, ?, ?)",
+                              Self.prefix + collection, id, json, theirs.timeIntervalSince1970)
+            collections[collection]?.reload(id: id)
+            remember(record)
+        }
+
+        private func remove(_ recordID: CKRecord.ID) {
+            guard let (collection, id) = Self.parse(recordName: recordID.recordName) else { return }
+            LampStore.execute("DELETE FROM forge_items WHERE collection = ? AND id = ?", Self.prefix + collection, id)
+            collections[collection]?.forget(id: id)
+            known[recordID.recordName] = nil
+        }
+
+        private func remember(_ record: CKRecord) {
+            let archiver = NSKeyedArchiver(requiringSecureCoding: true)
+            record.encodeSystemFields(with: archiver)
+            known[record.recordID.recordName] = archiver.encodedData
+        }
+
+        // MARK: CKSyncEngineDelegate
+
+        func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
+            switch event {
+            case .stateUpdate(let update):
+                LampStore.save(update.stateSerialization, to: "icloud.state")
+            case .accountChange(let change):
+                switch change.changeType {
+                case .signIn: resendEverything()
+                case .signOut, .switchAccounts:
+                    // The data stays, as this device's; the next account gets it sent afresh.
+                    known = [:]
+                    LampStore.save(known, to: "icloud.records")
+                @unknown default: break
+                }
+                await checkAccount()
+            case .fetchedDatabaseChanges(let changes):
+                // The zone deleted from iCloud (the person cleared the app's data there): what's here goes up again.
+                if changes.deletions.contains(where: { $0.zoneID == zoneID }) { resendEverything() }
+            case .fetchedRecordZoneChanges(let changes):
+                for modification in changes.modifications { apply(modification.record) }
+                for deletion in changes.deletions { remove(deletion.recordID) }
+                LampStore.save(known, to: "icloud.records")
+            case .sentDatabaseChanges(let sent):
+                for (zone, error) in sent.failedZoneSaves.map({ ($0.zone.zoneID.zoneName, $0.error) }) { print("LampSync: couldn't make the zone \(zone) in iCloud: \(error)") }
+            case .sentRecordZoneChanges(let sent):
+                for record in sent.savedRecords { remember(record) }
+                for failure in sent.failedRecordSaves {
+                    let recordID = failure.record.recordID
+                    if failure.error.code != .serverRecordChanged { print("LampSync: couldn't save \(recordID.recordName) to iCloud: \(failure.error)") }
+                    switch failure.error.code {
+                    case .serverRecordChanged:
+                        // Changed elsewhere meanwhile: the later change wins, and the loser is told.
+                        guard let server = failure.error.serverRecord else { break }
+                        let mine = failure.record["modified"] as? Date ?? .distantPast
+                        let theirs = server["modified"] as? Date ?? .distantPast
+                        if mine > theirs {
+                            server["json"] = failure.record["json"]
+                            server["collection"] = failure.record["collection"]
+                            server["modified"] = mine as CKRecordValue
+                            remember(server)
+                            syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
+                        } else {
+                            apply(server)
+                        }
+                    case .zoneNotFound:
+                        syncEngine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
+                        syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
+                    case .unknownItem:
+                        // iCloud no longer has the record it was a change to: sent again as a new one.
+                        known[recordID.recordName] = nil
+                        syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
+                    default: break
+                    }
+                }
+                for recordID in sent.deletedRecordIDs { known[recordID.recordName] = nil }
+                LampStore.save(known, to: "icloud.records")
+            default:
+                break
+            }
+        }
+
+        func nextRecordZoneChangeBatch(_ context: CKSyncEngine.SendChangesContext, syncEngine: CKSyncEngine) async -> CKSyncEngine.RecordZoneChangeBatch? {
+            let scope = context.options.scope
+            let changes = syncEngine.state.pendingRecordZoneChanges.filter { scope.contains($0) }
+            guard !changes.isEmpty else { return nil }
+            return await CKSyncEngine.RecordZoneChangeBatch(pendingChanges: changes) { recordID in
+                await self.record(for: recordID)
+            }
+        }
+    }
+
+    /// A collection as the engine sees it, whatever its items' type.
+    @MainActor
+    protocol LampSyncedCollection: AnyObject {
+        func reload(id: String)
+        func forget(id: String)
+    }
 
     /// The app's own files, from its Assets/ folder, bundled inside it (Contents/Resources/Assets).
     ///

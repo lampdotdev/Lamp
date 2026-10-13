@@ -3512,7 +3512,13 @@ final class Store: ObservableObject {
             }
         }
         let entitlements = project.dir.appendingPathComponent(".lamp/entitlements.plist")
-        try? capabilities.entitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8)
+        try? capabilities.entitlementsPlist(for: project, platform: .ios).write(to: entitlements, atomically: true, encoding: .utf8)
+        // The container's name, for LampSync to read; taken back when no longer declared.
+        if let container = capabilities.container(for: project) {
+            script += "plutil -replace LampICloudContainer -string '\(container.replacingOccurrences(of: "'", with: "'\\''"))' \"$P\"\n"
+        } else {
+            script += "{ plutil -remove LampICloudContainer \"$P\" 2>/dev/null || true; }\n"
+        }
         // iOS reads icons by name and scale from the bundle itself when told to in Info.plist: the home screen
         // sizes for iPhone (60pt at 2x and 3x) and iPad (76pt and 83.5pt at 2x), all cut from the one square.
         if fm.fileExists(atPath: Icons.squareURL(project).path) {
@@ -3607,7 +3613,7 @@ final class Store: ObservableObject {
         }
         // What the agent declared in capabilities.json, as the simulator's bundle gets its own (finishSimulatorBundle).
         let capabilities = Template.Capabilities.load(project)
-        capabilities.apply(to: project.builtURL)
+        capabilities.apply(to: project.builtURL, for: project)
         // Told once: from now on the app opens at login and keeps running, which is the person's to undo.
         let told = project.dir.appendingPathComponent(".lamp/background-told")
         if capabilities.background == true, !FileManager.default.fileExists(atPath: told.path) {
