@@ -44,6 +44,13 @@ final class NoteReceiptTests: XCTestCase {
         XCTAssertTrue(second.takenBack(from: afterFirstUndo, rejected: Set(first.added)).isEmpty)
     }
 
+    func testUndoLeavesALineThePersonPutBackThemselves() {
+        // A line is taken back, then the person writes it into the notes again; undoing another save leaves it.
+        let other = NoteReceipt(about: "you", before: Memory.Notes(), after: Memory.Notes(summary: "How apps should look", text: "- Dark backgrounds"))
+        let now = Memory.Notes(summary: "Look and sound", text: "- Dark backgrounds\n- No sounds")
+        XCTAssertEqual(NoteReceipt.lines(other.takenBack(from: now, rejected: ["No sounds"]).text), ["No sounds"])
+    }
+
     func testEachEngineIsToldWhatWasTakenBack() {
         var undone = Memory.Undone()
         undone.add(["No sounds"], about: "you", for: ["pi", "codex"])

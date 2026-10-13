@@ -34,12 +34,15 @@ struct NoteReceipt: Codable, Equatable {
     /// were. When something has (a later save, the person's own edit in Settings), only this save's lines are
     /// undone: what it added goes, what it removed comes back, and the rest stays.
     /// `rejected` are lines the person already took back on other receipts: a later save may have replaced
-    /// one of them, and undoing that save must not bring it back.
+    /// one of them, and undoing that save must not bring it back. One that is in the notes now stays.
     func takenBack(from current: Memory.Notes, rejected: Set<String> = []) -> Memory.Notes {
         let notes = current == after ? before : merged(into: current)
-        guard !rejected.isEmpty else { return notes }
-        let kept = notes.text.components(separatedBy: .newlines).filter { !rejected.contains(Self.plain($0)) }
-        guard kept.count < notes.text.components(separatedBy: .newlines).count else { return notes }
+        // Only what this Undo would bring back: a line that is in the notes now is there by a later choice.
+        let returning = rejected.subtracting(Self.lines(current.text))
+        guard !returning.isEmpty else { return notes }
+        let all = notes.text.components(separatedBy: .newlines)
+        let kept = all.filter { !returning.contains(Self.plain($0)) }
+        guard kept.count < all.count else { return notes }
         let text = kept.joined(separator: "\n").trimmed
         return text.isEmpty ? Memory.Notes() : Memory.Notes(summary: notes.summary, text: text)
     }
