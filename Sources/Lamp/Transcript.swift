@@ -452,6 +452,8 @@ struct LogRow: View, Equatable {
             }
         case .needsKey, .offer:
             if let offer = line.setupOffer { SetupCard(offer: offer, reason: line.text, dir: dir) }
+        case .noted:
+            NoteCard(line: line, dir: dir)
         case .drawIcon:
             if let project = Store.shared.projects.first(where: { $0.dir == dir }) { DrawIconLine(project: project) }
         case .widget:

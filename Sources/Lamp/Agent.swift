@@ -145,8 +145,13 @@ enum Agent {
     - Lamp keeps notes about the person and about this app between requests (`read_notes`, `save_notes`), and \
     tells you in a line what they cover. Read them before you build a new app or a new screen, and whenever \
     a request touches what they cover; not otherwise, since reading costs the person. Follow them, but what \
-    the person asks now wins: do that and correct the note. Don't mention them unless asked: the person sees \
-    them in Lamp's Settings, under Memory.
+    the person asks now wins: do that and correct the note. Before you finish each request, ask yourself \
+    whether it showed you something that should hold next time: they corrected you, said what they like or \
+    don't, turned something down, or put it as general (“in anything I use”, “I can't stand…”). If so, save \
+    it then; they needn't say "remember". How to go about this one request (“don't test it”, “be quick”) is \
+    not that: it is an instruction for now, not a taste, and isn't noted about them or the app. If nothing \
+    lasting came up, save nothing. \
+    Lamp shows the person in the chat what you noted, so don't mention the notes yourself unless asked.
     """
 
     /// pi ships inside Lamp.app (see build.sh).
@@ -418,6 +423,30 @@ enum Agent {
         without losing anything.
         """
 
+        /// Where an app works comes before what kind it is: a wish about something the user already has in front
+        /// of them wants no window to bring it to, and one that waits for something wants no window at all. Without
+        /// this the agent makes a window for everything, and the person has one more app to open.
+        static let shapes = """
+         Before the kind, decide where the app works. When the wish acts on something the user already has in \
+        front of them in another app (the text they selected, the post or message they're writing there, the file or \
+        page they're looking at), don't make a window to paste or drop it into: make a utility that works where \
+        they are. A `LampHotKey` \
+        takes the selection: read it from the focused element through Accessibility (kAXFocusedUIElementAttribute, \
+        then kAXSelectedTextAttribute; `LampPermissions` asks for Accessibility), and when that gives nothing, send \
+        ⌘C and read the clipboard, putting back what was on it. Show the result in a small floating panel that \
+        doesn't take focus from their app (an NSPanel with `.nonactivatingPanel` at `.floating` level, near the \
+        mouse) with the one or two actions that make sense (put it back in place by pasting, copy, save), or put it \
+        straight back in place when that's what they asked for; the menu bar icon holds the settings, where the \
+        shortcut can be changed. When the wish waits or watches for something (a folder, a time, the calendar, a \
+        site, the clipboard), it's a utility too: it works in the background and reaches the user with a \
+        notification, never a window they must open to check. A window is for what the user brings things to and \
+        comes back to: writing, collecting, browsing, playing. Collecting from wherever the user finds things \
+        (recipes from any website, articles, quotes, products) is both: the window to keep and find them in, and a \
+        way to save from where they are without coming to the window: a hotkey that takes the page or selection in \
+        front of them (the current tab's address from Safari, Chrome or Arc through AppleScript, or the selected \
+        text) and saves it with a brief floating confirmation, besides dropping or pasting a link.
+        """
+
         /// What kind of app it is decides how it looks: Notes, Weather and Breathe are all Apple's and look
         /// nothing alike. The agent picks a kind once and keeps it in APP.md, so the look holds across requests.
         /// design/app-archetypes/README.md is the reasoning behind each.
@@ -456,7 +485,7 @@ enum Agent {
             user asks for a different feel or the app becomes something else. Never ask them which kind, and never \
             name kinds to them. A style they gave wins over the kind's look but keeps its structure: a "cozy" water \
             tracker is a companion app, made cozy. Every kind feels like Apple made it, following the \
-            \(mac ? "macOS" : "iOS") Human Interface Guidelines.
+            \(mac ? "macOS" : "iOS") Human Interface Guidelines.\(mac ? shapes : "")
               • Tool (notes, inventory, lists, logs, a CRM: keeping and finding things): the base design below, exactly. \
             Dense and calm: system colors, the accent color, SF Symbols, no illustration. It's judged on how fast \
             things are found, added and changed.

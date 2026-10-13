@@ -91,9 +91,10 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// `needsKey` is a setup offer from before offers named their capability: it was always about pictures.
     /// `drawIcon` offers to draw the app's icon in Image Playground; its text is the design it's for (`Icons.artKey`).
     /// `widget` is the card of an app that has a widget (`WidgetCard`): how to add it, then that it's there.
+    /// `noted` is the receipt for a save of Lamp's notes (`NoteCard`).
     /// `ask` and `result` are the agent's own cards (`Talk`): questions to click through, and what a request
     /// made with its guesses as buttons. Their text is the same in plain words.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, drawIcon, widget, ask, result }
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -107,6 +108,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var ask: Talk.Ask? = nil          // the agent's questions, and what was clicked
     var fromCard: Bool? = nil         // for a request: it was clicked on the agent's card, which shows it
     var result: Talk.Result? = nil    // what a request made, as the agent put it
+    var noted: NoteReceipt? = nil     // what a save of Lamp's notes changed, with Undo
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -552,8 +554,9 @@ final class Store: ObservableObject {
     }
 
     func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil,
-             offer: SetupOffer? = nil) {
-        logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone, offer: offer))
+             offer: SetupOffer? = nil, noted: NoteReceipt? = nil) {
+        logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone,
+                                                    offer: offer, noted: noted))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
         saveChat(project)
     }
@@ -2524,7 +2527,7 @@ final class Store: ObservableObject {
             case "list_versions": (status, answer) = await versions("", [:], of: project)
             case "name_version": (status, answer) = await versions("/name", arguments, of: project)
             case "restore_version": (status, answer) = await versions("/restore", arguments, of: project)
-            case "read_notes", "save_notes": (status, answer) = Memory.call(name, arguments, for: project)
+            case "read_notes", "save_notes": (status, answer) = notes(name, arguments, for: project)
             case "make_art": (status, answer) = await makeArt(arguments, for: project)
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "ask", "show_result": (status, answer) = talk(name, arguments, for: project)
@@ -2675,6 +2678,41 @@ final class Store: ObservableObject {
         let why = (arguments["why"] as? String)?.trimmed ?? ""
         guard !why.isEmpty else { return (400, ["error": "Say in `why` what the person would get."]) }
         return (200, ["text": offerSetup(project, SetupOffer(capability: capability, away: away ? true : nil), because: why, fromAgent: true)])
+    }
+
+    /// `read_notes` and `save_notes`, for every engine. A save that changed what the notes say leaves a
+    /// receipt in the chat (`NoteReceipt`): what Lamp keeps about someone is shown to them when it's kept.
+    private func notes(_ tool: String, _ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
+        let place = tool == "save_notes" ? Memory.place(arguments, project) : nil
+        let before = place.map(Memory.read)
+        let (status, answer) = Memory.call(tool, arguments, for: project)
+        guard status == 200, let place, let before else { return (status, answer) }
+        let receipt = NoteReceipt(about: place.name, before: before, after: Memory.read(place))
+        guard !receipt.isEmpty else { return (status, answer) }
+        log(project, .noted, "", noted: receipt)
+        return (200, ["text": "Saved. Lamp showed the person what you noted, in the chat: don't repeat it in your reply."])
+    }
+
+    /// Undo on a receipt: takes that save back out of the notes, and has the agent told so it isn't noted
+    /// again. Returns what went wrong, in words for the person.
+    func undoNote(_ line: UUID, in project: LampProject) -> String? {
+        guard let index = logs[project.id]?.firstIndex(where: { $0.id == line }),
+              var receipt = logs[project.id]?[index].noted, receipt.undone != true else { return nil }
+        let place: Memory.Place = receipt.about == "you" ? .you : .app(project)
+        do {
+            // What was taken back on other receipts stays out: this save may have replaced one of those lines.
+            // The person's notes are shared by every app, so any chat may hold such a receipt.
+            let chats = receipt.about == "you" ? Array(logs.values) : [logs[project.id] ?? []]
+            let rejected = chats.joined().compactMap(\.noted).filter { $0.undone == true && $0.about == receipt.about }.flatMap(\.added)
+            try Memory.save(receipt.takenBack(from: Memory.read(place), rejected: Set(rejected)), in: place)
+        } catch {
+            return "Lamp couldn't take that back. Try again, or change it in Settings."
+        }
+        Memory.tookBack(receipt.added, from: place, in: project)
+        receipt.undone = true
+        logs[project.id]?[index].noted = receipt
+        saveChat(project)
+        return nil
     }
 
     /// `make_art`: a picture for the app to show, painted in its icon's style and saved in Assets/, the folder
@@ -3989,7 +4027,7 @@ final class Store: ObservableObject {
         }
         if route == "/agent/memory" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
-            return Memory.call(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
+            return notes(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/art" {
             return await makeArt((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
