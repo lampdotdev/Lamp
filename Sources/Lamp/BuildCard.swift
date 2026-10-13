@@ -18,6 +18,9 @@ struct TurnProgress {
     var finished: Date?
     /// The turn ended without a working app.
     var failed = false
+    /// The agent has asked its questions: nothing is built until they're answered. Set as they arrive, so
+    /// the card is already at its short size under them.
+    var asking = false
     /// The app was built, but couldn't be put in place or opened: the turn made its change, and there is
     /// nothing for the person to use yet.
     var unopened = false
@@ -88,6 +91,12 @@ struct TurnProgress {
         }
     }
 
+    /// The turn is over with nothing built yet: the agent asked first.
+    mutating func wait() {
+        finished = Date()
+        asking = true
+    }
+
     /// How a finished turn ended, for the line under the app's name.
     enum Ending { case ready, didNotFinish, didNotOpen }
 
@@ -98,6 +107,7 @@ struct TurnProgress {
 
     /// The turn is over. When the app was built and opened, everything planned is done.
     mutating func finish(worked: Bool, opened: Bool = true) {
+        asking = false   // it asked and then built anyway
         finished = Date()
         failed = !worked
         unopened = !opened
@@ -133,7 +143,8 @@ struct TurnProgress {
         case .remember: return "Taking notes for next time"
         case .art: return "Painting a picture"
         case .offer: return "Suggesting a better setup"
-        case .ask: return "Preparing choices"
+        case .ask: return "Asking you"
+        case .result: return "Wrapping up"
         case .delegate, .other: return "Working on your app"
         }
     }
@@ -202,10 +213,14 @@ struct BuildCard: View {
                     status.font(.body).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
-                Elapsed(from: progress.started, to: progress.finished)
-                    .font(.callout).foregroundStyle(.secondary)
+                if !progress.asking {
+                    Elapsed(from: progress.started, to: progress.finished)
+                        .font(.callout).foregroundStyle(.secondary)
+                }
             }
             .padding(14)
+            // Nothing is being built while the agent waits for an answer: the card is just the app.
+            if !progress.asking {
             Divider()
             Group {
                 if let screenshot = progress.screenshot {
@@ -218,6 +233,7 @@ struct BuildCard: View {
                 }
             }
             .padding(14)
+            }
         }
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
@@ -232,7 +248,9 @@ struct BuildCard: View {
     /// What's happening right now, under the app's name; once it's over, how it ended.
     @ViewBuilder
     private var status: some View {
-        if progress.finished == nil {
+        if progress.asking {
+            Text("A quick question first")
+        } else if progress.finished == nil {
             TimelineView(.periodic(from: progress.started, by: 1)) { context in
                 Text(progress.activity(at: context.date))
             }

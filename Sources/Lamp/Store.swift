@@ -87,54 +87,14 @@ struct AppUsage: Codable {
     var totalCost: Double { cost + (agentCost ?? 0) }
 }
 
-/// A choice the builder puts in the chat with `ask`. With no `chosen` it is a question to answer before
-/// building; with one it records a choice the builder made and lets the person switch it.
-struct AskQuestion: Codable, Equatable {
-    var question: String
-    var options: [String]
-    var chosen: String?
-}
-
-/// The persisted state of an ask card. `answers` is filled when its controls send a message; `dismissed`
-/// covers a question answered in the composer, whose user message immediately below is the record.
-struct AskCardPayload: Codable, Equatable {
-    var questions: [AskQuestion]
-    var answers: [String?]? = nil
-    var dismissed: Bool? = nil
-
-    var isAssumption: Bool { questions.allSatisfy { $0.chosen != nil } }
-    var isReadOnly: Bool { dismissed == true || answers != nil }
-
-    static func answerMessage(questions: [AskQuestion], answers: [String]) -> String {
-        zip(questions, answers).map { question, answer in
-            let mark = question.question.last.map { ".?!".contains($0) } == true ? "" : "?"
-            let answerMark = answer.last.map { ".?!".contains($0) } == true ? "" : "."
-            return "\(question.question)\(mark) \(answer)\(answerMark)"
-        }.joined(separator: " / ")
-    }
-
-    static func assumptionMessage(question: AskQuestion, answer: String) -> String {
-        func fragment(_ text: String) -> String {
-            guard text.count > 1, let first = text.first, first.isUppercase else { return text }
-            let second = text[text.index(after: text.startIndex)]
-            guard second.isLowercase || second.isWhitespace else { return text }
-            return first.lowercased() + text.dropFirst()
-        }
-        let mark = question.question.last.map { ".?!".contains($0) } == true ? "" : "?"
-        return "\(question.question)\(mark) Use \(fragment(answer)) instead of \(fragment(question.chosen ?? "the current choice"))."
-    }
-
-    mutating func reopen() {
-        answers = nil
-        dismissed = nil
-    }
-}
-
 struct LogLine: Identifiable, Codable, Equatable {
     /// `needsKey` is a setup offer from before offers named their capability: it was always about pictures.
     /// `drawIcon` offers to draw the app's icon in Image Playground; its text is the design it's for (`Icons.artKey`).
     /// `widget` is the card of an app that has a widget (`WidgetCard`): how to add it, then that it's there.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, ask, noted, drawIcon, widget }
+    /// `noted` is the receipt for a save of Lamp's notes (`NoteCard`).
+    /// `ask` and `result` are the agent's own cards (`Talk`): questions to click through, and what a request
+    /// made with its guesses as buttons. Their text is the same in plain words.
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -145,7 +105,9 @@ struct LogLine: Identifiable, Codable, Equatable {
     var tookBack: [String]? = nil      // …and every request that left the chat for it, oldest first
     var retryPhone: String? = nil     // a phone install failure: retry this destination without the agent
     var offer: SetupOffer? = nil      // a setup offer: what it's about (its text is the reason)
-    var ask: AskCardPayload? = nil    // questions or assumptions shown as choices in the chat
+    var ask: Talk.Ask? = nil          // the agent's questions, and what was clicked
+    var fromCard: Bool? = nil         // for a request: it was clicked on the agent's card, which shows it
+    var result: Talk.Result? = nil    // what a request made, as the agent put it
     var noted: NoteReceipt? = nil     // what a save of Lamp's notes changed, with Undo
 
     /// The offer a setup card is about, for this line and for the older key card.
@@ -213,14 +175,33 @@ struct QueuedMessage: Identifiable {
     let id = UUID()
     let text: String
     var attachments: [URL] = []
+    /// The agent's card these answers were clicked on. The card shows them, so the chat doesn't say them
+    /// again, and taking the message back before it's sent opens the card again (`Talk.unqueue`).
+    var card: UUID? = nil
     /// Files already in the app's Attachments folder: those of a request that's sent again.
     var kept: [String] = []
     /// The request this one takes the place of, when it's one sent again in other words.
     var replaces: String? = nil
     /// Every request that left the chat when this one was sent, oldest first.
     var tookBack: [String] = []
-    /// The ask card this message answers. Removing the queued message reopens that card.
-    var ask: UUID? = nil
+}
+
+extension QueuedMessage {
+    /// A request waiting for setup, as it's kept across a relaunch. The card it answers is kept with it:
+    /// without it the answer would come back as a message of its own under a card that already shows it,
+    /// and taking it back would no longer open the card again.
+    var saved: [String: Any] {
+        var saved: [String: Any] = ["text": text, "attachments": attachments.map(\.path)]
+        if let card { saved["card"] = card.uuidString }
+        return saved
+    }
+
+    /// `ask` is what the card was called in a request kept by an earlier Lamp: read, so that an answer
+    /// still waiting from then can be taken back and its card opens again.
+    init(saved: [String: Any], attachments: [URL]) {
+        self.init(text: saved["text"] as? String ?? "", attachments: attachments,
+                  card: ((saved["card"] ?? saved["ask"]) as? String).flatMap(UUID.init(uuidString:)))
+    }
 }
 
 @MainActor
@@ -337,6 +318,11 @@ final class Store: ObservableObject {
         var approving = false               // between the queue check and the approval card
         var look = Look()                   // what the agent's look_at_app has done
         var pendingName: String?            // a name the agent gave the version this request makes
+        var pendingResult: Talk.Result?     // the agent's card for what this request made, shown once it's open
+        /// The agent put its questions to the person this turn: the turn is over, whatever the agent does next.
+        var asked = false
+        /// Lamp ended the agent because it went on working past its own questions. Not a stop and not a failure.
+        var endedOnQuestions = false
         var artCost = 0.0                   // what make_art's pictures cost, for the turn's summary
         var request: String?                // the user's words, for the command classifiers
         var claudeSession: String?          // Claude Code's conversation, as its own output says (Privacy.isOwnOutput)
@@ -568,9 +554,9 @@ final class Store: ObservableObject {
     }
 
     func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil,
-             offer: SetupOffer? = nil, ask: AskCardPayload? = nil, noted: NoteReceipt? = nil) {
+             offer: SetupOffer? = nil, noted: NoteReceipt? = nil) {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone,
-                                                    offer: offer, ask: ask, noted: noted))
+                                                    offer: offer, noted: noted))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
         saveChat(project)
     }
@@ -1488,20 +1474,20 @@ final class Store: ObservableObject {
 
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
     /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
-    func send(_ prompt: String, attachments: [URL] = [], to project: LampProject, answering ask: UUID? = nil) {
-        // A composer message is the answer to an open question card, even if it has to wait behind the
-        // current turn. Fold the card as soon as Send is pressed rather than when that queued turn starts.
-        var answeredAsk = ask
-        if answeredAsk == nil,
-           let index = logs[project.id]?.lastIndex(where: { $0.kind == .ask && $0.ask?.isAssumption == false && $0.ask?.isReadOnly == false }) {
-            logs[project.id]?[index].ask?.dismissed = true
-            answeredAsk = logs[project.id]?[index].id
-            saveChat(project)
-        }
+    func send(_ prompt: String, attachments: [URL] = [], answering card: UUID? = nil, to project: LampProject) {
         // Waiting for setup can outlast this run, and the files may be temporary (a pasted screenshot):
         // keep copies, so the request still has them after a relaunch.
         let files = setup.ready ? attachments : keepForLater(attachments)
-        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, ask: answeredAsk))
+        // Typed while a card waits, the message is its answer, even if it has to wait behind the agent's
+        // turn: the card folds as it's sent, so it can't be answered a second time by a click meanwhile.
+        var card = card
+        if card == nil, let open = Talk.open(in: logs[project.id] ?? []),
+           let index = logs[project.id]?.firstIndex(where: { $0.id == open.id }) {
+            logs[project.id]?[index].ask?.typed = true
+            card = open.id
+            saveChat(project)
+        }
+        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card))
         startQueued(project)
         saveWaiting()
     }
@@ -1525,11 +1511,7 @@ final class Store: ObservableObject {
 
     private func saveWaiting() {
         let waiting = setup.ready ? [:] : queued.filter { !$0.value.isEmpty }.mapValues { messages in
-            messages.map { message in
-                var saved = ["text": message.text, "attachments": message.attachments.map(\.path)] as [String: Any]
-                if let ask = message.ask { saved["ask"] = ask.uuidString }
-                return saved
-            }
+            messages.map(\.saved)
         }
         if waiting.isEmpty {
             UserDefaults.standard.removeObject(forKey: Self.waitingKey)
@@ -1547,8 +1529,7 @@ final class Store: ObservableObject {
                 queued[id] = messages.map { message in
                     let files = (message["attachments"] as? [String] ?? []).filter { FileManager.default.fileExists(atPath: $0) }
                     kept.formUnion(files.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path })
-                    let ask = (message["ask"] as? String).flatMap(UUID.init(uuidString:))
-                    return QueuedMessage(text: message["text"] as? String ?? "", attachments: files.map(URL.init(fileURLWithPath:)), ask: ask)
+                    return QueuedMessage(saved: message, attachments: files.map(URL.init(fileURLWithPath:)))
                 }
             }
         }
@@ -1594,9 +1575,13 @@ final class Store: ObservableObject {
     }
 
     func unqueue(_ message: QueuedMessage, from project: LampProject) {
-        queued[project.id]?.removeAll { $0.id == message.id }
-        if let ask = message.ask, let index = logs[project.id]?.firstIndex(where: { $0.id == ask }) {
-            logs[project.id]?[index].ask?.reopen()
+        // A first request waiting for setup has no chat yet: it can still be taken back.
+        guard var waiting = queued[project.id] else { return }
+        var lines = logs[project.id] ?? []
+        let reopened = Talk.unqueue(message, from: &waiting, lines: &lines)
+        queued[project.id] = waiting
+        if reopened {
+            logs[project.id] = lines
             saveChat(project)
         }
         saveWaiting()
@@ -1649,6 +1634,10 @@ final class Store: ObservableObject {
                 }
                 if newApp && result.end != .replied {
                     progress[project.id]?.finish(worked: worked && turns[project.id]?.phoneReady != false, opened: !owner.didNotOpen)
+                } else if newApp, Talk.open(in: logs[project.id] ?? []) != nil {
+                    // The agent asked through its card: the app's card stays where it is while the person
+                    // answers, so the build that follows starts on it and nothing in the chat moves.
+                    progress[project.id]?.wait()
                 } else {
                     progress[project.id] = nil
                 }
@@ -1799,6 +1788,10 @@ final class Store: ObservableObject {
         for message in messages {
             let names = message.kept + Attachments.save(message.attachments, to: project)
             log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
+            if let card = message.card, Talk.shows(logs[project.id]?.first { $0.id == card }), let last = logs[project.id]?.indices.last {
+                logs[project.id]?[last].fromCard = true
+                saveChat(project)
+            }
             if message.replaces != nil || !message.tookBack.isEmpty, let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].replaced = message.replaces
                 logs[project.id]?[last].tookBack = message.tookBack.isEmpty ? nil : message.tookBack
@@ -1850,6 +1843,12 @@ final class Store: ObservableObject {
         guard ran else {
             return TurnResult(end: .failed, watched: isWatching(project.id))
         }
+        // The agent asked: nothing is built or saved in this turn, even if a file was written in the moment
+        // before Lamp ended it. That holds whether or not the card still waits: an answer clicked while the
+        // agent was finishing is only in line, and the agent hasn't had it. Its turn picks up from here.
+        if owner.asked {
+            return TurnResult(end: .replied, watched: isWatching(project.id))
+        }
         // A new app the agent didn't touch: it only replied (say, with questions about a vague request).
         // There's nothing worth building or opening yet; the answers start the first build.
         if !hasVersions(project), await !agentChangedFiles(project) {
@@ -1860,7 +1859,9 @@ final class Store: ObservableObject {
         try? Template.writeSupport(for: project)
         let changed = Runtime.sourcesChanged(project)
         if changed {
-            guard await buildFixingErrors(project) else { return TurnResult(end: .failed, watched: isWatching(project.id)) }
+            guard await buildFixingErrors(project) else {
+                return TurnResult(end: owner.asked ? .replied : .failed, watched: isWatching(project.id))
+            }
         }
         // Opening the app brings it in front of Lamp, so whether the user was watching is decided first.
         let watched = isWatching(project.id)
@@ -1895,8 +1896,12 @@ final class Store: ObservableObject {
         for _ in 0..<2 where crash != nil {
             log(project, .status, "Fixing the crash…")
             guard await runAgent("The app builds, but it quit right after launching. Find the cause and fix it.\n\n\(crash!)",
-                                 on: project),
-                  await buildFixingErrors(project) else { return TurnResult(end: .failed, watched: watched) }
+                                 on: project) else { return TurnResult(end: .failed, watched: watched) }
+            // It asked instead of fixing: the turn waits for the answer here, as it does after any question.
+            if owner.asked { return TurnResult(end: .replied, watched: watched) }
+            guard await buildFixingErrors(project) else {
+                return TurnResult(end: owner.asked ? .replied : .failed, watched: watched)
+            }
             let commit = committed ? "-q --amend --no-edit" : "-qm 'Fix a crash on launch'"
             switch await Versions.commitAll(commit, in: project.dir) {
             case .saved: (committed, unsaved) = (true, false)
@@ -1925,6 +1930,17 @@ final class Store: ObservableObject {
             versionsRevision += 1
         }
         let failed = crash != nil || owner.stopped || owner.phoneReady == false
+        // Not over an app that couldn't be put in place or opened either: that isn't a failed turn, but the
+        // card would say it's ready next to the line saying it didn't open.
+        if !failed, edited, !owner.didNotOpen, var result = owner.pendingResult {
+            result.version = await Versions.head(project)
+            // The card is the word that it's ready: the line saying so just above it would say it twice.
+            if let last = logs[project.id]?.last, last.kind == .status, last.text == "\(project.name) is ready" {
+                logs[project.id]?.removeLast()
+            }
+            logs[project.id, default: []].append(LogLine(kind: .result, text: result.text, result: result))
+            saveChat(project)
+        }
         return TurnResult(end: failed ? .failed : edited ? .changed : .replied, watched: watched)
     }
 
@@ -1945,7 +1961,8 @@ final class Store: ObservableObject {
         return !output.trimmed.isEmpty
     }
 
-    /// Builds the app, sending compiler errors back to the agent up to three times. False when it still doesn't build.
+    /// Builds the app, sending compiler errors back to the agent up to three times. False when it still doesn't
+    /// build, or when the agent asked the person something instead (`Turn.asked`).
     private func buildFixingErrors(_ project: LampProject) async -> Bool {
         var errors = await build(project)
         for _ in 0..<3 where errors != nil {
@@ -1954,6 +1971,9 @@ final class Store: ObservableObject {
             log(project, .status, "Fixing a problem…")
             guard await runAgent("The app failed to build. Fix these compiler errors:\n\n\(errors!)",
                                  on: project) else { return false }
+            // Asking ends the turn while fixing as well: no build, and no further try, under a card that
+            // hasn't been answered. Whoever called says the turn is waiting, not that it failed.
+            if turns[project.id]?.asked == true { return false }
             errors = await build(project)
         }
         guard turns[project.id]?.stopped != true, exists(project) else { return false }
@@ -2028,6 +2048,17 @@ final class Store: ObservableObject {
             guard let self else { return }
             for event in Agent.parseLine(line) {
                 if case .raw = event {} else if case .failed = event {} else { answered = true }
+                // The model carrying on after a failed attempt means the engine recovered from it (pi sends again
+                // after a dropped connection, after compacting a conversation that overflowed, and after its
+                // extension drops the pictures of a request that was too big: lamp-tools.ts), so that attempt is
+                // no longer the turn's failure. Lamp's own reasons for stopping the model stand: the process is
+                // being ended, and what it had already printed can still arrive.
+                if let text = failure, !text.hasPrefix("The model ") {
+                    switch event {
+                    case .text, .textPiece, .tool, .step: failure = nil
+                    default: break
+                    }
+                }
                 switch event {
                 case .textPiece(let piece):
                     write(piece, for: project)
@@ -2042,6 +2073,7 @@ final class Store: ObservableObject {
                         log(project, .agent, text)
                     }
                 case .step(let tool):
+                    if !tool.isEmpty { endOnQuestions(turn, before: tool) }
                     streamingTool = tool
                     streamingArguments = ""
                     note(TurnProgress.activity(tool: tool, partialArguments: ""), for: project)
@@ -2060,6 +2092,7 @@ final class Store: ObservableObject {
                 case .tool(let text, let fullCall):
                     log(project, .tool, text)
                     let call = ToolCall(text)
+                    endOnQuestions(turn, before: call.name)
                     note(TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
                     if let file = TurnProgress.file(changedBy: call) { progress[project.id]?.wrote(file) }
                     toolCalls += 1
@@ -2073,7 +2106,11 @@ final class Store: ObservableObject {
                         if let process = turn.agent { Subprocess.terminateTree(process) }
                     }
                 case .cost(let amount): cost += amount
-                case .failed(let text): failure = text
+                case .failed(let text):
+                    if engine == .pi, Agent.isRequestTooLarge(text), failure.map(Agent.isRequestTooLarge) != true {
+                        log(project, .status, Agent.droppingPictures)
+                    }
+                    failure = text
                 case .raw(let text): log(project, .detail, text)
                 case .session(let id):
                     if engine == .claude { turn.claudeSession = id }
@@ -2099,6 +2136,8 @@ final class Store: ObservableObject {
             log(project, .status, "Stopped. Any changes made so far are kept; press Undo to discard them.")
             return false
         }
+        // Ended by Lamp on the agent's own questions: the engine's exit says nothing went wrong.
+        if turn.endedOnQuestions { return true }
         if let failure, failure.hasPrefix("The model ") {
             log(project, .error, failure + " Try again, or pick a stronger model in Settings.")
             return false
@@ -2115,8 +2154,35 @@ final class Store: ObservableObject {
             log(project, .status, "Claude Code's auto mode isn't available, so Lamp will ask before every command.")
             return await runAgent(prompt, files: files, on: project)
         }
+        // A request too big to send, which the engine couldn't shrink (Claude Code and Codex don't in Lamp's
+        // non-interactive runs; pi's extension drops pictures and tries once more before this is reached):
+        // every later request would be too big too, so the conversation ends here and the next request starts
+        // a fresh one. The notes (Memory) and the app's AI status are told again to the new conversation.
+        if Agent.isRequestTooLarge(failure) {
+            Self.forgetConversation(of: project, engine: engine)
+            log(project, .error, Agent.conversationTooLarge)
+            return false
+        }
         log(project, .error, Provider.friendlyError(failure, from: Provider.name(of: engine)))
         return false
+    }
+
+    /// Asking ends the turn. The tool says so, and an agent that goes on to another step anyway (it has been
+    /// seen to ask and then build the app without waiting) is ended here, the way a runaway one is: what it
+    /// would build is a guess at the answer, under a card the person hasn't answered yet.
+    private func endOnQuestions(_ turn: Turn, before tool: String) {
+        guard turn.asked, !turn.endedOnQuestions, ToolCall(tool).action != .ask, let process = turn.agent else { return }
+        turn.endedOnQuestions = true
+        Subprocess.terminateTree(process)
+    }
+
+    /// Ends the engine's conversation for an app: the next request starts a new one, and is told what every
+    /// new conversation is told.
+    private static func forgetConversation(of project: LampProject, engine: Engine) {
+        let file = engine == .pi ? project.dir.appendingPathComponent(".lamp/pi-session") : sessionFile(for: project, engine: engine)
+        try? FileManager.default.removeItem(at: file)
+        Memory.compacted(project)
+        AIStatus.compacted(project)
     }
 
     /// One pi conversation per app, so the agent remembers earlier requests, including ones that were undone.
@@ -2387,7 +2453,7 @@ final class Store: ObservableObject {
             : "\n\n" + Privacy.picturesOff
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
-        return (200, ["text": text, "screenshots": Privacy.sharesPictures ? Runtime.pictures(of: project).map(\.path) : []])
+        return (200, ["text": text, "screenshots": Self.agentPictures(Runtime.pictures(of: project), in: project)])
     }
 
     /// A line every app that writes its screen as text (`LampScreen` in LampSupport.swift) has in its binary.
@@ -2453,7 +2519,7 @@ final class Store: ObservableObject {
             : "\n\n" + Privacy.picturesOff
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
-        return (200, ["text": text, "screenshots": Privacy.sharesPictures ? [picture.path] : []])
+        return (200, ["text": text, "screenshots": Self.agentPictures([picture], in: project)])
     }
 
     /// `look_at_app` and `use_app` for agents that take tools over MCP (Claude Code and Codex): one streamable-HTTP
@@ -2507,7 +2573,7 @@ final class Store: ObservableObject {
             case "read_notes", "save_notes": (status, answer) = notes(name, arguments, for: project)
             case "make_art": (status, answer) = await makeArt(arguments, for: project)
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
-            case "ask": (status, answer) = agentAsk(arguments, for: project)
+            case "ask", "show_result": (status, answer) = talk(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -2517,7 +2583,7 @@ final class Store: ObservableObject {
             var content: [[String: Any]] = [["type": "text", "text": answer["text"] as? String ?? ""]]
             for path in answer["screenshots"] as? [String] ?? [] {
                 if let data = try? Data(contentsOf: URL(fileURLWithPath: path)) {
-                    content.append(["type": "image", "data": data.base64EncodedString(), "mimeType": "image/png"])
+                    content.append(["type": "image", "data": data.base64EncodedString(), "mimeType": Previews.mimeType(of: path)])
                 }
             }
             return reply(["content": content])
@@ -2587,6 +2653,62 @@ final class Store: ObservableObject {
         return (200, ["text": "Deleted \(relative)."])
     }
 
+    /// `ask` and `show_result`, for every engine: pi's extension posts them to `/agent/talk`, Claude Code and
+    /// Codex call them over MCP.
+    func talk(_ tool: String, _ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
+        guard let turn = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        switch tool {
+        case "ask":
+            switch Talk.ask(from: arguments) {
+            case .failure(let trouble): return (400, ["error": trouble.text])
+            case .success(let ask):
+                // Asked again before the person answered (the agent thought better of its questions): the
+                // card that's showing stays as it is. A card that changed under the pointer would be worse
+                // than a question worded the first way.
+                // The same once the first was answered in words while this turn was still ending: the
+                // agent hasn't had that answer yet, and a new card would be asking over it.
+                if turn.asked || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
+                logs[project.id, default: []].append(LogLine(kind: .ask, text: ask.text, ask: ask))
+                // A new app's card gives up its checklist in the same moment the questions arrive, not when
+                // the turn ends a little later: once there's something to click, nothing above it moves.
+                if progress[project.id]?.newApp == true { progress[project.id]?.asking = true }
+                turn.asked = true
+                saveChat(project)
+                return (200, ["text": Talk.asked])
+            }
+        case "show_result":
+            switch Talk.result(from: arguments) {
+            case .failure(let trouble): return (400, ["error": trouble.text])
+            case .success(let result):
+                // Kept until the app is built and open: a card saying it's ready over a build that failed
+                // would be the one thing on screen that isn't true.
+                turn.pendingResult = result
+                return (200, ["text": Talk.resultKept])
+            }
+        default:
+            return (400, ["error": "Unknown tool \(tool)."])
+        }
+    }
+
+    /// A card's answers, chosen by clicking: noted on the card, then sent as the person's message.
+    func answer(_ line: LogLine, with answers: [String], in project: LampProject) {
+        guard var ask = line.ask, let index = logs[project.id]?.firstIndex(where: { $0.id == line.id }) else { return }
+        ask.answers = answers
+        logs[project.id]?[index].ask = ask
+        saveChat(project)
+        send(Talk.message(for: ask, answers: answers), answering: line.id, to: project)
+    }
+
+    /// A guess on a result card turned the other way: noted on the card, which shows it, then sent as the
+    /// agent's own words for that request.
+    func switchGuess(_ index: Int, on line: LogLine, in project: LampProject) {
+        guard let result = line.result, result.guesses.indices.contains(index), result.switched == nil,
+              let at = logs[project.id]?.firstIndex(where: { $0.id == line.id }) else { return }
+        logs[project.id]?[at].result?.switched = [index]
+        saveChat(project)
+        send(result.guesses[index].request, answering: line.id, to: project)
+    }
+
     /// `offer_setup`: the agent asks Lamp to offer the person a way to set up a capability, with its reason.
     private func agentOffer(_ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
         guard let capability = (arguments["capability"] as? String).flatMap(Capability.init(rawValue:)) else {
@@ -2599,35 +2721,6 @@ final class Store: ObservableObject {
         let why = (arguments["why"] as? String)?.trimmed ?? ""
         guard !why.isEmpty else { return (400, ["error": "Say in `why` what the person would get."]) }
         return (200, ["text": offerSetup(project, SetupOffer(capability: capability, away: away ? true : nil), because: why, fromAgent: true)])
-    }
-
-    /// `ask`: questions to answer before building, or choices the agent made while building. The payload is
-    /// kept on the chat line so its answered state survives a relaunch.
-    private func agentAsk(_ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
-        let raw = arguments["questions"] as? [[String: Any]] ?? []
-        guard (1...3).contains(raw.count) else { return (400, ["error": "Give one to three questions."]) }
-        var questions: [AskQuestion] = []
-        for item in raw {
-            let question = (item["question"] as? String)?.trimmed ?? ""
-            let options = (item["options"] as? [String] ?? []).map(\.trimmed).filter { !$0.isEmpty }
-            let chosen = (item["chosen"] as? String)?.trimmed.nilIfEmpty
-            guard !question.isEmpty else { return (400, ["error": "Every question needs short text."]) }
-            guard (2...4).contains(options.count), Set(options).count == options.count else {
-                return (400, ["error": "Every question needs two to four different options."])
-            }
-            guard chosen == nil || options.contains(chosen!) else {
-                return (400, ["error": "Each chosen value must be one of that question's options."])
-            }
-            questions.append(AskQuestion(question: question, options: options, chosen: chosen))
-        }
-        let assumptions = questions.allSatisfy { $0.chosen != nil }
-        guard assumptions || questions.allSatisfy({ $0.chosen == nil }) else {
-            return (400, ["error": "Use chosen for every question in an assumptions card, or for none in a question card."])
-        }
-        log(project, .ask, "", ask: AskCardPayload(questions: questions))
-        return (200, ["text": assumptions
-            ? "Lamp showed those choices in the chat. Carry on, and don't repeat the assumptions in your reply."
-            : "Lamp showed the questions in the chat. End your turn now without repeating them in prose or changing files."])
     }
 
     /// `read_notes` and `save_notes`, for every engine. A save that changed what the notes say leaves a
@@ -2663,17 +2756,6 @@ final class Store: ObservableObject {
         logs[project.id]?[index].noted = receipt
         saveChat(project)
         return nil
-    }
-
-    /// Records an ask card's controls before sending their readable answer as an ordinary user message.
-    func answerAsk(_ line: UUID, answers: [String], message: String, in project: LampProject) {
-        guard let index = logs[project.id]?.firstIndex(where: { $0.id == line }),
-              var payload = logs[project.id]?[index].ask, !payload.isReadOnly else { return }
-        payload.answers = payload.questions.indices.map { answers.indices.contains($0) ? answers[$0] : payload.questions[$0].chosen }
-        payload.dismissed = true
-        logs[project.id]?[index].ask = payload
-        saveChat(project)
-        send(message, to: project, answering: line)
     }
 
     /// `make_art`: a picture for the app to show, painted in its icon's style and saved in Assets/, the folder
@@ -2720,7 +2802,7 @@ final class Store: ObservableObject {
             let size = NSBitmapImageRep(data: png).map { " (\($0.pixelsWide)×\($0.pixelsHigh) pixels)" } ?? ""
             let around = scene ? "" : ", transparent around the object"
             return (200, ["text": "Saved Assets/\(name)\(size)\(around). Show it with LampAssets.image(\"\(name)\"). It follows.",
-                          "screenshots": [url.path]])
+                          "screenshots": [Previews.forAgent(url, in: project).path]])
         } catch let failure as AppAI.Failure where failure.needs == .pictures {
             offerSetup(project, SetupOffer(capability: .pictures), because: because)
             return (200, ["text": unavailable])
@@ -3900,7 +3982,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/ask", "/agent/art", "/mcp", "/pi/key"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/art", "/agent/talk", "/mcp", "/pi/key"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -4000,11 +4082,12 @@ final class Store: ObservableObject {
         if route == "/agent/art" {
             return await makeArt((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
         }
+        if route == "/agent/talk" {
+            let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+            return talk(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
+        }
         if route == "/agent/setup" {
             return agentOffer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
-        }
-        if route == "/agent/ask" {
-            return agentAsk((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/approve" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
@@ -4368,6 +4451,13 @@ final class Store: ObservableObject {
         }
     }
 
+    /// The pictures a tool's reply shows the agent, as the paths it reads: small copies of the screenshots or
+    /// the art (`Previews.forAgent`), so a conversation holds many before a request is too big to send; none
+    /// when the person keeps pictures from the model. The files given are left as they are.
+    static func agentPictures(_ pictures: [URL], in project: LampProject) -> [String] {
+        Privacy.sharesPictures ? pictures.map { Previews.forAgent($0, in: project).path } : []
+    }
+
     /// The agent's `look_at_app` tool: builds what it has written so far, opens the app behind the
     /// user's windows, and reports what happened. The pictures are sent as file paths for pi to read.
     private func look(at project: LampProject) async -> (Int, [String: Any]) {
@@ -4421,7 +4511,7 @@ final class Store: ObservableObject {
                 }
             }
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
-            return (200, ["text": text, "screenshots": Privacy.sharesPictures ? screenshots.map(\.path) : []])
+            return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
         }
         var since = Date()
         if !changed, NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first != nil {
@@ -4455,7 +4545,7 @@ final class Store: ObservableObject {
         if Privacy.sharesPictures, !screenshots.isEmpty, Self.binary(of: project, contains: Self.screenTextMarker),
            let words = await Runtime.screenText(of: project, since: since) { text += "\n\n" + words }
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
-        return (200, ["text": text, "screenshots": Privacy.sharesPictures ? screenshots.map(\.path) : []])
+        return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
     }
 
     /// For an app that declares what it opens (`opens` in capabilities.json): the command that hands this

@@ -541,11 +541,7 @@ struct ProjectView: View {
     }
     private var queued: [QueuedMessage] { store.queued[project.id] ?? [] }
     /// The finished agent turn a suggestion follows up on. Nil while working, so none shows mid-turn.
-    private var suggestionTurn: UUID? {
-        let lines = store.logs[project.id] ?? []
-        return busy || lines.contains(where: { $0.kind == .ask && $0.ask?.isAssumption == false && $0.ask?.isReadOnly == false })
-            ? nil : NextStep.turn(in: lines)
-    }
+    private var suggestionTurn: UUID? { busy ? nil : NextStep.turn(in: store.logs[project.id] ?? []) }
     private var shownSuggestion: String? {
         guard suggestionTurn != nil, let suggestion, suggestion != dismissedSuggestion else { return nil }
         return suggestion
@@ -610,7 +606,7 @@ struct ProjectView: View {
                     }
                     .background(EarlierOnScroll(more: start > 0, follow: follow, glides: glides, glided: {
                         gliding = false
-                        followEnd(proxy, pin: pin)
+                        followEnd(proxy, lines, pin: pin)
                     }, watching: $earlierOnScroll) { showEarlier(lines, from: start) })
                     // A readable line length; wide windows get margins instead of longer lines.
                     .frame(maxWidth: 640)
@@ -622,19 +618,34 @@ struct ProjectView: View {
                 }
                 // A chat opens on its latest messages: the scroll view starts at the bottom, with
                 // no scrolling to get there.
-                // It stays at its end as the chat grows, except while a request just sent glides to the top:
-                // it would be at the end at once.
-                .modifier(OpensAtEnd(holdsEnd: !gliding && pin == pinned))
+                // It stays at its end as the chat grows, except while a request just sent glides to the top
+                // (it would be at the end at once) and while the agent's questions wait.
+                .modifier(OpensAtEnd(holdsEnd: !gliding && pin == pinned && Talk.open(in: lines) == nil))
                 // The chat follows what's added at its end, but only from the end: scrolled up to read
                 // something earlier, it stays there. A message sent goes to the top, with room below for the answer.
-                .onChange(of: lines.count) { followEnd(proxy, pin: pin) }
-                .onChange(of: written(lines)) { followEnd(proxy, pin: pin) }
-                .onChange(of: queued.count) { followEnd(proxy, pin: pin) }
-                .onChange(of: store.progress[project.id]?.plan.count) { followEnd(proxy, pin: pin) }
-                .onChange(of: store.progress[project.id]?.screenshot != nil) { followEnd(proxy, pin: pin) }
+                // The agent's questions come into view whole as they arrive, and then the chat holds still
+                // until they're answered: following anything added meanwhile would slide the answers out
+                // from under the pointer.
+                .onChange(of: Talk.open(in: lines)?.id) { _, waiting in
+                    // Answered, by a click or in words: the chat goes back to following its end, where the
+                    // reply is about to be. It stopped following while the card waited, so it may not be there.
+                    if waiting == nil { follow.followThroughSettling() }
+                    // After this pass: the card isn't laid out yet, and the end is still where it was.
+                    if follow.atEnd { DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) } }
+                }
+                .onChange(of: lines.count) { followEnd(proxy, lines, pin: pin) }
+                // A result card comes into view whole. It can take the place of the line before it, so the
+                // count may not change; and it's tall, so the end is looked for after it has been laid out.
+                .onChange(of: Talk.current(in: lines)?.id) {
+                    if follow.atEnd { DispatchQueue.main.async { followEnd(proxy, lines, pin: pin) } }
+                }
+                .onChange(of: written(lines)) { followEnd(proxy, lines, pin: pin) }
+                .onChange(of: queued.count) { followEnd(proxy, lines, pin: pin) }
+                .onChange(of: store.progress[project.id]?.plan.count) { followEnd(proxy, lines, pin: pin) }
+                .onChange(of: store.progress[project.id]?.screenshot != nil) { followEnd(proxy, lines, pin: pin) }
                 .onChange(of: sends) {
                     follow.atEnd = true
-                    followEnd(proxy, pin: pin)
+                    followEnd(proxy, lines, pin: pin)
                 }
             }
         }
@@ -649,8 +660,8 @@ struct ProjectView: View {
     }
 
     /// Goes to the end if the chat is following it. With a request pinned, the end is where the request
-    /// is at the top, so a request just arrived goes there, gently.
-    private func followEnd(_ proxy: ScrollViewProxy, pin: UUID?) {
+    /// is at the top, so a request just arrived goes there, gently. Not while the agent's questions wait.
+    private func followEnd(_ proxy: ScrollViewProxy, _ lines: [LogLine], pin: UUID?) {
         if let pin, pin != pinned {
             pinned = pin
             pinWanted = false
@@ -659,7 +670,7 @@ struct ProjectView: View {
             glides += 1
             return
         }
-        guard follow.atEnd, !gliding else { return }
+        guard follow.atEnd, !gliding, Talk.open(in: lines) == nil else { return }
         proxy.scrollTo("bottom", anchor: .bottom)
     }
 
@@ -679,9 +690,9 @@ struct ProjectView: View {
                 .frame(minHeight: height - 32)
         }
         if let card = store.progress[project.id], card.newApp,
-           let request = lines.lastIndex(where: { $0.kind == .user }) {
-            // The build card goes straight after the request; what the agent says and
-            // does follows it.
+           let request = lines.firstIndex(where: { $0.kind == .user }) {
+            // The build card goes straight after the request that began the app, and stays there through
+            // the agent's questions and their answers; what the agent says and does follows it.
             transcript(Array(lines[...request]), busy: false, pin: pin)
             BuildCard(project: project, progress: card)
                 .padding(.top, 16).padding(.bottom, 12)
@@ -693,10 +704,12 @@ struct ProjectView: View {
                 .zIndex(1)
             transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy, pin: pin)
         } else {
-            // Not until the request it's working on is in: the turn starts a moment before, and the line would
+            // No line of activity under the agent's questions: it would go away when the turn ends a moment
+            // later, and the card above it would move.
+            // Nor until the request it's working on is in: the turn starts a moment before, and the line would
             // show up under the last answer and then jump below the request.
             let awaited = pinWanted && lines.last { $0.kind == .user }?.id == pinAfter
-            let progress = busy && !awaited ? store.progress[project.id] : nil
+            let progress = busy && !awaited && Talk.open(in: lines) == nil ? store.progress[project.id] : nil
             transcript(lines, busy: busy, progressShown: progress != nil, pin: pin)
             if let progress { ActivityRow(progress: progress).padding(.top, 12) }
         }

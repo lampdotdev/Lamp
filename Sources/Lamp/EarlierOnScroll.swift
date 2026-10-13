@@ -19,10 +19,26 @@ final class ChatFollow {
     /// The scroll view moved: `y` is how far down the chat it is, `fromEnd` how far the end is below what's
     /// in view.
     func moved(to y: CGFloat, fromEnd: CGFloat) {
+        // The chat's own doing: whichever way the scroll view goes meanwhile, it's still following.
+        if let settling, Date() < settling {
+            place = y
+            return
+        }
         guard let from = place else { return place = y }
         let move: Move = y < from - 0.5 ? .up : y > from ? .down : .neither
         if move != .neither { place = y }
         atEnd = Self.following(was: atEnd, move: move, fromEnd: fromEnd)
+    }
+
+    /// Until when the scroll view's moves are the chat rearranging itself, not the person scrolling.
+    private var settling: Date?
+
+    /// Goes to following the end, and stays there while the chat settles: a card that folds as it's answered
+    /// makes the chat shorter over a few frames, and the scroll view moving up with it would read as the
+    /// person scrolling away from the end.
+    func followThroughSettling() {
+        atEnd = true
+        settling = Date().addingTimeInterval(0.6)
     }
 
     /// The scroll view is another one, or the same one somewhere new: where it was says nothing now.

@@ -18,7 +18,9 @@
  *   shows it to the agent.
  * - `offer_setup`: asks Lamp to show the person a card in the chat for setting up a kind of AI the app can't
  *   use yet (a key, a download, a sign-in). Lamp decides whether to show it and says what happened.
- * - `ask`: shows questions or changeable assumptions as choices in the chat.
+ * - `ask`, `show_result`: the agent's cards. `ask` puts questions in the chat as a card the person answers by
+ *   clicking; `show_result` is the card for what a request made, with the agent's guesses as buttons. Lamp
+ *   draws both and turns a click into the person's next message, so neither waits for an answer here.
  * - `web_fetch`: reads a web page (or any URL) as text. Reading needs no approval.
  * - pi's file tools (read, edit, write, grep, find, ls) are checked before they run: inside the app's folder
  *   they need nothing, outside it Lamp decides (system files are fine, Lamp's own keys never, the rest asks
@@ -81,10 +83,98 @@ async function pictureReply(response: Response, model: { input: string[] } | und
 		content.push({ type: "text", text: "This model can't view images, so the pictures of the windows were left out." });
 	} else {
 		for (const path of pictures) {
-			content.push({ type: "image", data: (await readFile(path)).toString("base64"), mimeType: "image/png" });
+			content.push({ type: "image", data: (await readFile(path)).toString("base64"), mimeType: mimeType(path) });
 		}
 	}
 	return { content, details: { screenshots: pictures } };
+}
+
+/** Lamp hands the agent small JPEG copies of its pictures (Previews.forAgent); the files it names say which. */
+function mimeType(path: string) {
+	return /\.jpe?g$/i.test(path) ? "image/jpeg" : "image/png";
+}
+
+/**
+ * Keeps the pictures in the conversation few enough to send. Every look_at_app, use_app and make_art reply
+ * carries one, and the conversation is sent whole with every request: left in, they add up until the provider
+ * refuses the request (Anthropic takes 30 MB of images in one; OpenRouter drops the connection at about 5 MB of
+ * body, which pi reports as a connection error). So after each turn the older ones are taken out of what the
+ * model is sent, with a line in their place, through pi's context edits: the session file keeps them, and the
+ * person's chat never showed them anyway. The newest few stay, within a byte budget, so the model can still
+ * compare what it just did with the picture before.
+ *
+ * When a request was refused as too big all the same (a conversation from before this ran, or one with
+ * pictures from elsewhere), every picture goes and the request is sent once more.
+ */
+const keepPictures = 6;
+const pictureBudget = 2_500_000;   // base64 characters, well under what OpenRouter takes
+const droppedPicture = "(The picture that came with this reply was taken out of the conversation to make room. " +
+	"The newest pictures are still here; look_at_app gives a fresh one.)";
+
+type PictureEntry = { id: string; message: { role: string; content: unknown } };
+
+/** The tool results on the current branch that still show the model a picture, oldest first. */
+function pictureEntries(branch: { type: string; id?: string; targetId?: string; replacement?: unknown; message?: { role: string; content: unknown } }[]) {
+	const edited = new Set<string>();
+	for (const entry of branch) if (entry.type === "context_edit" && entry.targetId) edited.add(entry.targetId);
+	const found: (PictureEntry & { bytes: number })[] = [];
+	for (const entry of branch) {
+		if (entry.type !== "message" || !entry.id || edited.has(entry.id)) continue;
+		const message = entry.message;
+		if (!message || message.role !== "toolResult" || !Array.isArray(message.content)) continue;
+		let bytes = 0;
+		for (const block of message.content) if (block?.type === "image") bytes += String(block.data ?? "").length;
+		if (bytes > 0) found.push({ id: entry.id, message, bytes });
+	}
+	return found;
+}
+
+/** A context edit leaving a tool result its words and not its picture. */
+function withoutPicture(entry: PictureEntry) {
+	const content = (entry.message.content as { type: string; text?: string }[])
+		.filter((block) => block.type === "text")
+		.map((block) => ({ type: "text" as const, text: block.text ?? "" }));
+	content.push({ type: "text", text: droppedPicture });
+	return { type: "context_edit" as const, targetId: entry.id, replacement: { content } };
+}
+
+function isRequestTooLarge(text: string) {
+	const lower = text.toLowerCase();
+	if (/payload[_ ]too[_ ]large|request[_ ]too[_ ]large|request entity too large/.test(lower)) return true;
+	return lower.includes("413") && (lower.includes("too large") || lower.includes("cannot exceed"));
+}
+
+function keepsPicturesFew(pi: ExtensionAPI) {
+	let retried = false;
+	pi.on("turn_end", (event, ctx) => {
+		const branch = ctx.sessionManager.getBranch() as Parameters<typeof pictureEntries>[0];
+		const pictures = pictureEntries(branch);
+		const message = event.message as { role: string; stopReason?: string; errorMessage?: string };
+		const error = message.stopReason === "error" ? (message.errorMessage ?? "") : "";
+		const total = pictures.reduce((sum, picture) => sum + picture.bytes, 0);
+		// A connection dropped the moment a picture-heavy request went out is the body's size too.
+		const refused = error !== "" && (isRequestTooLarge(error) || (/connection error/i.test(error) && total > pictureBudget));
+		const entries = [...(event.entries as unknown[])];
+		if (refused && pictures.length > 0 && !retried) {
+			retried = true;
+			for (const picture of pictures) entries.push(withoutPicture(picture));
+			// The refused attempt itself goes too, so the model isn't answering after its own error.
+			if (event.messageEntryId) entries.push({ type: "context_edit", targetId: event.messageEntryId, replacement: null });
+			return { entries, continue: true };
+		}
+		// Newest first: keep up to the limit and the budget, drop the rest.
+		let kept = 0;
+		let bytes = 0;
+		for (const picture of [...pictures].reverse()) {
+			if (kept < keepPictures && bytes + picture.bytes <= pictureBudget) {
+				kept += 1;
+				bytes += picture.bytes;
+			} else {
+				entries.push(withoutPicture(picture));
+			}
+		}
+		return entries.length > (event.entries as unknown[]).length ? { entries } : undefined;
+	});
 }
 
 const useApp = defineTool({
@@ -370,22 +460,24 @@ const offerSetup = defineTool({
 	},
 });
 
-const ask = defineTool({
-	...spec("ask"),
-	async execute(_toolCallId, params, signal) {
-		const url = process.env.LAMP_ASK_URL;
-		if (!url) throw new Error("Lamp isn't available to show choices.");
-		const response = await fetch(url, {
-			method: "POST",
-			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
-			body: JSON.stringify(params),
-			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
-		});
-		const reply = (await response.json()) as { text?: string; error?: string };
-		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't show those choices.");
-		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
-	},
-});
+function talkTool(name: string) {
+	return defineTool({
+		...spec(name),
+		async execute(_toolCallId, params, signal) {
+			const url = process.env.LAMP_TALK_URL;
+			if (!url) throw new Error("Lamp isn't available to show that.");
+			const response = await fetch(url, {
+				method: "POST",
+				headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+				body: JSON.stringify({ tool: name, arguments: params }),
+				signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
+			});
+			const reply = (await response.json()) as { text?: string; error?: string };
+			if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+			return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+		},
+	});
+}
 
 export default function (pi: ExtensionAPI) {
 	const computer = computerTools();
@@ -407,6 +499,7 @@ export default function (pi: ExtensionAPI) {
 		if (answer.command) input.command = answer.command;   // the hook may change the input before it runs
 		return undefined;
 	});
+	keepsPicturesFew(pi);
 	pi.registerTool(webFetch);
 	pi.registerTool(lookAtApp);
 	pi.registerTool(useApp);
@@ -417,6 +510,6 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(restoreVersion);
 	pi.registerTool(makeArt);
 	pi.registerTool(offerSetup);
-	pi.registerTool(ask);
+	for (const name of ["ask", "show_result"]) pi.registerTool(talkTool(name));
 	for (const name of ["read_notes", "save_notes"]) pi.registerTool(notesTool(name));
 }
