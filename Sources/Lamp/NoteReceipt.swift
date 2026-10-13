@@ -83,14 +83,17 @@ struct NoteReceipt: Codable, Equatable {
     }
 }
 
-/// The receipt in the chat: what was noted, about whom, and Undo.
+/// The receipt in the chat: one line saying what was noted and about whom, with Undo. The line opens to the
+/// notes themselves, the way a command Lamp ran does (`RanCommand`): a receipt is there to be glanced at, and
+/// drawn as a card it competed with the card the person is answering. Taken back, it is the two words.
 struct NoteCard: View {
     let line: LogLine
     let dir: URL
     @ObservedObject private var store = Store.shared
     @State private var problem: String?
+    @State private var expanded = false
 
-    /// More lines than this and the rest are counted, not listed: the card is a receipt, not the notes.
+    /// More lines than this and the rest are counted, not listed: it is a receipt, not the notes.
     private static let shown = 4
 
     private var project: LampProject? { store.projects.first { $0.dir == dir } }
@@ -105,32 +108,53 @@ struct NoteCard: View {
         if let receipt = line.noted {
             let undone = receipt.undone == true
             let lines = receipt.added.map { ($0, false) } + receipt.removed.map { ($0, true) }
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "note.text").foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(Self.title(receipt, app: project?.name ?? "this app")).font(.callout.weight(.medium))
-                    ForEach(Array(lines.prefix(Self.shown).enumerated()), id: \.offset) { _, item in
-                        Text(item.0)
-                            .strikethrough(item.1 || undone)
-                            .foregroundStyle(item.1 || undone ? .tertiary : .secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Button {
+                        withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "note.text").frame(width: 16)
+                            Text(Self.title(receipt, app: project?.name ?? "this app")).fixedSize()
+                            // Closed, the line says what the notes are as far as it has room.
+                            if !expanded && !undone {
+                                Text((receipt.added.isEmpty ? receipt.removed : receipt.added).joined(separator: " "))
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                            }
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                                .rotationEffect(.degrees(expanded ? 90 : 0))
+                        }
+                        .contentShape(Rectangle())
                     }
-                    if lines.count > Self.shown {
-                        Text("and \(lines.count - Self.shown) more").foregroundStyle(.tertiary)
+                    .buttonStyle(.plain)
+                    .help(undone ? "Show what was taken back" : "Show what was noted")
+                    Spacer(minLength: 8)
+                    if !undone, let project {
+                        Button("Undo") { problem = store.undoNote(line.id, in: project) }
+                            .buttonStyle(.borderless)
+                            .help("Lamp forgets this. Everything it remembers is in Settings, under Memory.")
                     }
-                    if let problem { Text(problem).font(.caption).foregroundStyle(.orange) }
                 }
-                .font(.callout)
-                Spacer(minLength: 8)
-                if !undone, let project {
-                    Button("Undo") { problem = store.undoNote(line.id, in: project) }
-                        .controlSize(.small)
-                        .help("Lamp forgets this. Everything it remembers is in Settings, under Memory.")
+                if expanded {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(Array(lines.prefix(Self.shown).enumerated()), id: \.offset) { _, item in
+                            Text(item.0)
+                                .strikethrough(item.1 || undone)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if lines.count > Self.shown { Text("and \(lines.count - Self.shown) more") }
+                    }
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, 22)
                 }
+                if let problem { Text(problem).font(.caption).foregroundStyle(.orange).padding(.leading, 22) }
             }
-            .padding(.horizontal, 12).padding(.vertical, 9)
+            .font(.callout)
+            .foregroundStyle(undone ? .tertiary : .secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
             .accessibilityElement(children: .contain)
         }
     }
