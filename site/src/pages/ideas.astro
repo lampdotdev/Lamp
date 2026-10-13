@@ -42,7 +42,8 @@ const description = "Wishes for software nobody else would make: for the office,
     </section>
 
     <!--
-      The categories as a row of icons with their names under them, in the manner of the row of products at the
+      The categories as a row of icons with their names under them, each rising into the row in turn as the page
+      opens (global.css), in the manner of the row of products at the
       top of Apple's product pages: each is an object drawn like an icon's, off its tile, and All is four of them
       together. The
       row slides sideways where it doesn't fit. The one chosen is kept in the address (#office), so a link can
@@ -51,29 +52,33 @@ const description = "Wishes for software nobody else would make: for the office,
     <nav aria-label="Kinds of wish" class="mt-10 overflow-x-auto pb-12 [scrollbar-width:none] sm:mt-14 sm:pb-14 [&::-webkit-scrollbar]:hidden">
       <div class="mx-auto flex w-max gap-1 px-4 sm:gap-2 sm:px-6">
         {
-          [{ id: "", title: "All" }, ...CATEGORIES].map((category) => (
+          [{ id: "", title: "All" }, ...CATEGORIES].map((category, index) => (
             <button
               type="button"
               data-filter={category.id}
               aria-pressed={category.id === "" ? "true" : "false"}
-              class="group flex w-[5.75rem] cursor-pointer flex-col items-center rounded-2xl pt-1 pb-2 focus-visible:outline-2 focus-visible:outline-graphite sm:w-[6.5rem]"
+              style={`--i: ${index}`}
+              class="category-rise group flex w-[5.75rem] cursor-pointer flex-col items-center rounded-2xl pt-1 pb-2 focus-visible:outline-2 focus-visible:outline-graphite sm:w-[6.5rem]"
             >
+              <span class="transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] group-hover:-translate-y-0.5">
               {category.id ? (
                 <Image
                   src={objectOf(category.id)}
                   alt=""
-                  width={56}
-                  height={56}
+                  width={48}
+                  height={48}
                   densities={[1, 2]}
-                  class="size-14 object-contain drop-shadow-[0_5px_6px_rgba(0,0,0,0.13)] transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] group-hover:-translate-y-0.5"
+                  loading="eager"
+                  class="size-12 object-contain drop-shadow-[0_5px_6px_rgba(0,0,0,0.13)]"
                 />
               ) : (
-                <span class="grid size-14 grid-cols-2 gap-1 p-1 transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] group-hover:-translate-y-0.5">
+                <span class="grid size-12 grid-cols-2 gap-1 p-0.5">
                   {CATEGORIES.slice(0, 4).map((other) => (
-                    <Image src={objectOf(other.id)} alt="" width={22} height={22} densities={[1, 2]} class="size-full object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.13)]" />
+                    <Image src={objectOf(other.id)} alt="" width={20} height={20} densities={[1, 2]} loading="eager" class="size-full object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.13)]" />
                   ))}
                 </span>
               )}
+              </span>
               <span class="mt-2.5 text-center text-[13px] leading-tight text-muted sm:text-[14px] sm:whitespace-nowrap transition group-hover:text-ink group-aria-pressed:font-semibold group-aria-pressed:text-ink">
                 {category.title}
               </span>

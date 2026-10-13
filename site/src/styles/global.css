@@ -105,6 +105,17 @@
   .hero-card, .hero-icon, .hero-words, .hero-button, .hero-lamp { animation: none; }
 }
 
+/* The ideas page's categories (ideas.astro): each rises from the bottom of the row and fades in, a moment after
+   the one before it (--i is its place in the row). The row's own edge hides them until they're in. */
+@keyframes category-rise {
+  from { opacity: 0; translate: 0 60%; }
+  to { opacity: 1; translate: 0 0; }
+}
+.category-rise { animation: category-rise 0.8s cubic-bezier(.22,.8,.2,1) calc(0.15s + var(--i) * 0.06s) both; }
+@media (prefers-reduced-motion: reduce) {
+  .category-rise { animation: none; }
+}
+
 /* The first-idea section (FirstIdea.astro): a night sky like the app icon's, with faint stars that twinkle and
    the lamp's warm light rising from the bottom edge. The light grows as the conversation goes on (--glow, set
    by the section's script) and is brightest when the wish appears. */
