@@ -5,12 +5,10 @@ import { DOWNLOAD_URL } from "../lib/download";
 
 // The page we're on, so its link can say so.
 const here = Astro.url.pathname.replace(/\/$/, "") || "/";
-// On a phone only Ideas fits beside the name (which goes home) and Download.
+// On a phone Home is left out: the name beside it goes home too.
 const links = [
   { href: "/", label: "Home", wide: true },
   { href: "/ideas", label: "Ideas" },
-  // The ideas page has the few questions too, so there it stays on the page.
-  { href: here === "/ideas" ? "#first-idea" : "/#first-idea", label: "Find your wish", wide: true },
 ];
 ---
 
@@ -52,9 +50,10 @@ const links = [
       <a
         href={DOWNLOAD_URL}
         data-download-place="menu"
-        class="ml-1 inline-flex h-10 items-center rounded-full bg-linear-to-b from-[#cf620c] to-[#b04e0a] px-4 whitespace-nowrap sm:ml-2 sm:px-5 text-[14px] font-semibold text-white shadow-[0_1px_2px_rgba(0,0,0,0.15)] ring-1 ring-white/25 ring-inset transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#b04e0a] active:scale-[0.97]"
+        class="ml-1 inline-flex h-10 items-center rounded-full bg-linear-to-b from-[#ff8a24] to-[#e65c00] [text-shadow:0_1px_1px_rgb(140_50_0/0.35)] px-4 whitespace-nowrap sm:ml-2 sm:px-5 text-[14px] font-semibold text-white shadow-[0_1px_2px_rgba(0,0,0,0.15)] ring-1 ring-white/30 ring-inset transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#b04e0a] active:scale-[0.97]"
       >
-        Download free
+        <!-- On a phone or a tablet it says what it's for, so nobody tries to put Lamp on an iPhone. -->
+        <span class="max-sm:hidden pointer-coarse:hidden">Download free</span><span class="hidden max-sm:inline pointer-coarse:inline">Download for Mac</span>
       </a>
     </div>
   </nav>

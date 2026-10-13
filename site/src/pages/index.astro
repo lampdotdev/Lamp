@@ -228,7 +228,17 @@ const description = `${pitch} ${noCode}`;
         </h1>
         <p class="mt-5 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">{together(pitch)}<br />{together(noCode)}</p>
       </div>
-      <div class="hero-button relative z-10 mt-9"><DownloadButton place="hero" /></div>
+      <div class="hero-button relative z-10 mt-9">
+        <DownloadButton place="hero">
+          <a
+            slot="beside"
+            href="/ideas"
+            class="inline-flex h-[52px] items-center rounded-full bg-white/70 px-8 text-[17px] font-semibold text-ink shadow-[0_1px_3px_rgba(0,0,0,0.08)] ring-1 ring-black/10 backdrop-blur-sm transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-[1.03] hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-graphite active:scale-[0.98]"
+          >
+            Explore ideas
+          </a>
+        </DownloadButton>
+      </div>
       <!-- As wide as the card allows, but no taller than leaves the whole card in the window, with a little space
            under it: the menu bar and the words above take about 676px, and the render is 2.98 times as wide as it
            is tall. -->
