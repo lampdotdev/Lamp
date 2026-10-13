@@ -224,7 +224,7 @@ enum Agent {
             .replacingOccurrences(of: "{{IMAGE}}", with: "LampImage")
             .replacingOccurrences(of: "{{RELAUNCH}}", with: "builds it and opens it where Try On points")
             .replacingOccurrences(of: "{{TRANSLATION_OS}}", with: "macOS 15 and iOS 18")
-            .replacingOccurrences(of: "{{EXTRA_PERMISSIONS}}", with: "and calendars, reminders, contacts, photos and Mail")
+            .replacingOccurrences(of: "{{EXTRA_PERMISSIONS}}", with: "and calendars, reminders, contacts, photos, Bluetooth and Mail")
     }
 
     private static func prompt(platform: Platform, device: String) -> String {
@@ -246,7 +246,7 @@ enum Agent {
             .replacingOccurrences(of: "{{IMAGE}}", with: mac ? "NSImage" : "UIImage")
             .replacingOccurrences(of: "{{RELAUNCH}}", with: mac ? "builds and relaunches it" : "builds it and opens it in the simulator")
             .replacingOccurrences(of: "{{TRANSLATION_OS}}", with: mac ? "macOS 15" : "iOS 18")
-            .replacingOccurrences(of: "{{EXTRA_PERMISSIONS}}", with: mac ? "and calendars, reminders, contacts and Mail"
+            .replacingOccurrences(of: "{{EXTRA_PERMISSIONS}}", with: mac ? "and calendars, reminders, contacts, photos, Bluetooth and Mail"
                                   : "and photos, calendars, reminders and contacts")
     }
 
