@@ -272,6 +272,10 @@ enum Template {
         /// Mac apps: what the app opens when Finder hands it something. "folder", "file" for any file, a
         /// file extension ("png"), or a type identifier ("public.image").
         var opens: [String]?
+        /// Mac apps: the app works in the background (it watches or waits for something), so it opens at
+        /// login and keeps running after its last window closes. Declared in Info.plist as LampBackground,
+        /// which LampSupport reads at launch (LampBackground).
+        var background: Bool?
 
         static func load(_ project: LampProject) -> Capabilities { load(project.dir.appendingPathComponent(file)) }
 
@@ -285,7 +289,8 @@ enum Template {
         var checked: Capabilities {
             func some(_ names: [String]) -> [String]? { names.isEmpty ? nil : names }
             return Capabilities(healthkit: healthkit == true ? true : nil, nfc: nfc == true ? true : nil, siri: siri == true ? true : nil,
-                                backgroundModes: some(modes), bonjourServices: some(services), backgroundTasks: some(tasks), opens: some(kinds))
+                                backgroundModes: some(modes), bonjourServices: some(services), backgroundTasks: some(tasks), opens: some(kinds),
+                                background: background == true ? true : nil)
         }
 
         var isEmpty: Bool { checked == Capabilities() }
@@ -384,7 +389,8 @@ enum Template {
 
         /// The Info.plist keys a Mac app's capabilities own, each with its value or nil when nothing is declared.
         var macInfo: [String: Any?] {
-            ["CFBundleDocumentTypes": documentTypes.isEmpty ? nil : documentTypes]
+            ["CFBundleDocumentTypes": documentTypes.isEmpty ? nil : documentTypes,
+             "LampBackground": background == true ? true : nil]
         }
 
         /// Declares a Mac app's capabilities in its Info.plist, before it's signed (Store.deploy): written by
@@ -1373,6 +1379,7 @@ enum Template {
     /// lives in the menu bar (LampMenuBar) shows its panel.
     enum LampWindows {
         static let start: Void = {
+            LampBackground.start
             DistributedNotificationCenter.default().addObserver(
                 forName: Notification.Name("{{NOTE}}showWindow"), object: Bundle.main.bundleIdentifier, queue: .main
             ) { _ in
@@ -3655,12 +3662,112 @@ enum Template {
     enum LampLoginItem {
         static var isEnabled: Bool {
             get { SMAppService.mainApp.status == .enabled }
-            set {
-                do {
-                    if newValue { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-                } catch {
-                    print("LampLoginItem: \(error.localizedDescription)")
-                }
+            set { _ = set(newValue) }
+        }
+
+        /// Turns opening at login on or off. False when macOS refused; true when it took, which for turning
+        /// on includes macOS wanting the person's approval in System Settings (the item is there, switched off).
+        @discardableResult static func set(_ on: Bool) -> Bool {
+            do {
+                if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+                return true
+            } catch {
+                if on, SMAppService.mainApp.status == .requiresApproval { return true }
+                print("LampLoginItem: \(error.localizedDescription)")
+                return false
+            }
+        }
+    }
+
+    /// An app that works in the background (`"background": true` in capabilities.json, which Lamp puts in the
+    /// app's Info.plist as LampBackground): it opens at login from its first launch on, so a watcher keeps
+    /// watching after a restart, and the person is told once by Lamp. Turning it off is theirs to do:
+    /// `LampLoginItem.isEnabled` as a toggle in Settings, or System Settings → General → Login Items. Once they
+    /// have turned it off it stays off: the first launch is the only one that turns it on.
+    enum LampBackground {
+        static var isDeclared: Bool { Bundle.main.object(forInfoDictionaryKey: "LampBackground") as? Bool == true }
+
+        static let start: Void = {
+            guard isDeclared, !UserDefaults.standard.bool(forKey: "lampBackground.registered") else { return }
+            // Remembered only once it took, so a launch where macOS refused tries again next time.
+            if LampLoginItem.set(true) { UserDefaults.standard.set(true, forKey: "lampBackground.registered") }
+        }()
+    }
+
+    /// Does something at a time of day or every so often, for as long as the app runs, and catches up on what
+    /// was missed while the Mac slept or the app wasn't running (once, on launch or wake). Keep it alive.
+    /// Each schedule has a name, so what it last did is remembered between launches.
+    ///
+    ///     @State private var briefing = LampSchedule.daily("briefing", hour: 7, minute: 30) { await makeBriefing() }
+    ///     @State private var check = LampSchedule.every("inbox", minutes: 15) { await checkInbox() }
+    final class LampSchedule {
+        private let name: String
+        private let interval: TimeInterval?
+        private let time: (hour: Int, minute: Int)?
+        private let work: () async -> Void
+        private var timer: Timer?
+        private var observer: NSObjectProtocol?
+        /// The run under way, if any: a wake or a timer during it doesn't start another; it's rearmed when done.
+        private var running: Task<Void, Never>?
+
+        static func daily(_ name: String, hour: Int, minute: Int = 0, _ work: @escaping () async -> Void) -> LampSchedule {
+            LampSchedule(name: name, interval: nil, time: (hour, minute), work: work)
+        }
+
+        static func every(_ name: String, minutes: Double, _ work: @escaping () async -> Void) -> LampSchedule {
+            LampSchedule(name: name, interval: max(1, minutes) * 60, time: nil, work: work)
+        }
+
+        private init(name: String, interval: TimeInterval?, time: (hour: Int, minute: Int)?, work: @escaping () async -> Void) {
+            self.name = name
+            self.interval = interval
+            self.time = time
+            self.work = work
+            observer = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.arm()
+            }
+            arm()
+        }
+
+        deinit {
+            timer?.invalidate()
+            if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        }
+
+        private var lastRunKey: String { "lampSchedule.\(name).lastRun" }
+
+        /// When it should next run: the next occurrence of its time, or `interval` after it last ran (now, when
+        /// it never has). A time that passed while the Mac was off or asleep counts as due.
+        private var due: Date {
+            let lastRun = UserDefaults.standard.object(forKey: lastRunKey) as? Date
+            if let interval {
+                return lastRun.map { $0.addingTimeInterval(interval) } ?? Date()
+            }
+            let now = Date()
+            var next = Calendar.current.nextDate(after: now, matching: DateComponents(hour: time!.hour, minute: time!.minute), matchingPolicy: .nextTime) ?? now
+            // Today's time already passed and nothing ran for it: run now rather than wait a day.
+            if let previous = Calendar.current.date(byAdding: .day, value: -1, to: next), previous <= now, (lastRun ?? .distantPast) < previous {
+                next = now
+            }
+            return next
+        }
+
+        private func arm() {
+            guard running == nil else { return }
+            timer?.invalidate()
+            let delay = max(0, due.timeIntervalSinceNow)
+            timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in self?.fire() }
+            timer?.tolerance = min(60, delay / 10)
+        }
+
+        private func fire() {
+            guard running == nil else { return }
+            UserDefaults.standard.set(Date(), forKey: lastRunKey)
+            running = Task { @MainActor [weak self] in
+                guard let self else { return }
+                await work()
+                running = nil
+                arm()
             }
         }
     }

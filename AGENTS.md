@@ -96,6 +96,19 @@ A capability given to one engine must be given to all of them that can take it, 
   refused, and the agent may use git on it as it likes. On Lamp's own runs signing, hooks and the
   file-watcher command are off (`Versions.environment`): the sandbox closes the person's keys, and a hook
   could only stall a save.
+- **Pictures the agent is shown** (`look_at_app`, `use_app`, `make_art`): the conversation is sent whole with
+  every request, so its pictures add up until the provider refuses the request (Anthropic takes 30 MB of images
+  in one; OpenRouter drops the connection at about 5 MB of body). Every engine is handed a JPEG copy
+  (`Previews.forAgent`, under `.lamp/runtime/previews`, through `Store.agentPictures`), never the file itself:
+  the screenshots and the art stay as they are for the person and the app. A screenshot's copy keeps its pixels,
+  since `use_app`'s points are pixels in the picture at the scale it was taken; art is shrunk to 1280 px. Lamp
+  writes the copies unconfined, so their folder and file are checked like `Store.artDestination` checks art. pi's extension (`keepsPicturesFew` in
+  `lamp-tools.ts`) then takes the older pictures out of what the model is sent after each turn, with pi's
+  context edits (the session file keeps them), and when a request is refused as too big all the same it drops
+  every picture and sends once more. Claude Code and Codex compact on their own by tokens, which the small
+  copies keep ahead of the byte limit. When a request is still refused (`Agent.isRequestTooLarge`), the turn
+  says so in plain words and the conversation ends (`Store.forgetConversation`): the next request starts a
+  fresh one rather than failing the same way.
 - **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items.

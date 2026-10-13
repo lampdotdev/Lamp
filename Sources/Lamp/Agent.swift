@@ -1,5 +1,22 @@
 import Foundation
 
+/// The words for a request the model's provider refused as too big: the pictures in a conversation add up
+/// (Anthropic takes 30 MB of them in one request).
+extension Agent {
+    static let droppingPictures = "The conversation holds more pictures than the AI can take in at once, so Lamp is dropping the older ones and trying again."
+    static let conversationTooLarge = "The conversation had grown too large for the AI to take in at once, so Lamp has started a fresh one for this app. Send your request again."
+
+    /// Whether an engine's failure is the provider refusing the request for its size (HTTP 413, Anthropic's
+    /// payload_too_large, OpenAI's request_too_large, and Claude Code's own words for it), as against the
+    /// context window, which the engines handle themselves by compacting.
+    static func isRequestTooLarge(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        if ["payload_too_large", "request_too_large", "payload too large", "request too large", "request entity too large",
+            "pushed the request over the limit"].contains(where: lower.contains) { return true }
+        return lower.contains("413") && (lower.contains("too large") || lower.contains("cannot exceed"))
+    }
+}
+
 enum AgentEvent {
     case text(String)
     case textPiece(String) // a piece of the message the model is writing, as it streams in; `.text` follows with the whole
@@ -262,7 +279,10 @@ enum Agent {
         `LampFolderWatcher(folder) { changedURLs in }` (files added or changed in a folder; keep it alive) and \
         `LampFolders` (downloads, desktop, documents, screenshots, `files(in:)` newest first); \
         `LampHotKey("cmd+shift+space") { }` (a shortcut that works from any app; keep it alive); \
-        `LampLoginItem.isEnabled` (open at login: offer it as a toggle in Settings, never turn it on silently); \
+        `LampLoginItem.isEnabled` (open at login: offer it as a toggle in Settings, never turn it on yourself; an app \
+        that declares `"background": true` is opened at login by Lamp); `LampSchedule.daily("briefing", hour: 7) { }` and \
+        `LampSchedule.every("inbox", minutes: 15) { }` (work at a time or every so often, catching up after sleep; \
+        keep it alive); \
         `await LampText.read(url)` (text from PDFs, scanned PDFs, images and screenshots via Live Text, RTF, Word, \
         HTML, plain text, all on the Mac and free; use it before sending documents to LampAI) and \
         `await LampText.recognize(in: nsImage)`; `.lampDropFiles { urls in }` on any view and `LampDropZone("Drop \
@@ -439,7 +459,10 @@ enum Agent {
         straight back in place when that's what they asked for; the menu bar icon holds the settings, where the \
         shortcut can be changed. When the wish waits or watches for something (a folder, a time, the calendar, a \
         site, the clipboard), it's a utility too: it works in the background and reaches the user with a \
-        notification, never a window they must open to check. A window is for what the user brings things to and \
+        notification, never a window they must open to check. Such a utility declares `{"background": true}` in \
+        `capabilities.json` at the app's root: then it opens at login and keeps running, and Lamp tells the user \
+        so (don't explain it yourself; put Open at Login in its Settings so they can turn it off). What runs at a \
+        time or every so often uses `LampSchedule`. A window is for what the user brings things to and \
         comes back to: writing, collecting, browsing, playing. Collecting from wherever the user finds things \
         (recipes from any website, articles, quotes, products) is both: the window to keep and find them in, and a \
         way to save from where they are without coming to the window: a hotkey that takes the page or selection in \
