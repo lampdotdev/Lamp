@@ -781,9 +781,9 @@ enum Agent {
         trust it over the picture for exact words and values. Use x and y (pixels in the picture) only for what \
         the list doesn't have: a drawing, a canvas, a game board. A control it lists with no name has no \
         accessibility label: give it one. There are no menus \
-        or keyboard shortcuts on an iPhone. The simulator has no camera, motion sensors, Bluetooth, NFC, Face ID \
-        or health data: try everything else there, and for those parts tell the user plainly that they're for \
-        their phone, never that they're broken.
+        or keyboard shortcuts on an iPhone. The simulator has no camera, motion sensors, Bluetooth, NFC or Face ID, \
+        and no Health data until the app saves some: try everything else there, and for those parts tell the \
+        user plainly that they're for their phone, never that they're broken.
         """
 
         static let iPhoneHardware = """
@@ -795,7 +795,15 @@ enum Agent {
         live and VNDocumentCameraViewController to scan documents. Location and maps: CoreLocation (ask for \
         when-in-use) and MapKit. Haptics: `.sensoryFeedback` for taps and successes, CoreHaptics for patterns. \
         Face ID or Touch ID: LocalAuthentication. Bluetooth devices: CoreBluetooth; nearby phones without a \
-        network: MultipeerConnectivity. Health (steps, heart rate, workouts, sleep): HealthKit. NFC tags: CoreNFC. \
+        network: MultipeerConnectivity. Health: `LampHealth` from LampSupport.swift, after `{"healthkit": true}` in \
+        capabilities.json: `authorize(read:write:workouts:)` once, then `total(.steps)` (today's; a day's sum, or \
+        its average for heart rate and the like), `dailyTotals(.activeCalories, days: 7)`, `latest(.weight)`, \
+        `samples(.heartRate, days:)`, `sleep()` (hours, last night), `workouts(days:)`, and `save(.caloriesEaten, \
+        350)` to log what the person tells it; `Kind` lists steps, distance, calories, heart rate, sleep, weight, \
+        water, protein and the rest, each with `unitName`. The simulator has no Health data of its own: save a \
+        sample there to have something to read, and only there. Never write test data on a person's own phone, \
+        where it would join their real record; what the app logs for them is only what they told it. A Mac has none at all (`LampHealth.isAvailable` is false): an app for \
+        both reads on the iPhone and keeps what the Mac shows in LampSync. NFC tags: CoreNFC. \
         Notifications at a time or place: UNUserNotificationCenter with a trigger. Siri and Shortcuts: App \
         Intents. AR: ARKit with RealityKit. Music: MusicKit or MediaPlayer. The app already declares why it \
         wants each of these (microphone, speech, camera, photos, location, motion, Bluetooth, Face ID, health, \

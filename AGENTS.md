@@ -197,6 +197,10 @@ bundle what `deploy` does for a Mac one: usage descriptions, the icon (cut from 
 which `Icons.write` makes from the same tile as the Mac icon) and the chat's attachments, then an ad hoc signature.
 Every iOS app carries every usage description (`Template.iosUsageDescriptions`, one list for the scaffold's
 build.sh, `finishSimulatorBundle` and the phone's Info.plist), so the agent only requests authorization.
+The simulator's build takes its entitlements (Health, iCloud, push) from a section of the binary, as Xcode puts
+them: `writeOwnedFiles` writes `.lamp/entitlements.plist` and the iPhone build.sh links it in with `-sectcreate`;
+the bundle's ad hoc signature claims none, since the simulator refuses to launch an app whose signature claims a
+restricted entitlement without a provisioning profile.
 What needs more, the agent declares in `capabilities.json` at the app's root (`Template.Capabilities`:
 healthkit, nfc, siri, backgroundModes): Lamp turns it into an entitlements plist for the simulator's ad hoc
 signature and the phone project's `App.entitlements`, which Xcode's automatic signing registers, and
@@ -290,6 +294,18 @@ CloudKit's own `CKSyncEngine` in a zone of the app's in the private database, on
 JSON. The later change to an item wins; a sign-in or a zone deleted in iCloud sends everything up again. The
 agent is told in `Agent.Rules.icloud` (iPhone and both-kind prompts) when to use it and that the simulator is
 usually not signed in. The team must be in the Developer Program: a free account's build fails at signing.
+
+## Apple Health
+
+Health data goes through `LampHealth` in LampSupport.swift, the one building block for it: a `Kind` for each
+kind of data (steps, calories, heart rate, sleep, weight, what was eaten and drunk) with its HealthKit type,
+unit and the unit's name, and calls to authorize, read a day's total or average, daily totals, the latest
+sample, samples, last night's sleep and workouts, and to save a sample. It needs `{"healthkit": true}` in
+`capabilities.json`, which is the iPhone's entitlement only (`entitlementsPlist(container:platform:)` leaves
+it off the Mac half's signature, which couldn't carry it): a Mac has no Health data, `isAvailable` is false
+there, and an app for both reads on the iPhone and keeps what the Mac shows in LampSync. The simulator has
+HealthKit with no data in it, so the agent is told to save a sample before reading (`Agent.Rules.iPhoneHardware`).
+`HealthTests` compiles the block out of the template and checks every kind's unit.
 
 ## Generated apps
 

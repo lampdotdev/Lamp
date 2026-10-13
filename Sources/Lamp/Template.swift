@@ -93,6 +93,11 @@ enum Template {
     static func writeOwnedFiles(for project: LampProject) throws {
         try writeSupport(for: project)
         let widget = hasWidget(project)
+        // The simulator build's entitlements, for build.sh to put in the binary (see iPhoneBuildSh).
+        if project.platform.hasIOS {
+            try Capabilities.load(project).simulatorEntitlementsPlist(for: project)
+                .write(to: project.dir.appendingPathComponent(".lamp/entitlements.plist"), atomically: true, encoding: .utf8)
+        }
         switch project.platform {
         case .mac:
             try write(buildSh(widget: widget, widgetOnly: isWidgetOnly(project)), to: "build.sh", for: project, executable: true)
@@ -309,6 +314,16 @@ enum Template {
     cd "$(dirname "$0")"
     SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
     FLAGS=(-c release --triple arm64-apple-ios17.0-simulator --sdk "$SDK" -Xswiftc -g)
+    # The simulator takes an app's entitlements (Health, iCloud) from a section of its binary, as Xcode puts
+    # them, and refuses an app whose signature claims them without a provisioning profile. Lamp writes the file.
+    ENT=".lamp/entitlements.plist"
+    if [[ -f "$ENT" ]]; then
+      # Named after its contents: the linker isn't told its inputs' dates, but a new name is a new link.
+      mkdir -p .build
+      HASHED=".build/entitlements-$(shasum -a 256 "$ENT" | cut -c1-16).plist"
+      cp "$ENT" "$HASHED"
+      FLAGS+=(-Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$HASHED")
+    fi
     swift build "${FLAGS[@]}" 2>&1
     BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"
     APP="build/{{EXE}}.app"
@@ -476,6 +491,18 @@ enum Template {
             entitlementsPlist(container: container(for: project), platform: platform)
         }
 
+        /// The simulator build's entitlements, which build.sh puts in the binary: the iPhone's, with the app's
+        /// identity as Xcode writes it, which HealthKit and iCloud look for before they do anything. Empty when
+        /// nothing is declared, so a plain app stays plain.
+        func simulatorEntitlementsPlist(for project: LampProject) -> String {
+            let plist = entitlementsPlist(for: project, platform: .ios)
+            let team = Devices.team
+            guard !team.isEmpty, plist.contains("<key>") else { return plist }
+            let identity = "  <key>application-identifier</key><string>\(team).\(project.bundleID.xmlEscaped)</string>\n" +
+                "  <key>com.apple.developer.team-identifier</key><string>\(team)</string>\n"
+            return plist.replacingOccurrences(of: "<plist version=\"1.0\"><dict>\n", with: "<plist version=\"1.0\"><dict>\n" + identity)
+        }
+
         func entitlementsPlist(container: String?, platform: Destination = .ios) -> String {
             var lines: [String] = []
             if let container {
@@ -483,7 +510,8 @@ enum Template {
                 lines.append("  <key>com.apple.developer.icloud-services</key><array><string>CloudKit</string></array>")
                 lines.append("  <key>\(platform == .mac ? "com.apple.developer.aps-environment" : "aps-environment")</key><string>development</string>")
             }
-            if healthkit == true {
+            // Health is the iPhone's: a Mac has no Health data, and its signature can't claim the entitlement.
+            if healthkit == true, platform == .ios {
                 lines.append("  <key>com.apple.developer.healthkit</key><true/>")
                 lines.append("  <key>com.apple.developer.healthkit.access</key><array/>")
             }
@@ -1186,6 +1214,7 @@ enum Template {
     import UniformTypeIdentifiers
     import UserNotifications
     import CloudKit
+    import HealthKit
     @preconcurrency import Vision
     #if os(macOS)
     import AppKit
@@ -3410,6 +3439,353 @@ enum Template {
     protocol LampSyncedCollection: AnyObject {
         func reload(id: String)
         func forget(id: String)
+    }
+
+
+    // MARK: - Health
+
+    /// The person's Health data (steps, heart rate, sleep, workouts, weight, what they ate and drank), read and
+    /// written through HealthKit on an iPhone or iPad, once capabilities.json says `{"healthkit": true}`. A
+    /// Mac has no Health data of its own (`isAvailable` is false there), so an app for both reads on the
+    /// iPhone and keeps what the Mac shows in LampSync. The simulator has HealthKit but no data: save a sample
+    /// to have something to read.
+    ///
+    ///     try await LampHealth.authorize(read: [.steps, .heartRate, .sleep], write: [.caloriesEaten])
+    ///     let steps = try await LampHealth.total(.steps)                 // today's
+    ///     let rate = try await LampHealth.latest(.heartRate)?.value     // beats per minute
+    ///     let hours = try await LampHealth.sleep()                      // last night, asleep
+    ///     let week = try await LampHealth.dailyTotals(.activeCalories, days: 7)
+    ///     let runs = try await LampHealth.workouts(days: 7)
+    ///     try await LampHealth.save(.caloriesEaten, 350)               // logged now
+    ///
+    /// Every value is in the unit `Kind.unitName` says (steps, km, kcal, bpm, kg, cm, %, ml, mg, g, hours).
+    /// Each call throws a plain message when Health isn't available or the person hasn't allowed it.
+    enum LampHealth {
+        enum Kind: String, CaseIterable, Codable {
+            case steps, distance, flightsClimbed, activeCalories, restingCalories, exerciseMinutes, standHours
+            case heartRate, restingHeartRate, heartRateVariability, bloodOxygen, respiratoryRate, bodyTemperature
+            case weight, height, bodyFat, bodyMassIndex, waistCircumference
+            case water, caffeine, caloriesEaten, protein, carbohydrates, fat, fiber, sugar, sodium
+            case bloodGlucose, bloodPressureSystolic, bloodPressureDiastolic
+            /// Not a quantity but a stretch of time: read with `sleep()`, never with `total` or `latest`.
+            case sleep
+
+            var identifier: HKQuantityTypeIdentifier {
+                switch self {
+                case .steps: .stepCount
+                case .distance: .distanceWalkingRunning
+                case .flightsClimbed: .flightsClimbed
+                case .activeCalories: .activeEnergyBurned
+                case .restingCalories: .basalEnergyBurned
+                case .exerciseMinutes: .appleExerciseTime
+                case .standHours: .appleStandTime
+                case .heartRate: .heartRate
+                case .restingHeartRate: .restingHeartRate
+                case .heartRateVariability: .heartRateVariabilitySDNN
+                case .bloodOxygen: .oxygenSaturation
+                case .respiratoryRate: .respiratoryRate
+                case .bodyTemperature: .bodyTemperature
+                case .weight: .bodyMass
+                case .height: .height
+                case .bodyFat: .bodyFatPercentage
+                case .bodyMassIndex: .bodyMassIndex
+                case .waistCircumference: .waistCircumference
+                case .water: .dietaryWater
+                case .caffeine: .dietaryCaffeine
+                case .caloriesEaten: .dietaryEnergyConsumed
+                case .protein: .dietaryProtein
+                case .carbohydrates: .dietaryCarbohydrates
+                case .fat: .dietaryFatTotal
+                case .fiber: .dietaryFiber
+                case .sugar: .dietarySugar
+                case .sodium: .dietarySodium
+                case .bloodGlucose: .bloodGlucose
+                case .bloodPressureSystolic: .bloodPressureSystolic
+                case .bloodPressureDiastolic: .bloodPressureDiastolic
+                case .sleep: .stepCount   // never used: sleep is a category, read by sleep()
+                }
+            }
+
+            var unit: HKUnit {
+                switch self {
+                case .steps, .flightsClimbed, .bodyMassIndex: .count()
+                case .distance: .meterUnit(with: .kilo)
+                case .activeCalories, .restingCalories, .caloriesEaten: .kilocalorie()
+                case .exerciseMinutes: .minute()
+                case .standHours, .sleep: .hour()
+                case .heartRate, .restingHeartRate, .respiratoryRate: HKUnit.count().unitDivided(by: .minute())
+                case .heartRateVariability: .secondUnit(with: .milli)
+                case .bloodOxygen, .bodyFat: .percent()
+                case .bodyTemperature: .degreeCelsius()
+                case .weight: .gramUnit(with: .kilo)
+                case .height, .waistCircumference: .meterUnit(with: .centi)
+                case .water: .literUnit(with: .milli)
+                case .caffeine, .sodium: .gramUnit(with: .milli)
+                case .protein, .carbohydrates, .fat, .fiber, .sugar: .gram()
+                case .bloodGlucose: HKUnit.gramUnit(with: .milli).unitDivided(by: .literUnit(with: .deci))
+                case .bloodPressureSystolic, .bloodPressureDiastolic: .millimeterOfMercury()
+                }
+            }
+
+            /// The unit as a person would write it beside the number.
+            var unitName: String {
+                switch self {
+                case .steps: "steps"
+                case .flightsClimbed: "flights"
+                case .bodyMassIndex: ""
+                case .distance: "km"
+                case .activeCalories, .restingCalories, .caloriesEaten: "kcal"
+                case .exerciseMinutes: "min"
+                case .standHours, .sleep: "hours"
+                case .heartRate, .restingHeartRate: "bpm"
+                case .respiratoryRate: "breaths/min"
+                case .heartRateVariability: "ms"
+                case .bloodOxygen, .bodyFat: "%"
+                case .bodyTemperature: "°C"
+                case .weight: "kg"
+                case .height, .waistCircumference: "cm"
+                case .water: "ml"
+                case .caffeine, .sodium: "mg"
+                case .protein, .carbohydrates, .fat, .fiber, .sugar: "g"
+                case .bloodGlucose: "mg/dL"
+                case .bloodPressureSystolic, .bloodPressureDiastolic: "mmHg"
+                }
+            }
+
+            /// Whether a day's samples add up (steps, calories, water) or the latest one is the answer (weight,
+            /// heart rate): `total` sums the first kind and averages the second.
+            var isCumulative: Bool {
+                switch self {
+                case .steps, .distance, .flightsClimbed, .activeCalories, .restingCalories, .exerciseMinutes, .standHours,
+                     .water, .caffeine, .caloriesEaten, .protein, .carbohydrates, .fat, .fiber, .sugar, .sodium: true
+                default: false
+                }
+            }
+
+            /// HealthKit keeps percentages as fractions; people write them as percent.
+            fileprivate var scale: Double { unit == .percent() ? 100 : 1 }
+        }
+
+        struct Sample: Identifiable, Codable {
+            var id: UUID              // HealthKit's own, so the same record reads as the same item every time
+            var kind: Kind
+            var value: Double
+            var date: Date
+            /// The app or device that recorded it ("Apple Watch", the app's own name).
+            var source: String
+        }
+
+        struct Workout: Identifiable, Codable {
+            var id: UUID            // HealthKit's own
+            var name: String        // "Running", "Cycling", "Strength Training"…
+            var start: Date
+            var end: Date
+            var calories: Double?   // kcal
+            var distance: Double?   // km
+            var minutes: Double { end.timeIntervalSince(start) / 60 }
+        }
+
+        struct Failure: LocalizedError {
+            let message: String
+            var errorDescription: String? { message }
+        }
+
+        /// Whether this device has Health data at all: an iPhone or iPad does, a Mac doesn't.
+        static var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
+
+        private static let store = HKHealthStore()
+
+        private static func ready() throws {
+            guard isAvailable else {
+                #if os(macOS)
+                throw Failure(message: "Health data isn't available on a Mac: read it on the iPhone and keep what the Mac shows in LampSync.")
+                #else
+                throw Failure(message: "Health data isn't available on this device.")
+                #endif
+            }
+        }
+
+        /// Asks the person once for the kinds the app reads and writes (iOS shows its own sheet; what they
+        /// refuse reads as nothing, as Apple has it). Call before anything else, and again for new kinds.
+        static func authorize(read: [Kind], write: [Kind] = [], workouts: Bool = false) async throws {
+            try ready()
+            var toRead: Set<HKObjectType> = []
+            var toWrite: Set<HKSampleType> = []
+            for kind in read {
+                if kind == .sleep { toRead.insert(HKCategoryType(.sleepAnalysis)) } else { toRead.insert(HKQuantityType(kind.identifier)) }
+            }
+            for kind in write where kind != .sleep { toWrite.insert(HKQuantityType(kind.identifier)) }
+            if workouts { toRead.insert(HKObjectType.workoutType()) }
+            do {
+                try await store.requestAuthorization(toShare: toWrite, read: toRead)
+            } catch {
+                throw Failure(message: "Health access couldn't be asked for: \(error.localizedDescription)")
+            }
+        }
+
+        /// A day's total for what adds up (steps, calories eaten), or its average for what doesn't (heart rate).
+        static func total(_ kind: Kind, on day: Date = Date()) async throws -> Double {
+            try ready()
+            guard kind != .sleep else { return try await sleep(nightEnding: day) }
+            let bounds = dayBounds(day)
+            return try await statistic(kind, from: bounds.start, to: bounds.end)
+        }
+
+        /// One number per day, oldest first, for the last `days` days: what a chart wants.
+        static func dailyTotals(_ kind: Kind, days: Int = 7) async throws -> [(day: Date, value: Double)] {
+            try ready()
+            var totals: [(day: Date, value: Double)] = []
+            let calendar = Calendar.current
+            for back in stride(from: max(1, days) - 1, through: 0, by: -1) {
+                let day = calendar.date(byAdding: .day, value: -back, to: calendar.startOfDay(for: Date())) ?? Date()
+                totals.append((day, try await total(kind, on: day)))
+            }
+            return totals
+        }
+
+        /// The most recent sample, or nil when there is none the app may see.
+        static func latest(_ kind: Kind) async throws -> Sample? {
+            try await samples(kind, from: .distantPast, to: Date(), limit: 1).first
+        }
+
+        /// Every sample in the last `days` days, newest first.
+        static func samples(_ kind: Kind, days: Int = 7) async throws -> [Sample] {
+            try await samples(kind, from: Calendar.current.date(byAdding: .day, value: -max(1, days), to: Date()) ?? Date(), to: Date(), limit: HKObjectQueryNoLimit)
+        }
+
+        /// Hours asleep in the night that ended on `day`: between the evening before and noon.
+        static func sleep(nightEnding day: Date = Date()) async throws -> Double {
+            try ready()
+            let calendar = Calendar.current
+            let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
+            let evening = calendar.date(byAdding: .hour, value: -18, to: noon) ?? day
+            let predicate = HKQuery.predicateForSamples(withStart: evening, end: noon, options: .strictStartDate)
+            let found: [HKSample] = try await withCheckedThrowingContinuation { continuation in
+                let query = HKSampleQuery(sampleType: HKCategoryType(.sleepAnalysis), predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
+                    if let error { continuation.resume(throwing: Failure(message: "Sleep couldn't be read: \(error.localizedDescription)")) } else { continuation.resume(returning: samples ?? []) }
+                }
+                store.execute(query)
+            }
+            let asleep: Set<Int> = [HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue, HKCategoryValueSleepAnalysis.asleepCore.rawValue,
+                                    HKCategoryValueSleepAnalysis.asleepDeep.rawValue, HKCategoryValueSleepAnalysis.asleepREM.rawValue]
+            // A watch's stages and a sleep app's one long record cover the same hours: counted once, as the
+            // union of the stretches asleep, within the night.
+            let stretches = found.compactMap { $0 as? HKCategorySample }.filter { asleep.contains($0.value) }
+                .map { (max($0.startDate, evening), min($0.endDate, noon)) }.filter { $0.0 < $0.1 }
+            return asleepSeconds(stretches) / 3600
+        }
+
+        /// Seconds covered by the stretches, overlaps counted once.
+        static func asleepSeconds(_ stretches: [(Date, Date)]) -> Double {
+            var total = 0.0
+            var current: (Date, Date)?
+            for stretch in stretches.sorted(by: { $0.0 < $1.0 }) {
+                if let open = current, stretch.0 <= open.1 {
+                    current = (open.0, max(open.1, stretch.1))
+                } else {
+                    if let open = current { total += open.1.timeIntervalSince(open.0) }
+                    current = stretch
+                }
+            }
+            if let open = current { total += open.1.timeIntervalSince(open.0) }
+            return total
+        }
+
+        /// Workouts in the last `days` days, newest first.
+        static func workouts(days: Int = 7) async throws -> [Workout] {
+            try ready()
+            let start = Calendar.current.date(byAdding: .day, value: -max(1, days), to: Date()) ?? Date()
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: Date(), options: .strictStartDate)
+            let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+            let found: [HKSample] = try await withCheckedThrowingContinuation { continuation in
+                let query = HKSampleQuery(sampleType: .workoutType(), predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: [sort]) { _, samples, error in
+                    if let error { continuation.resume(throwing: Failure(message: "Workouts couldn't be read: \(error.localizedDescription)")) } else { continuation.resume(returning: samples ?? []) }
+                }
+                store.execute(query)
+            }
+            return found.compactMap { $0 as? HKWorkout }.map { workout in
+                let calories = workout.statistics(for: HKQuantityType(.activeEnergyBurned))?.sumQuantity()?.doubleValue(for: .kilocalorie())
+                let distance = [HKQuantityTypeIdentifier.distanceWalkingRunning, .distanceCycling, .distanceSwimming]
+                    .compactMap { workout.statistics(for: HKQuantityType($0))?.sumQuantity()?.doubleValue(for: .meterUnit(with: .kilo)) }.first
+                return Workout(id: workout.uuid, name: name(of: workout.workoutActivityType), start: workout.startDate, end: workout.endDate, calories: calories, distance: distance)
+            }
+        }
+
+        /// Logs a sample, as the app's own: calories eaten, water, weight, or anything else the person tells it.
+        static func save(_ kind: Kind, _ value: Double, at date: Date = Date()) async throws {
+            try ready()
+            guard kind != .sleep else { throw Failure(message: "Sleep can't be logged this way.") }
+            let quantity = HKQuantity(unit: kind.unit, doubleValue: value / kind.scale)
+            let sample = HKQuantitySample(type: HKQuantityType(kind.identifier), quantity: quantity, start: date, end: date)
+            do {
+                try await store.save(sample)
+            } catch {
+                throw Failure(message: "Couldn't save to Health: \(error.localizedDescription)")
+            }
+        }
+
+        // MARK: Behind the calls
+
+        private static func dayBounds(_ day: Date) -> (start: Date, end: Date) {
+            let start = Calendar.current.startOfDay(for: day)
+            return (start, Calendar.current.date(byAdding: .day, value: 1, to: start) ?? day)
+        }
+
+        private static func statistic(_ kind: Kind, from start: Date, to end: Date) async throws -> Double {
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+            let options: HKStatisticsOptions = kind.isCumulative ? .cumulativeSum : .discreteAverage
+            return try await withCheckedThrowingContinuation { continuation in
+                let query = HKStatisticsQuery(quantityType: HKQuantityType(kind.identifier), quantitySamplePredicate: predicate, options: options) { _, statistics, error in
+                    if let failure = error as? HKError, failure.code == .errorNoData { continuation.resume(returning: 0); return }
+                    if let error { continuation.resume(throwing: Failure(message: "\(kind.rawValue) couldn't be read: \(error.localizedDescription)")); return }
+                    let quantity = kind.isCumulative ? statistics?.sumQuantity() : statistics?.averageQuantity()
+                    continuation.resume(returning: (quantity?.doubleValue(for: kind.unit) ?? 0) * kind.scale)
+                }
+                store.execute(query)
+            }
+        }
+
+        private static func samples(_ kind: Kind, from start: Date, to end: Date, limit: Int) async throws -> [Sample] {
+            try ready()
+            guard kind != .sleep else { throw Failure(message: "Sleep is read with sleep(), as hours.") }
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+            let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+            let found: [HKSample] = try await withCheckedThrowingContinuation { continuation in
+                let query = HKSampleQuery(sampleType: HKQuantityType(kind.identifier), predicate: predicate, limit: limit, sortDescriptors: [sort]) { _, samples, error in
+                    if let error { continuation.resume(throwing: Failure(message: "\(kind.rawValue) couldn't be read: \(error.localizedDescription)")) } else { continuation.resume(returning: samples ?? []) }
+                }
+                store.execute(query)
+            }
+            return found.compactMap { $0 as? HKQuantitySample }.map {
+                Sample(id: $0.uuid, kind: kind, value: $0.quantity.doubleValue(for: kind.unit) * kind.scale, date: $0.endDate, source: $0.sourceRevision.source.name)
+            }
+        }
+
+        private static func name(of type: HKWorkoutActivityType) -> String {
+            switch type {
+            case .running: "Running"
+            case .walking: "Walking"
+            case .cycling: "Cycling"
+            case .swimming: "Swimming"
+            case .hiking: "Hiking"
+            case .yoga: "Yoga"
+            case .functionalStrengthTraining, .traditionalStrengthTraining: "Strength Training"
+            case .highIntensityIntervalTraining: "HIIT"
+            case .rowing: "Rowing"
+            case .elliptical: "Elliptical"
+            case .stairClimbing: "Stair Climbing"
+            case .coreTraining: "Core Training"
+            case .pilates: "Pilates"
+            case .dance, .cardioDance: "Dance"
+            case .tennis: "Tennis"
+            case .soccer: "Soccer"
+            case .basketball: "Basketball"
+            case .golf: "Golf"
+            case .cooldown: "Cooldown"
+            case .mixedCardio: "Mixed Cardio"
+            default: "Workout"
+            }
+        }
     }
 
     /// The app's own files, from its Assets/ folder, bundled inside it (Contents/Resources/Assets).
