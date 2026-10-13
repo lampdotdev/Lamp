@@ -48,6 +48,7 @@ final class BrowserPrototype {
         if let bytes = try? Data(contentsOf: Self.folder.appendingPathComponent("grants.json")) {
             grants = try JSONDecoder().decode([Grant].self, from: bytes)
         }
+        try BrowserTaskPrototype.shared.prepare()
         guard let source = ProcessInfo.processInfo.environment["LAMP_BROWSER_FIXTURES"] else { return }
         let fixture = URL(fileURLWithPath: source)
         let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/BrowserNativeHost")
@@ -148,6 +149,7 @@ final class BrowserPrototype {
         guard let session = body["session"] as? String, let profile = body["profile"] as? String,
               UUID(uuidString: profile) != nil else { return fail("Missing browser identity.") }
         let op = body["op"] as? String ?? ""
+        if op.hasPrefix("task") { return BrowserTaskPrototype.shared.native(body, origin: origin) }
         if op == "list" || op == "poll" {
             var jobs: [[String: Any]] = []
             if op == "poll" {
