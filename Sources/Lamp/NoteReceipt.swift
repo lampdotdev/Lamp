@@ -27,19 +27,20 @@ struct NoteReceipt: Codable, Equatable {
     /// lines one after another, as many as fit in a line. It is what the person sees in Settings and all the
     /// agent is told of the notes, so it has to be true of what is there.
     static func summary(of text: String) -> String {
-        var parts = lines(text).map { line in
+        let parts = lines(text).map { line in
             var line = Substring(line)
             while let last = line.last, ".;,".contains(last) { line = line.dropLast() }
             return String(line)
         }.filter { !$0.isEmpty }
-        guard let first = parts.first else { return "" }
-        guard first.count <= Memory.summaryLimit else { return String(first.prefix(Memory.summaryLimit - 1)) + "…" }
-        var summary = first
-        parts.removeFirst()
-        for part in parts {
-            // Room is kept for the mark that says there is more.
-            guard summary.count + 2 + part.count <= Memory.summaryLimit - 1 else { return summary + "…" }
-            summary += "; " + part
+        var summary = ""
+        for (index, part) in parts.enumerated() {
+            let next = summary.isEmpty ? part : summary + "; " + part
+            // Whatever doesn't fit is stood for by a mark, which needs its own place in the line.
+            let room = Memory.summaryLimit - (index == parts.count - 1 ? 0 : 1)
+            guard next.count <= room else {
+                return (summary.isEmpty ? String(part.prefix(Memory.summaryLimit - 1)) : summary) + "…"
+            }
+            summary = next
         }
         return summary
     }

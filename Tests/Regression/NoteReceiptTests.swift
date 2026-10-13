@@ -70,6 +70,13 @@ final class NoteReceiptTests: XCTestCase {
         XCTAssertTrue(summary.hasPrefix("Likes thing number 1 done a particular way; Likes thing number 2"))
     }
 
+    func testASummaryStaysALineWhenTheFirstNoteFillsIt() {
+        // A first note as long as a summary may be, and another after it: the mark for "more" must still fit.
+        let first = String(repeating: "a", count: Memory.summaryLimit)
+        XCTAssertLessThanOrEqual(NoteReceipt.summary(of: first + "\nAnother note").count, Memory.summaryLimit)
+        XCTAssertEqual(NoteReceipt.summary(of: first), first)
+    }
+
     func testEachEngineIsToldWhatWasTakenBack() {
         var undone = Memory.Undone()
         undone.add(["No sounds"], about: "you", for: ["pi", "codex"])
