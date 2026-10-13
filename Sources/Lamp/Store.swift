@@ -87,11 +87,48 @@ struct AppUsage: Codable {
     var totalCost: Double { cost + (agentCost ?? 0) }
 }
 
+/// A choice the builder puts in the chat with `ask`. With no `chosen` it is a question to answer before
+/// building; with one it records a choice the builder made and lets the person switch it.
+struct AskQuestion: Codable, Equatable {
+    var question: String
+    var options: [String]
+    var chosen: String?
+}
+
+/// The persisted state of an ask card. `answers` is filled when its controls send a message; `dismissed`
+/// covers a question answered in the composer, whose user message immediately below is the record.
+struct AskCardPayload: Codable, Equatable {
+    var questions: [AskQuestion]
+    var answers: [String?]? = nil
+    var dismissed: Bool? = nil
+
+    var isAssumption: Bool { questions.allSatisfy { $0.chosen != nil } }
+    var isReadOnly: Bool { dismissed == true || answers != nil }
+
+    static func answerMessage(questions: [AskQuestion], answers: [String]) -> String {
+        zip(questions, answers).map { question, answer in
+            let mark = question.question.last.map { ".?!".contains($0) } == true ? "" : "?"
+            let answerMark = answer.last.map { ".?!".contains($0) } == true ? "" : "."
+            return "\(question.question)\(mark) \(answer)\(answerMark)"
+        }.joined(separator: " / ")
+    }
+
+    static func assumptionMessage(question: AskQuestion, answer: String) -> String {
+        func fragment(_ text: String) -> String {
+            guard text.count > 1, let first = text.first, first.isUppercase else { return text }
+            let second = text[text.index(after: text.startIndex)]
+            guard second.isLowercase || second.isWhitespace else { return text }
+            return first.lowercased() + text.dropFirst()
+        }
+        return "Use \(fragment(answer)) instead of \(fragment(question.chosen ?? "the current choice"))."
+    }
+}
+
 struct LogLine: Identifiable, Codable, Equatable {
     /// `needsKey` is a setup offer from before offers named their capability: it was always about pictures.
     /// `drawIcon` offers to draw the app's icon in Image Playground; its text is the design it's for (`Icons.artKey`).
     /// `widget` is the card of an app that has a widget (`WidgetCard`): how to add it, then that it's there.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, drawIcon, widget }
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, ask, drawIcon, widget }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -102,6 +139,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var tookBack: [String]? = nil      // …and every request that left the chat for it, oldest first
     var retryPhone: String? = nil     // a phone install failure: retry this destination without the agent
     var offer: SetupOffer? = nil      // a setup offer: what it's about (its text is the reason)
+    var ask: AskCardPayload? = nil    // questions or assumptions shown as choices in the chat
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -521,8 +559,9 @@ final class Store: ObservableObject {
     }
 
     func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil,
-             offer: SetupOffer? = nil) {
-        logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone, offer: offer))
+             offer: SetupOffer? = nil, ask: AskCardPayload? = nil) {
+        logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone,
+                                                    offer: offer, ask: ask))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
         saveChat(project)
     }
@@ -1441,6 +1480,12 @@ final class Store: ObservableObject {
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
     /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
     func send(_ prompt: String, attachments: [URL] = [], to project: LampProject) {
+        // A composer message is the answer to an open question card, even if it has to wait behind the
+        // current turn. Fold the card as soon as Send is pressed rather than when that queued turn starts.
+        if let index = logs[project.id]?.lastIndex(where: { $0.kind == .ask && $0.ask?.isAssumption == false && $0.ask?.isReadOnly == false }) {
+            logs[project.id]?[index].ask?.dismissed = true
+            saveChat(project)
+        }
         // Waiting for setup can outlast this run, and the files may be temporary (a pasted screenshot):
         // keep copies, so the request still has them after a relaunch.
         let files = setup.ready ? attachments : keepForLater(attachments)
@@ -2431,6 +2476,7 @@ final class Store: ObservableObject {
             case "read_notes", "save_notes": (status, answer) = Memory.call(name, arguments, for: project)
             case "make_art": (status, answer) = await makeArt(arguments, for: project)
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
+            case "ask": (status, answer) = agentAsk(arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -2522,6 +2568,46 @@ final class Store: ObservableObject {
         let why = (arguments["why"] as? String)?.trimmed ?? ""
         guard !why.isEmpty else { return (400, ["error": "Say in `why` what the person would get."]) }
         return (200, ["text": offerSetup(project, SetupOffer(capability: capability, away: away ? true : nil), because: why, fromAgent: true)])
+    }
+
+    /// `ask`: questions to answer before building, or choices the agent made while building. The payload is
+    /// kept on the chat line so its answered state survives a relaunch.
+    private func agentAsk(_ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
+        let raw = arguments["questions"] as? [[String: Any]] ?? []
+        guard (1...3).contains(raw.count) else { return (400, ["error": "Give one to three questions."]) }
+        var questions: [AskQuestion] = []
+        for item in raw {
+            let question = (item["question"] as? String)?.trimmed ?? ""
+            let options = (item["options"] as? [String] ?? []).map(\.trimmed).filter { !$0.isEmpty }
+            let chosen = (item["chosen"] as? String)?.trimmed.nilIfEmpty
+            guard !question.isEmpty else { return (400, ["error": "Every question needs short text."]) }
+            guard (2...4).contains(options.count), Set(options).count == options.count else {
+                return (400, ["error": "Every question needs two to four different options."])
+            }
+            guard chosen == nil || options.contains(chosen!) else {
+                return (400, ["error": "Each chosen value must be one of that question's options."])
+            }
+            questions.append(AskQuestion(question: question, options: options, chosen: chosen))
+        }
+        let assumptions = questions.allSatisfy { $0.chosen != nil }
+        guard assumptions || questions.allSatisfy({ $0.chosen == nil }) else {
+            return (400, ["error": "Use chosen for every question in an assumptions card, or for none in a question card."])
+        }
+        log(project, .ask, "", ask: AskCardPayload(questions: questions))
+        return (200, ["text": assumptions
+            ? "Lamp showed those choices in the chat. Carry on, and don't repeat the assumptions in your reply."
+            : "Lamp showed the questions in the chat. End your turn now without repeating them in prose or changing files."])
+    }
+
+    /// Records an ask card's controls before sending their readable answer as an ordinary user message.
+    func answerAsk(_ line: UUID, answers: [String], message: String, in project: LampProject) {
+        guard let index = logs[project.id]?.firstIndex(where: { $0.id == line }),
+              var payload = logs[project.id]?[index].ask, !payload.isReadOnly else { return }
+        payload.answers = payload.questions.indices.map { answers.indices.contains($0) ? answers[$0] : payload.questions[$0].chosen }
+        payload.dismissed = true
+        logs[project.id]?[index].ask = payload
+        saveChat(project)
+        send(message, to: project)
     }
 
     /// `make_art`: a picture for the app to show, painted in its icon's style and saved in Assets/, the folder
@@ -3741,7 +3827,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/art", "/mcp", "/pi/key"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/ask", "/agent/art", "/mcp", "/pi/key"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -3843,6 +3929,9 @@ final class Store: ObservableObject {
         }
         if route == "/agent/setup" {
             return agentOffer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/ask" {
+            return agentAsk((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/approve" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]

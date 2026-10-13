@@ -133,6 +133,7 @@ struct TurnProgress {
         case .remember: return "Taking notes for next time"
         case .art: return "Painting a picture"
         case .offer: return "Suggesting a better setup"
+        case .ask: return "Preparing choices"
         case .delegate, .other: return "Working on your app"
         }
     }
