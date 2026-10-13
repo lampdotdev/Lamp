@@ -27,10 +27,22 @@ final class DictationTranscriptTests: XCTestCase {
         XCTAssertEqual(transcript.phrases, 1)
     }
 
-    func testAMarkedPhraseTheRecognizerCarriesOnIsntRepeated() {
+    /// A phrase can be said again, or begin with all of the one before: it is still a phrase of its own.
+    func testAShortPhraseSaidAgainAfterAPauseIsKept() {
         var transcript = Dictation.Transcript()
-        _ = transcript.take("Make a timer.", endsPhrase: true)
-        XCTAssertEqual(transcript.take("Make a timer. Make it blue."), "Make a timer. Make it blue.")
+        _ = transcript.take("Go.", endsPhrase: true, span: 0...1)
+        XCTAssertEqual(transcript.take("Go.", endsPhrase: true, span: 3...4), "Go. Go.")
+        XCTAssertEqual(transcript.take("Go"), "Go. Go. Go")
+        XCTAssertEqual(transcript.take("Go now."), "Go. Go. Go now.")
+        XCTAssertEqual(transcript.phrases, 3)
+    }
+
+    /// A correction to a phrase's first word, with no pause, replaces it.
+    func testCorrectingTheFirstWordReplacesThePhrase() {
+        var transcript = Dictation.Transcript()
+        _ = transcript.take("Buy a pair of pears")
+        XCTAssertEqual(transcript.take("By a pair of pears"), "By a pair of pears")
+        XCTAssertEqual(transcript.phrases, 1)
     }
 
     /// Seen dictating: the recognizer marked a phrase finished, then sent it again with a word fixed.

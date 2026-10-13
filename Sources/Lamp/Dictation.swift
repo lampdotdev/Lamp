@@ -198,11 +198,9 @@ final class Dictation: ObservableObject {
         mutating func take(_ text: String, endsPhrase: Bool = false, span: ClosedRange<TimeInterval>? = nil) -> String {
             guard !text.isEmpty else { return Self.join(earlier, phrase) }
             if phraseEnded {
-                let extends = text.count > phrase.count && text.lowercased().hasPrefix(phrase.lowercased())
+                // After its mark, the recognizer starts again from the next word; it doesn't carry the phrase on.
                 let sameTime = span != nil && phraseSpan != nil && span!.overlaps(phraseSpan!)
-                if extends {
-                    phraseEnded = endsPhrase
-                } else if sameTime || Self.resembles(text, phrase) {
+                if sameTime || Self.resembles(text, phrase) {
                     // Said again: phraseEnded stays.
                 } else {
                     earlier = Self.join(earlier, phrase)
