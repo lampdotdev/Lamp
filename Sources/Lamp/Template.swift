@@ -4012,8 +4012,14 @@ enum Template {
         @Published private(set) var status = "Not asked yet"
 
         private let manager = CLLocationManager()
-        private var permission: CheckedContinuation<Bool, Never>?
+        /// Everyone waiting on the person's answer, each settled once: one question answers them all.
+        private var waiting: [(always: Bool, answer: CheckedContinuation<Bool, Never>)] = []
         private var once: [CheckedContinuation<CLLocation, Error>] = []
+        /// What's been asked to run: a watcher waiting on the person's answer starts only if it still is.
+        private var wantsMoves = false
+        private var wantsVisits = false
+        /// iOS asks for Always once; after that the question can't be asked again, and nothing would answer.
+        private static let askedAlwaysKey = "LampLocation.askedAlways"
         private let kept = LampStore.collection("location.visits", of: Visit.self)
 
         private override init() {
@@ -4022,21 +4028,57 @@ enum Template {
             manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
             visits = kept.all(orderBy: "arrived", descending: true)
             isAllowed = Self.allowed(manager.authorizationStatus)
+            // The system's question makes the app inactive; when it's active again the person has answered,
+            // even with an answer that changes nothing (keeping "While Using" when asked for Always), which
+            // the location manager doesn't report.
+            #if os(iOS)
+            let active = UIApplication.didBecomeActiveNotification
+            #else
+            let active = NSApplication.didBecomeActiveNotification
+            #endif
+            NotificationCenter.default.addObserver(forName: active, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { LampLocation.shared.settle() }
+            }
         }
 
-        /// Asks once (while in use, or always for watching in the background); true when allowed.
+        /// Asks once (while in use, or always for watching in the background); true when allowed. A question
+        /// the system won't ask again (refused, restricted, Always asked before) answers straight away.
         static func authorize(always: Bool = false) async -> Bool {
             let me = shared
-            if Self.allowed(me.manager.authorizationStatus), !always { return true }
+            let status = me.manager.authorizationStatus
+            if status == .denied || status == .restricted { return false }
             #if os(iOS)
-            if always, me.manager.authorizationStatus == .authorizedAlways { return true }
+            if always ? status == .authorizedAlways : Self.allowed(status) { return true }
+            if always, status == .authorizedWhenInUse, UserDefaults.standard.bool(forKey: askedAlwaysKey) { return false }
+            #else
+            if Self.allowed(status) { return true }
             #endif
             return await withCheckedContinuation { continuation in
-                me.permission = continuation
+                me.waiting.append((always, continuation))
                 #if os(iOS)
-                if always { me.manager.requestAlwaysAuthorization() } else { me.manager.requestWhenInUseAuthorization() }
+                if always {
+                    UserDefaults.standard.set(true, forKey: askedAlwaysKey)
+                    me.manager.requestAlwaysAuthorization()
+                } else if status == .notDetermined {
+                    me.manager.requestWhenInUseAuthorization()
+                }
                 #else
-                me.manager.requestWhenInUseAuthorization()
+                if status == .notDetermined { me.manager.requestWhenInUseAuthorization() }
+                #endif
+            }
+        }
+
+        /// Answers everyone waiting, once, from where things stand now, unless the question is still open.
+        private func settle() {
+            let status = manager.authorizationStatus
+            guard !waiting.isEmpty, status != .notDetermined else { return }
+            let everyone = waiting
+            waiting = []
+            for waiter in everyone {
+                #if os(iOS)
+                waiter.answer.resume(returning: waiter.always ? status == .authorizedAlways : Self.allowed(status))
+                #else
+                waiter.answer.resume(returning: Self.allowed(status))
                 #endif
             }
         }
@@ -4077,8 +4119,9 @@ enum Template {
 
         /// Keeps `current` up as the person moves a few hundred metres or more, sparing the battery.
         func watch() {
+            wantsMoves = true
             Task {
-                guard await Self.authorize() else { return }
+                guard await Self.authorize(), wantsMoves else { return }
                 manager.startMonitoringSignificantLocationChanges()
                 status = "Following big moves"
             }
@@ -4088,8 +4131,10 @@ enum Template {
         /// needs `always` and the location background mode.
         func watchVisits() {
             #if os(iOS)
+            wantsVisits = true
             Task {
                 guard await Self.authorize(always: true) else { status = "Visits need Always: the person can allow it in Settings"; return }
+                guard wantsVisits else { return }
                 manager.startMonitoringVisits()
                 status = "Noting where the person stops"
             }
@@ -4099,6 +4144,8 @@ enum Template {
         }
 
         func stop() {
+            wantsMoves = false
+            wantsVisits = false
             manager.stopMonitoringSignificantLocationChanges()
             #if os(iOS)
             manager.stopMonitoringVisits()
@@ -4121,8 +4168,7 @@ enum Template {
             Task { @MainActor in
                 isAllowed = Self.allowed(status)
                 self.status = isAllowed ? "Allowed" : status == .notDetermined ? "Not asked yet" : "Not allowed; the person can allow it in Settings"
-                permission?.resume(returning: isAllowed)
-                permission = nil
+                settle()
             }
         }
 
@@ -4279,6 +4325,8 @@ enum Template {
             var album: String
             var seconds: Double
             var artworkURL: String?
+            /// From the person's library (`library()`, `recentlyPlayed()`), whose ids aren't the catalog's.
+            var inLibrary: Bool?
         }
 
         struct Failure: LocalizedError {
@@ -4295,7 +4343,7 @@ enum Template {
             try await allowed()
             var request = MusicRecentlyPlayedRequest<MusicKit.Song>()
             request.limit = limit
-            return try await run { try await request.response().items.map(song) }
+            return try await run { try await request.response().items.map { song($0) } }   // catalog songs
         }
 
         /// Songs in the person's own library, most recently added first.
@@ -4304,7 +4352,7 @@ enum Template {
             var request = MusicLibraryRequest<MusicKit.Song>()
             request.limit = limit
             request.sort(by: \.libraryAddedDate, ascending: false)
-            return try await run { try await request.response().items.map(song) }
+            return try await run { try await request.response().items.map { song($0, inLibrary: true) } }
         }
 
         /// Songs in Apple Music's catalog matching the words.
@@ -4312,14 +4360,24 @@ enum Template {
             try await allowed()
             var request = MusicCatalogSearchRequest(term: text, types: [MusicKit.Song.self])
             request.limit = limit
-            return try await run { try await request.response().songs.map(song) }
+            return try await run { try await request.response().songs.map { song($0) } }
         }
 
-        /// Plays the song through the app's own player.
+        /// Plays the song through the app's own player: a library song from the library (it may be one the
+        /// person added themselves, which the catalog doesn't have), any other from the catalog.
         static func play(_ song: Song) async throws {
             try await allowed()
-            let request = MusicCatalogResourceRequest<MusicKit.Song>(matching: \.id, equalTo: MusicItemID(song.id))
-            guard let item = try await run({ try await request.response().items.first }) else { throw Failure(message: "That song isn't in the catalog.") }
+            let id = MusicItemID(song.id)
+            let found: MusicKit.Song?
+            if song.inLibrary == true {
+                var request = MusicLibraryRequest<MusicKit.Song>()
+                request.filter(matching: \.id, equalTo: id)
+                found = try await run { try await request.response().items.first }
+            } else {
+                let request = MusicCatalogResourceRequest<MusicKit.Song>(matching: \.id, equalTo: id)
+                found = try await run { try await request.response().items.first }
+            }
+            guard let item = found else { throw Failure(message: "That song can't be found to play.") }
             let player = ApplicationMusicPlayer.shared
             player.queue = [item]
             do { try await player.play() } catch { throw Failure(message: "Couldn't play it: \(error.localizedDescription)") }
@@ -4351,9 +4409,10 @@ enum Template {
             }
         }
 
-        private static func song(_ item: MusicKit.Song) -> Song {
+        private static func song(_ item: MusicKit.Song, inLibrary: Bool = false) -> Song {
             Song(id: item.id.rawValue, title: item.title, artist: item.artistName, album: item.albumTitle ?? "",
-                 seconds: item.duration ?? 0, artworkURL: item.artwork?.url(width: 300, height: 300)?.absoluteString)
+                 seconds: item.duration ?? 0, artworkURL: item.artwork?.url(width: 300, height: 300)?.absoluteString,
+                 inLibrary: inLibrary ? true : nil)
         }
     }
 
