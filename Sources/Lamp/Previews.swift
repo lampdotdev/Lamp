@@ -6,26 +6,59 @@ import UniformTypeIdentifiers
 /// version's thumbnail. The full-size files stay as they are: a picture of a window is what the person sees,
 /// and a painted asset is what the app shows.
 enum Previews {
-    /// The long side of a picture handed to the agent. A window or phone screen is still readable at this
-    /// size, and a JPEG of it is a tenth of the PNG: a model takes in hundreds before the request is too big
-    /// to send, where the full pictures ran out at a few dozen (Anthropic refuses a request whose images come
-    /// to more than 30 MB).
-    static let agentMaxPixels = 1280
+    /// The long side of a painted picture handed to the agent: enough to judge it by, a thirtieth of the PNG.
+    /// A screenshot keeps its pixels: `use_app` takes its points as pixels in the picture, and the app
+    /// (`LampDriver`) and the simulator driver turn them into points on the screen at the scale the picture was
+    /// taken at (at most 1400 pixels on the long side for a Mac window, point size for an iPhone), so a smaller
+    /// picture would land every click short of its target. JPEG alone makes it a fifth of the PNG.
+    static let artMaxPixels = 1280
     static let agentQuality = 0.7
 
-    /// Writes a JPEG of `source` no larger than `maxPixels` on its long side. False if the source can't be read
-    /// or the copy can't be written.
-    @discardableResult
-    static func write(_ source: URL, to destination: URL, maxPixels: Int, quality: Double) -> Bool {
-        try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let options = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: maxPixels,
-                       kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary
-        guard let imageSource = CGImageSourceCreateWithURL(source as CFURL, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options),
-              let output = CGImageDestinationCreateWithURL(destination as CFURL, UTType.jpeg.identifier as CFString, 1, nil)
-        else { return false }
+    /// A JPEG of `source`, no larger than `maxPixels` on its long side when given, else the same size. Nil if the
+    /// source can't be read.
+    static func jpeg(of source: URL, maxPixels: Int?, quality: Double) -> Data? {
+        guard let imageSource = CGImageSourceCreateWithURL(source as CFURL, nil) else { return nil }
+        let image: CGImage?
+        if let maxPixels {
+            let options = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: maxPixels,
+                           kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary
+            image = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options)
+        } else {
+            image = CGImageSourceCreateImageAtIndex(imageSource, 0, nil)
+        }
+        let data = NSMutableData()
+        guard let image, let output = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
         CGImageDestinationAddImage(output, image, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
-        return CGImageDestinationFinalize(output)
+        return CGImageDestinationFinalize(output) ? data as Data : nil
+    }
+
+    /// Writes a JPEG of `source` at `destination`, a path `destination(for:…)` gave. False if the source can't
+    /// be read or the copy can't be written.
+    @discardableResult
+    static func write(_ source: URL, to destination: URL, maxPixels: Int?, quality: Double) -> Bool {
+        guard let data = jpeg(of: source, maxPixels: maxPixels, quality: quality) else { return false }
+        // Atomic: the file is written beside its place and moved over whatever is there, a link included,
+        // so nothing is ever written through one.
+        return (try? data.write(to: destination, options: .atomic)) != nil
+    }
+
+    /// Where a copy named `name` may be written under `folder` (a path inside the app's folder, such as
+    /// `.lamp/runtime/previews`), made if needed. The app's folder is the agent's to write, and Lamp writes
+    /// here unconfined, so the folder has to be a real folder in the app's own, not a link leading out, and
+    /// the file a plain file or nothing: the same rule as `Store.artDestination`.
+    static func destination(for name: String, under folder: String, in project: LampProject) -> URL? {
+        let fm = FileManager.default
+        let root = project.dir.resolvingSymlinksInPath().standardizedFileURL
+        let url = project.dir.appendingPathComponent(folder)
+        if let type = (try? fm.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType {
+            guard type == .typeDirectory else { return nil }
+        } else if (try? fm.createDirectory(at: url, withIntermediateDirectories: true)) == nil {
+            return nil
+        }
+        guard url.resolvingSymlinksInPath().standardizedFileURL.path == root.appendingPathComponent(folder).path else { return nil }
+        let file = url.appendingPathComponent(name)
+        if let type = (try? fm.attributesOfItem(atPath: file.path))?[.type] as? FileAttributeType, type != .typeRegular { return nil }
+        return file
     }
 
     /// The copy of `picture` the agent is shown, written under the app's runtime folder (`.lamp/runtime/previews`),
@@ -34,9 +67,11 @@ enum Previews {
     static func forAgent(_ picture: URL, in project: LampProject) -> URL {
         let name = picture.deletingPathExtension().lastPathComponent
         // Art and screenshots share the folder; a file's own folder keeps two of one name apart.
-        let prefix = picture.deletingLastPathComponent().lastPathComponent == "Assets" ? "art-" : ""
-        let preview = Runtime.folder(project).appendingPathComponent("previews/\(prefix)\(name).jpg")
-        return write(picture, to: preview, maxPixels: agentMaxPixels, quality: agentQuality) ? preview : picture
+        let art = picture.deletingLastPathComponent().lastPathComponent == "Assets"
+        guard let preview = destination(for: (art ? "art-" : "") + name + ".jpg", under: ".lamp/runtime/previews", in: project),
+              write(picture, to: preview, maxPixels: art ? artMaxPixels : nil, quality: agentQuality)
+        else { return picture }
+        return preview
     }
 
     /// The MIME type of a picture file the agent is handed, by its extension.
