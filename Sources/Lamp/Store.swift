@@ -1801,9 +1801,8 @@ final class Store: ObservableObject {
             ?? Self.label(attachments: saved)
         let saving = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: project.dir, env: ["LAMP_PROMPT": label])
         var committed = saving == .saved
-        // The change is in the app either way. Without a version of its own it can't be gone back to by
-        // itself, and the person should know that rather than find it out from Undo.
-        if saving == .failed { log(project, .error, ErrorMessages.versionNotSaved) }
+        // Said once the turn's last save is known: a fix for a crash on launch saves again, and may get through.
+        var unsaved = saving == .failed
         let edited = changed || committed
         var crash: String?
         if changed {
@@ -1831,9 +1830,16 @@ final class Store: ObservableObject {
                                  on: project),
                   await buildFixingErrors(project) else { return TurnResult(end: .failed, watched: watched) }
             let commit = committed ? "-q --amend --no-edit" : "-qm 'Fix a crash on launch'"
-            if await Versions.commitAll(commit, in: project.dir) == .saved { committed = true }
+            switch await Versions.commitAll(commit, in: project.dir) {
+            case .saved: (committed, unsaved) = (true, false)
+            case .failed: unsaved = true
+            case .nothingToSave: break
+            }
             crash = await install(project)
         }
+        // The change is in the app either way. Without a version of its own it can't be gone back to by
+        // itself, and the person should know that rather than find it out from Undo.
+        if unsaved { log(project, .error, ErrorMessages.versionNotSaved) }
         if crash != nil {
             log(project, .error, ErrorMessages.quitsAfterLaunch(project.name))
         }
