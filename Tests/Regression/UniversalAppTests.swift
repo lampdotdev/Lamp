@@ -29,6 +29,11 @@ final class UniversalAppTests: XCTestCase {
         var project = try draft()
         XCTAssertEqual(AppKind(project), .universal)
         XCTAssertEqual(AppKind.universal.platform, .universal)
+        // Three kinds to choose from, named as the intro's sentence says them; iPhone and iPad are one.
+        XCTAssertEqual(AppKind.allCases.map(\.rawValue), ["Mac", "iPhone & iPad", "Mac, iPhone & iPad"])
+        var ipad = project; ipad.platform = .iphone; ipad.family = .ipad
+        XCTAssertEqual(AppKind(ipad), .phone)
+        XCTAssertEqual(AppKind.phone.platform, .iphone)
         XCTAssertEqual(project.destination, .mac)
         XCTAssertFalse(project.onIOS)
         project.chosen = .ios
@@ -56,6 +61,8 @@ final class UniversalAppTests: XCTestCase {
         XCTAssertTrue(build.contains("if [[ \"${1:-mac}\" == \"ios\" ]]; then"))
         XCTAssertTrue(build.contains("\nSDK=\"$(xcrun --sdk iphonesimulator --show-sdk-path)\"\n"), "the simulator build is the iPhone's")
         XCTAssertTrue(build.contains("\nPLIST\n"), "the heredoc that writes Info.plist ends at the start of a line")
+        XCTAssertTrue(build.contains("APP=\"build/iOS/BothWays.app\""), "the iOS half has its own build folder")
+        XCTAssertTrue(build.contains("APP=\"build/BothWays.app\""), "the Mac half keeps the usual one")
         XCTAssertTrue(build.contains("-destination \"platform=macOS\""))
         XCTAssertTrue(build.contains("LAMP_TEAM"))
         // The shell must take the whole script: the iOS branch's heredoc ends where the shell expects it to.
@@ -82,6 +89,16 @@ final class UniversalAppTests: XCTestCase {
         XCTAssertEqual(project.deviceBundleID(team: "ABCDE12345"), project.bundleID)
         var mac = project; mac.platform = .mac
         XCTAssertEqual(mac.bundleID, Edition.appBundlePrefix + "bothways")
+        // One build per place, and the Mac's where every Mac app's is.
+        XCTAssertEqual(project.builtURL.lastPathComponent, "BothWays.app")
+        XCTAssertEqual(project.builtURL.deletingLastPathComponent().lastPathComponent, "build")
+        var onPhone = project; onPhone.chosen = .ios
+        XCTAssertEqual(onPhone.builtURL.deletingLastPathComponent().lastPathComponent, "iOS")
+        XCTAssertEqual(Devices.validFingerprints(in: """
+          1) B0F571D758FA881D2EA72E5CE0BDCDDDFF053E20 "Apple Development: Someone (ABCDE12345)"
+          2) 7532baa19eda09cc45e82e804cc7a30f7ae5eb56 "Developer ID Application: Someone (ABCDE12345)"
+             2 valid identities found
+        """), ["B0F571D758FA881D2EA72E5CE0BDCDDDFF053E20", "7532BAA19EDA09CC45E82E804CC7A30F7AE5EB56"])
     }
 
     func testMovingTheAppUnderTryOnIsAChangeToBuild() throws {

@@ -96,7 +96,13 @@ enum Analytics {
 
     // MARK: Words for properties, from fixed lists
 
-    static func kind(_ kind: AppKind) -> String { kind.rawValue.lowercased() }
+    static func kind(_ kind: AppKind) -> String {
+        switch kind {
+        case .mac: "mac"
+        case .phone: "iphone"   // what the kind was called when it was iPhone or iPad, so the counts carry on
+        case .universal: "universal"
+        }
+    }
 
     static func agent(_ choice: Builder.Choice) -> String {
         switch choice {

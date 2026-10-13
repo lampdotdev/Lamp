@@ -43,12 +43,7 @@ enum Devices {
 
     /// Prefer Xcode's signed-in teams, then teams with a valid development signing identity on this Mac.
     static func knownTeams() async -> [(id: String, name: String)] {
-        let output = await Subprocess.run("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"], timeout: 20).output
-        let fingerprints = Set(output.split(separator: "\n").compactMap { line -> String? in
-            line.split(whereSeparator: \.isWhitespace).first {
-                $0.range(of: #"^[0-9A-Fa-f]{40}$"#, options: .regularExpression) != nil
-            }.map { String($0).uppercased() }
-        })
+        let fingerprints = validFingerprints(in: await Subprocess.run("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"], timeout: 20).output)
         var teams = xcodeTeams()
         var found: CFTypeRef?
         let query: [String: Any] = [kSecClass as String: kSecClassCertificate,
@@ -69,8 +64,11 @@ enum Devices {
     /// The certificate that signs for a team on this Mac, as codesign takes it (its SHA-1 fingerprint, which
     /// names one certificate where the common name may not), or nil when there is none: Xcode makes one the
     /// first time it builds for the team.
-    static func signingIdentity(for team: String) -> String? {
+    static func signingIdentity(for team: String) async -> String? {
         guard team.count == 10 else { return nil }
+        // Only an identity codesign can use: a certificate with its key, in date. An expired one, or one
+        // whose key isn't here, is a certificate all the same, and Xcode would have signed with another.
+        let usable = validFingerprints(in: await Subprocess.run("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"], timeout: 20).output)
         var found: CFTypeRef?
         let query: [String: Any] = [kSecClass as String: kSecClassCertificate,
                                    kSecMatchSubjectContains as String: "Apple Development",
@@ -78,9 +76,19 @@ enum Devices {
         guard SecItemCopyMatching(query as CFDictionary, &found) == errSecSuccess,
               let certificates = found as? [SecCertificate] else { return nil }
         for certificate in certificates where certificateTeam(certificate)?.id == team.uppercased() {
-            return Insecure.SHA1.hash(data: SecCertificateCopyData(certificate) as Data).map { String(format: "%02X", $0) }.joined()
+            let fingerprint = Insecure.SHA1.hash(data: SecCertificateCopyData(certificate) as Data).map { String(format: "%02X", $0) }.joined()
+            if usable.contains(fingerprint) { return fingerprint }
         }
         return nil
+    }
+
+    /// The fingerprints `security find-identity -v` lists: the identities that can sign.
+    static func validFingerprints(in listing: String) -> Set<String> {
+        Set(listing.split(separator: "\n").compactMap { line -> String? in
+            line.split(whereSeparator: \.isWhitespace).first {
+                $0.range(of: #"^[0-9A-Fa-f]{40}$"#, options: .regularExpression) != nil
+            }.map { String($0).uppercased() }
+        })
     }
 
     /// The common name's parenthesised ID identifies the developer, not necessarily their team. The

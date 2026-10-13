@@ -270,10 +270,12 @@ enum Template {
     /// Lamp writes under .lamp/device, signed for the team Lamp was given (LAMP_TEAM, from Settings → Building).
     static var universalBuildSh: String {
         // Not indented: the iPhone script writes Info.plist with a heredoc, whose end line must start the line.
+        // The iOS half's build goes to its own folder, so checking one half never replaces the other's build.
         let ios = iPhoneBuildSh.components(separatedBy: "\n").dropFirst(4).joined(separator: "\n")   // after the shebang, the comment, set and cd
+            .replacingOccurrences(of: "APP=\"build/{{EXE}}.app\"", with: "APP=\"build/iOS/{{EXE}}.app\"")
         return """
         #!/bin/zsh
-        # Builds build/{{EXE}}.app for this Mac (./build.sh mac) or for the iPhone simulator (./build.sh ios). Run after every change.
+        # Builds build/{{EXE}}.app for this Mac (./build.sh mac) or build/iOS/{{EXE}}.app for the iPhone simulator (./build.sh ios). Run after every change.
         set -euo pipefail
         cd "$(dirname "$0")"
         if [[ "${1:-mac}" == "ios" ]]; then

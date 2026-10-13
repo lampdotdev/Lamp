@@ -274,7 +274,7 @@ enum Agent {
         (folders, shortcuts that work in every app, the menu bar, the clipboard watcher, Mail, other apps, the \
         permission screens, opening at login) exist only under `#if os(macOS)`; `LampMotion` only under \
         `#if os(iOS)`; `LampImage` is NSImage on the Mac and UIImage on iOS. This app has no widget. Check both \
-        halves compile before a look: `swift build` for the Mac's, `./build.sh ios` for iOS's.
+        halves compile before a look: `swift build` for the Mac's, `./build.sh ios` for iOS's (it builds into build/iOS, beside the Mac's build).
         """
 
         static let universalFrameworks = """
