@@ -94,7 +94,7 @@ const description = "Wishes for software nobody else would make: for the office,
               <li data-category={idea.category} class="flex">
                 <button
                   type="button"
-                  data-idea={JSON.stringify({ ...idea, picture: large[idea.name], icon: iconURL[idea.name] })}
+                  data-idea={JSON.stringify({ ...idea, platform: platform(idea), picture: large[idea.name], icon: iconURL[idea.name] })}
                   class="group flex w-full cursor-pointer flex-col overflow-hidden rounded-[22px] bg-page text-left shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-black/[0.04] transition duration-300 hover:-translate-y-0.5 hover:shadow-[0_14px_34px_-14px_rgba(0,0,0,0.22)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-graphite"
                 >
                   {thumbOf(idea.name) ? (
@@ -176,6 +176,9 @@ const description = "Wishes for software nobody else would make: for the office,
         rows="5"
         class="w-full resize-none rounded-xl bg-page p-3.5 text-[17px] leading-relaxed ring-1 ring-[#d2d2d7] transition focus:ring-2 focus:ring-[#cf620c]/40 focus:outline-none"
       ></textarea>
+      <!-- A wish carries only its words to Lamp, which starts a Mac app unless told otherwise, so an iPhone or
+           iPad idea says which to choose. -->
+      <p data-device hidden class="mt-3 text-[14px] text-muted"></p>
       <div data-finish class="mt-6 flex flex-col items-center lg:items-start lg:[&>div]:items-start">
         <DownloadButton place="ideas" />
         <button
@@ -304,7 +307,8 @@ const description = "Wishes for software nobody else would make: for the office,
   const fit = () => { text.style.height = "auto"; text.style.height = `${text.scrollHeight + 2}px`; };
   text.addEventListener("input", fit);
 
-  type Idea = { name: string; about: string; wish: string; picture: string; icon: string };
+  type Idea = { name: string; about: string; wish: string; platform: string; picture: string; icon: string };
+  const device = dialog.querySelector<HTMLElement>("[data-device]")!;
   const stage = dialog.querySelector<HTMLElement>("[data-stage]")!;
   const picture = dialog.querySelector<HTMLImageElement>("[data-picture]")!;
   const backdrop = dialog.querySelector<HTMLImageElement>("[data-backdrop]")!;
@@ -327,6 +331,8 @@ const description = "Wishes for software nobody else would make: for the office,
       if (current.icon) icon.src = current.icon;
       name.textContent = current.name;
       about.textContent = current.about;
+      device.hidden = current.platform === "Mac";
+      device.textContent = `In Lamp, choose ${current.platform} before you send this wish.`;
       text.value = current.wish;
       go.textContent = "Download Lamp";
       if (requirement) requirement.hidden = true;
