@@ -47,19 +47,21 @@ struct AskCard: View {
 
     var body: some View {
         if let ask = line.ask, let project = store.projects.first(where: { $0.dir == dir }) {
-            Group {
-                if !isOpen {
-                    Answered(ask: ask)
-                } else if ask.layout == .together && ask.questions.count > 1 {
-                    together(ask, project)
-                } else {
-                    AskSteps(ask: ask, progress: $progress) { answers in withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: answers, in: project) } }
+            if !isOpen {
+                Answered(ask: ask)
+            } else {
+                Group {
+                    if ask.layout == .together && ask.questions.count > 1 {
+                        together(ask, project)
+                    } else {
+                        AskSteps(ask: ask, progress: $progress) { answers in withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: answers, in: project) } }
+                    }
                 }
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+                .frame(maxWidth: 620, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
-            .frame(maxWidth: 620, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -93,31 +95,33 @@ struct AskCard: View {
     }
 }
 
-/// A card that's no longer waiting, folded where it was: the answers that were clicked, or, when the person
-/// typed their own answer instead, what was asked (their message under it is the answer).
+/// A card that's no longer waiting, folded where it was to a line like the ones for what Lamp did: the
+/// answers that were clicked, or, when the person typed their own answer instead, what was asked (their
+/// message under it is the answer). Only the card that waits is drawn as a card.
 private struct Answered: View {
     let ask: Talk.Ask
 
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 4) {
             if let answers = ask.answers {
-                Label {
-                    Text(answers.joined(separator: " · ")).fontWeight(.medium)
-                } icon: {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "checkmark.circle").foregroundStyle(.secondary).frame(width: 16)
+                    Text(answers.joined(separator: " · ")).fixedSize(horizontal: false, vertical: true)
                 }
                 .help(ask.questions.map(\.question).joined(separator: "\n"))
             } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(ask.questions.enumerated()), id: \.offset) { _, question in
-                        Text(question.question).foregroundStyle(.secondary)
+                ForEach(Array(ask.questions.enumerated()), id: \.offset) { _, question in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "questionmark.circle").frame(width: 16)
+                        Text(question.question).fixedSize(horizontal: false, vertical: true)
                     }
+                    .foregroundStyle(.secondary)
                 }
             }
         }
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(.horizontal, 16).padding(.vertical, 12)
+        .font(.callout)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -125,7 +129,9 @@ private struct Answered: View {
 ///
 /// The card is laid out for all its questions at once and shows one: its height is the tallest question's,
 /// and the field and the links under the tiles never move. A card that changed size from one question to the
-/// next would slide what's about to be clicked out from under the pointer.
+/// next would slide what's about to be clicked out from under the pointer. So that this never shows as a
+/// card with room to spare, the questions are kept the same height: a question's answers are one row however
+/// many there are, and each question's tiles fill whatever another's wording needed (`Tallest`, `TileRows`).
 struct AskSteps: View {
     let ask: Talk.Ask
     @Binding var progress: AskProgress
@@ -140,27 +146,27 @@ struct AskSteps: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if count > 1 {
-                HStack {
-                    Text("Question \(step + 1) of \(count)").font(.subheadline).foregroundStyle(.secondary)
-                    Spacer()
-                    StepDots(count: count, current: step)
-                }
+                Text("Question \(step + 1) of \(count)").font(.subheadline).foregroundStyle(.secondary)
             }
-            every { question, _ in
-                Text(question.question)
-                    .font(.title3.weight(.semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            every { question, index in
-                let columns = Array(repeating: GridItem(.flexible(), spacing: 10),
-                                    count: question.options.count == 4 ? 2 : question.options.count)
-                LazyVGrid(columns: columns, spacing: 10) {
-                    ForEach(Array(question.options.enumerated()), id: \.offset) { _, option in
-                        OptionTile(option: option, chosen: progress.answers[index] == option.title) {
-                            pick(option.title)
+            Tallest {
+                ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(question.question)
+                            .font(.title3.weight(.semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        TileRows {
+                            ForEach(Array(question.options.enumerated()), id: \.offset) { _, option in
+                                OptionTile(option: option, chosen: progress.answers[index] == option.title) {
+                                    pick(option.title)
+                                }
+                            }
                         }
                     }
+                    // Only the current one is there to see, click or read aloud.
+                    .opacity(index == step ? 1 : 0)
+                    .allowsHitTesting(index == step)
+                    .accessibilityHidden(index != step)
                 }
             }
             .allowsHitTesting(armed)
@@ -200,37 +206,59 @@ struct AskSteps: View {
         }
     }
 
-    /// Every question's version of one part of the card, stacked, with only the current one there to see,
-    /// click or read aloud: the part takes the size of the largest.
-    private func every<Part: View>(@ViewBuilder _ part: @escaping (Talk.Question, Int) -> Part) -> some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
-                part(question, index)
-                    .opacity(index == step ? 1 : 0)
-                    .allowsHitTesting(index == step)
-                    .accessibilityHidden(index != step)
-            }
-        }
-    }
-
     private func pick(_ answer: String) {
         if progress.take(answer, of: count) { send(progress.all(count)) }
     }
 }
 
-/// The welcome's dots: a pill for the step showing.
-private struct StepDots: View {
-    let count: Int
-    let current: Int
+/// Every question of a card in the same place, each given the room the tallest one needs.
+private struct Tallest: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)) }
+        return CGSize(width: proposal.width ?? sizes.map(\.width).max() ?? 0, height: sizes.map(\.height).max() ?? 0)
+    }
 
-    var body: some View {
-        HStack(spacing: 5) {
-            ForEach(0..<count, id: \.self) { step in
-                Capsule().fill(step <= current ? Color.primary.opacity(0.8) : Color.primary.opacity(0.15))
-                    .frame(width: step == current ? 20 : 7, height: 7)
-            }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for subview in subviews { subview.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size)) }
+    }
+}
+
+/// A question's answers as tiles of one size, filling the height they are given. One row: two rows for four
+/// answers made that question a row taller than the others on its card, which showed as a gap under theirs.
+/// Four go two by two only where a row would leave each too narrow to read.
+private struct TileRows: Layout {
+    static let spacing: CGFloat = 10
+    /// Narrower than this, a tile has no room for a word beside its symbol.
+    static let narrowest: CGFloat = 120
+
+    static func columns(for count: Int, width: CGFloat) -> Int {
+        let inOneRow = (width - spacing * CGFloat(count - 1)) / CGFloat(max(count, 1))
+        return count == 4 && inOneRow < narrowest ? 2 : max(count, 1)
+    }
+
+    private func grid(_ subviews: Subviews, width: CGFloat) -> (columns: Int, rows: Int, tile: CGSize) {
+        let columns = Self.columns(for: subviews.count, width: width)
+        let tileWidth = max(0, (width - Self.spacing * CGFloat(columns - 1)) / CGFloat(columns))
+        let height = subviews.map { $0.sizeThatFits(ProposedViewSize(width: tileWidth, height: nil)).height }.max() ?? 0
+        return (columns, (subviews.count + columns - 1) / columns, CGSize(width: tileWidth, height: height))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 600
+        let grid = grid(subviews, width: width)
+        let natural = grid.tile.height * CGFloat(grid.rows) + Self.spacing * CGFloat(grid.rows - 1)
+        return CGSize(width: width, height: max(natural, proposal.height ?? 0))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let grid = grid(subviews, width: bounds.width)
+        let height = max(grid.tile.height, (bounds.height - Self.spacing * CGFloat(grid.rows - 1)) / CGFloat(grid.rows))
+        for (index, subview) in subviews.enumerated() {
+            let column = CGFloat(index % grid.columns), row = CGFloat(index / grid.columns)
+            subview.place(at: CGPoint(x: bounds.minX + column * (grid.tile.width + Self.spacing),
+                                      y: bounds.minY + row * (height + Self.spacing)),
+                          proposal: ProposedViewSize(width: grid.tile.width, height: height))
         }
-        .accessibilityHidden(true)
     }
 }
 

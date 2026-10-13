@@ -106,3 +106,21 @@ final class OwnAnswerLayoutTests: XCTestCase {
         XCTAssertEqual(height(typing: "Start with Work and Personal, and let me add more"), height(typing: ""))
     }
 }
+
+/// Questions answered one at a time share a card that never changes size, so the card is as tall as its
+/// tallest question. A question with fewer answers must not leave that height empty under them.
+final class AskStepsLayoutTests: XCTestCase {
+    @MainActor
+    func testAQuestionWithFourAnswersLeavesNoSpaceUnderOneWithThree() {
+        func options(_ titles: [String]) -> [Talk.Option] { titles.map { .init(title: $0, symbol: "person") } }
+        let who = Talk.Question(question: "Who is the tracker for?", options: options(["Just me", "My family", "My team"]))
+        let what = Talk.Question(question: "What should it track?", options: options(["Habits", "Mood", "Workouts", "Spending"]))
+        let how = Talk.Question(question: "How often?", options: options(["Daily", "Weekly", "Monthly"]))
+        // The card's width in a window of the size Lamp opens at.
+        func height(_ questions: [Talk.Question]) -> CGFloat {
+            let card = AskSteps(ask: Talk.Ask(layout: .steps, questions: questions), progress: .constant(AskProgress())) { _ in }
+            return NSHostingController(rootView: card).sizeThatFits(in: CGSize(width: 613, height: 2000)).height
+        }
+        XCTAssertEqual(height([who, what]), height([who, how]))
+    }
+}
