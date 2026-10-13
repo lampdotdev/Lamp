@@ -380,6 +380,7 @@ enum Template {
         ("NSNearbyInteractionUsageDescription", "{{NAME}} finds nearby devices."),
         ("NSLocalNetworkUsageDescription", "{{NAME}} talks to Lamp on your Mac for its AI features."),
         ("NSAppleMusicUsageDescription", "{{NAME}} plays music from your library."),
+        ("NSHomeKitUsageDescription", "{{NAME}} reads and controls your home."),
     ]
 
     /// The usage descriptions as Info.plist lines, with the app's name in.
@@ -401,6 +402,9 @@ enum Template {
         ("NSBluetoothAlwaysUsageDescription", "{{NAME}} connects to Bluetooth devices."),
         ("NSAppleEventsUsageDescription", "{{NAME}} reads your email and drafts replies through Mail."),
         ("NSLocalNetworkUsageDescription", "{{NAME}} looks for printers and other devices on your network."),
+        ("NSLocationUsageDescription", "{{NAME}} uses your location."),
+        ("NSLocationWhenInUseUsageDescription", "{{NAME}} uses your location."),
+        ("NSAppleMusicUsageDescription", "{{NAME}} plays music from your library."),
     ]
 
     static func macUsagePlistLines(name: String) -> String { usagePlistLines(macUsageDescriptions, name: name) }
@@ -438,6 +442,10 @@ enum Template {
         /// named in Info.plist as LampICloudContainer. Only for apps Apple signs for a team: those with an
         /// iPhone half; a Mac app on its own carries Lamp's signature, which iCloud refuses.
         var icloud: Bool?
+        /// The app gets the weather from Apple (LampWeather): an entitlement, so for apps Apple signs for a team.
+        var weather: Bool?
+        /// iPhone apps: the app reads and controls the person's home (LampHome): an entitlement.
+        var homekit: Bool?
 
         static func load(_ project: LampProject) -> Capabilities { load(project.dir.appendingPathComponent(file)) }
 
@@ -452,7 +460,8 @@ enum Template {
             func some(_ names: [String]) -> [String]? { names.isEmpty ? nil : names }
             return Capabilities(healthkit: healthkit == true ? true : nil, nfc: nfc == true ? true : nil, siri: siri == true ? true : nil,
                                 backgroundModes: some(modes), bonjourServices: some(services), backgroundTasks: some(tasks), opens: some(kinds),
-                                background: background == true ? true : nil, icloud: icloud == true ? true : nil)
+                                background: background == true ? true : nil, icloud: icloud == true ? true : nil,
+                                weather: weather == true ? true : nil, homekit: homekit == true ? true : nil)
         }
 
         var isEmpty: Bool { checked == Capabilities() }
@@ -488,8 +497,11 @@ enum Template {
         /// sync engine hears of changes made elsewhere through notifications, whose entitlement is spelled
         /// differently on each platform.
         func entitlementsPlist(for project: LampProject, platform: Destination = .ios) -> String {
-            entitlementsPlist(container: container(for: project), platform: platform)
+            entitlementsPlist(container: container(for: project), platform: platform, teamSigned: project.platform.hasIOS)
         }
+
+        /// Whether the app gets the weather: declared, and signed for a team (an iPhone half).
+        func weather(for project: LampProject) -> Bool { weather == true && project.platform.hasIOS }
 
         /// The simulator build's entitlements, which build.sh puts in the binary: the iPhone's, with the app's
         /// identity as Xcode writes it, which HealthKit and iCloud look for before they do anything. Empty when
@@ -503,13 +515,17 @@ enum Template {
             return plist.replacingOccurrences(of: "<plist version=\"1.0\"><dict>\n", with: "<plist version=\"1.0\"><dict>\n" + identity)
         }
 
-        func entitlementsPlist(container: String?, platform: Destination = .ios) -> String {
+        func entitlementsPlist(container: String?, platform: Destination = .ios, teamSigned: Bool = false) -> String {
             var lines: [String] = []
             if let container {
                 lines.append("  <key>com.apple.developer.icloud-container-identifiers</key><array><string>\(container.xmlEscaped)</string></array>")
                 lines.append("  <key>com.apple.developer.icloud-services</key><array><string>CloudKit</string></array>")
                 lines.append("  <key>\(platform == .mac ? "com.apple.developer.aps-environment" : "aps-environment")</key><string>development</string>")
             }
+            // The weather is Apple's service, signed for by the team on either platform; a Mac app on its own,
+            // with Lamp's signature, can't have it, which `weather(for:)` says.
+            if weather == true, teamSigned { lines.append("  <key>com.apple.developer.weatherkit</key><true/>") }
+            if homekit == true, platform == .ios { lines.append("  <key>com.apple.developer.homekit</key><true/>") }
             // Health is the iPhone's: a Mac has no Health data, and its signature can't claim the entitlement.
             if healthkit == true, platform == .ios {
                 lines.append("  <key>com.apple.developer.healthkit</key><true/>")
@@ -1215,6 +1231,10 @@ enum Template {
     import UserNotifications
     import CloudKit
     import HealthKit
+    import Photos
+    import CoreLocation
+    import WeatherKit
+    import MusicKit
     @preconcurrency import Vision
     #if os(macOS)
     import AppKit
@@ -1227,6 +1247,7 @@ enum Template {
     typealias LampImage = NSImage
     #else
     import UIKit
+    import HomeKit
     import CoreMotion
     import Security
     /// A picture: NSImage on the Mac, UIImage on iPhone and iPad.
@@ -3787,6 +3808,686 @@ enum Template {
             }
         }
     }
+
+
+    // MARK: - Photos
+
+    /// The person's photo library: what they took, by day and place, their albums, a picture at the size
+    /// wanted, what a picture shows (tags worked out on the device), and saving one. The picker for choosing
+    /// a picture is SwiftUI's own `PhotosPicker`. Nothing to declare; the system asks the person once.
+    ///
+    ///     guard try await LampPhotos.authorize() else { … }
+    ///     let week = try await LampPhotos.photos(days: 7)                      // newest first
+    ///     let there = try await LampPhotos.photos(near: 51.5, -0.12, km: 2)    // around a place
+    ///     let image = await LampPhotos.image(week[0], size: 800)              // LampImage?
+    ///     let tags = await LampPhotos.tags(of: week[0])                        // ["beach", "sunset"]
+    ///     let albums = try await LampPhotos.albums()
+    ///     try await LampPhotos.save(image)
+    ///
+    /// Photos' own people, memories and search aren't open to apps; `tags(of:)` is the device's own look at a
+    /// picture (Vision), good for sorting and finding, not a transcript of Photos. The simulator can't do it
+    /// (no tags there); a Mac and an iPhone can.
+    enum LampPhotos {
+        struct Photo: Identifiable, Codable, Hashable {
+            var id: String          // Photos' identifier for the picture; the same across launches
+            var date: Date?
+            var latitude: Double?
+            var longitude: Double?
+            var isVideo: Bool
+            var isFavorite: Bool
+            var width: Int
+            var height: Int
+            var seconds: Double     // a video's length; 0 for a picture
+        }
+
+        struct Album: Identifiable, Codable, Hashable {
+            var id: String
+            var title: String
+            var count: Int
+        }
+
+        struct Failure: LocalizedError {
+            let message: String
+            var errorDescription: String? { message }
+        }
+
+        /// Asks once; false when the person refused (or allowed only some pictures, which still reads as allowed).
+        static func authorize(toSave: Bool = false) async throws -> Bool {
+            let status = await PHPhotoLibrary.requestAuthorization(for: toSave ? .readWrite : .readWrite)
+            return status == .authorized || status == .limited
+        }
+
+        /// Pictures and videos taken in the last `days` days, newest first.
+        static func photos(days: Int = 30, limit: Int = 500) async throws -> [Photo] {
+            let since = Calendar.current.date(byAdding: .day, value: -max(1, days), to: Date()) ?? Date()
+            return try fetch(NSPredicate(format: "creationDate >= %@", since as NSDate), limit: limit)
+        }
+
+        /// Those taken within `km` of a place, newest first, among the last year's by default.
+        static func photos(near latitude: Double, _ longitude: Double, km: Double = 1, days: Int = 365, limit: Int = 500) async throws -> [Photo] {
+            let there = CLLocation(latitude: latitude, longitude: longitude)
+            return try await photos(days: days, limit: 10_000).filter { photo in
+                guard let lat = photo.latitude, let lon = photo.longitude else { return false }
+                return CLLocation(latitude: lat, longitude: lon).distance(from: there) <= km * 1000
+            }.prefix(limit).map { $0 }
+        }
+
+        static func favorites(limit: Int = 500) async throws -> [Photo] {
+            try fetch(NSPredicate(format: "isFavorite == YES"), limit: limit)
+        }
+
+        /// The person's own albums, and Photos' standard ones that have something in them (Favorites, Selfies, Screenshots…).
+        static func albums() async throws -> [Album] {
+            try authorized()
+            var albums: [Album] = []
+            let options = PHFetchOptions()
+            for kind in [PHAssetCollectionType.album, .smartAlbum] {
+                PHAssetCollection.fetchAssetCollections(with: kind, subtype: .any, options: options).enumerateObjects { collection, _, _ in
+                    let count = PHAsset.fetchAssets(in: collection, options: nil).count
+                    guard count > 0, let title = collection.localizedTitle else { return }
+                    albums.append(Album(id: collection.localIdentifier, title: title, count: count))
+                }
+            }
+            return albums
+        }
+
+        static func photos(in album: Album, limit: Int = 500) async throws -> [Photo] {
+            try authorized()
+            guard let collection = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [album.id], options: nil).firstObject else { return [] }
+            let options = PHFetchOptions()
+            options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+            options.fetchLimit = limit
+            var found: [Photo] = []
+            PHAsset.fetchAssets(in: collection, options: options).enumerateObjects { asset, _, _ in found.append(photo(asset)) }
+            return found
+        }
+
+        /// The picture itself, at most `size` points on its long side (the whole thing with `size: 0`), or nil
+        /// when it can't be loaded (in iCloud and offline, say).
+        static func image(_ photo: Photo, size: CGFloat = 1024) async -> LampImage? {
+            guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photo.id], options: nil).firstObject else { return nil }
+            let options = PHImageRequestOptions()
+            options.isNetworkAccessAllowed = true
+            options.deliveryMode = .highQualityFormat
+            let target = size > 0 ? CGSize(width: size, height: size) : PHImageManagerMaximumSize
+            return await withCheckedContinuation { continuation in
+                var done = false
+                PHImageManager.default().requestImage(for: asset, targetSize: target, contentMode: .aspectFit, options: options) { image, info in
+                    guard !done, (info?[PHImageResultIsDegradedKey] as? Bool) != true else { return }
+                    done = true
+                    continuation.resume(returning: image)
+                }
+            }
+        }
+
+        /// What the picture shows, as the device sees it: up to ten tags, surest first ("beach", "dog", "document").
+        static func tags(of photo: Photo, limit: Int = 10) async -> [String] {
+            guard let image = await image(photo, size: 512), let cgImage = image.lampCGImage else { return [] }
+            let request = VNClassifyImageRequest()
+            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+            guard (try? handler.perform([request])) != nil else { return [] }
+            return (request.results ?? []).filter { $0.confidence > 0.3 }.prefix(limit).map { $0.identifier.replacingOccurrences(of: "_", with: " ") }
+        }
+
+        /// Puts a picture in the person's library, as the app's.
+        static func save(_ image: LampImage) async throws {
+            guard try await authorize(toSave: true) else { throw Failure(message: "The app isn't allowed to add to Photos.") }
+            do {
+                try await PHPhotoLibrary.shared().performChanges { PHAssetChangeRequest.creationRequestForAsset(from: image) }
+            } catch {
+                throw Failure(message: "Couldn't save to Photos: \(error.localizedDescription)")
+            }
+        }
+
+        private static func authorized() throws {
+            let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+            guard status == .authorized || status == .limited else {
+                throw Failure(message: status == .notDetermined ? "Ask for Photos first: LampPhotos.authorize()." : "The app isn't allowed to see Photos. The person can allow it in Settings.")
+            }
+        }
+
+        private static func fetch(_ predicate: NSPredicate, limit: Int) throws -> [Photo] {
+            try authorized()
+            let options = PHFetchOptions()
+            options.predicate = predicate
+            options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+            options.fetchLimit = limit
+            var found: [Photo] = []
+            PHAsset.fetchAssets(with: options).enumerateObjects { asset, _, _ in found.append(photo(asset)) }
+            return found
+        }
+
+        private static func photo(_ asset: PHAsset) -> Photo {
+            Photo(id: asset.localIdentifier, date: asset.creationDate, latitude: asset.location?.coordinate.latitude,
+                  longitude: asset.location?.coordinate.longitude, isVideo: asset.mediaType == .video, isFavorite: asset.isFavorite,
+                  width: asset.pixelWidth, height: asset.pixelHeight, seconds: asset.mediaType == .video ? asset.duration : 0)
+        }
+    }
+
+    // MARK: - Location
+
+    /// Where the person is: once, as they move, and the places they stop at (iPhone only), with names from the
+    /// map. The system asks once; `always` is for watching while the app is closed, which also needs
+    /// `"backgroundModes": ["location"]` in capabilities.json.
+    ///
+    ///     let here = try await LampLocation.current()          // Place: coordinates and "Street, Town"
+    ///     let km = LampLocation.distance(from: here, to: there)
+    ///     let office = try await LampLocation.find("1 Infinite Loop, Cupertino")
+    ///     LampLocation.shared.watch()                           // `.current` follows big moves (a few hundred metres)
+    ///     LampLocation.shared.watchVisits()                     // iPhone: `.visits`, where they stopped and for how long
+    @MainActor
+    final class LampLocation: NSObject, ObservableObject, CLLocationManagerDelegate {
+        static let shared = LampLocation()
+
+        struct Place: Codable, Hashable {
+            var latitude: Double
+            var longitude: Double
+            var accuracy: Double      // metres
+            var date: Date
+            var name: String?         // "Street, Town", when the map knows
+        }
+
+        struct Visit: Identifiable, Codable, Hashable {
+            var id = UUID()
+            var latitude: Double
+            var longitude: Double
+            var arrived: Date
+            var left: Date?           // nil while still there
+            var name: String?
+            var minutes: Double { (left ?? Date()).timeIntervalSince(arrived) / 60 }
+        }
+
+        struct Failure: LocalizedError {
+            let message: String
+            var errorDescription: String? { message }
+        }
+
+        /// The latest place, kept up by `watch()` or any `current()`.
+        @Published private(set) var current: Place?
+        /// Places the person stopped at, newest first, kept across launches (iPhone, after `watchVisits()`).
+        @Published private(set) var visits: [Visit] = []
+        /// Whether the person has allowed the app to know where they are.
+        @Published private(set) var isAllowed = false
+        /// What's going on, for a settings screen.
+        @Published private(set) var status = "Not asked yet"
+
+        private let manager = CLLocationManager()
+        private var permission: CheckedContinuation<Bool, Never>?
+        private var once: [CheckedContinuation<CLLocation, Error>] = []
+        private let kept = LampStore.collection("location.visits", of: Visit.self)
+
+        private override init() {
+            super.init()
+            manager.delegate = self
+            manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+            visits = kept.all(orderBy: "arrived", descending: true)
+            isAllowed = Self.allowed(manager.authorizationStatus)
+        }
+
+        /// Asks once (while in use, or always for watching in the background); true when allowed.
+        static func authorize(always: Bool = false) async -> Bool {
+            let me = shared
+            if Self.allowed(me.manager.authorizationStatus), !always { return true }
+            #if os(iOS)
+            if always, me.manager.authorizationStatus == .authorizedAlways { return true }
+            #endif
+            return await withCheckedContinuation { continuation in
+                me.permission = continuation
+                #if os(iOS)
+                if always { me.manager.requestAlwaysAuthorization() } else { me.manager.requestWhenInUseAuthorization() }
+                #else
+                me.manager.requestWhenInUseAuthorization()
+                #endif
+            }
+        }
+
+        /// Where the person is now, named when the map knows the place.
+        static func current() async throws -> Place {
+            guard await authorize() else { throw Failure(message: "The app isn't allowed to know where the person is. They can allow it in Settings.") }
+            let location: CLLocation = try await withCheckedThrowingContinuation { continuation in
+                shared.once.append(continuation)
+                shared.manager.requestLocation()
+            }
+            let place = Place(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude, accuracy: location.horizontalAccuracy,
+                              date: location.timestamp, name: await name(of: location.coordinate.latitude, location.coordinate.longitude))
+            shared.current = place
+            return place
+        }
+
+        /// "Street, Town" for coordinates, when the map knows.
+        static func name(of latitude: Double, _ longitude: Double) async -> String? {
+            guard let mark = try? await CLGeocoder().reverseGeocodeLocation(CLLocation(latitude: latitude, longitude: longitude)).first else { return nil }
+            let parts = [mark.name, mark.locality].compactMap { $0 }.filter { !$0.isEmpty }
+            return parts.isEmpty ? nil : Array(NSOrderedSet(array: parts)).compactMap { $0 as? String }.joined(separator: ", ")
+        }
+
+        /// Coordinates for an address or a place's name.
+        static func find(_ address: String) async throws -> Place {
+            guard let mark = try? await CLGeocoder().geocodeAddressString(address).first, let location = mark.location else {
+                throw Failure(message: "No place found for \"\(address)\".")
+            }
+            return Place(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude, accuracy: location.horizontalAccuracy,
+                         date: Date(), name: [mark.name, mark.locality].compactMap { $0 }.joined(separator: ", "))
+        }
+
+        /// Kilometres between two places, as the crow flies.
+        static func distance(from a: Place, to b: Place) -> Double {
+            CLLocation(latitude: a.latitude, longitude: a.longitude).distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude)) / 1000
+        }
+
+        /// Keeps `current` up as the person moves a few hundred metres or more, sparing the battery.
+        func watch() {
+            Task {
+                guard await Self.authorize() else { return }
+                manager.startMonitoringSignificantLocationChanges()
+                status = "Following big moves"
+            }
+        }
+
+        /// Keeps `visits`: where the person stops and for how long, even with the app closed. iPhone only;
+        /// needs `always` and the location background mode.
+        func watchVisits() {
+            #if os(iOS)
+            Task {
+                guard await Self.authorize(always: true) else { status = "Visits need Always: the person can allow it in Settings"; return }
+                manager.startMonitoringVisits()
+                status = "Noting where the person stops"
+            }
+            #else
+            status = "Visits are the iPhone's: a Mac doesn't note them"
+            #endif
+        }
+
+        func stop() {
+            manager.stopMonitoringSignificantLocationChanges()
+            #if os(iOS)
+            manager.stopMonitoringVisits()
+            #endif
+            status = "Not watching"
+        }
+
+        private static func allowed(_ status: CLAuthorizationStatus) -> Bool {
+            #if os(iOS)
+            status == .authorizedWhenInUse || status == .authorizedAlways
+            #else
+            status == .authorizedAlways || status == .authorized
+            #endif
+        }
+
+        // MARK: CLLocationManagerDelegate
+
+        nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+            let status = manager.authorizationStatus
+            Task { @MainActor in
+                isAllowed = Self.allowed(status)
+                self.status = isAllowed ? "Allowed" : status == .notDetermined ? "Not asked yet" : "Not allowed; the person can allow it in Settings"
+                permission?.resume(returning: isAllowed)
+                permission = nil
+            }
+        }
+
+        nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+            guard let location = locations.last else { return }
+            Task { @MainActor in
+                let waiting = once
+                once = []
+                for continuation in waiting { continuation.resume(returning: location) }
+                if waiting.isEmpty {
+                    current = Place(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude, accuracy: location.horizontalAccuracy,
+                                    date: location.timestamp, name: await Self.name(of: location.coordinate.latitude, location.coordinate.longitude))
+                }
+            }
+        }
+
+        nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+            Task { @MainActor in
+                let waiting = once
+                once = []
+                for continuation in waiting { continuation.resume(throwing: Failure(message: "Couldn't find where the person is: \(error.localizedDescription)")) }
+            }
+        }
+
+        #if os(iOS)
+        nonisolated func locationManager(_ manager: CLLocationManager, didVisit visit: CLVisit) {
+            let arrived = visit.arrivalDate == .distantPast ? Date() : visit.arrivalDate
+            let left: Date? = visit.departureDate == .distantFuture ? nil : visit.departureDate
+            let latitude = visit.coordinate.latitude, longitude = visit.coordinate.longitude
+            Task { @MainActor in
+                // One record per stop: the arrival's record gets its departure when the person leaves.
+                var record = visits.first { abs($0.arrived.timeIntervalSince(arrived)) < 60 && $0.left == nil }
+                    ?? Visit(latitude: latitude, longitude: longitude, arrived: arrived, left: nil, name: nil)
+                record.left = left
+                if record.name == nil { record.name = await Self.name(of: latitude, longitude) }
+                kept.put(record)
+                visits = kept.all(orderBy: "arrived", descending: true)
+            }
+        }
+        #endif
+    }
+
+    // MARK: - Weather
+
+    /// The weather, from Apple's own service: now, the next hours and the next days, anywhere or where the
+    /// person is. Needs `{"weather": true}` in capabilities.json, which signs the app for it (so apps with
+    /// an iPhone half, which Apple signs for a team). Apple also asks the team to turn WeatherKit on for the
+    /// app under App Services at developer.apple.com, once; until then the calls fail with a message saying so.
+    ///
+    ///     let now = try await LampWeather.now(latitude: 51.5, longitude: -0.12)   // °C, condition, symbol
+    ///     let today = try await LampWeather.hours(latitude: 51.5, longitude: -0.12)
+    ///     let week = try await LampWeather.days(latitude: 51.5, longitude: -0.12)
+    ///     let here = try await LampWeather.here()                                   // where the person is
+    enum LampWeather {
+        struct Now: Codable {
+            var temperature: Double       // °C
+            var feelsLike: Double
+            var condition: String         // "Partly cloudy"
+            var symbol: String            // an SF Symbol: "cloud.sun"
+            var humidity: Double          // %
+            var windKph: Double
+            var uvIndex: Int
+            var isDaylight: Bool
+        }
+
+        struct Hour: Codable, Identifiable {
+            var id: Date { date }
+            var date: Date
+            var temperature: Double
+            var condition: String
+            var symbol: String
+            var rainChance: Double        // %
+        }
+
+        struct Day: Codable, Identifiable {
+            var id: Date { date }
+            var date: Date
+            var high: Double
+            var low: Double
+            var condition: String
+            var symbol: String
+            var rainChance: Double
+            var sunrise: Date?
+            var sunset: Date?
+        }
+
+        struct Failure: LocalizedError {
+            let message: String
+            var errorDescription: String? { message }
+        }
+
+        static func now(latitude: Double, longitude: Double) async throws -> Now {
+            let weather = try await fetch { try await WeatherService.shared.weather(for: CLLocation(latitude: latitude, longitude: longitude), including: .current) }
+            return Now(temperature: celsius(weather.temperature), feelsLike: celsius(weather.apparentTemperature),
+                       condition: weather.condition.description, symbol: weather.symbolName, humidity: weather.humidity * 100,
+                       windKph: weather.wind.speed.converted(to: .kilometersPerHour).value, uvIndex: weather.uvIndex.value, isDaylight: weather.isDaylight)
+        }
+
+        static func hours(latitude: Double, longitude: Double, count: Int = 24) async throws -> [Hour] {
+            let forecast = try await fetch { try await WeatherService.shared.weather(for: CLLocation(latitude: latitude, longitude: longitude), including: .hourly) }
+            return forecast.forecast.filter { $0.date >= Date().addingTimeInterval(-3600) }.prefix(count).map {
+                Hour(date: $0.date, temperature: celsius($0.temperature), condition: $0.condition.description, symbol: $0.symbolName, rainChance: $0.precipitationChance * 100)
+            }
+        }
+
+        static func days(latitude: Double, longitude: Double, count: Int = 7) async throws -> [Day] {
+            let forecast = try await fetch { try await WeatherService.shared.weather(for: CLLocation(latitude: latitude, longitude: longitude), including: .daily) }
+            return forecast.forecast.prefix(count).map {
+                Day(date: $0.date, high: celsius($0.highTemperature), low: celsius($0.lowTemperature), condition: $0.condition.description,
+                    symbol: $0.symbolName, rainChance: $0.precipitationChance * 100, sunrise: $0.sun.sunrise, sunset: $0.sun.sunset)
+            }
+        }
+
+        /// Now, where the person is.
+        static func here() async throws -> Now {
+            let place = try await LampLocation.current()
+            return try await now(latitude: place.latitude, longitude: place.longitude)
+        }
+
+        private static func celsius(_ measurement: Measurement<UnitTemperature>) -> Double {
+            (measurement.converted(to: .celsius).value * 10).rounded() / 10
+        }
+
+        private static func fetch<T>(_ work: () async throws -> T) async throws -> T {
+            do {
+                return try await work()
+            } catch {
+                let text = "\(error) \(error.localizedDescription)"
+                if text.contains("WDSJWTAuthenticator") || text.contains("401") || text.contains("403") || text.contains("permission") {
+                    throw Failure(message: "Apple's weather service refused the app. It needs WeatherKit turned on for the app at developer.apple.com (Identifiers → the app → App Services), and `{\"weather\": true}` in capabilities.json; new settings there take up to half an hour.")
+                }
+                throw Failure(message: "The weather couldn't be fetched: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    // MARK: - Music
+
+    /// Apple Music: what the person has played lately, their library, the catalog, and playing a song. Needs
+    /// an Apple Music subscription on the device and the person's leave, asked once. Apple also asks the team
+    /// to turn MusicKit on for the app under App Services at developer.apple.com, once.
+    ///
+    ///     guard try await LampMusic.authorize() else { … }
+    ///     let recent = try await LampMusic.recentlyPlayed()
+    ///     let mine = try await LampMusic.library(limit: 200)
+    ///     let found = try await LampMusic.search("blue in green")
+    ///     try await LampMusic.play(found[0])
+    ///     let playing = LampMusic.nowPlaying        // iPhone: whatever the Music app is playing
+    enum LampMusic {
+        struct Song: Identifiable, Codable, Hashable {
+            var id: String
+            var title: String
+            var artist: String
+            var album: String
+            var seconds: Double
+            var artworkURL: String?
+        }
+
+        struct Failure: LocalizedError {
+            let message: String
+            var errorDescription: String? { message }
+        }
+
+        /// Asks once; false when the person refused.
+        static func authorize() async -> Bool {
+            await MusicAuthorization.request() == .authorized
+        }
+
+        static func recentlyPlayed(limit: Int = 25) async throws -> [Song] {
+            try await allowed()
+            var request = MusicRecentlyPlayedRequest<MusicKit.Song>()
+            request.limit = limit
+            return try await run { try await request.response().items.map(song) }
+        }
+
+        /// Songs in the person's own library, most recently added first.
+        static func library(limit: Int = 100) async throws -> [Song] {
+            try await allowed()
+            var request = MusicLibraryRequest<MusicKit.Song>()
+            request.limit = limit
+            request.sort(by: \.libraryAddedDate, ascending: false)
+            return try await run { try await request.response().items.map(song) }
+        }
+
+        /// Songs in Apple Music's catalog matching the words.
+        static func search(_ text: String, limit: Int = 25) async throws -> [Song] {
+            try await allowed()
+            var request = MusicCatalogSearchRequest(term: text, types: [MusicKit.Song.self])
+            request.limit = limit
+            return try await run { try await request.response().songs.map(song) }
+        }
+
+        /// Plays the song through the app's own player.
+        static func play(_ song: Song) async throws {
+            try await allowed()
+            let request = MusicCatalogResourceRequest<MusicKit.Song>(matching: \.id, equalTo: MusicItemID(song.id))
+            guard let item = try await run({ try await request.response().items.first }) else { throw Failure(message: "That song isn't in the catalog.") }
+            let player = ApplicationMusicPlayer.shared
+            player.queue = [item]
+            do { try await player.play() } catch { throw Failure(message: "Couldn't play it: \(error.localizedDescription)") }
+        }
+
+        static func pause() { ApplicationMusicPlayer.shared.pause() }
+
+        #if os(iOS)
+        /// What the Music app is playing right now, or nil.
+        static var nowPlaying: Song? {
+            guard let entry = SystemMusicPlayer.shared.queue.currentEntry, case .song(let item) = entry.item else { return nil }
+            return song(item)
+        }
+        #endif
+
+        private static func allowed() async throws {
+            guard await authorize() else { throw Failure(message: "The app isn't allowed to use Apple Music. The person can allow it in Settings.") }
+        }
+
+        private static func run<T>(_ work: () async throws -> T) async throws -> T {
+            do {
+                return try await work()
+            } catch {
+                let text = "\(error)"
+                if text.contains("401") || text.contains("403") || text.contains("developerTokenRequestFailed") {
+                    throw Failure(message: "Apple Music refused the app. It needs MusicKit turned on for the app at developer.apple.com (Identifiers → the app → App Services), once.")
+                }
+                throw Failure(message: "Apple Music didn't answer: \(error.localizedDescription)")
+            }
+        }
+
+        private static func song(_ item: MusicKit.Song) -> Song {
+            Song(id: item.id.rawValue, title: item.title, artist: item.artistName, album: item.albumTitle ?? "",
+                 seconds: item.duration ?? 0, artworkURL: item.artwork?.url(width: 300, height: 300)?.absoluteString)
+        }
+    }
+
+    #if os(iOS)
+    // MARK: - Home
+
+    /// The person's home, as HomeKit has it: lights, locks, thermostats, sensors and switches, to read and to
+    /// act on. iPhone only. Needs `{"homekit": true}` in capabilities.json, which signs the app for it; the
+    /// system asks the person once.
+    ///
+    ///     let things = try await LampHome.accessories()          // each with its room and what it is
+    ///     try await LampHome.set(lamp, on: true)
+    ///     try await LampHome.set(lamp, brightness: 40)
+    ///     try await LampHome.set(door, locked: true)
+    ///     let fresh = try await LampHome.read(sensor)             // its latest value
+    @MainActor
+    final class LampHome: NSObject, ObservableObject, HMHomeManagerDelegate {
+        static let shared = LampHome()
+
+        struct Accessory: Identifiable, Codable, Hashable {
+            var id: String            // HomeKit's identifier
+            var name: String
+            var room: String
+            var kind: String          // "Light", "Lock", "Thermostat", "Sensor", "Switch", "Outlet", or the category's name
+            var isOn: Bool?           // lights, switches, outlets
+            var brightness: Int?      // %
+            var isLocked: Bool?
+            var temperature: Double?  // °C, from a thermostat or sensor
+            var humidity: Double?     // %
+            var isReachable: Bool
+        }
+
+        struct Failure: LocalizedError {
+            let message: String
+            var errorDescription: String? { message }
+        }
+
+        @Published private(set) var accessories: [Accessory] = []
+        @Published private(set) var status = "Loading the home…"
+
+        private let manager = HMHomeManager()
+        private var loaded = false
+        private var waiting: [CheckedContinuation<Void, Never>] = []
+
+        private override init() {
+            super.init()
+            manager.delegate = self
+        }
+
+        /// Everything in the person's primary home, read fresh.
+        static func accessories() async throws -> [Accessory] {
+            let me = shared
+            if !me.loaded { await withCheckedContinuation { me.waiting.append($0) } }
+            guard let home = me.manager.primaryHome else {
+                throw Failure(message: me.manager.authorizationStatus.contains(.restricted) ? "The app isn't allowed to see the home. The person can allow it in Settings." : "No home is set up on this iPhone.")
+            }
+            var found: [Accessory] = []
+            for accessory in home.accessories {
+                for service in accessory.services where Self.kinds[service.serviceType] != nil {
+                    for characteristic in service.characteristics where characteristic.properties.contains(HMCharacteristicPropertyReadable) {
+                        try? await characteristic.readValue()
+                    }
+                    found.append(me.describe(accessory, service))
+                }
+            }
+            me.accessories = found
+            me.status = "\(found.count) things in \(home.name)"
+            return found
+        }
+
+        static func set(_ accessory: Accessory, on: Bool) async throws {
+            try await write(accessory, HMCharacteristicTypePowerState, on)
+        }
+
+        static func set(_ accessory: Accessory, brightness: Int) async throws {
+            try await write(accessory, HMCharacteristicTypeBrightness, max(0, min(100, brightness)))
+        }
+
+        static func set(_ accessory: Accessory, locked: Bool) async throws {
+            try await write(accessory, HMCharacteristicTypeTargetLockMechanismState, locked ? HMCharacteristicValueLockMechanismState.secured.rawValue : HMCharacteristicValueLockMechanismState.unsecured.rawValue)
+        }
+
+        /// The thing again, with its latest values.
+        static func read(_ accessory: Accessory) async throws -> Accessory {
+            try await accessories().first { $0.id == accessory.id } ?? accessory
+        }
+
+        private static func write(_ accessory: Accessory, _ type: String, _ value: Any) async throws {
+            guard let (device, service) = shared.find(accessory.id) else { throw Failure(message: "\(accessory.name) isn't in the home any more.") }
+            guard let characteristic = service.characteristics.first(where: { $0.characteristicType == type }) else {
+                throw Failure(message: "\(accessory.name) can't do that.")
+            }
+            do { try await characteristic.writeValue(value) } catch { throw Failure(message: "\(device.name) didn't take it: \(error.localizedDescription)") }
+        }
+
+        private func find(_ id: String) -> (HMAccessory, HMService)? {
+            guard let home = manager.primaryHome else { return nil }
+            for accessory in home.accessories {
+                for service in accessory.services where service.uniqueIdentifier.uuidString == id { return (accessory, service) }
+            }
+            return nil
+        }
+
+        private static let kinds: [String: String] = [
+            HMServiceTypeLightbulb: "Light", HMServiceTypeLockMechanism: "Lock", HMServiceTypeThermostat: "Thermostat",
+            HMServiceTypeTemperatureSensor: "Sensor", HMServiceTypeHumiditySensor: "Sensor", HMServiceTypeMotionSensor: "Sensor",
+            HMServiceTypeContactSensor: "Sensor", HMServiceTypeOccupancySensor: "Sensor", HMServiceTypeSwitch: "Switch",
+            HMServiceTypeOutlet: "Outlet", HMServiceTypeFan: "Fan", HMServiceTypeGarageDoorOpener: "Garage door",
+            HMServiceTypeWindowCovering: "Blind", HMServiceTypeDoorbell: "Doorbell",
+        ]
+
+        private func describe(_ accessory: HMAccessory, _ service: HMService) -> Accessory {
+            func value<T>(_ type: String, as: T.Type) -> T? { service.characteristics.first { $0.characteristicType == type }?.value as? T }
+            let lock = value(HMCharacteristicTypeCurrentLockMechanismState, as: Int.self)
+            return Accessory(id: service.uniqueIdentifier.uuidString, name: service.name.isEmpty ? accessory.name : service.name,
+                             room: accessory.room?.name ?? "", kind: Self.kinds[service.serviceType] ?? service.localizedDescription,
+                             isOn: value(HMCharacteristicTypePowerState, as: Bool.self), brightness: value(HMCharacteristicTypeBrightness, as: Int.self),
+                             isLocked: lock.map { $0 == HMCharacteristicValueLockMechanismState.secured.rawValue },
+                             temperature: value(HMCharacteristicTypeCurrentTemperature, as: Double.self),
+                             humidity: value(HMCharacteristicTypeCurrentRelativeHumidity, as: Double.self), isReachable: accessory.isReachable)
+        }
+
+        // MARK: HMHomeManagerDelegate
+
+        nonisolated func homeManagerDidUpdateHomes(_ manager: HMHomeManager) {
+            Task { @MainActor in
+                loaded = true
+                let waiting = self.waiting
+                self.waiting = []
+                for continuation in waiting { continuation.resume() }
+            }
+        }
+    }
+    #endif
 
     /// The app's own files, from its Assets/ folder, bundled inside it (Contents/Resources/Assets).
     ///
