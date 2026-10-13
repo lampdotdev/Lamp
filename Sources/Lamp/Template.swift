@@ -4068,6 +4068,9 @@ enum Template {
                 me.waiting.append((always, continuation))
                 #if os(iOS)
                 if always {
+                    // A question already open answers this caller too: asking again would do nothing, and
+                    // starting over would answer everyone before the person has.
+                    guard !me.askingAlways else { return }
                     me.askingAlways = true
                     me.shownWhileAsking = false
                     me.manager.requestAlwaysAuthorization()
