@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Lamp Page Connector</title>
+<style>
+body { width:340px; margin:0; padding:22px; background:#faf8f4; color:#222; font:14px system-ui; }
+h1 { font-size:20px; margin:0 0 14px; } p { line-height:1.45; overflow-wrap:anywhere; }
+button,select { font:inherit; padding:9px 12px; border-radius:8px; border:1px solid #bbb; background:white; }
+#share { background:#a94312; color:white; border-color:#a94312; } button:disabled { opacity:.45; }
+select { width:100%; } #status { white-space:pre-wrap; } #site { color:#555; }
+</style></head><body><h1>Share this page</h1>
+<select id="destination" aria-label="Destination app" hidden></select>
+<p id="site"></p><p id="consent"></p><p id="status">Connecting to Lamp…</p>
+<button id="share" hidden>Share page</button> <button id="cancel" hidden>Cancel</button>
+<script src="popup.js"></script></body></html>

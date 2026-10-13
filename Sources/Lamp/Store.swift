@@ -493,6 +493,7 @@ final class Store: ObservableObject {
             }
         }
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        if BrowserPrototype.enabled { try? BrowserPrototype.shared.prepareFixtures(root: root) }
         reload()
         restoreWaiting()
         for project in projects { discardIfUnused(project.id) }
@@ -4708,6 +4709,9 @@ final class Store: ObservableObject {
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
+        if BrowserPrototype.enabled, request.path.hasPrefix("/prototype/browser/") {
+            return BrowserPrototype.shared.handle(request, projects: projects)
+        }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
                      "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/kind", "/agent/art", "/agent/talk", "/mcp", "/pi/key"]
