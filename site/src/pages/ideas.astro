@@ -3,6 +3,7 @@ import { Image, getImage } from "astro:assets";
 import type { ImageMetadata } from "astro";
 import Base from "../layouts/Base.astro";
 import DownloadButton from "../components/DownloadButton.astro";
+import FirstIdea from "../components/FirstIdea.astro";
 import { CATEGORIES, IDEAS, platform, slug } from "../lib/ideas";
 import { together } from "../lib/text";
 import { platformIcon } from "../lib/platform-icons";
@@ -41,15 +42,13 @@ const description = "Wishes for software nobody else would make: for the office,
     </section>
 
     <!--
-      The categories as a row of icons with their names under them, each rising into the row in turn as the page
-      opens (global.css), in the manner of the row of products at the
-      top of Apple's product pages: each is an object drawn like an icon's, off its tile, and All is four of them
-      together. The
-      row slides sideways where it doesn't fit. The one chosen is kept in the address (#office), so a link can
-      open on it.
+      The categories as icons with their names under them, in the manner of the row of products at the top of
+      Apple's product pages: one row on a laptop, two rows of five on anything narrower. Each is an object drawn
+      like an icon's, off its tile, and All is four of them together; each rises into place in turn as the page
+      opens (global.css). The one chosen is kept in the address (#office), so a link can open on it.
     -->
-    <nav aria-label="Kinds of wish" class="mt-10 overflow-x-auto pb-12 [scrollbar-width:none] sm:mt-14 sm:pb-14 [&::-webkit-scrollbar]:hidden">
-      <div class="mx-auto flex w-max gap-1 px-4 sm:gap-2 sm:px-6">
+    <nav aria-label="Kinds of wish" class="mt-10 pb-12 sm:mt-14 sm:pb-14">
+      <div class="mx-auto grid max-w-md grid-cols-5 gap-y-5 px-3 sm:max-w-xl lg:flex lg:w-max lg:max-w-none lg:gap-3">
         {
           [{ id: "", title: "All" }, ...CATEGORIES].map((category, index) => (
             <button
@@ -57,7 +56,7 @@ const description = "Wishes for software nobody else would make: for the office,
               data-filter={category.id}
               aria-pressed={category.id === "" ? "true" : "false"}
               style={`--i: ${index}`}
-              class="category-rise group flex w-[5.75rem] cursor-pointer flex-col items-center rounded-2xl pt-1 pb-2 focus-visible:outline-2 focus-visible:outline-graphite sm:w-[6.5rem]"
+              class="category-rise group flex cursor-pointer flex-col items-center rounded-2xl pt-1 pb-2 focus-visible:outline-2 focus-visible:outline-graphite lg:w-[6.25rem]"
             >
               <span class="transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] group-hover:-translate-y-0.5">
               {category.id ? (
@@ -68,17 +67,17 @@ const description = "Wishes for software nobody else would make: for the office,
                   height={48}
                   densities={[1, 2]}
                   loading="eager"
-                  class="size-12 object-contain drop-shadow-[0_5px_6px_rgba(0,0,0,0.13)]"
+                  class="size-10 object-contain drop-shadow-[0_5px_6px_rgba(0,0,0,0.13)] sm:size-12"
                 />
               ) : (
-                <span class="grid size-12 grid-cols-2 gap-1 p-0.5">
+                <span class="grid size-10 grid-cols-2 gap-0.5 p-0.5 sm:size-12 sm:gap-1">
                   {CATEGORIES.slice(0, 4).map((other) => (
                     <Image src={objectOf(other.id)} alt="" width={20} height={20} densities={[1, 2]} loading="eager" class="size-full object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.13)]" />
                   ))}
                 </span>
               )}
               </span>
-              <span class="mt-2.5 text-center text-[13px] leading-tight text-muted sm:text-[14px] sm:whitespace-nowrap transition group-hover:text-ink group-aria-pressed:font-semibold group-aria-pressed:text-ink">
+              <span class="mt-2 text-center text-[13px] leading-tight whitespace-nowrap text-muted transition sm:mt-2.5 sm:text-[14px] group-hover:text-ink group-aria-pressed:font-semibold group-aria-pressed:text-ink">
                 {category.title}
               </span>
             </button>
@@ -128,16 +127,13 @@ const description = "Wishes for software nobody else would make: for the office,
           }
         </ul>
 
-        <div class="mt-12 text-center">
-          <h2 class="font-display text-3xl font-bold tracking-tight sm:text-4xl">Not quite&nbsp;yours?</h2>
-          <p class="mx-auto mt-3 max-w-[40rem] text-xl leading-[1.4] text-muted">{together("A few questions about your week, and Lamp's first wish is written in your own words.")}</p>
-          <a
-            href="/#first-idea"
-            class="mt-6 inline-flex h-[52px] items-center rounded-full bg-graphite px-8 text-[17px] font-semibold text-white transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-[1.03] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-graphite active:scale-[0.98]"
-          >
-            Find your wish
-          </a>
-        </div>
+        <!-- For whoever found nothing quite theirs: the homepage's few questions, here, so nobody has to leave. -->
+        <FirstIdea
+          heading="Not quite yours?"
+          lead="Answer a couple of questions and you'll see it in a minute."
+          explore={false}
+          class="pt-16 sm:pt-20"
+        />
       </div>
     </section>
   </main>
@@ -272,6 +268,11 @@ const description = "Wishes for software nobody else would make: for the office,
     filter.addEventListener("click", () => {
       const id = filter.dataset.filter ?? "";
       if (filter.getAttribute("aria-pressed") === "true") return;
+      // The row of categories goes to just under the menu bar, so it's clear what changed and the wishes have
+      // the rest of the window.
+      const row = document.querySelector<HTMLElement>('[aria-label="Kinds of wish"]')!;
+      const bar = document.querySelector<HTMLElement>("header nav")!.getBoundingClientRect().bottom;
+      scrollTo({ top: row.getBoundingClientRect().top + scrollY - bar - 12, behavior: still ? "auto" : "smooth" });
       show(id);
       history.replaceState(null, "", id ? `#${id}` : location.pathname);
       if (id) track("ideas_filtered", { category: id });

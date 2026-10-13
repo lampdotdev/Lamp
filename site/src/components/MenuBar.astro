@@ -9,7 +9,8 @@ const here = Astro.url.pathname.replace(/\/$/, "") || "/";
 const links = [
   { href: "/", label: "Home", wide: true },
   { href: "/ideas", label: "Ideas" },
-  { href: "/#first-idea", label: "Find your wish", wide: true },
+  // The ideas page has the few questions too, so there it stays on the page.
+  { href: here === "/ideas" ? "#first-idea" : "/#first-idea", label: "Find your wish", wide: true },
 ];
 ---
 

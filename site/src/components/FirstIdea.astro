@@ -1,6 +1,17 @@
 ---
 import DownloadButton from "./DownloadButton.astro";
 import { together } from "../lib/text";
+
+interface Props {
+  /** The heading and the line under it; the homepage's own when left out. */
+  heading?: string;
+  lead?: string;
+  /** Whether to offer the ideas page beside the button, where there's somewhere to go. */
+  explore?: boolean;
+  /** The space around the section, for where it sits on its page. */
+  class?: string;
+}
+const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 sm:pt-6 sm:pb-24" } = Astro.props;
 ---
 
 <!--
@@ -14,14 +25,14 @@ import { together } from "../lib/text";
 -->
 <!-- ph-no-capture: the model's questions and answers can repeat what the visitor wrote, so PostHog's autocapture
      skips this section; its steps are counted by `count`, with fixed words only. -->
-<section id="first-idea" class="ph-no-capture px-2 pt-4 pb-20 sm:px-3 sm:pt-6 sm:pb-24">
+<section id="first-idea" class:list={["ph-no-capture", space]}>
   <div data-sky class="wish-night relative isolate overflow-hidden rounded-[28px] px-5 pt-16 pb-14 text-white sm:px-10 sm:pt-20 sm:pb-20">
     <!-- Dawn: the sky warms when the wish appears. -->
     <div data-dawn aria-hidden="true" class="wish-dawn"></div>
     <div class="relative z-10">
-      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Find your first&nbsp;wish</h2>
+      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">{heading ? together(heading) : <>Find your first&nbsp;wish</>}</h2>
       <p class="mx-auto mt-4 max-w-[40rem] text-center text-xl leading-[1.4] font-semibold text-white/70">
-        {together("Unsure of what you could do?")} <span class="sm:whitespace-nowrap">Just answer a couple of questions.</span>
+        {lead ? together(lead) : <>{together("Unsure of what you could do?")} <span class="sm:whitespace-nowrap">Just answer a couple of questions.</span></>}
       </p>
 
       <!-- Two ways in: a few questions, or the ideas page to browse. -->
@@ -53,12 +64,12 @@ import { together } from "../lib/text";
           <span aria-hidden="true" class="relative">✦</span> <span class="relative">Discover my wish</span>
         </button>
         </div>
-        <a
+        {explore && <a
           href="/ideas"
           class="inline-flex h-[52px] items-center rounded-full bg-white/10 px-8 text-[17px] font-semibold text-white ring-1 ring-white/25 ring-inset backdrop-blur-sm transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-[1.04] hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white/70 active:scale-[0.98]"
         >
           Explore ideas
-        </a>
+        </a>}
       </div>
 
       <div data-convo hidden class="mx-auto mt-12 max-w-2xl">
