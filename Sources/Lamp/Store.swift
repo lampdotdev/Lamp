@@ -3267,7 +3267,8 @@ final class Store: ObservableObject {
             // an app, is asked for again now there is one (an icon drawn by hand is only offered then).
             upgradeIconArt(project)
             // As on the Mac: the widget is built, and adding it to the home screen is the person's to do.
-            if problem == nil, Template.hasWidget(project), WidgetCard.isNeeded(after: logs[project.id] ?? []) { log(project, .widget, "") }
+            // Only for a widget to add: Live Activities alone show by themselves and aren't among the widgets.
+            if problem == nil, Template.hasHomeScreenWidget(project), WidgetCard.isNeeded(after: logs[project.id] ?? []) { log(project, .widget, "") }
             return problem
         }
         await quit(project)

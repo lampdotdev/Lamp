@@ -570,17 +570,22 @@ extension Simulator {
                 // The home screen and the lock screen, where a widget and a Live Activity are: the viewer's
                 // own Home and Lock commands, then a look. Lock wakes the screen again so there's something to see.
                 if key == "home" || key == "lock" {
+                    // Asked again before every press: the turn may stop, or another app take the device, during a wait.
                     guard await live() else { return "stopped before pressing \(key)" }
                     guard pressMenuItem("Home", in: screen) else {
-                        return "key \(key): \(screen.viewer) has no Home command Lamp can press; say to the user you couldn't look there"
+                        return "key \(key): \(screen.viewer) has no Home command Lamp can press for this device; say to the user you couldn't look there"
                     }
                     if key == "lock" {
                         try? await Task.sleep(for: .milliseconds(600))
+                        guard await live() else { return "pressed home, then stopped before locking" }
                         guard pressMenuItem("Lock", in: screen) else {
-                            return "key lock: \(screen.viewer) has no Lock command Lamp can press; the home screen is showing instead"
+                            return "key lock: \(screen.viewer) has no Lock command Lamp can press for this device; the home screen is showing instead"
                         }
                         try? await Task.sleep(for: .milliseconds(1200))
-                        _ = pressMenuItem("Home", in: screen)   // wakes it, onto the lock screen
+                        guard await live() else { return "locked, then stopped before waking the screen" }
+                        guard pressMenuItem("Home", in: screen) else {   // wakes it, onto the lock screen
+                            return "key lock: locked, but the screen couldn't be woken, so the picture may be dark"
+                        }
                     }
                     try? await Task.sleep(for: .milliseconds(800))
                     return key == "lock" ? "pressed lock: the lock screen is showing, with any Live Activity on it" : "pressed home: the home screen is showing, with any widget the person added"
@@ -1065,7 +1070,12 @@ extension Simulator {
             }
             // swiftlint:disable:next force_cast
             guard let item = find(bar as! AXUIElement, depth: 0) else { return false }
+            // The command acts on the front window: this device's is raised and made main first, and checked to
+            // be so, or another device would be locked while this one is photographed.
             NSRunningApplication(processIdentifier: screen.pid)?.activate()
+            _ = call { AXUIElementPerformAction(screen.window, kAXRaiseAction as CFString) }
+            _ = call { AXUIElementSetAttributeValue(screen.window, kAXMainAttribute as CFString, kCFBooleanTrue) }
+            guard let main = attribute(screen.app, kAXMainWindowAttribute), CFEqual(main, screen.window) else { return false }
             return call { AXUIElementPerformAction(item, kAXPressAction as CFString) } == .success
         }
 

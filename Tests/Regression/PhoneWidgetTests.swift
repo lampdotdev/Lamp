@@ -83,6 +83,21 @@ final class PhoneWidgetTests: XCTestCase {
         XCTAssertFalse(support.contains("NWConnection"))
     }
 
+    func testOnlyAWidgetToAddGetsTheCard() throws {
+        let project = try app(.iphone)
+        let widget = project.dir.appendingPathComponent("Widget/Widget.swift")
+        // Live Activities alone: nothing to add from the gallery.
+        try "import ActivityKit\nstruct A: Widget { var body: some WidgetConfiguration { ActivityConfiguration(for: X.self) { _ in } dynamicIsland: { _ in } } }\n// StaticConfiguration( later\n"
+            .write(to: widget, atomically: true, encoding: .utf8)
+        XCTAssertTrue(Template.hasWidget(project))
+        XCTAssertFalse(Template.hasHomeScreenWidget(project))
+        XCTAssertFalse(WidgetCard.isShown(for: project))
+        try "struct W: Widget { var body: some WidgetConfiguration { StaticConfiguration(kind: \"k\", provider: P()) { _ in } } }\n"
+            .write(to: widget, atomically: true, encoding: .utf8)
+        XCTAssertTrue(Template.hasHomeScreenWidget(project))
+        XCTAssertTrue(WidgetCard.isShown(for: project))
+    }
+
     func testWithoutAWidgetNothingChanges() throws {
         let project = try app(.iphone, widget: false)
         XCTAssertEqual(try text("Package.swift", in: project).replacingOccurrences(of: "TeaTimer", with: "{{EXE}}"), Template.iPhonePackageSwift)

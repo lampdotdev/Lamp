@@ -1100,6 +1100,22 @@ enum Template {
         return files.contains { $0.pathExtension == "swift" && $0.lastPathComponent != widgetSupportFile }
     }
 
+    /// Whether the app's extension holds a widget someone can add: a configuration with a timeline, not only
+    /// Live Activities, which iOS shows by itself and never lists among the widgets to add. Read from the code,
+    /// comments and strings left out, as `isWidgetOnly` does.
+    static func hasHomeScreenWidget(_ project: LampProject) -> Bool {
+        guard hasWidget(project) else { return false }
+        let folder = project.dir.appendingPathComponent(widgetFolder)
+        let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        return files.contains { file in
+            file.pathExtension == "swift" && file.lastPathComponent != widgetSupportFile
+                && ((try? String(contentsOf: file, encoding: .utf8)).map { source in
+                    let text = code(in: source)
+                    return ["StaticConfiguration(", "AppIntentConfiguration(", "IntentConfiguration("].contains { text.contains($0) }
+                } ?? false)
+        }
+    }
+
     /// The scene a widget-only app is made of (`LampWidgetOnly` in LampSupport.swift).
     static let widgetOnlyScene = "LampWidgetOnly("
 

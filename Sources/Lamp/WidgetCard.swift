@@ -24,7 +24,9 @@ enum WidgetCard {
 
     /// A card stays in the chat's record, but is only shown while the app has a widget: once the widget is
     /// taken away there's nothing to add, and saying how would send the person looking for it.
-    static func isShown(for project: LampProject) -> Bool { Template.hasWidget(project) }
+    static func isShown(for project: LampProject) -> Bool {
+        project.platform.hasIOS ? Template.hasHomeScreenWidget(project) : Template.hasWidget(project)
+    }
 
     /// Whether to run a widget-only app out of sight to ask if its widget is placed, on coming back to Lamp.
     /// Asked whatever the last answer was: a widget that was placed can be taken off the desktop again, and
