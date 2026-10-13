@@ -82,14 +82,6 @@ final class WidgetBuildTests: XCTestCase {
         XCTAssertFalse(try text("build.sh", in: project).contains("PlugIns"))
     }
 
-    func testAnIPhoneAppGetsNoWidget() throws {
-        let project = try app(platform: .iphone)
-        try addWidget(to: project)
-        XCTAssertFalse(Template.hasWidget(project))
-        try Template.writeOwnedFiles(for: project)
-        XCTAssertFalse(try text("Package.swift", in: project).contains("Widget"))
-    }
-
     func testAChangeToTheWidgetNeedsABuild() throws {
         let project = try app()
         let before = Runtime.fingerprint(project)
@@ -156,7 +148,8 @@ final class WidgetBuildTests: XCTestCase {
         XCTAssertTrue(mac.contains("LampWidget.share("))
         XCTAssertTrue(mac.contains("LampWidget.read("))
         XCTAssertFalse(mac.contains("isn't possible yet"))
-        XCTAssertFalse(Agent.iPhonePrompt(for: .iphone).contains("LampWidget"))
+        // The same calls on an iPhone, over a shared folder instead of the Mac's connection.
+        XCTAssertTrue(Agent.iPhonePrompt(for: .iphone).contains("LampWidget.share("))
     }
 
     func testTheWidgetIsSignedBeforeTheApp() {
@@ -269,11 +262,12 @@ final class WidgetBuildTests: XCTestCase {
         XCTAssertFalse(mac.contains("Edit Widgets"))
         XCTAssertTrue(mac.contains("containerBackground(for: .widget)"))
         XCTAssertTrue(mac.contains("(and a widget's code in Widget/)"))
+        // An iPhone app's widgets are the home screen's, told in their own rule (PhoneWidgetTests).
         for family in [DeviceFamily.iphone, .ipad] {
             let phone = Agent.iPhonePrompt(for: family)
-            XCTAssertFalse(phone.contains("Widget/"))
             XCTAssertFalse(phone.contains("Edit Widgets"))
-            XCTAssertTrue(phone.contains("Not possible yet: widgets, Live Activities"))
+            XCTAssertFalse(phone.contains("widget for the desktop"))
+            XCTAssertFalse(phone.contains("Not possible yet: widgets"))
         }
     }
 

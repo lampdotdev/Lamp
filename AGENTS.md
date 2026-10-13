@@ -278,7 +278,7 @@ in Settings → Building, so the app can use what Apple ties to a team, which La
 platforms (`LampProject.bundleID`), and `Store.deploy` seals what it adds (icon, assets, Info.plist) with the
 team's certificate and the entitlements Xcode gave it (`Devices.signingIdentity`), never Lamp's. The agent gets
 both kinds' rules, each marked for its half, after one rule on sharing the code (`Agent.universalPrompt`). An app
-for both has no widget and can't be shared as a `.lampapp` yet.
+for both can't be shared as a `.lampapp` yet; its widgets and Live Activities are the iPhone half's (below).
 
 ## iCloud
 
@@ -387,7 +387,7 @@ profile changes.
 ### Widgets
 
 A Mac app can have a desktop widget. The agent writes it in `Widget/` at the app's root (`Agent.Rules.widget`,
-Mac only; an iPhone app is still told widgets aren't possible). Swift in that folder (`Template.hasWidget`,
+Mac only; an iPhone app's widgets are described under "Home screen widgets and Live Activities" below). Swift in that folder (`Template.hasWidget`,
 asked before every build) gives the app's Package.swift a second program, built as an extension, and build.sh
 puts it in the app as `Contents/PlugIns/<Exe>Widget.appex` with the bundle id `<app's id>.widget`. It is
 signed by itself, sandboxed (`Template.widgetEntitlementsPlist`), before the app around it
@@ -439,6 +439,43 @@ own process is ended just before the swap too, and before an app is deleted (`Wi
 file inside that app or, for a copy running from elsewhere such as the Trash, by the widget's bundle id):
 left alive it no longer matches the widget installed, and macOS fails every reload and leaves the widget
 blank until that process happens to exit.
+
+### Home screen widgets and Live Activities
+
+An iPhone app, and the iPhone half of an app for both, gets its widgets the same way: Swift in `Widget/`
+(`Template.hasWidget` says yes for every kind; `isWidgetOnly` stays the Mac's) makes a WidgetKit extension
+holding home screen widgets and Live Activities (`ActivityConfiguration`) in one `WidgetBundle`. The rule is
+`Agent.Rules.iPhoneWidget`, given to the iPhone prompt and, marked for its half, to an app for both's.
+
+- **Building.** In the simulator build the extension is a second SwiftPM product (`iPhonePackageSwift(widget:)`,
+  `universalPackageSwift(widget:)`), linked with its own entitlements in its binary like the app's, and wrapped
+  by `iPhoneBuildSh(widget:)` as `PlugIns/<Exe>Widget.appex` at the top of the bundle (`XPC!`,
+  `com.apple.widgetkit-extension`, a version that changes every build so iOS rereads the widget's kinds),
+  signed before the app; `finishSimulatorBundle` signs any `.appex` before the app again. The app's Info.plist
+  says `NSSupportsLiveActivities` and names the folder it shares (`LampAppGroup`). On a phone and for an app for
+  both, the Xcode project gains an app extension target (`withWidgetTarget`: its folder as a synchronized group,
+  an Embed Foundation Extensions phase, automatic signing with the app, `Widget-Info.plist`, `Widget.entitlements`);
+  for an app for both the target and its embedding carry `platformFilter = ios`, so the Mac half builds without
+  it. A malformed extension doesn't fail the build, it just never shows in the gallery: check there.
+- **Shared code.** Swift in `Widget/Shared/` compiles into both targets: Lamp links it into `Sources/` as
+  `Sources/WidgetShared` (`linkSharedWidgetCode`, before every build, and only ever a link Lamp made), because
+  SwiftPM refuses one file in two targets; Xcode's synchronized group doesn't follow that link, so the project
+  gives the app target `Widget/Shared/` as a synchronized group of its own (`withWidgetTarget`). It's where an
+  `ActivityAttributes` type goes. In an app for both the Mac half compiles that folder too, and
+  `ActivityAttributes` is unavailable on macOS, so the rule says to put it under `#if os(iOS)` and to check the
+  Mac half with `swift build --product <app>`.
+- **Data.** Unlike the Mac (`Template.WidgetSharing`), iOS lets the app and its extension share an app group,
+  `group.<the app's id as signed>` (`appGroup(for:onDevice:)`; the team is in it on a phone): both are signed for
+  it, ad hoc in the simulator through the entitlements in their binaries. `LampWidget.share` (in LampSupport,
+  under `#if os(iOS)`) writes a JSON file there and reloads the timelines; the widget's `LampWidget.read` comes
+  from `lampWidgetSupportIOSSwift`, the iPhone version of Lamp's own file in `Widget/`. The calls are the Mac's,
+  so the agent learns one way.
+- **Live Activities** are started, updated and ended from the app with ActivityKit; there is no push from a
+  server, so the rule says to give timers and progress an end date and let them move by themselves.
+- **Looking.** A widget and a Live Activity aren't the app's screen. `use_app` with `key` "home" or "lock" presses
+  the viewer's own Home and Lock commands (`Simulator.Driver.pressMenuItem`; lock then wakes the screen, onto the
+  lock screen) before the picture. Only the person can add a widget to the home screen; the chat's `WidgetCard`
+  says how in iOS words (`WidgetCard.phoneStatus`), and iOS doesn't say whether they did, so it always does.
 
 ## Naming: Lamp and Lamp
 

@@ -567,6 +567,24 @@ extension Simulator {
                 return result == .success ? "typed \"\(text)\" into \(describe(field)); it now holds that" : "couldn't type into \(describe(field))"
             case "key":
                 let key = (action.key ?? "").lowercased()
+                // The home screen and the lock screen, where a widget and a Live Activity are: the viewer's
+                // own Home and Lock commands, then a look. Lock wakes the screen again so there's something to see.
+                if key == "home" || key == "lock" {
+                    guard await live() else { return "stopped before pressing \(key)" }
+                    guard pressMenuItem("Home", in: screen) else {
+                        return "key \(key): \(screen.viewer) has no Home command Lamp can press; say to the user you couldn't look there"
+                    }
+                    if key == "lock" {
+                        try? await Task.sleep(for: .milliseconds(600))
+                        guard pressMenuItem("Lock", in: screen) else {
+                            return "key lock: \(screen.viewer) has no Lock command Lamp can press; the home screen is showing instead"
+                        }
+                        try? await Task.sleep(for: .milliseconds(1200))
+                        _ = pressMenuItem("Home", in: screen)   // wakes it, onto the lock screen
+                    }
+                    try? await Task.sleep(for: .milliseconds(800))
+                    return key == "lock" ? "pressed lock: the lock screen is showing, with any Live Activity on it" : "pressed home: the home screen is showing, with any widget the person added"
+                }
                 guard key == "return" || key == "enter" || key == "escape" || key == "esc" else {
                     return "key \(action.key ?? ""): an iPhone has no such key; tap, type, scroll or swipe instead"
                 }
@@ -1031,6 +1049,24 @@ extension Simulator {
 
         private static func press(_ element: AXUIElement) -> Bool {
             call { AXUIElementPerformAction(element, kAXPressAction as CFString) } == .success
+        }
+
+        /// Presses the viewer's own menu command of that name (Simulator's Device menu has Home and Lock), as
+        /// choosing it would: the device it acts on is the one in the viewer's front window.
+        private static func pressMenuItem(_ title: String, in screen: Screen) -> Bool {
+            guard let bar = attribute(screen.app, kAXMenuBarAttribute) else { return false }
+            func find(_ element: AXUIElement, depth: Int) -> AXUIElement? {
+                if (attribute(element, kAXTitleAttribute) as? String) == title, attribute(element, kAXRoleAttribute) as? String == kAXMenuItemRole {
+                    return element
+                }
+                guard depth < 4 else { return nil }
+                for child in children(element) { if let found = find(child, depth: depth + 1) { return found } }
+                return nil
+            }
+            // swiftlint:disable:next force_cast
+            guard let item = find(bar as! AXUIElement, depth: 0) else { return false }
+            NSRunningApplication(processIdentifier: screen.pid)?.activate()
+            return call { AXUIElementPerformAction(item, kAXPressAction as CFString) } == .success
         }
 
         private static func children(_ element: AXUIElement) -> [AXUIElement] {

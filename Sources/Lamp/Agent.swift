@@ -214,7 +214,7 @@ enum Agent {
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
                      Rules.script, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
-                     half(onPhone, Rules.iPhoneHardware), Rules.store, Rules.kinds(mac: true),
+                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneWidget), Rules.store, Rules.kinds(mac: true),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
                      Rules.universalTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
@@ -235,7 +235,7 @@ enum Agent {
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.permissions] }
         rules += [Rules.script, mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules.append(Rules.computer) }
-        if !mac { rules += [Rules.iPhoneHardware, Rules.icloud] }
+        if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneWidget, Rules.icloud] }
         rules += [Rules.store, Rules.kinds(mac: mac), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
                   Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
@@ -273,8 +273,11 @@ enum Agent {
         the rest of the Mac's code; those marked "On iPhone and iPad" inside iOS's. The Mac-only building blocks \
         (folders, shortcuts that work in every app, the menu bar, the clipboard watcher, Mail, other apps, the \
         permission screens, opening at login) exist only under `#if os(macOS)`; `LampMotion` and `LampHome` only under \
-        `#if os(iOS)`; `LampImage` is NSImage on the Mac and UIImage on iOS. This app has no widget. Check both \
-        halves compile before a look: `swift build` for the Mac's, `./build.sh ios` for iOS's (it builds into build/iOS, beside the Mac's build).
+        `#if os(iOS)`; `LampImage` is NSImage on the Mac and UIImage on iOS. Its widgets and Live Activities are \
+        the iPhone half's (below); the Mac half has none, and Widget/Shared/ is compiled into the Mac half too, so \
+        an `ActivityAttributes` type there goes under `#if os(iOS)`. Check both halves compile before a look: \
+        `swift build --product` and the app's name (the first target in Package.swift) for the Mac's, and \
+        `./build.sh ios` for iOS's (it builds into build/iOS, beside the Mac's build).
         """
 
         static let universalFrameworks = """
@@ -803,6 +806,31 @@ enum Agent {
         user plainly that they're for their phone, never that they're broken.
         """
 
+        static let iPhoneWidget = """
+        - The app can have home screen widgets and Live Activities. Make a widget when the user asks for one, or \
+        for something to glance at without opening the app; a Live Activity when something is under way and \
+        ends (a timer, a delivery, a game, a workout, a trip). Write them with WidgetKit, SwiftUI and ActivityKit \
+        in a `Widget/` folder at the app's root, beside Sources/, starting with Widget/Widget.swift: one `@main` \
+        on a `WidgetBundle` holding the widgets (`StaticConfiguration` with a `TimelineProvider`, \
+        `.containerBackground(.fill.tertiary, for: .widget)`, `.supportedFamilies` for the sizes that fit) and \
+        any `ActivityConfiguration` (the lock screen's view and the `dynamicIsland` regions). Lamp builds that \
+        folder into the app as its extension. It shares no code with Sources/ and has nothing from \
+        LampSupport.swift, except Widget/Shared/: Swift there is compiled into both the app and the extension \
+        (Lamp links it into Sources/ as Sources/WidgetShared; edit it in Widget/Shared/), the place for an \
+        `ActivityAttributes` type and anything else both sides need. The widget's data: in the app, \
+        `LampWidget.share(Summary(…), as: "summary")` with any Codable value, at launch and whenever it changes \
+        (it redraws the widgets too); in the widget, `LampWidget.read(Summary.self, from: "summary") { summary \
+        in … }` in getSnapshot and getTimeline, or `await` it, from Widget/LampWidgetSupport.swift, which Lamp \
+        writes: never edit it. It gives what the app shared last, also while the app is closed, and nil until \
+        then: show a short line asking to open the app. A Live Activity starts from the app, \
+        `Activity.request(attributes:content:)`, and is changed with `update` and ended with `end` from the app \
+        while it runs; there's no server to push changes, so give a timer or progress an end date \
+        (`Text(timerInterval:countsDown:)`, `ProgressView(timerInterval:)`) and it moves by itself. To see them, \
+        `use_app` with `key` "lock" shows the lock screen, where a Live Activity is, and "home" the home screen; \
+        then the picture. Only the person can add a widget to the home screen, and Lamp shows them how: don't \
+        explain it, and say in a sentence that it's ready to add.
+        """
+
         static let iPhoneHardware = """
         - The phone itself is the app's best material: use what it has, without being asked, whenever it fits \
         what the user wants. Motion: `LampMotion` from LampSupport.swift (tilt, gravity, acceleration, rotation, \
@@ -832,8 +860,9 @@ enum Agent {
         audio, location, fetch, processing, remote-notification, bluetooth-central, bluetooth-peripheral. \
         `bonjourServices` are the service types MultipeerConnectivity browses for (both _tcp and _udp of \
         the same name, up to 15 characters); `backgroundTasks` are the identifiers BGTaskScheduler registers, \
-        needed with the fetch and processing modes. Not possible yet: widgets, Live Activities and other \
-        extensions, push notifications from a server, and in-app purchases; say so when asked.
+        needed with the fetch and processing modes. Not possible yet: extensions other than widgets and Live \
+        Activities (share sheets, keyboards, Watch apps), push notifications from a server, and in-app \
+        purchases; say so when asked.
         """
 
         static let appMd = """
