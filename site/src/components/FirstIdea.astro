@@ -1,6 +1,17 @@
 ---
 import DownloadButton from "./DownloadButton.astro";
 import { together } from "../lib/text";
+
+interface Props {
+  /** The heading and the line under it; the homepage's own when left out. */
+  heading?: string;
+  lead?: string;
+  /** Whether to offer the ideas page beside the button, where there's somewhere to go. */
+  explore?: boolean;
+  /** The space around the section, for where it sits on its page. */
+  class?: string;
+}
+const { heading, lead, explore = true, class: space = "px-2 pt-4 pb-20 sm:px-3 sm:pt-6 sm:pb-24" } = Astro.props;
 ---
 
 <!--
@@ -14,17 +25,18 @@ import { together } from "../lib/text";
 -->
 <!-- ph-no-capture: the model's questions and answers can repeat what the visitor wrote, so PostHog's autocapture
      skips this section; its steps are counted by `count`, with fixed words only. -->
-<section id="first-idea" class="ph-no-capture px-2 pt-20 sm:px-3 sm:pt-24">
-  <div data-sky class="wish-night relative isolate mx-auto max-w-6xl overflow-hidden rounded-[28px] px-5 pt-16 pb-14 text-white sm:px-10 sm:pt-20 sm:pb-20">
+<section id="first-idea" class:list={["ph-no-capture", space]}>
+  <div data-sky class="wish-night relative isolate overflow-hidden rounded-[28px] px-5 pt-16 pb-14 text-white sm:px-10 sm:pt-20 sm:pb-20">
     <!-- Dawn: the sky warms when the wish appears. -->
     <div data-dawn aria-hidden="true" class="wish-dawn"></div>
     <div class="relative z-10">
-      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Find your first&nbsp;wish</h2>
+      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">{heading ? together(heading) : <>Find your first&nbsp;wish</>}</h2>
       <p class="mx-auto mt-4 max-w-[40rem] text-center text-xl leading-[1.4] font-semibold text-white/70">
-        {together("Unsure of what you could do?")} <span class="sm:whitespace-nowrap">Just answer a couple of questions.</span>
+        {lead ? together(lead) : <>{together("Unsure of what you could do?")} <span class="sm:whitespace-nowrap">Just answer a couple of questions.</span></>}
       </p>
 
-      <div data-begin class="mt-9 flex justify-center">
+      <!-- Two ways in: a few questions, or the ideas page to browse. -->
+      <div data-begin class="mt-9 flex flex-wrap items-center justify-center gap-x-4 gap-y-3">
         <!-- Sparkles glint around and over the button, each popping up in turn, flashing and turning, then gone;
              now and then a sweep of light crosses the button itself. -->
         <div class="relative">
@@ -49,9 +61,15 @@ import { together } from "../lib/text";
           class="wish-beckon relative z-10 inline-flex overflow-hidden h-[52px] items-center gap-2 rounded-full bg-linear-to-b from-[#ffe2a3] to-[#ffb45c] px-8 text-[17px] font-semibold text-[#3a2600] ring-1 ring-white/40 ring-inset transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-[1.04] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#ffcf7a] active:scale-[0.98]"
         >
           <span aria-hidden="true" class="wish-glint"></span>
-          <span aria-hidden="true" class="relative">✦</span> <span class="relative">Find my wish</span>
+          <span aria-hidden="true" class="relative">✦</span> <span class="relative">Discover my wish</span>
         </button>
         </div>
+        {explore && <a
+          href="/ideas"
+          class="inline-flex h-[52px] items-center rounded-full bg-white/10 px-8 text-[17px] font-semibold text-white ring-1 ring-white/25 ring-inset backdrop-blur-sm transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-[1.04] hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white/70 active:scale-[0.98]"
+        >
+          Explore ideas
+        </a>}
       </div>
 
       <div data-convo hidden class="mx-auto mt-12 max-w-2xl">
@@ -511,6 +529,22 @@ import { together } from "../lib/text";
     }
     if (phase === "talk" && pending) { clearChoices(); me(t); answer(t); }
   });
+
+  // The stars' parallax (global.css): how far the sky's middle is from the window's, while it's in view.
+  if (!calm.matches) {
+    let queued = false;
+    const drift = () => {
+      queued = false;
+      const box = sky.getBoundingClientRect();
+      sky.style.setProperty("--drift", String(Math.round(box.top + box.height / 2 - innerHeight / 2)));
+    };
+    const queue = () => { if (!queued) { queued = true; requestAnimationFrame(drift); } };
+    new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) { addEventListener("scroll", queue, { passive: true }); queue(); }
+      else removeEventListener("scroll", queue);
+    }).observe(sky);
+    addEventListener("resize", queue, { passive: true });
+  }
 
   // The conversation starts when they ask for it.
   const begin = section.querySelector<HTMLElement>("[data-begin]")!;

@@ -500,8 +500,20 @@ struct ProjectView: View {
     @State private var earlierOnScroll = false
     /// Whether the chat is at its end, and so follows what's added there.
     @State private var follow = ChatFollow()
-    /// Goes up with each message sent from here, which takes the chat back to its end.
+    /// Goes up with each message sent from here, which takes the chat to it (see `pinned`).
     @State private var sends = 0
+    /// The request sent from here, held at the top of the chat with room below it for the answer, as long
+    /// as it's the latest one. Only one sent from here: a chat opens on its end, as ever.
+    @State private var pinned: UUID?
+    /// A message was sent from here and its request isn't in the chat yet: the next request to arrive after
+    /// `pinAfter` (the latest one when it was sent) is pinned.
+    @State private var pinWanted = false
+    @State private var pinAfter: UUID?
+    /// The chat is gliding up to a request just pinned. Nothing else moves it meanwhile: following the end
+    /// would go to the same place at once, cutting the glide short.
+    @State private var gliding = false
+    /// Goes up to start a glide (see `EarlierOnScroll`).
+    @State private var glides = 0
     /// What the toolbar knows of the app's history, for which of its buttons can do anything. Nil until read.
     @State private var history: History?
 
@@ -516,6 +528,8 @@ struct ProjectView: View {
     private var busy: Bool { store.busy.contains(project.id) }
     /// The chat area has to be about twice the build card's height before the card is pinned.
     private static let roomToPinCard: CGFloat = 560
+    /// Space above a request held at the top of the chat.
+    private static let pinMargin: CGFloat = 16
 
     /// The first turn of a new app, while it's still running.
     private var building: TurnProgress? {
@@ -551,13 +565,16 @@ struct ProjectView: View {
         // Only the end of a long chat is shown until more is asked for (see `LogLine.recentStart`).
         let start = LogLine.recentStart(in: lines, atLeast: reach)
         let shown = start > 0 ? Array(lines[start...]) : lines
+        let latestRequest = lines.last { $0.kind == .user }?.id
+        let pin = pinned(latestRequest)
         return ScrollViewReader { proxy in
             GeometryReader { area in
                 ScrollView {
                     // Every row shown is laid out, not only the ones in view. A stack that makes its rows as
                     // they scroll into view has to guess the height of the rest, and during a turn that
                     // guessing could go round without ever settling, with Lamp stuck for good.
-                    VStack(alignment: .leading, spacing: 0) {
+                    // With the end in view, the pinned request's bubble is a margin below the top of the chat.
+                    ChatStack(fill: area.size.height - Self.pinMargin, end: 16) {
                         // Earlier messages come in as the chat is scrolled up towards them (see `earlier`).
                         // The button is only for when that can't be watched for.
                         if start > 0, !earlierOnScroll {
@@ -577,13 +594,19 @@ struct ProjectView: View {
                         }
                         // While a new app is being built, its card stays in view above the steps, if there's
                         // room: in a short window a pinned card would fill the chat and hide everything else.
-                        chatRows(shown, height: area.size.height,
+                        chatRows(shown, pin: pin, height: area.size.height,
                                  cardPinned: building != nil && area.size.height >= Self.roomToPinCard)
+                        // Room for the answer to a request just sent. The answer fills it as it comes; once
+                        // there's more, the chat follows it down as ever.
+                        Color.clear.id("bottom").layoutValue(key: ChatStack.Room.self, value: true)
                     }
-                    .background(EarlierOnScroll(more: start > 0, follow: follow, ends: sends, watching: $earlierOnScroll) { showEarlier(lines, from: start) })
+                    .background(EarlierOnScroll(more: start > 0, follow: follow, ends: sends,
+                                                glideDue: gliding || (pin != nil && pin != pinned), glides: glides,
+                                                glided: { gliding = false }, watching: $earlierOnScroll) { showEarlier(lines, from: start) })
                     // A readable line length; wide windows get margins instead of longer lines.
                     .frame(maxWidth: 640)
-                    .padding(.horizontal, 20).padding(.vertical, 16)
+                    // Only at the top: the margin at the bottom is the room's (see `ChatStack.end`).
+                    .padding(.horizontal, 20).padding(.top, 16)
                     .frame(maxWidth: .infinity)
                     // At least as tall as the chat area, so a short chat still sits at the top.
                     .frame(minHeight: area.size.height, alignment: .top)
@@ -592,15 +615,33 @@ struct ProjectView: View {
                 // no scrolling to get there.
                 .modifier(OpensAtEnd())
                 // The chat follows what's added at its end, but only from the end: scrolled up to read
-                // something earlier, it stays there (see `EarlierOnScroll`). Sending a message goes back to
-                // the end.
+                // something earlier, it stays there (see `EarlierOnScroll`). A message sent goes to the top,
+                // with room below for the answer.
                 // The agent's questions come into view whole as they arrive, and then the chat holds still
                 // until they're answered: following anything added meanwhile would slide the answers out
                 // from under the pointer. Answered, by a click or in words, the chat goes back to following
                 // its end, where the reply is about to be.
                 .onChange(of: Talk.open(in: lines)?.id, initial: true) { _, waiting in follow.waiting(for: waiting) }
+                // With a request pinned, the end is where the request is at the top, so a request just
+                // arrived goes there, gently.
+                .onChange(of: pin) {
+                    guard let pin, pin != pinned else { return }
+                    pinned = pin
+                    pinWanted = false
+                    follow.atEnd = true
+                    gliding = true
+                    glides += 1
+                }
             }
         }
+    }
+
+    /// The request held at the top: the one pinned, or one sent from here that has just arrived. Worked out
+    /// as the chat is drawn, so a request arrives with its room already below it.
+    private func pinned(_ latestRequest: UUID?) -> UUID? {
+        guard let latestRequest else { return nil }
+        if pinWanted, latestRequest != pinAfter { return latestRequest }
+        return latestRequest == pinned ? latestRequest : nil
     }
 
     /// Reaches one more lot back. From what's shown, not from what was asked for: a long turn can take the
@@ -612,7 +653,7 @@ struct ProjectView: View {
     /// The chat's rows: the intro for a new app, the transcript with its build card or activity, and the
     /// messages waiting their turn.
     @ViewBuilder
-    private func chatRows(_ lines: [LogLine], height: CGFloat, cardPinned: Bool) -> some View {
+    private func chatRows(_ lines: [LogLine], pin: UUID?, height: CGFloat, cardPinned: Bool) -> some View {
         if lines.isEmpty && queued.isEmpty {
             // In the middle of the chat area: less the scroll view's own padding.
             NewAppIntro(project: project, draft: draftBinding)
@@ -622,7 +663,7 @@ struct ProjectView: View {
            let request = lines.firstIndex(where: { $0.kind == .user }) {
             // The build card goes straight after the request that began the app, and stays there through
             // the agent's questions and their answers; what the agent says and does follows it.
-            transcript(Array(lines[...request]), busy: false)
+            transcript(Array(lines[...request]), busy: false, pin: pin)
             BuildCard(project: project, progress: card)
                 .padding(.top, 16).padding(.bottom, 12)
                 .background(Color(nsColor: .textBackgroundColor))
@@ -631,12 +672,15 @@ struct ProjectView: View {
                     content.offset(y: cardPinned ? max(0, -geometry.frame(in: .scrollView).minY) : 0)
                 }
                 .zIndex(1)
-            transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy)
+            transcript(Array(lines[(request + 1)...]), busy: busy, progressShown: busy, pin: pin)
         } else {
             // No line of activity under the agent's questions: it would go away when the turn ends a moment
             // later, and the card above it would move.
-            let progress = busy && Talk.open(in: lines) == nil ? store.progress[project.id] : nil
-            transcript(lines, busy: busy, progressShown: progress != nil)
+            // Nor until the request it's working on is in: the turn starts a moment before, and the line would
+            // show up under the last answer and then jump below the request.
+            let awaited = pinWanted && lines.last { $0.kind == .user }?.id == pinAfter
+            let progress = busy && !awaited && Talk.open(in: lines) == nil ? store.progress[project.id] : nil
+            transcript(lines, busy: busy, progressShown: progress != nil, pin: pin)
             if let progress { ActivityRow(progress: progress).padding(.top, 12) }
         }
         ForEach(queued) { message in
@@ -817,12 +861,12 @@ struct ProjectView: View {
         }
     }
 
-    private func transcript(_ lines: [LogLine], busy: Bool, progressShown: Bool = false) -> some View {
+    private func transcript(_ lines: [LogLine], busy: Bool, progressShown: Bool = false, pin: UUID? = nil) -> some View {
         Transcript(lines: lines, dir: project.dir, busy: busy, progressShown: progressShown, goBack: { line, before in
             Task { await store.restore(project, toVersionOf: line, before: before) }
         }, sendAgain: self.busy || submissionPending ? nil : takeBack, retryPhone: project.device != nil ? { udid in
             Task { await store.retryPhone(project, udid: udid) }
-        } : nil)
+        } : nil, pinned: pin)
     }
 
     /// Persist writes synchronously so a check finishing in this event cycle sees the newest input,
@@ -1010,6 +1054,10 @@ struct ProjectView: View {
                                     setAsideText: setAside?.text ?? "", setAsideAttachments: setAside?.attachments ?? [])
         guard let token = store.beginSubmission(project) else { return }
         store.endArrival(for: project.id)
+        // Decided now: sending makes the app busy at once, so by the time the chat hears of it, it can't tell
+        // a request that starts from one that waits, which joins the queue at the end.
+        pinWanted = !busy
+        pinAfter = lines.last { $0.kind == .user }?.id
         sends += 1
         store.saveDraft(submitted, for: project)
         PhoneSetup.shared.perform(for: project, in: store, cancelled: {
@@ -1040,6 +1088,7 @@ struct ProjectView: View {
     }
 
     private func finishSubmission(_ token: UUID, captured: Store.Draft, sent: Bool) {
+        if !sent { pinWanted = false }
         if let current = store.current(project) {
             let kept = store.draft(for: current).afterSubmission(captured, sent: sent)
             store.updateDraft(kept, for: current)

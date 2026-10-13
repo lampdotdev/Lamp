@@ -1,0 +1,80 @@
+Waiting On|an hourglass with a small paper envelope resting against it|blue|a list of five sent emails with recipient names, each with a small "4 days" style badge, and a "Draft nudge" button next to the top ones
+Friday Update|a paper document with three short bold heading lines and a small star sticker|indigo|a weekly update document with three section headings (Done, Next, Blocked) and short bullet points, a sidebar listing the week's days with calendar dots
+Back From Leave|a suitcase with a small stack of envelopes on top|teal|an inbox sorted into three columns titled Needs me, FYI, Sorted itself, each with a few email rows with one-line summaries
+Meeting Diet|a calendar page with a fork and knife beside it|green|a table of recurring meetings with hours-per-quarter bars, a few rows highlighted in soft red with a "Could drop" tag
+Monthly Merge|three small spreadsheet sheets merging into one, with a curved arrow|green|three small spreadsheet tables on the left flowing with arrows into one clean merged table on the right, a yellow flag on one odd cell
+Board Pack|a presentation slide with a bar chart, standing on a small easel|orange|a grid of eight slide thumbnails with charts and a larger selected slide showing a bar chart and a short commentary box
+What's Different|two overlapping paper pages with a magnifying glass|graphite|a side-by-side contract comparison, changed clauses highlighted in yellow and red, a right panel listing "3 changes legal will care about"
+Quote in a Minute|a stopwatch with a price tag hanging from it|orange|a pricing calculator with plan tier cards, seat count stepper, discount toggles and a big total price, plus a "Send PDF" button
+Who's Who|a stack of portrait photo cards with a friendly face on the top one|pink|a flashcard of a smiling colleague's face (friendly illustrated portrait) with a name and team below, buttons "Got it" and "Again", progress dots
+New Starter|a cardboard welcome box with a small laptop peeking out|yellow|a checklist for a new hire's first two weeks with ticked items (Laptop, Accounts, Meet the team), a timeline across Day 1 to Day 10
+House Style|a fountain pen nib over a small style guide booklet|purple|a document with a few words underlined in purple and margin notes, a right panel listing fixes like product name spelling and date format
+Tomorrow|a small sunrise over a calendar page|orange|a dropdown panel listing tomorrow's three meetings with times, each with a one-line note of what it needs, and two documents to read first
+One-to-Ones|two speech bubbles facing each other|blue|a sidebar with seven team member names with small avatars, and a notes page for one person with "Promised" and "Bring up next" sections
+Client Timesheet|a paper timesheet card with a clock face on it|teal|a clunky web timesheet form in a browser window with hours filled per project per weekday, and a floating panel saying "Ready to submit? Check first"
+Monday Export|a spreadsheet with a small calendar page marked M|green|a CRM export table with four columns struck through and fading out, a filter chip "My region", and a tidy team sheet on the right
+Brag Jar|a glass jar with small gold stars inside|yellow|a dropdown panel with a text field "Add a win" and a list of saved wins with dates, and a button "Write my self-assessment"
+Handover|a baton being passed, with a small note tied to it|orange|a handover document with sections Open threads, Who's waiting, Where files are, and an "If the Henderson order goes wrong" callout box
+Office Days|a small office building with a calendar week strip|indigo|a dropdown panel showing a Mon to Fri grid with team avatars on the days they're in, Wednesday highlighted as "Most of us"
+Deliveries Due|a cardboard parcel with a clock on its side|orange|a table of purchase orders with supplier names, due dates and status pills, two late ones in red at the top with "Draft chaser" buttons
+Say It Right|a speech bubble with small sound waves|purple|a dropdown panel with a customer's name, a phonetic spelling, a small play button, and a line about who they are and the last conversation
+Desk Setups|a laptop next to a large monitor, with tidy window rectangles on its screen|blue|a dropdown panel with three layout buttons (Writing, Calls, Focus), each with a tiny diagram of window arrangements
+Presenting|a projector beaming a soft light cone|graphite|a dropdown panel with a big "Presenting" switch on, and checklist rows: Desktop hidden, Notifications off, Personal tabs closed, Deck open
+Mic Check|a studio microphone with a green check mark badge|green|a dropdown panel showing the next call in 1 minute, with rows Microphone, Camera, Volume, AirPods each with a green check
+Heads Up|a bell with a small calendar page|red|a macOS notification banner in the top right: meeting in 5 minutes with names and one line of what was promised, with a Join button
+Stay Awake|a coffee cup with a small crescent moon crossed out|teal|a dropdown panel saying "Awake while: Export running" with a progress bar, and toggles for Downloads, Backups, Presenting
+Quitting Time|a small sunset over a desk lamp switched off|purple|a dropdown panel with a big "Done for the day" button and the list of what it does: quit Slack and Mail, save tabs, quiet until 9, evening playlist
+Team Clocks|three small clocks side by side showing different times|indigo|a dropdown panel with three cities (Lisbon, Austin, Singapore), their local times, small sun or moon icons, and a "4pm here is 11pm in Singapore" note
+Morning Wallpaper|a framed landscape painting with a sun and clouds|blue|a whole Mac desktop whose wallpaper is a soft painted rainy landscape, with a small panel saying "Rainy Monday, 5 meetings"
+Movie Night|a bucket of popcorn with a small film clapper|red|five movie poster cards (illustrated, no real titles), a mood picker row (Funny, Cosy, Adventure), and a "Final say: Ivy" badge
+Whose Turn|a spinning chore wheel with tiny icons of a plate and a bin|green|three kids' names as big colourful columns with today's chores, a big "Whose turn now: Sam" card at the top
+Grandma's Cards|a handwritten recipe card with a small wooden spoon|orange|a photo of an old handwritten recipe card on the left and the neatly typed recipe on the right with a servings stepper and grams
+Bedtime Stories|an open storybook with a small plush giraffe sitting on it|indigo|a storybook page with a soft illustration of a girl and a stuffed giraffe under the stars, and two lines of large story text
+The House Book|a small house with an open book in front of it|teal|a sidebar of rooms and topics (Boiler, Paint, Gutters, Plumber) and, in the main area, a question asked in plain words above an answer card with a photo of the boiler, its model, the last service date and the plumber's phone number, plus a row of paint colour swatches for the living room
+Tooth Fairy Ledger|a small tooth with a gold coin and a sparkle|pink|a list for two twins with tooth drawings, dates and coin amounts, all the same amount, and a tiny sparkle
+Fridge Rescue|an open fridge with a carrot and a spinach leaf|green|a photo of an open fridge at the top and three recipe suggestion cards below with "Use first: spinach" tags
+Mum's Week|a pill organiser box with days of the week|pink|a week view with medication times, appointments and visitor names per day, and a drafted message to two brothers in a side panel
+Has Biscuit Eaten?|a dog bowl with a small bone|orange|two enormous buttons "Fed" and "Walked" with "2 hours ago" and "45 minutes ago" under them, and a small cartoon dachshund
+Fridge Gallery|a child's crayon drawing pinned with a magnet|yellow|a grid of colourful children's crayon drawings grouped by child and age, and a "Make Gran's book" button
+Deep Freeze|a frosty ice cube with a snowflake|blue|a list of frozen foods with frost icons and dates, the oldest at the top in amber ("Lasagne, 2024"), and a microphone button
+Frank the Snake|a long dachshund curled in a snake shape holding a striped sock|green|a cheerful top-down retro snake game where the snake is a very long dachshund weaving through a cartoon living room picking up colourful socks, a cat obstacle, and a score counter
+Escape Room Maker|an old brass key with a small padlock|graphite|an iPad countdown timer showing 32:15 with a big "Hint" button, next to printed puzzle cards and an envelope on a wooden table
+Murder at Number 12|a magnifying glass over a dinner place card|red|a dinner party murder mystery kit: character booklets with illustrated portraits, sealed envelopes per course, candles on a table, a laptop showing "The answer, sealed"
+Nan's Rules|a fan of playing cards with a small teacup|red|a card game on a green felt table, fanned playing cards and piles, a small banner "Nan's rule: you may steal from the pile"
+Family Trumps|a single playing card with a cartoon family portrait|orange|several Top Trumps style cards laid out, each with a cartoon portrait of a family member or a dog and stat bars for Grumpiness, Snack theft, Dancing
+Inbox Invaders|a little pixel space invader holding an envelope|indigo|a retro pixel-art space shooter where rows of invaders are little envelopes, a laser cannon at the bottom, a neon score display
+Monday Bingo|a bingo card with a few dotted squares|pink|a bingo card on a laptop screen with squares of short office phrases, several marked, beside a video call grid
+Fig|a small potted fiddle-leaf fig with a happy face|green|a cute virtual pet in a macOS menu bar dropdown: a small fiddle-leaf fig with a happy face, a water drop meter, and a "Water me" button
+Are We Nearly There|a toy car with a small map pin|teal|an iPad in a car seat-back pocket showing a cartoon route map with towns, a progress car, and spot-it cards (cow, windmill, red bus) with points
+Our Street, the Board Game|a board game die with a tiny house on top|green|a Monopoly-like board game whose squares are local places (school, chip shop, Auntie Jo's house), little houses, dice and chance cards
+Lesson Notes|a grand piano with a small notepad|indigo|a list of piano students with avatars, one open showing "Working on: Clair de Lune", a paid badge, and a two-line note to parents
+Shot List|a camera with a checklist tag hanging from it|graphite|a checklist of photo groupings for a wedding with times, "Gran: seated" note, several ticked items
+Quote From the Van|a small white van with a speech bubble|blue|a recording waveform at the top and a neatly laid out quote below with parts, labour and total, and a Send button
+Freezer Map|a sample tube rack with a frosty glow|teal|a grid map of a freezer box with numbered slots, some filled in colours, a selected slot showing sample name, owner and date, a shelf selector
+Colour Formulas|a hair dye bowl with a brush|pink|a client card with a hair colour swatch, the formula (developer, timing), before and after photo placeholders, and a search box
+Tonight's Covers|a cloche dish cover with a small bell|orange|a list of tonight's table bookings with times, allergy badges (nuts, gluten) and a regulars star with "Last time: sea bass"
+Agenda Watch|a newspaper with a magnifying glass|graphite|a dropdown panel listing three council agendas, keywords highlighted (planning, bypass), each with a page number
+School Dates|a school satchel with a calendar page tucked in|blue|a dropdown panel listing upcoming school dates (Non-uniform day, Trip money due, Early finish) with small "to do" notes
+What to Bring|a backpack with a small PE kit bag|yellow|a large macOS desktop widget filling the middle of the picture, titled Tuesday, with a column for each of three children (Sam, Ella, Jack) listing what each needs today (PE kit, library book, swimming bag) with small friendly icons
+Spelling Coach|a pencil with a gold star|yellow|a big friendly spelling screen with a speaker button, an answer field with large letters, and three stars at the top
+Explain, Don't Answer|a lightbulb with a small pencil|yellow|a photo of a maths homework sheet on the left and a step-by-step explanation on the right with "Hint 1 of 3" and a "Next hint" button
+Report Season|a stack of report cards with a red pen|red|a class list on the left and a drafted report comment on the right with an "In my voice" toggle
+Revision Timetable|a revision timetable with coloured blocks and a highlighter|purple|a week timetable with colourful subject blocks, a confidence slider per topic, and "Skipped Tuesday, moved to Thursday"
+Letter Pile|an envelope with a small paperclip and a tick|teal|a list of scanned letters, each with sender, what it is, and a "Do by 14 Nov" badge for two of them
+Tax Shoebox|a shoebox full of paper receipts|orange|receipt photos sorted into tax categories with running totals, and a big "This year" summary
+Renewal Season|a calendar page with a small car and a house|teal|a macOS desktop widget listing renewals (Car, Home, Broadband) with dates and last year's price, one marked "Haggle now"
+Warranties|a shield with a small washing machine|blue|a list of household items with receipt thumbnails, purchase dates and warranty bars, one showing "Under warranty until March"
+Three Flats|three small house keys on a ring|green|three property cards with rent status, open repairs, certificate due dates, one amber "Gas safety due in 3 weeks"
+Game Shelf|a stack of board game boxes with a die|red|filters for Players 4, Time 45 min, Brainpower Low, and four board game box cards (illustrated, invented titles)
+Row Counter|a ball of yarn with knitting needles|pink|a knitting pattern with the current row highlighted large, a giant "Next row" button and "Row 42 of 120"
+Year List|a small robin bird perched on a notebook|green|a map with bird sighting pins and a list of bird species with first-seen dates and a "Year: 87" count
+Campaign Notes|a twenty-sided die on an old scroll|purple|a sidebar of characters and places with fantasy portraits, and a parchment-styled "Last time on..." recap
+Crate Digger|a vinyl record half out of its sleeve|graphite|a photo of record spines on a shelf turning into a tidy list of albums, and a search showing "You already own this"
+Family Tree|a small tree with round leaves and a tiny portrait locket|green|a family tree diagram with old photo portraits, and a list of stories with a play button for recordings
+Weak Rounds|a quiz buzzer with a small question mark|orange|a quiz question card about flags with four answer buttons, and a chart of weekly team scores
+Secret Santa|a wrapped gift box with a question mark tag|red|a list of 14 friends with sealed envelope icons, rules shown (No couples, Not last year's), and a "Send by message" button
+Good Friend|a small heart with a speech bubble|pink|a dropdown panel listing two friends to get in touch with this week, when you last spoke, and a line about what was going on for them
+Dinner Party Book|a dinner plate with a small menu card|orange|a list of dinner parties with dates, guests' avatars, what was cooked, and dietary notes per guest
+Wedding Tables|a round table with tiny chairs and a place card|purple|a seating plan with round tables, guest name chips being dragged, and a red line between two guests who mustn't sit together
+Physio Sheet|a resistance band with a small timer|teal|an exercise screen with a stick-figure illustration, a big countdown "Hold 0:20", sets remaining and a streak flame
+Safe to Eat|a dinner plate with a small shield and a peanut crossed out|green|a list of nearby restaurants with green "Safe for nuts" badges, past orders, and a menu photo with items highlighted

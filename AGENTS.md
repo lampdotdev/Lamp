@@ -77,7 +77,10 @@ A capability given to one engine must be given to all of them that can take it, 
   same sandbox, through `Versions.git` (`gitBlocking` where it can't await): the app's folder is the agent's
   to write, its `.git` included, and git runs the programs a repository names (hooks, filters, a signing
   program), so unconfined it would run whatever the agent left there. A new git call on an app's folder
-  belongs in that helper, never in `Shell.run` directly. The one exception is the helper's own look at the
+  belongs in that helper, never in `Shell.run` directly. Lamp looks at an app while a turn saves it, so its git
+  runs with `GIT_OPTIONAL_LOCKS=0` (a look never takes the index's lock), and a save goes through
+  `Versions.commitAll`, which tries again when it is shut out and tells a save that failed from one with
+  nothing to save; a turn whose save failed says so in the chat. The one exception is the helper's own look at the
   person's Mac-wide git settings (`Versions.personalFiles`), which the sandbox closes: it reads files the agent
   can't write, runs no program, and opens to Lamp's git only the files those settings name, never a folder
   and never anything in Lamp's own folders. Nothing in an app's history is checked, cleaned or
@@ -375,6 +378,15 @@ anything that's the same for every app and already in Settings.
   wide enough that most rows fit on one line.
 - **Current.** The panel observes whatever its rows read (Settings, keys, the app's own choices, the models
   on this Mac), so a value never outlives what it describes.
+
+## The website
+
+`site/` is lamp.dev (Astro; `site/FIRST_IDEA.md` and `site/BUG_REPORTS.md` cover its moving parts). Its
+Download buttons (`DownloadButton.astro` and the menu bar's) are the lamp's bright orange with white words, about
+3:1 at their lightest, a faint shadow under the words. That trade-off was weighed and accepted: the brightness is
+the point of the button, and the label is large, bold and the same on every page. About 3:1 is the floor for
+those buttons, so a change that goes below it is a regression; everything else on the site, links and small
+text included, is held to 4.5:1.
 
 ## Conventions
 

@@ -148,4 +148,17 @@ final class ChatFollowTests: XCTestCase {
         XCTAssertEqual(fromEnd(scroll), 0)
         withExtendedLifetime(window) {}
     }
+
+    /// A request just sent glides to the top, and the room for its answer arrives with it: following the
+    /// end then would be there at once, with no glide.
+    func testNothingGoesToTheEndWhileARequestIsAboutToGlideThere() {
+        let (scroll, rows, _, probe, window) = chat()
+        probe.glideDue = true
+        rows.setFrameSize(NSSize(width: 300, height: 1400))
+        XCTAssertEqual(scroll.contentView.bounds.minY, 600)
+        probe.glideDue = false
+        probe.followEnd()
+        XCTAssertEqual(fromEnd(scroll), 0)
+        withExtendedLifetime(window) {}
+    }
 }

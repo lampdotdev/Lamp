@@ -104,6 +104,14 @@ struct EarlierOnScroll: NSViewRepresentable {
     let follow: ChatFollow
     /// Goes up each time the chat is to go to its end wherever it is: a message was sent.
     var ends = 0
+    /// A request just sent is going to the top, or about to: the chat glides there, and nothing else takes
+    /// it to its end meanwhile, which would be the same place at once.
+    var glideDue = false
+    /// Goes up for each glide to the end: a request just sent going to the top, gently. SwiftUI's own
+    /// animated scrolling on macOS jumps rather than glides.
+    var glides = 0
+    /// Told when a glide is over.
+    var glided: () -> Void = {}
     /// Set once the scroll view is found: until then the chat offers a button instead.
     @Binding var watching: Bool
     let load: () -> Void
@@ -115,13 +123,26 @@ struct EarlierOnScroll: NSViewRepresentable {
         probe.follow = follow
         probe.load = load
         probe.found = { [binding = $watching] in binding.wrappedValue = true }
+        probe.onGlided = glided
         probe.check()
+        let wasDue = probe.glideDue
+        probe.glideDue = glideDue
         if ends != probe.ends {
             probe.ends = ends
             follow.atEnd = true
             probe.followEnd(whatever: true)
         }
+        if glides != probe.glided {
+            probe.glided = glides
+            // Once the update that asked for it is laid out, so the end is where it'll be.
+            DispatchQueue.main.async { probe.glideToEnd() }
+        } else if wasDue, !glideDue {
+            // The glide is over: wherever the end went meanwhile, the chat is following it again.
+            probe.followEnd()
+        }
     }
+
+    static let glideTime = 0.4
 
     final class Probe: NSView {
         /// How close to the top of what's shown, in points, before more is brought in: a few screens, so
@@ -133,6 +154,13 @@ struct EarlierOnScroll: NSViewRepresentable {
         var load: (() -> Void)?
         var found: (() -> Void)?
         var ends = 0
+        var glideDue = false
+        var glided = 0
+        var onGlided: (() -> Void)?
+        private var glide: (from: CGFloat, progress: Double, last: CFTimeInterval)?
+        private var frames: CADisplayLink?
+        /// The glide is moving the scroll view itself, so the move is the glide's and not someone scrolling.
+        private var gliding = false
         private var opened = false
         private weak var scroll: NSScrollView?
         /// The content's height when more was asked for, until it has arrived.
@@ -175,6 +203,8 @@ struct EarlierOnScroll: NSViewRepresentable {
                 follow?.moved(to: flipped ? visible.minY : -visible.minY,
                               fromEnd: flipped ? content.frame.height - visible.maxY : visible.minY)
             }
+            // Someone scrolling while a glide is going takes over from it: it doesn't pull them back.
+            if glide != nil, !gliding { stopGliding() }
             check()
         }
 
@@ -186,19 +216,61 @@ struct EarlierOnScroll: NSViewRepresentable {
         /// SwiftUI's comes a frame later, and one that went up, after the chat got shorter, was taken for the
         /// person scrolling away and stopped the following until the next message was sent.
         /// `whatever` goes there even past the agent's waiting questions: a message was sent.
+        /// Not while a request just sent glides to the top: the end is where the glide is going.
         func followEnd(whatever: Bool = false) {
-            guard let follow, whatever || follow.followsEnd(), let scroll, let content = scroll.documentView, content.isFlipped else { return }
+            guard let follow, whatever || follow.followsEnd(), !glideDue, glide == nil, let scroll,
+                  let end = end(of: scroll) else { return }
+            guard abs(end - scroll.contentView.bounds.minY) > 0.5 else { return }
+            follow.byItself { scrollTo(end, in: scroll) }
+        }
+
+        /// Glides to the end a frame at a time. Not by the clock, as an animation would: a request starting
+        /// keeps the app busy for a moment, and an animation timed by the clock would make up for the frames
+        /// it missed by leaping ahead. Each frame moves on by at most one frame's worth, so a busy moment
+        /// only slows it.
+        func glideToEnd() {
+            guard let scroll else { return onGlided?() ?? () }
+            frames?.invalidate()
+            glide = (scroll.contentView.bounds.minY, 0, CACurrentMediaTime())
+            let link = displayLink(target: self, selector: #selector(step))
+            link.add(to: .main, forMode: .common)
+            frames = link
+        }
+
+        @objc private func step(_ link: CADisplayLink) {
+            guard var glide, let scroll else { return stopGliding() }
+            let now = CACurrentMediaTime()
+            glide.progress = min(1, glide.progress + min(now - glide.last, 1.0 / 60) / EarlierOnScroll.glideTime)
+            glide.last = now
+            self.glide = glide
+            // The end as it is now: it can move while gliding.
+            let end = self.end(of: scroll) ?? glide.from
+            let eased = 1 - pow(1 - glide.progress, 3)
+            gliding = true
+            follow?.byItself { scrollTo(glide.from + (end - glide.from) * eased, in: scroll) }
+            gliding = false
+            if glide.progress >= 1 { stopGliding() }
+        }
+
+        private func stopGliding() {
+            frames?.invalidate()
+            frames = nil
+            glide = nil
+            onGlided?()
+        }
+
+        /// Where the chat is at its end, as the scroll view has it, which keeps a chat shorter than its area
+        /// at the top. Nil before the chat area has its size: the end isn't anywhere yet.
+        private func end(of scroll: NSScrollView) -> CGFloat? {
             let clip = scroll.contentView
-            // Not before the chat area has its size: the end isn't anywhere yet.
-            guard clip.bounds.height > 0 else { return }
-            // The end as the scroll view has it, which keeps a chat shorter than its area at the top.
-            let end = clip.constrainBoundsRect(NSRect(x: clip.bounds.minX, y: content.frame.height - clip.bounds.height,
-                                                      width: clip.bounds.width, height: clip.bounds.height)).minY
-            guard abs(end - clip.bounds.minY) > 0.5 else { return }
-            follow.byItself {
-                clip.scroll(to: NSPoint(x: clip.bounds.minX, y: end))
-                scroll.reflectScrolledClipView(clip)
-            }
+            guard let content = scroll.documentView, content.isFlipped, clip.bounds.height > 0 else { return nil }
+            return clip.constrainBoundsRect(NSRect(x: clip.bounds.minX, y: content.frame.height - clip.bounds.height,
+                                                   width: clip.bounds.width, height: clip.bounds.height)).minY
+        }
+
+        private func scrollTo(_ y: CGFloat, in scroll: NSScrollView) {
+            scroll.contentView.scroll(to: NSPoint(x: scroll.contentView.bounds.minX, y: y))
+            scroll.reflectScrolledClipView(scroll.contentView)
         }
 
         /// Asks for more when the top of what's shown is near. One lot at a time: the next is asked for once

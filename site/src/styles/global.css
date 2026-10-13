@@ -43,8 +43,15 @@
   --breakpoint-bento: 72rem;
 }
 
+/* How much of the top of the window the floating menu bar covers, with the space above it (MenuBar.astro). */
+:root {
+  --menu-height: 4.25rem;
+}
+
 @layer base {
   html {
+    /* A link to a section scrolls it to just under the menu bar, not behind it. */
+    scroll-padding-top: var(--menu-height);
     color-scheme: light;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
@@ -74,11 +81,11 @@
 }
 
 @keyframes hero-card {
-  0%, 18% { min-height: calc(100svh - 0.75rem); }
+  0%, 18% { min-height: calc(100svh - var(--menu-height) - 1.5rem); }
   100% { min-height: 0; }
 }
 @keyframes hero-icon {
-  0%, 18% { translate: 0 calc(50svh - 120px); scale: 2.6; }
+  0%, 18% { translate: 0 calc(50svh - 126px - var(--menu-height) / 2); scale: 2.6; }
   100% { translate: 0 0; scale: 1; }
 }
 @keyframes hero-rise {
@@ -98,6 +105,23 @@
   .hero-card, .hero-icon, .hero-words, .hero-button, .hero-lamp { animation: none; }
 }
 
+/* The ideas page's categories (ideas.astro): each rises from the bottom of the row and fades in, a moment after
+   the one before it (--i is its place in the row). The row's own edge hides them until they're in. */
+@keyframes category-rise {
+  from { opacity: 0; translate: 0 60%; }
+  to { opacity: 1; translate: 0 0; }
+}
+.category-rise { animation: category-rise 0.8s cubic-bezier(.22,.8,.2,1) calc(0.15s + var(--i) * 0.06s) both; }
+@media (prefers-reduced-motion: reduce) {
+  .category-rise { animation: none; }
+}
+
+/* The ideas page's wishes are see-through until each appears (ideas.astro's script), so none flashes up
+   before its turn. Without the script, or for people who've asked for less motion, they're simply there. */
+@media (scripting: enabled) and (prefers-reduced-motion: no-preference) {
+  [data-ideas] > li:not([data-shown]) { opacity: 0; }
+}
+
 /* The first-idea section (FirstIdea.astro): a night sky like the app icon's, with faint stars that twinkle and
    the lamp's warm light rising from the bottom edge. The light grows as the conversation goes on (--glow, set
    by the section's script) and is brightest when the wish appears. */
@@ -115,6 +139,9 @@
     radial-gradient(45% 40% at 0% 30%, rgb(61 56 201 / 0.35), rgb(61 56 201 / 0) 70%),
     var(--color-night);
 }
+/* The stars lag behind the page as it scrolls, the small ones (further away) more than the large: --drift is how
+   far the sky's middle is from the window's, set by the section's script, and stays 0 for people who've asked
+   for less motion. The layers repeat, so they can shift any distance without an edge showing. */
 .wish-night::before,
 .wish-night::after {
   content: "";
@@ -123,6 +150,8 @@
   pointer-events: none;
   background-repeat: repeat;
 }
+.wish-night::before { background-position: 0 calc(var(--drift, 0) * -0.3px); }
+.wish-night::after { background-position: 0 calc(var(--drift, 0) * -0.14px); }
 .wish-night::before {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cg fill='white'%3E%3Ccircle cx='14' cy='22' r='1'/%3E%3Ccircle cx='96' cy='12' r='.8'/%3E%3Ccircle cx='170' cy='44' r='1.2'/%3E%3Ccircle cx='52' cy='88' r='.7'/%3E%3Ccircle cx='132' cy='104' r='1'/%3E%3Ccircle cx='200' cy='150' r='.8'/%3E%3Ccircle cx='30' cy='170' r='1.1'/%3E%3Ccircle cx='110' cy='196' r='.7'/%3E%3C/g%3E%3C/svg%3E");
   opacity: 0.55;

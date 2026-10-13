@@ -76,7 +76,10 @@ enum Versions {
     static let environment: [String: String] = {
         let settings = [("core.hooksPath", "/dev/null"), ("core.fsmonitor", "false"), ("commit.gpgSign", "false"),
                         ("tag.gpgSign", "false"), ("tag.forceSignAnnotated", "false")]
-        var environment = ["GIT_CONFIG_COUNT": "\(settings.count)"]
+        // Lamp looks at an app's state while a turn is saving it (the chat asks whether there's anything unsaved
+        // as lines arrive). A look would otherwise take the index's lock for a moment to tidy it, and a save
+        // that met the lock failed. With this, git's own switch for looks made in the background, they leave it alone.
+        var environment = ["GIT_CONFIG_COUNT": "\(settings.count)", "GIT_OPTIONAL_LOCKS": "0"]
         for (index, setting) in settings.enumerated() {
             environment["GIT_CONFIG_KEY_\(index)"] = setting.0
             environment["GIT_CONFIG_VALUE_\(index)"] = setting.1
@@ -248,8 +251,28 @@ enum Versions {
     /// Saves the app's files as they are now as a new version. False when nothing changed.
     static func save(_ project: LampProject, message: String, trailer: String? = nil) async -> Bool {
         let trailerArgument = trailer.map { " -m \"\($0)\"" } ?? ""
-        return await git("git add -A && ! git diff --cached --quiet && \(commit) -q -m \"$LAMP_MESSAGE\"\(trailerArgument)",
-                               cwd: project.dir, env: ["LAMP_MESSAGE": message]) { _ in } == 0
+        return await commitAll("-q -m \"$LAMP_MESSAGE\"\(trailerArgument)", in: project.dir, env: ["LAMP_MESSAGE": message]) == .saved
+    }
+
+    /// How a save ended. `failed` is a save that had something to save and couldn't: not the same as nothing
+    /// having changed, which is how it used to pass.
+    enum Saved { case saved, nothingToSave, failed }
+
+    /// How long a save waits before trying again, each time it is shut out.
+    static let savePauses: [Duration] = [.milliseconds(250), .milliseconds(600)]
+
+    /// Stages everything and commits it, with `arguments` for the commit. A save can be shut out for a moment
+    /// by something else at work in the folder (the agent's own git, say, which is free to use it), so one
+    /// that fails with changes still unsaved is tried again before it's given up on.
+    static func commitAll(_ arguments: String, in dir: URL, env: [String: String] = [:]) async -> Saved {
+        for attempt in 0...savePauses.count {
+            if await git("git add -A && \(commit) \(arguments)", cwd: dir, env: env) == 0 { return .saved }
+            var unsaved = ""
+            let looked = await git("git status --porcelain", cwd: dir) { unsaved += $0 }
+            if looked == 0, unsaved.trimmed.isEmpty { return .nothingToSave }
+            if attempt < savePauses.count { try? await Task.sleep(for: savePauses[attempt]) }
+        }
+        return .failed
     }
 
     static func head(_ project: LampProject) async -> String? {

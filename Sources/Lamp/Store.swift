@@ -1309,10 +1309,12 @@ final class Store: ObservableObject {
     /// Shared apps opened before setup was done get their reviews once the person is through setup, one at a
     /// time in the order they were opened: called when setup becomes ready, when the welcome ends, and when a
     /// review closes.
-    func openWaitingImport() {
-        guard pendingImport == nil, importRequest == nil else { return }
+    /// Whether a shared app is now being looked at, waiting or not.
+    @discardableResult func openWaitingImport() -> Bool {
+        guard pendingImport == nil, importRequest == nil else { return true }
         let file = waitingImport.take(setupReady: setupLook.isDone && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
         if let file { review(file, waited: true) }
+        return file != nil
     }
 
     func cancelImport() {
@@ -1834,8 +1836,10 @@ final class Store: ObservableObject {
         // Nothing is committed when the agent changed no files.
         let label = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n").nilIfEmpty
             ?? Self.label(attachments: saved)
-        var committed = await Versions.git("git add -A && \(Self.commit) -qm \"$LAMP_PROMPT\"", cwd: project.dir,
-                                        env: ["LAMP_PROMPT": label]) { _ in } == 0
+        let saving = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: project.dir, env: ["LAMP_PROMPT": label])
+        var committed = saving == .saved
+        // Said once the turn's last save is known: a fix for a crash on launch saves again, and may get through.
+        var unsaved = saving == .failed
         let edited = changed || committed
         var crash: String?
         if changed {
@@ -1863,9 +1867,16 @@ final class Store: ObservableObject {
                                  on: project),
                   await buildFixingErrors(project) else { return TurnResult(end: .failed, watched: watched) }
             let commit = committed ? "-q --amend --no-edit" : "-qm 'Fix a crash on launch'"
-            if await Versions.git("git add -A && \(Self.commit) \(commit)", cwd: project.dir) { _ in } == 0 { committed = true }
+            switch await Versions.commitAll(commit, in: project.dir) {
+            case .saved: (committed, unsaved) = (true, false)
+            case .failed: unsaved = true
+            case .nothingToSave: break
+            }
             crash = await install(project)
         }
+        // The change is in the app either way. Without a version of its own it can't be gone back to by
+        // itself, and the person should know that rather than find it out from Undo.
+        if unsaved { log(project, .error, ErrorMessages.versionNotSaved) }
         if crash != nil {
             log(project, .error, ErrorMessages.quitsAfterLaunch(project.name))
         }
@@ -3345,7 +3356,9 @@ final class Store: ObservableObject {
         let fm = FileManager.default
         let resources = project.builtURL.appendingPathComponent("Contents/Resources")
         try fm.createDirectory(at: resources, withIntermediateDirectories: true)
-        // Without these, macOS kills the app the moment it uses the mic, speech recognition or camera.
+        // Without these, macOS kills the app the moment it uses the mic, speech recognition or camera. The last
+        // is for the question macOS asks when an app first opens the print panel, which looks for printers on
+        // the network: without it the question gives no reason.
         // Added here rather than in build.sh so apps made before this change get them too.
         _ = await Shell.run("""
             P="$LAMP_APP/Contents/Info.plist"
@@ -3357,7 +3370,8 @@ final class Store: ObservableObject {
             plutil -replace NSCalendarsFullAccessUsageDescription -string "$LAMP_NAME reads and adds calendar events." "$P" && \
             plutil -replace NSRemindersFullAccessUsageDescription -string "$LAMP_NAME reads and adds reminders." "$P" && \
             plutil -replace NSContactsUsageDescription -string "$LAMP_NAME looks up people in your contacts." "$P" && \
-            plutil -replace NSAppleEventsUsageDescription -string "$LAMP_NAME reads your email and drafts replies through Mail." "$P"
+            plutil -replace NSAppleEventsUsageDescription -string "$LAMP_NAME reads your email and drafts replies through Mail." "$P" && \
+            plutil -replace NSLocalNetworkUsageDescription -string "$LAMP_NAME looks for printers and other devices on your network." "$P"
             """, cwd: project.dir, env: ["LAMP_APP": project.builtURL.path, "LAMP_NAME": project.name]) { _ in }
         if fm.fileExists(atPath: Icons.icnsURL(project).path) {
             try? fm.removeItem(at: resources.appendingPathComponent("AppIcon.icns"))
