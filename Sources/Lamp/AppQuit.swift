@@ -79,9 +79,6 @@ enum AppQuit {
         /// (a turn that was stopped, then the next build) isn't sent a second request on top of the first.
         @MainActor private static var waiting: [pid_t: Request] = [:]
 
-        /// Whether the app has a request it hasn't answered: it was answering Lamp when that was sent.
-        @MainActor static func isWaiting(_ pid: pid_t) -> Bool { waiting[pid].map { $0.answered == nil } ?? false }
-
         @MainActor static func to(_ app: NSRunningApplication) -> Request {
             let pid = app.processIdentifier
             if let request = waiting[pid], request.answered == nil { return request }
@@ -157,9 +154,10 @@ enum AppQuit {
         let pid = app.processIdentifier
         var quiet = false, pulse: Pulse?, lastPulse = Date.distantPast
         defer { if quiet { silent(false) } }
-        // Asked "still there?" before it's asked to quit: afterwards an app with a question up, or saving
-        // on the answer, is quiet too, and that says nothing.
-        if listens(pid, runtime: runtime), !Request.isWaiting(pid) {
+        // Asked "still there?" before it's asked to quit, and again each time the wait is taken up for a
+        // request it already has (a turn that was stopped, then the next build): quiet then, it gets the same
+        // notice it had.
+        if listens(pid, runtime: runtime) {
             let asked = Pulse(app: id, pid: pid)
             pulse = asked
             while !asked.state.heard, !quiet {
