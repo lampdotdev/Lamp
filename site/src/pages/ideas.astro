@@ -200,24 +200,92 @@ const description = "Wishes for software nobody else would make: for the office,
   import { formIcon } from "../lib/form-icons";
   import type { Form } from "../lib/ideas";
 
-  // ---------- The filters ----------
+  // ---------- The filters, and the wishes coming and going ----------
   const filters = [...document.querySelectorAll<HTMLButtonElement>("[data-filter]")];
   const items = [...document.querySelectorAll<HTMLElement>("[data-ideas] > li")];
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const ease = "cubic-bezier(.22,.8,.2,1)";
 
-  const show = (id: string) => {
-    if (id && !filters.some((filter) => filter.dataset.filter === id)) id = "";
-    filters.forEach((filter) => filter.setAttribute("aria-pressed", String(filter.dataset.filter === id)));
-    items.forEach((item) => (item.hidden = !!id && item.dataset.category !== id));
+  // A wish appearing, fading and growing into place: the first time it scrolls into view, and when a filter
+  // brings it back. Until then
+  // it's see-through (global.css), and it's marked as shown so it stays put afterwards.
+  const rise = (item: HTMLElement, delay: number) => {
+    item.dataset.shown = "";
+    reveal.unobserve(item);
+    if (still) return;
+    item.animate(
+      [{ opacity: 0, transform: "scale(0.96)" }, { opacity: 1, transform: "none" }],
+      { duration: 500, delay, easing: ease, fill: "backwards" },
+    );
   };
+  const reveal = new IntersectionObserver((entries) => {
+    entries.filter((entry) => entry.isIntersecting).forEach((entry, index) => {
+      reveal.unobserve(entry.target);
+      rise(entry.target as HTMLElement, index * 70);
+    });
+  }, { rootMargin: "0px 0px -40px 0px" });
+
+  const select = (id: string) => {
+    filters.forEach((filter) => filter.setAttribute("aria-pressed", String(filter.dataset.filter === id)));
+  };
+  const belongs = (item: HTMLElement, id: string) => !id || item.dataset.category === id;
+
+  // A change of filter: the wishes that go fade and shrink away, then those that stay glide to their new places
+  // while the ones that come appear, a moment apart. A second change before the first is done takes over from
+  // wherever it got to.
+  let change = 0;
+  const show = async (id: string) => {
+    const mine = ++change;
+    select(id);
+    items.forEach((item) => item.getAnimations().forEach((animation) => animation.cancel()));
+    const leaving = items.filter((item) => !item.hidden && !belongs(item, id));
+    const coming = items.filter((item) => item.hidden && belongs(item, id));
+    if (still) {
+      items.forEach((item) => { item.hidden = !belongs(item, id); item.dataset.shown = ""; });
+      return;
+    }
+    if (leaving.length) {
+      await Promise.all(leaving.map((item) => item.animate(
+        [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "scale(0.96)" }],
+        { duration: 220, easing: "ease-in", fill: "forwards" },
+      ).finished.catch(() => {})));
+      if (mine !== change) return;
+    }
+    const staying = items.filter((item) => !item.hidden && belongs(item, id));
+    const before = new Map(staying.map((item) => [item, item.getBoundingClientRect()]));
+    items.forEach((item) => (item.hidden = !belongs(item, id)));
+    leaving.forEach((item) => item.getAnimations().forEach((animation) => animation.cancel()));
+    staying.forEach((item) => {
+      const from = before.get(item)!, to = item.getBoundingClientRect();
+      const dx = from.left - to.left, dy = from.top - to.top;
+      if (dx || dy) item.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 500, easing: ease });
+    });
+    // Only those in or near the window are worth waiting for; the rest appear when scrolled to, as the first time.
+    let shown = 0;
+    coming.forEach((item) => {
+      const box = item.getBoundingClientRect();
+      if (box.top < innerHeight + 200) rise(item, 30 + Math.min(shown++, 8) * 60);
+      else { delete item.dataset.shown; reveal.observe(item); }
+    });
+  };
+
   filters.forEach((filter) =>
     filter.addEventListener("click", () => {
       const id = filter.dataset.filter ?? "";
+      if (filter.getAttribute("aria-pressed") === "true") return;
       show(id);
       history.replaceState(null, "", id ? `#${id}` : location.pathname);
       if (id) track("ideas_filtered", { category: id });
     }),
   );
-  show(location.hash.slice(1));
+
+  // As the page opens: the filter in the address, if any, then each wish appears as it comes into view.
+  const opening = location.hash.slice(1);
+  const first = filters.some((filter) => filter.dataset.filter === opening) ? opening : "";
+  select(first);
+  items.forEach((item) => (item.hidden = !belongs(item, first)));
+  if (still) items.forEach((item) => (item.dataset.shown = ""));
+  else items.forEach((item) => reveal.observe(item));
 
   // ---------- A wish, opened ----------
   const dialog = document.querySelector<HTMLDialogElement>("[data-wish]")!;

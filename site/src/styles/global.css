@@ -116,6 +116,12 @@
   .category-rise { animation: none; }
 }
 
+/* The ideas page's wishes are see-through until each appears (ideas.astro's script), so none flashes up
+   before its turn. Without the script, or for people who've asked for less motion, they're simply there. */
+@media (scripting: enabled) and (prefers-reduced-motion: no-preference) {
+  [data-ideas] > li:not([data-shown]) { opacity: 0; }
+}
+
 /* The first-idea section (FirstIdea.astro): a night sky like the app icon's, with faint stars that twinkle and
    the lamp's warm light rising from the bottom edge. The light grows as the conversation goes on (--glow, set
    by the section's script) and is brightest when the wish appears. */
