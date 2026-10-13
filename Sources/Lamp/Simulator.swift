@@ -549,8 +549,16 @@ extension Simulator {
                 guard let text = action.text else { return "type: no text given" }
                 // The field with the keyboard is the one last tapped; the bridge doesn't say which has focus,
                 // so the text goes to the text field under the point given, or the one tapped last.
-                guard let field = rememberedField(in: screen) ?? textField(near: point, in: screen) ?? onlyTextField(in: screen) else {
-                    return "typed nothing: tap a text field first, then type"
+                // A named field is the one meant, whatever was tapped before it.
+                let field: AXUIElement
+                if let target = action.target {
+                    guard let named = textField(near: point, in: screen) else { return "type into \"\(target)\": it isn't a text field" }
+                    field = named
+                } else {
+                    guard let found = rememberedField(in: screen) ?? textField(near: point, in: screen) ?? onlyTextField(in: screen) else {
+                        return "typed nothing: tap a text field first, then type"
+                    }
+                    field = found
                 }
                 // The text replaces what the field holds: a tapped field on an iPhone shows its old value
                 // formatted ("0.00"), and typing after it would make nonsense of a number.

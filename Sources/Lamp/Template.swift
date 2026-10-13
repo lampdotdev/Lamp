@@ -2340,9 +2340,13 @@ enum Template {
                     }
                     guard let view = frame.hitTest(point) else { return "type into \(what): nothing there" }
                     _ = click(view, at: point, in: window, count: 1)
-                    send("a", code: 0, flags: [.command], to: window)
+                    // What the field holds is selected through its editor (the key for Select All belongs to
+                    // the Edit menu, which not every app has), so the text typed next takes its place.
+                    if let editor = window.firstResponder as? NSText { editor.selectAll(nil) } else { send("a", code: 0, flags: [.command], to: window) }
+                    // Nothing to type over the selection: delete it, so an empty text clears the field.
+                    if text.isEmpty { send(String(UnicodeScalar(127)), code: 51, flags: [], to: window) }
                     for character in text { send(String(character), code: 0, flags: [], to: window) }
-                    return "typed \"\(text)\" into \(what), in place of what it held"
+                    return text.isEmpty ? "cleared \(what)" : "typed \"\(text)\" into \(what), in place of what it held"
                 }
                 for character in text { send(String(character), code: 0, flags: [], to: window) }
                 return "typed \"\(text)\" into \(focus(of: window))"

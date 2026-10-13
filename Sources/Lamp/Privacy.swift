@@ -36,7 +36,8 @@ enum Privacy {
             let inside = String(path.dropFirst(home.count))
             if inside.hasPrefix("/.lamp/runtime/") {
                 let name = (inside as NSString).lastPathComponent
-                if name.hasSuffix(".png"), !sharesPictures { return .deny(picturesOff) }
+                // The screen as text says what the pictures show, so it goes with them.
+                if name.hasSuffix(".png") || name == "screen.txt", !sharesPictures { return .deny(picturesOff) }
                 if name.hasSuffix("log.txt"), !sharesLog { return .deny(logOff) }
             }
             return .allow

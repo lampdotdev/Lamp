@@ -96,3 +96,22 @@ final class MacScreenTextTests: XCTestCase {
         return (process.terminationStatus, String(decoding: data, as: UTF8.self))
     }
 }
+
+/// The screen as text says what the pictures show, so when the person keeps pictures from the agent, the
+/// file tools keep the text from it too, old copies included.
+@MainActor
+final class ScreenTextPrivacyTests: XCTestCase {
+    func testTheScreenAsTextGoesWithThePictures() {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-privacy-\(UUID().uuidString)")
+        let project = LampProject(id: "coinflip", name: "Coin Flip", exe: "CoinFlip", dir: dir)
+        let before = UserDefaults.standard.object(forKey: "shareAppPictures")
+        defer { UserDefaults.standard.set(before, forKey: "shareAppPictures") }
+        UserDefaults.standard.set(false, forKey: "shareAppPictures")
+        for file in [".lamp/runtime/screen.txt", ".lamp/runtime/screenshot.png"] {
+            guard case .deny = Privacy.verdict(tool: "read", path: file, project: project) else { return XCTFail("\(file) was allowed") }
+        }
+        guard case .allow = Privacy.verdict(tool: "read", path: ".lamp/runtime/log.txt", project: project) else { return XCTFail("the log was refused") }
+        UserDefaults.standard.set(true, forKey: "shareAppPictures")
+        guard case .allow = Privacy.verdict(tool: "read", path: ".lamp/runtime/screen.txt", project: project) else { return XCTFail("the text was refused") }
+    }
+}
