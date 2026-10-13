@@ -514,9 +514,6 @@ struct ProjectView: View {
         return LogLine.visible(Array(all[..<hidden]) + (problem.map { [$0] } ?? []), details: showDetails)
     }
     private var busy: Bool { store.busy.contains(project.id) }
-    /// How much of its latest message the agent has written so far: a message being written grows without
-    /// adding a line, and the chat follows it down.
-    private func written(_ lines: [LogLine]) -> Int { busy ? lines.last?.text.count ?? 0 : 0 }
     /// The chat area has to be about twice the build card's height before the card is pinned.
     private static let roomToPinCard: CGFloat = 560
 
@@ -583,7 +580,7 @@ struct ProjectView: View {
                         chatRows(shown, height: area.size.height,
                                  cardPinned: building != nil && area.size.height >= Self.roomToPinCard)
                     }
-                    .background(EarlierOnScroll(more: start > 0, follow: follow, watching: $earlierOnScroll) { showEarlier(lines, from: start) })
+                    .background(EarlierOnScroll(more: start > 0, follow: follow, ends: sends, watching: $earlierOnScroll) { showEarlier(lines, from: start) })
                     // A readable line length; wide windows get margins instead of longer lines.
                     .frame(maxWidth: 640)
                     .padding(.horizontal, 20).padding(.vertical, 16)
@@ -593,39 +590,17 @@ struct ProjectView: View {
                 }
                 // A chat opens on its latest messages: the scroll view starts at the bottom, with
                 // no scrolling to get there.
-                .defaultScrollAnchor(.bottom)
+                .modifier(OpensAtEnd())
                 // The chat follows what's added at its end, but only from the end: scrolled up to read
-                // something earlier, it stays there. Sending a message goes back to the end.
+                // something earlier, it stays there (see `EarlierOnScroll`). Sending a message goes back to
+                // the end.
                 // The agent's questions come into view whole as they arrive, and then the chat holds still
                 // until they're answered: following anything added meanwhile would slide the answers out
-                // from under the pointer.
-                .onChange(of: Talk.open(in: lines)?.id) { _, waiting in
-                    // Answered, by a click or in words: the chat goes back to following its end, where the
-                    // reply is about to be. It stopped following while the card waited, so it may not be there.
-                    if waiting == nil { follow.followThroughSettling() }
-                    // After this pass: the card isn't laid out yet, and the end is still where it was.
-                    if follow.atEnd { DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) } }
-                }
-                .onChange(of: lines.count) { followEnd(proxy, lines) }
-                // A result card comes into view whole. It can take the place of the line before it, so the
-                // count may not change; and it's tall, so the end is looked for after it has been laid out.
-                .onChange(of: Talk.current(in: lines)?.id) {
-                    if follow.atEnd { DispatchQueue.main.async { followEnd(proxy, lines) } }
-                }
-                .onChange(of: written(lines)) { followEnd(proxy, lines) }
-                .onChange(of: queued.count) { followEnd(proxy, lines) }
-                .onChange(of: store.progress[project.id]?.plan.count) { followEnd(proxy, lines) }
-                .onChange(of: store.progress[project.id]?.screenshot != nil) { followEnd(proxy, lines) }
-                .onChange(of: sends) {
-                    follow.atEnd = true
-                    proxy.scrollTo("bottom", anchor: .bottom)
-                }
+                // from under the pointer. Answered, by a click or in words, the chat goes back to following
+                // its end, where the reply is about to be.
+                .onChange(of: Talk.open(in: lines)?.id, initial: true) { _, waiting in follow.waiting(for: waiting) }
             }
         }
-    }
-
-    private func followEnd(_ proxy: ScrollViewProxy, _ lines: [LogLine]) {
-        if follow.atEnd, Talk.open(in: lines) == nil { proxy.scrollTo("bottom", anchor: .bottom) }
     }
 
     /// Reaches one more lot back. From what's shown, not from what was asked for: a long turn can take the
@@ -668,7 +643,6 @@ struct ProjectView: View {
             QueuedRow(message: message) { store.unqueue(message, from: project) }
                 .padding(.top, lines.isEmpty ? 0 : 32)
         }
-        Color.clear.frame(height: 1).id("bottom")
     }
 
     /// The message box with the buttons around it.
