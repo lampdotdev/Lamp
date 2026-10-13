@@ -4,7 +4,7 @@
  * - `look_at_app`: the agent can't run anything itself. This asks Lamp (over its local gateway) to build
  *   the app with the agent's changes, open it, and report back: a picture of each window, what the app
  *   printed, and any build errors or crash.
- * - `use_app`: clicks, types and presses keys in the open app's front window, at points in its latest picture.
+ * - `use_app`: clicks, types and presses keys in the open app's front window, on things named in the screen as text or at points in its latest picture.
  *   Lamp passes the actions to the app, which performs them on itself (LampDriver in LampSupport), so no
  *   Accessibility permission is needed. The reply is what happened and a fresh picture.
  * - `delete_file`: pi's own tools can write and edit files but not remove one. This deletes a single file

@@ -14,9 +14,9 @@ final class ScreenTextTests: XCTestCase {
             Item(role: "AXButton", label: "Add", frame: CGRect(x: 330, y: 160, width: 44, height: 44), disabled: true)
         ])
         XCTAssertEqual(text?.components(separatedBy: "\n").dropFirst().joined(separator: "\n"), """
-            heading "Groceries" @116,120 200x40
-            text field "New item" = Milk @166,182 300x44
-            button "Add", dimmed @352,182 44x44
+            t1 heading "Groceries" @116,120 200x40
+            f1 text field "New item" = Milk @166,182 300x44
+            b1 button "Add", dimmed @352,182 44x44
             """)
     }
 
@@ -30,14 +30,14 @@ final class ScreenTextTests: XCTestCase {
             Item(role: "AXButton", label: "Today", frame: frame, selected: true)
         ])?.components(separatedBy: "\n").dropFirst() ?? []
         XCTAssertEqual(Array(lines), [
-            #"switch "Reminders" = on @5,5 10x10"#, #"switch "Sounds" = off @5,5 10x10"#,
-            #"choice "Week", selected @5,5 10x10"#, #"choice "Month" @5,5 10x10"#, #"button "Today", selected @5,5 10x10"#
+            #"s1 switch "Reminders" = on @5,5 10x10"#, #"s2 switch "Sounds" = off @5,5 10x10"#,
+            #"c1 choice "Week", selected @5,5 10x10"#, #"c2 choice "Month" @5,5 10x10"#, #"b1 button "Today", selected @5,5 10x10"#
         ])
     }
 
     func testAControlWithNoNameIsStillListedSoItCanBeTappedAndFixed() {
         let text = Simulator.Driver.text(for: [Item(role: "AXButton", frame: CGRect(x: 350, y: 60, width: 30, height: 30))])
-        XCTAssertTrue(text?.hasSuffix("\nbutton @365,75 30x30") == true)
+        XCTAssertTrue(text?.hasSuffix("\nb1 button @365,75 30x30") == true)
     }
 
     func testAControlWithNoNameKeepsItsStateAndPlainTextIsNamedByItsWords() {
@@ -50,7 +50,7 @@ final class ScreenTextTests: XCTestCase {
             Item(role: "AXRadioButton", value: "1", frame: frame),
             Item(role: "AXSlider", value: "0.5", frame: frame)
         ])?.components(separatedBy: "\n").dropFirst() ?? []
-        XCTAssertEqual(Array(lines), ["switch = on @5,5 10x10", "choice, selected @5,5 10x10", "slider = 0.5 @5,5 10x10"])
+        XCTAssertEqual(Array(lines), ["s1 switch = on @5,5 10x10", "c1 choice, selected @5,5 10x10", "n1 slider = 0.5 @5,5 10x10"])
         let words = Simulator.Driver.naming(control: false, label: "", value: " 2 of 4 packed ")
         XCTAssertEqual([words.label, words.value], ["2 of 4 packed", ""])
         let named = Simulator.Driver.naming(control: true, label: "Days away", value: "0.31")
@@ -70,5 +70,33 @@ final class ScreenTextTests: XCTestCase {
 
     func testAnEmptyScreenSaysNothing() {
         XCTAssertNil(Simulator.Driver.text(for: []))
+    }
+
+    func testATargetIsAnIdOrTheOneThingWithThatName() {
+        let frame = CGRect(x: 0, y: 0, width: 10, height: 10)
+        let items = [
+            Item(role: "AXButton", label: "Add", frame: frame),
+            Item(role: "AXStaticText", label: "Add", frame: frame),      // the button's own caption
+            Item(role: "AXTextField", label: "Name", frame: frame),
+            Item(role: "AXButton", label: "Delete", frame: frame),
+            Item(role: "AXButton", label: "Delete", frame: frame),
+            Item(role: "AXButton", label: "Export…", frame: frame)
+        ]
+        XCTAssertEqual(Simulator.Driver.ids(for: items), ["b1", "t1", "f1", "b2", "b3", "b4"])
+        XCTAssertEqual(Simulator.Driver.find("f1", in: items), .one(2))
+        XCTAssertEqual(Simulator.Driver.find(" B2 ", in: items), .one(3))
+        // A name: the control, not its caption; any case; "..." for "…".
+        XCTAssertEqual(Simulator.Driver.find("add", in: items), .one(0))
+        XCTAssertEqual(Simulator.Driver.find("Export...", in: items), .one(5))
+        XCTAssertEqual(Simulator.Driver.find("Delete", in: items), .several(["b2", "b3"]))
+        XCTAssertEqual(Simulator.Driver.find("Save", in: items), .none)
+    }
+
+    func testIdsCountWithinAKindSoANewLabelDoesNotRenumberTheButtons() {
+        let frame = CGRect(x: 0, y: 0, width: 10, height: 10)
+        let before = [Item(role: "AXButton", label: "One", frame: frame), Item(role: "AXButton", label: "Two", frame: frame)]
+        let after = [Item(role: "AXStaticText", label: "Saved", frame: frame)] + before
+        XCTAssertEqual(Simulator.Driver.ids(for: before), ["b1", "b2"])
+        XCTAssertEqual(Simulator.Driver.ids(for: after), ["t1", "b1", "b2"])
     }
 }

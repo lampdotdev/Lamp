@@ -1541,6 +1541,13 @@ enum Template {
                     try? FileManager.default.removeItem(at: url)
                 }
             }
+            // The front window as text, beside its picture (LampScreen), for the builder to read and act on by name.
+            let text = folder.appendingPathComponent("screen.txt")
+            if let words = LampScreen.text(for: LampDriver.elements(in: windows[0]).map(\.item)) {
+                try? words.write(to: text, atomically: true, encoding: .utf8)
+            } else {
+                try? FileManager.default.removeItem(at: text)
+            }
         }
 
         /// Open windows, frontmost first. A dialog or sheet comes before the window it's attached to: it's
@@ -2023,14 +2030,124 @@ enum Template {
     #if os(macOS)
     // Mac only: Lamp tries the app from inside it. On iPhone and iPad that is done from outside, through the Simulator.
 
+    /// The front window as text, for Lamp's builder to read beside the picture and act on by name: one line
+    /// for each thing the app's accessibility tree names, with a short id. Lamp writes the same lines for an
+    /// iPhone's screen (its Simulator driver has a copy of this), so the builder learns one format: a change
+    /// to one is a change to the other, and a test holds them together.
+    enum LampScreen {
+        struct Item: Equatable {
+            var role: String          // in words: "button", "text field", "switch", …
+            var label = ""
+            var value = ""
+            var frame: CGRect         // in the picture's pixels
+            var selected = false
+            var disabled = false
+        }
+
+        /// The most things listed: a full window is a few dozen, and past this the list costs more than it tells.
+        static let itemLimit = 120
+
+        /// A thing's id: a letter for its kind and a number counted within that kind, so a new label doesn't
+        /// renumber the buttons.
+        static func ids(for items: [Item]) -> [String] {
+            var counts: [String: Int] = [:]
+            return items.map { item in
+                let letter = prefix(for: item.role)
+                counts[letter, default: 0] += 1
+                return "\(letter)\(counts[letter]!)"
+            }
+        }
+
+        static func prefix(for role: String) -> String {
+            switch role {
+            case "button": "b"
+            case "text field", "text area", "search field", "password field", "combo box": "f"
+            case "text", "heading": "t"
+            case "switch": "s"
+            case "choice", "tab": "c"
+            case "slider", "stepper": "n"
+            case "picture": "i"
+            case "link": "k"
+            case "picker", "menu button", "menu item", "tabs": "m"
+            case "row": "r"
+            default: "e"
+            }
+        }
+
+        /// What one thing is called when it's spoken of: `b2 (button "Add")`.
+        static func name(_ item: Item, id: String) -> String {
+            item.label.isEmpty ? "\(id) (\(item.role))" : "\(id) (\(item.role) \"\(item.label)\")"
+        }
+
+        enum Found: Equatable { case one(Int), none, several([String]) }
+
+        /// The thing a `target` names: an id from the list, else the one thing with exactly that name.
+        static func find(_ target: String, in items: [Item]) -> Found {
+            let ids = ids(for: items)
+            let wanted = plain(target)
+            if let index = ids.firstIndex(where: { $0.lowercased() == wanted }) { return .one(index) }
+            var matches = items.indices.filter { plain(items[$0].label) == wanted }
+            // Something and its own caption are one thing: the control.
+            if matches.count > 1 { matches = matches.filter { items[$0].role != "text" } }
+            switch matches.count {
+            case 0: return .none
+            case 1: return .one(matches[0])
+            default: return .several(matches.map { ids[$0] })
+            }
+        }
+
+        private static func plain(_ text: String) -> String {
+            text.lowercased().replacingOccurrences(of: "...", with: "…").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        /// A number as a person would write it: a slider at 0.3076923 is at 0.31.
+        static func number(_ value: Double) -> String {
+            let rounded = (value * 100).rounded() / 100
+            return rounded == rounded.rounded() ? String(Int(rounded)) : String(rounded)
+        }
+
+        /// One short line for each thing: its id, what it is, its name, what it holds, the point to aim at and
+        /// its size. Nil when there's nothing with a name.
+        static func text(for items: [Item]) -> String? {
+            guard !items.isEmpty else { return nil }
+            func short(_ text: String, _ limit: Int) -> String {
+                let line = text.replacingOccurrences(of: "\n", with: " ")
+                return line.count > limit ? line.prefix(limit - 1) + "…" : line
+            }
+            let ids = ids(for: items)
+            var lines = zip(ids, items.prefix(itemLimit)).map { id, item -> String in
+                var line = "\(id) \(item.role)"
+                if !item.label.isEmpty { line += " \"\(short(item.label, 80))\"" }
+                var value = item.value == item.label ? "" : item.value
+                if item.role == "switch" { value = value == "1" ? "on" : value == "0" ? "off" : value }
+                if item.role == "choice" || item.role == "button" || item.role == "tab", value == "1" || value == "0" { value = "" }
+                if !value.isEmpty { line += " = \(short(value, 60))" }
+                if item.selected || ((item.role == "choice" || item.role == "tab") && item.value == "1") { line += ", selected" }
+                if item.disabled { line += ", dimmed" }
+                return line + " @\(Int(item.frame.midX.rounded())),\(Int(item.frame.midY.rounded())) \(Int(item.frame.width.rounded()))x\(Int(item.frame.height.rounded()))"
+            }
+            if items.count > itemLimit { lines.append("… and \(items.count - itemLimit) more") }
+            return heading + "\n" + lines.joined(separator: "\n")
+        }
+
+        static let heading = "The screen as text, in reading order. Each line is a thing's id, what it is, its name, \"= \" what it holds, " +
+            "then @x,y (its middle in the picture) and its size. Act on a thing with `target` set to its id or exact name; " +
+            "x and y are for what isn't listed:"
+    }
+    // end LampScreen
+
     /// Lets Lamp's builder use the app the way a person would: it clicks, types, presses keys and picks from
-    /// menus in the front window, from inside the app, so no Accessibility permission is needed. Points are pixels
-    /// in the latest picture of that window (LampRuntime.snapshot), so the builder aims at what it saw. A fresh
-    /// picture is taken afterwards, then what happened goes to .lamp/runtime/use.json, which tells Lamp it's all ready.
+    /// menus in the front window, from inside the app, so no Accessibility permission is needed. An action names
+    /// what it's for by `target`, an id or name from the screen as text (LampScreen, written beside each picture),
+    /// and the thing is asked to press itself or take a value, the way VoiceOver would ask it; what has no such
+    /// action, or isn't listed at all (a drawing), is clicked at a point, pixels in the latest picture of the
+    /// window (LampRuntime.snapshot). A fresh picture and text are taken afterwards, then what happened goes to
+    /// .lamp/runtime/use.json, which tells Lamp it's all ready.
     @MainActor
     enum LampDriver {
         struct Action: Decodable {
             let action: String          // click, double_click, right_click, menu, bar_icon, type, key, scroll, wait
+            var target: String?         // what to act on: an id ("b2") or exact name from the screen as text
             var x: Double?
             var y: Double?
             var text: String?
@@ -2089,8 +2206,8 @@ enum Template {
                 }
                 report[line] = run(action)
                 if action.action != "bar_icon" { keepBarPanel() }
-                // A menu that was only read out isn't expected to change anything.
-                if report[line].contains("\n") { last = nil }
+                // A menu that was only read out, or an action that found nothing to do, isn't expected to change anything.
+                if report[line].contains("\n") || report[line].contains("nothing on the screen is called that") || report[line].contains("several things are called that") { last = nil }
             }
             after(0) { step(0) }
         }
@@ -2144,6 +2261,26 @@ enum Template {
             guard let window = LampRuntime.windowsOnScreen.first, let frame = window.contentView?.superview else {
                 return "\(action.action): the app has no window open"
             }
+            // What the action names, found in the window's own accessibility tree: it's acted on where it has
+            // an action of its own, and its middle is the point to click otherwise.
+            var action = action
+            var named: (item: LampScreen.Item, id: String, element: AXUIElement)?
+            if let target = action.target?.trimmingCharacters(in: .whitespacesAndNewlines), !target.isEmpty, !(window is NSSavePanel) {
+                let elements = elements(in: window)
+                let items = elements.map(\.item)
+                switch LampScreen.find(target, in: items) {
+                case .one(let index):
+                    named = (items[index], LampScreen.ids(for: items)[index], elements[index].element)
+                    action.x = items[index].frame.midX
+                    action.y = items[index].frame.midY
+                case .none:
+                    return "\(action.action) \"\(target)\": nothing on the screen is called that. Use an id or exact name from the " +
+                        "screen as text, or x and y for what isn't listed there."
+                case .several(let ids):
+                    return "\(action.action) \"\(target)\": several things are called that (\(ids.joined(separator: ", "))). Use one of their ids."
+                }
+            }
+            let what = named.map { LampScreen.name($0.item, id: $0.id) }
             // Pictures run top-down in pixels; windows run bottom-up in points.
             let scale = LampRuntime.scale(of: window)
             let point = NSPoint(x: (action.x ?? 0) / scale, y: frame.bounds.height - (action.y ?? 0) / scale)
@@ -2168,8 +2305,15 @@ enum Template {
             }
             switch action.action {
             case "click", "double_click", "right_click":
-                guard let x = action.x, let y = action.y else { return "\(action.action): needs x and y" }
-                let label = "\(action.action) at \(Int(x)), \(Int(y)): "
+                guard let x = action.x, let y = action.y else { return "\(action.action): needs a target, or x and y" }
+                let label = what.map { "\(action.action) \($0): " } ?? "\(action.action) at \(Int(x)), \(Int(y)): "
+                // A thing that presses itself (a button, a switch, a link, a row's disclosure) is asked to, the
+                // way VoiceOver asks it, so the click can't miss. A picker's press would open its menu on the
+                // user's screen, and a row's or field's is a click: those go by the point.
+                if let named, action.action == "click", action.item == nil, pressable.contains(named.item.role) {
+                    guard !named.item.disabled else { return label + "it's dimmed right now, so nothing happened" }
+                    if AXUIElementPerformAction(named.element, kAXPressAction as CFString) == .success { return label + "pressed" }
+                }
                 guard frame.bounds.contains(point) else { return label + "outside the window, whose picture is \(size) pixels" }
                 guard let view = frame.hitTest(point) else { return label + "nothing there" }
                 if action.action == "right_click" { return label + contextMenu(of: view, at: point, in: window, pick: action.item) }
@@ -2181,11 +2325,40 @@ enum Template {
                 return label + click(view, at: point, in: window, count: action.action == "click" ? 1 : 2)
             case "type":
                 let text = action.text ?? ""
+                if let named, let what {
+                    // A slider or stepper takes the number; a field takes the keyboard, with the text in place of
+                    // what it held, so a value typed over "0.00" isn't "0.00120".
+                    if named.item.role == "slider" || named.item.role == "stepper" {
+                        guard let value = Double(text) else { return "type into \(what): give it a number" }
+                        guard AXUIElementSetAttributeValue(named.element, kAXValueAttribute as CFString, value as CFTypeRef) == .success else {
+                            return "type into \(what): it didn't take the number"
+                        }
+                        return "set \(what) to \(LampScreen.number(value))"
+                    }
+                    guard LampScreen.prefix(for: named.item.role) == "f" else {
+                        return "type into \(what): it isn't a text field. Click it, or type into a field."
+                    }
+                    guard let view = frame.hitTest(point) else { return "type into \(what): nothing there" }
+                    _ = click(view, at: point, in: window, count: 1)
+                    send("a", code: 0, flags: [.command], to: window)
+                    for character in text { send(String(character), code: 0, flags: [], to: window) }
+                    return "typed \"\(text)\" into \(what), in place of what it held"
+                }
                 for character in text { send(String(character), code: 0, flags: [], to: window) }
                 return "typed \"\(text)\" into \(focus(of: window))"
             case "key":
                 let name = action.key ?? ""
                 guard let (characters, code, flags) = key(name) else { return "key \(name): not a key I know" }
+                if let named, let what {
+                    // Up and down step a slider or stepper; anything else goes to the thing once it has focus.
+                    if named.item.role == "slider" || named.item.role == "stepper", name == "up" || name == "down" {
+                        let stepped = AXUIElementPerformAction(named.element, (name == "up" ? kAXIncrementAction : kAXDecrementAction) as CFString) == .success
+                        return stepped ? "stepped \(what) \(name)" : "key \(name): \(what) didn't take the step"
+                    }
+                    if let view = frame.hitTest(point) { _ = click(view, at: point, in: window, count: 1) }
+                    send(characters, code: code, flags: flags, to: window)
+                    return "pressed \(name) in \(what)"
+                }
                 // Shortcuts belong to the menu bar and to buttons (a dialog's default button takes Return), which
                 // see a key before whatever has focus.
                 if let event = event(.keyDown, characters, code, flags, window) {
@@ -2201,11 +2374,169 @@ enum Template {
                                                                          wheel1: Int32(-(action.amount ?? 200)), wheel2: 0, wheel3: 0),
                       let event = NSEvent(cgEvent: cg) else { return "scroll: nothing to scroll there" }
                 (view.enclosingScrollView ?? view).scrollWheel(with: event)
-                return "scrolled \(Int(action.amount ?? 200)) points"
+                return "scrolled \(Int(action.amount ?? 200)) points" + (what.map { " in \($0)" } ?? "")
             case "wait":
                 return "waited \(action.amount ?? 1) s"
             default:
                 return "\(action.action): not an action I know"
+            }
+        }
+
+        // MARK: The screen as text
+
+        /// What takes a press of its own, as VoiceOver gives one. Not a picker (its press opens a menu on the
+        /// user's screen), not a field or a row (a click is how those are chosen).
+        private static let pressable: Set<String> = ["button", "switch", "choice", "link", "menu item", "disclosure", "tab"]
+
+        /// Everything in the window that the app's own accessibility tree names (what VoiceOver would read), in
+        /// reading order, each with the element it was read from, which takes the presses. Read through the
+        /// accessibility API on this app's own process, which needs no permission: it's the one way to see
+        /// SwiftUI's elements, whose bridge to AppKit stays asleep until an accessibility client asks, and
+        /// it shows AppKit's and SwiftUI's alike. Frames are in the picture's pixels.
+        static func elements(in window: NSWindow) -> [(item: LampScreen.Item, element: AXUIElement)] {
+            guard let frame = window.contentView?.superview, let root = axWindow(for: window) else { return [] }
+            let scale = LampRuntime.scale(of: window)
+            // The accessibility API counts from the top left of the main screen, pictures from the window's.
+            let origin = CGPoint(x: window.frame.minX, y: (NSScreen.screens.first?.frame.maxY ?? 0) - window.frame.maxY)
+            let bounds = CGRect(origin: origin, size: frame.bounds.size)
+            var found: [(item: LampScreen.Item, element: AXUIElement)] = []
+            func string(_ value: CFTypeRef?) -> String {
+                switch value {
+                case let text as String: text
+                case let text as NSAttributedString: text.string
+                case let number as NSNumber: LampScreen.number(number.doubleValue)
+                default: ""
+                }
+            }
+            func trimmed(_ text: String) -> String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            /// A row's words, so one row can be told from the next: what its cells say, up to three pieces.
+            func words(in element: AXUIElement, depth: Int) -> [String] {
+                var out: [String] = []
+                guard depth < 6 else { return out }
+                for child in axAttribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
+                    guard out.count < 3 else { break }
+                    if axAttribute(child, kAXRoleAttribute) as? String == kAXStaticTextRole {
+                        let text = trimmed(string(axAttribute(child, kAXValueAttribute)))
+                        if !text.isEmpty { out.append(text) }
+                    } else {
+                        out += words(in: child, depth: depth + 1)
+                    }
+                }
+                return out
+            }
+            let wanted = [kAXRoleAttribute, kAXSubroleAttribute, kAXDescriptionAttribute, kAXTitleAttribute, kAXPlaceholderValueAttribute, kAXValueAttribute,
+                          kAXPositionAttribute, kAXSizeAttribute, kAXSelectedAttribute, kAXEnabledAttribute, kAXChildrenAttribute]
+            func visit(_ element: AXUIElement, depth: Int, under: Set<String>) {
+                guard depth < 60, found.count < 400 else { return }
+                let read = axAttributes(element, wanted)
+                let role = read[0] as? String ?? "", subrole = read[1] as? String ?? ""
+                var position = CGPoint.zero, size = CGSize.zero
+                if let value = read[6] { AXValueGetValue(value as! AXValue, .cgPoint, &position) }
+                if let value = read[7] { AXValueGetValue(value as! AXValue, .cgSize, &size) }
+                let rect = CGRect(origin: position, size: size)
+                var under = under
+                let visible = !rect.isEmpty && bounds.contains(CGPoint(x: rect.midX, y: rect.midY))
+                let control = controls.contains(role)
+                // The window itself, its own buttons (close, zoom) and its title aren't the app's.
+                if visible, role != kAXWindowRole, !windowOwn.contains(subrole), !(depth == 1 && role == kAXStaticTextRole) {
+                    var label = trimmed([read[2], read[3], read[4]].lazy.compactMap { $0 as? String }.first { !$0.isEmpty } ?? "")
+                    var value = trimmed(string(read[5]))
+                    // Plain text's words are its name; a control's value is its state, named or not.
+                    if label.isEmpty, !control { label = value; value = "" }
+                    var captions: Set<String> = []
+                    if role == kAXRowRole, label.isEmpty {
+                        let pieces = words(in: element, depth: 0)
+                        captions = Set(pieces)
+                        label = pieces.joined(separator: " · ")
+                    }
+                    // A control's own caption (a button's text) is the control, not a second thing.
+                    if control || (!label.isEmpty && !(role == kAXStaticTextRole && under.contains(label))) {
+                        found.append((LampScreen.Item(
+                            role: word(for: role, subrole), label: label, value: value,
+                            frame: CGRect(x: (rect.minX - origin.x) * scale, y: (rect.minY - origin.y) * scale, width: rect.width * scale, height: rect.height * scale),
+                            selected: (read[8] as? Bool) == true, disabled: (read[9] as? Bool) == false), element))
+                        if control { under = captions.union([label]) }
+                    }
+                }
+                for child in read[10] as? [AXUIElement] ?? [] { visit(child, depth: depth + 1, under: under) }
+            }
+            visit(root, depth: 0, under: [])
+            return found
+        }
+
+        /// This window as the accessibility API has it: the one of this app's windows, or sheets on them, in
+        /// the same place and of the same size.
+        private static func axWindow(for window: NSWindow) -> AXUIElement? {
+            let top = (NSScreen.screens.first?.frame.maxY ?? 0) - window.frame.maxY
+            func matches(_ element: AXUIElement) -> Bool {
+                var position = CGPoint.zero, size = CGSize.zero
+                if let value = axAttribute(element, kAXPositionAttribute) { AXValueGetValue(value as! AXValue, .cgPoint, &position) }
+                if let value = axAttribute(element, kAXSizeAttribute) { AXValueGetValue(value as! AXValue, .cgSize, &size) }
+                return abs(position.x - window.frame.minX) < 2 && abs(position.y - top) < 2
+                    && abs(size.width - window.frame.width) < 2 && abs(size.height - window.frame.height) < 2
+            }
+            let windows = axAttribute(AXUIElementCreateApplication(getpid()), kAXWindowsAttribute) as? [AXUIElement] ?? []
+            if let found = windows.first(where: matches) { return found }
+            for parent in windows {
+                for child in axAttribute(parent, kAXChildrenAttribute) as? [AXUIElement] ?? [] where axAttribute(child, kAXRoleAttribute) as? String == kAXSheetRole {
+                    if matches(child) { return child }
+                }
+            }
+            return nil
+        }
+
+        private static func axAttribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+            var value: CFTypeRef?
+            return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+        }
+
+        /// Several attributes in one call; what an element doesn't have comes back as nil in its place.
+        private static func axAttributes(_ element: AXUIElement, _ names: [String]) -> [CFTypeRef?] {
+            var values: CFArray?
+            guard AXUIElementCopyMultipleAttributeValues(element, names as CFArray, [], &values) == .success,
+                  let list = values as? [AnyObject], list.count == names.count else { return names.map { axAttribute(element, $0) } }
+            return list.map { value in
+                if value is NSNull || (CFGetTypeID(value) == AXValueGetTypeID() && AXValueGetType(value as! AXValue) == .axError) { return nil }
+                return value
+            }
+        }
+
+        /// Listed even with no name: something to act on, which a name would help.
+        private static let controls: Set<String> = [kAXButtonRole, kAXCheckBoxRole, kAXRadioButtonRole, kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole,
+                                                    kAXSliderRole, kAXIncrementorRole, "AXLink", kAXMenuItemRole, kAXPopUpButtonRole, kAXMenuButtonRole,
+                                                    kAXRowRole, kAXDisclosureTriangleRole, kAXColorWellRole, kAXTabGroupRole]
+
+        /// The window's own buttons, which belong to macOS.
+        private static let windowOwn: Set<String> = [kAXCloseButtonSubrole, kAXMinimizeButtonSubrole, kAXZoomButtonSubrole, kAXFullScreenButtonSubrole]
+
+        private static func word(for role: String, _ subrole: String) -> String {
+            switch (role, subrole) {
+            case (kAXButtonRole, _): "button"
+            case (kAXRadioButtonRole, "AXTabButton"): "tab"
+            case (kAXRadioButtonRole, _): "choice"
+            case (kAXTextFieldRole, kAXSearchFieldSubrole): "search field"
+            case (kAXTextFieldRole, kAXSecureTextFieldSubrole): "password field"
+            case (kAXTextFieldRole, _): "text field"
+            case (kAXTextAreaRole, _): "text area"
+            case (kAXComboBoxRole, _): "combo box"
+            case (kAXStaticTextRole, _): "text"
+            case (kAXCheckBoxRole, _): "switch"
+            case (kAXSliderRole, _): "slider"
+            case (kAXImageRole, _): "picture"
+            case ("AXLink", _): "link"
+            case ("AXHeading", _): "heading"
+            case (kAXTabGroupRole, _): "tabs"
+            case (kAXPopUpButtonRole, _): "picker"
+            case (kAXMenuButtonRole, _): "menu button"
+            case (kAXMenuItemRole, _): "menu item"
+            case (kAXIncrementorRole, _): "stepper"
+            case (kAXProgressIndicatorRole, _): "progress"
+            case (kAXRowRole, _): "row"
+            case (kAXDisclosureTriangleRole, _): "disclosure"
+            case (kAXColorWellRole, _): "color well"
+            case (kAXGroupRole, _): "group"
+            case (kAXListRole, _), (kAXTableRole, _), (kAXOutlineRole, _): "list"
+            default: "thing"
             }
         }
 

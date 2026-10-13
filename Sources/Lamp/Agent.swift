@@ -62,10 +62,15 @@ enum Agent {
     and any build errors or crash, so you can check your work instead of guessing. Once your edits are in, use \
     it after changing the interface or after a fix you can't verify from the code, and fix what you see before \
     finishing. Skip it for small changes you're sure of.
-    - `use_app` then uses the open app like a person: clicks at points in its latest picture, types, presses keys, \
-    scrolls and picks from menus, and shows you the result. It tells you what each click landed \
-    on and whether the window changed: when nothing changed, the click probably missed, so aim again before \
-    deciding the app is broken. It uses the app as last built, so call `look_at_app` again after editing code.
+    - `use_app` then uses the open app like a person: clicks, types, presses keys, scrolls and picks from menus, \
+    and shows you the result. Both tools give you the front window as text beside its picture: every control \
+    and piece of text, each with an id, its name, what it holds and where it is. Act on things by name: set \
+    `target` to an id or exact name from that list (click a button or switch, type into a field, press a key \
+    in it), and read the list for exact words and values rather than the picture. Use x and y only for what \
+    the list doesn't have: a drawing, a canvas, a chart, a game board. A control the list shows with no name \
+    has no accessibility label: give it one. It tells you what each action did and whether the window \
+    changed: when nothing changed, a click by point probably missed, so aim again before deciding the app is \
+    broken. It uses the app as last built, so call `look_at_app` again after editing code.
     - Never open the print panel while trying an app (a Print button, File > Print, ⌘P): it makes macOS ask \
     the person, over whatever they're doing, whether the app may look for devices on their network. Check \
     what would be printed from the code or another screen, and say that printing itself wasn't tried.
@@ -657,13 +662,14 @@ enum Agent {
 
         static let iPhoneTry = """
         - `look_at_app` builds the app and opens it in the simulator and shows you the screen; `use_app` then taps, \
-        types, scrolls and swipes on it like a finger (click at a point in the picture, right_click for a long \
-        press, type into the field you tapped last, which replaces what it held, key return or escape, scroll, \
-        swipe with a direction and \
-        `item` to tap what the swipe uncovered), and tells you what each action landed on. Both also give you the \
-        screen as text: every control and piece of text on it with its name, what it holds and the point to tap \
-        it. Read it with the picture: aim taps with its points, and trust it over the picture for exact words \
-        and values. A control it lists with no name has no accessibility label: give it one. There are no menus \
+        types, scrolls and swipes on it like a finger (click to tap, right_click for a long press, type into \
+        the field you tapped last, which replaces what it held, key return or escape, scroll, swipe with a \
+        direction and `item` to tap what the swipe uncovered), and tells you what each action landed on. Both \
+        also give you the screen as text: every control and piece of text on it with an id, its name, what it \
+        holds and where it is. Act on things by name: set `target` to an id or exact name from that list, and \
+        trust it over the picture for exact words and values. Use x and y (pixels in the picture) only for what \
+        the list doesn't have: a drawing, a canvas, a game board. A control it lists with no name has no \
+        accessibility label: give it one. There are no menus \
         or keyboard shortcuts on an iPhone. The simulator has no camera, motion sensors, Bluetooth, NFC, Face ID \
         or health data: try everything else there, and for those parts tell the user plainly that they're for \
         their phone, never that they're broken.
@@ -948,9 +954,13 @@ enum Agent {
         }
     }
 
-    /// What a use_app call does, for the transcript: "click, type, key".
+    /// What a use_app call does, for the transcript: "click Add, type, key".
     static func summary(of actions: [[String: Any]]) -> String {
-        actions.compactMap { $0["action"] as? String }.joined(separator: ", ")
+        actions.compactMap { action -> String? in
+            guard let name = action["action"] as? String else { return nil }
+            guard let target = (action["target"] as? String)?.trimmed, !target.isEmpty else { return name }
+            return "\(name) \(target)"
+        }.joined(separator: ", ")
     }
 }
 
