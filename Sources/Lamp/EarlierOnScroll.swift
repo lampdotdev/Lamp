@@ -90,6 +90,8 @@ struct EarlierOnScroll: NSViewRepresentable {
         var onGlided: (() -> Void)?
         private var glide: (from: CGFloat, progress: Double, last: CFTimeInterval)?
         private var frames: CADisplayLink?
+        /// The glide is moving the scroll view itself, so the move is the glide's and not someone scrolling.
+        private var gliding = false
         private var opened = false
         private weak var scroll: NSScrollView?
         /// The content's height when more was asked for, until it has arrived.
@@ -127,6 +129,8 @@ struct EarlierOnScroll: NSViewRepresentable {
                 follow?.moved(to: flipped ? visible.minY : -visible.minY,
                               fromEnd: flipped ? content.frame.height - visible.maxY : visible.minY)
             }
+            // Someone scrolling while a glide is going takes over from it: it doesn't pull them back.
+            if glide != nil, !gliding { stopGliding() }
             check()
         }
 
@@ -152,7 +156,9 @@ struct EarlierOnScroll: NSViewRepresentable {
             // The end as it is now: it can move while gliding.
             let end = self.end(of: scroll)
             let eased = 1 - pow(1 - glide.progress, 3)
+            gliding = true
             scrollTo(glide.from + (end - glide.from) * eased, in: scroll)
+            gliding = false
             if glide.progress >= 1 { stopGliding() }
         }
 
