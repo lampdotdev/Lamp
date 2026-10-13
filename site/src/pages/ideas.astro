@@ -5,12 +5,16 @@ import Base from "../layouts/Base.astro";
 import DownloadButton from "../components/DownloadButton.astro";
 import { CATEGORIES, IDEAS, slug } from "../lib/ideas";
 import { together } from "../lib/text";
+import { formIcon } from "../lib/form-icons";
 
 // Each idea's icon, on Lamp's own tile as Lamp makes them, and a picture of it in use, both drawn by an image
 // model from a short brief (see scripts/idea-art/README.md). An idea without one shows without it.
 const icons = import.meta.glob<ImageMetadata>("../assets/ideas/icons/*.png", { eager: true, import: "default" });
 const thumbs = import.meta.glob<ImageMetadata>("../assets/ideas/thumbs/*.jpg", { eager: true, import: "default" });
 const iconOf = (name: string) => icons[`../assets/ideas/icons/${slug(name)}.png`];
+// Each category's own picture: an object drawn like an icon's, off its tile.
+const objects = import.meta.glob<ImageMetadata>("../assets/ideas/objects/*.png", { eager: true, import: "default" });
+const objectOf = (category: string) => objects[`../assets/ideas/objects/${category}.png`];
 const thumbOf = (name: string) => thumbs[`../assets/ideas/thumbs/${slug(name)}.jpg`];
 // The larger picture for an opened wish.
 const large = Object.fromEntries(await Promise.all(IDEAS.map(async (idea) => {
@@ -22,7 +26,6 @@ const iconURL = Object.fromEntries(await Promise.all(IDEAS.map(async (idea) => {
   return [idea.name, icon ? (await getImage({ src: icon, width: 128, format: "webp" })).src : ""];
 })));
 
-const colour = Object.fromEntries(CATEGORIES.map((category) => [category.id, category.colour]));
 const title = Object.fromEntries(CATEGORIES.map((category) => [category.id, category.title]));
 // In the categories' order, so "All" reads as the categories one after another.
 const ideas = CATEGORIES.flatMap((category) => IDEAS.filter((idea) => idea.category === category.id));
@@ -31,48 +34,65 @@ const description = "Wishes for software nobody else would make: for the office,
 
 <Base title="Ideas · Lamp" description={description} image="/og.jpg">
   <main>
-    <section class="mx-auto max-w-6xl px-4 pt-16 text-center sm:px-6 sm:pt-20">
-      <h1 class="font-display text-5xl leading-[1.05] font-bold tracking-tight text-balance sm:text-6xl">Wishes nobody else would&nbsp;make.</h1>
-      <p class="mx-auto mt-5 max-w-[46rem] text-xl leading-[1.4] font-semibold text-muted">
-        {together("Too small, too particular or too personal for anyone to sell.")}<br class="hidden sm:block" />
-        {" "}{together("Find one that's nearly yours, and make it yours.")}
+    <section class="mx-auto max-w-6xl px-4 pt-32 text-center sm:px-6 sm:pt-36">
+      <h1 class="font-display text-5xl leading-[1.05] font-bold tracking-tight text-balance sm:text-6xl"><span class="sm:inline-block">A world of software</span> <span class="sm:inline-block">no one else would&nbsp;make.</span></h1>
+      <p class="mx-auto mt-5 max-w-[40rem] text-xl leading-[1.4] font-semibold text-muted">
+        {together("Ideas to solve your own specific problems, or have fun your own way.")}
       </p>
     </section>
 
     <!--
-      The categories as a row of filters that stays under the menu bar while the wishes scroll by, and slides
-      sideways on a phone. The one chosen is kept in the address (#office), so a link can open on it.
+      The categories as a row of icons with their names under them, in the manner of the row of products at the
+      top of Apple's product pages: each is an object drawn like an icon's, off its tile, and All is four of them
+      together. The
+      row slides sideways where it doesn't fit. The one chosen is kept in the address (#office), so a link can
+      open on it.
     -->
-    <nav aria-label="Kinds of wish" class="sticky top-(--menu-height) z-30 mt-10 border-b border-black/[0.06] bg-white/85 backdrop-blur-xl">
-      <div class="mx-auto max-w-7xl overflow-x-auto px-4 py-3 [scrollbar-width:none] sm:px-6 [&::-webkit-scrollbar]:hidden">
-        <div class="flex w-max gap-1.5 lg:w-auto lg:flex-wrap lg:justify-center">
-          {
-            [{ id: "", title: "All", colour: "" }, ...CATEGORIES].map((category) => (
-              <button
-                type="button"
-                data-filter={category.id}
-                aria-pressed={category.id === "" ? "true" : "false"}
-                class="flex h-8 items-center gap-1.5 rounded-full bg-panel px-3.5 text-[14px] whitespace-nowrap text-ink/80 ring-1 ring-black/[0.04] transition hover:bg-[#ebebef] hover:text-ink focus-visible:outline-2 focus-visible:outline-graphite aria-pressed:bg-graphite aria-pressed:text-white"
-              >
-                {category.colour && <span aria-hidden="true" class="size-2 rounded-full" style={`background: ${category.colour}`} />}
+    <nav aria-label="Kinds of wish" class="mt-10 overflow-x-auto pb-12 [scrollbar-width:none] sm:mt-14 sm:pb-14 [&::-webkit-scrollbar]:hidden">
+      <div class="mx-auto flex w-max gap-1 px-4 sm:gap-2 sm:px-6">
+        {
+          [{ id: "", title: "All" }, ...CATEGORIES].map((category) => (
+            <button
+              type="button"
+              data-filter={category.id}
+              aria-pressed={category.id === "" ? "true" : "false"}
+              class="group flex w-[5.75rem] cursor-pointer flex-col items-center rounded-2xl pt-1 pb-2 focus-visible:outline-2 focus-visible:outline-graphite sm:w-[6.5rem]"
+            >
+              {category.id ? (
+                <Image
+                  src={objectOf(category.id)}
+                  alt=""
+                  width={56}
+                  height={56}
+                  densities={[1, 2]}
+                  class="size-14 object-contain drop-shadow-[0_5px_6px_rgba(0,0,0,0.13)] transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] group-hover:-translate-y-0.5"
+                />
+              ) : (
+                <span class="grid size-14 grid-cols-2 gap-1 p-1 transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] group-hover:-translate-y-0.5">
+                  {CATEGORIES.slice(0, 4).map((other) => (
+                    <Image src={objectOf(other.id)} alt="" width={22} height={22} densities={[1, 2]} class="size-full object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.13)]" />
+                  ))}
+                </span>
+              )}
+              <span class="mt-2.5 text-center text-[13px] leading-tight text-muted sm:text-[14px] sm:whitespace-nowrap transition group-hover:text-ink group-aria-pressed:font-semibold group-aria-pressed:text-ink">
                 {category.title}
-              </button>
-            ))
-          }
-        </div>
+              </span>
+            </button>
+          ))
+        }
       </div>
     </nav>
 
     <section class="bg-panel">
-      <div class="mx-auto max-w-6xl px-4 pt-8 pb-20 sm:px-6 sm:pb-24">
+      <div class="mx-auto max-w-6xl px-4 pt-10 pb-20 sm:px-6 sm:pt-12 sm:pb-24">
         <ul data-ideas class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {
             ideas.map((idea) => (
               <li data-category={idea.category} class="flex">
                 <button
                   type="button"
-                  data-idea={JSON.stringify({ ...idea, title: title[idea.category], colour: colour[idea.category], picture: large[idea.name], icon: iconURL[idea.name] })}
-                  class="group flex w-full flex-col overflow-hidden rounded-[22px] bg-page text-left shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-black/[0.04] transition duration-300 hover:-translate-y-0.5 hover:shadow-[0_14px_34px_-14px_rgba(0,0,0,0.22)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-graphite"
+                  data-idea={JSON.stringify({ ...idea, title: title[idea.category], picture: large[idea.name], icon: iconURL[idea.name] })}
+                  class="group flex w-full cursor-pointer flex-col overflow-hidden rounded-[22px] bg-page text-left shadow-[0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-black/[0.04] transition duration-300 hover:-translate-y-0.5 hover:shadow-[0_14px_34px_-14px_rgba(0,0,0,0.22)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-graphite"
                 >
                   {thumbOf(idea.name) ? (
                     <Image
@@ -84,7 +104,7 @@ const description = "Wishes for software nobody else would make: for the office,
                       class="aspect-[3/2] w-full object-cover"
                     />
                   ) : (
-                    <span aria-hidden="true" class="aspect-[3/2] w-full" style={`background: linear-gradient(160deg, ${colour[idea.category]}22, ${colour[idea.category]}44)`} />
+                    <span aria-hidden="true" class="aspect-[3/2] w-full bg-panel" />
                   )}
                   <span class="flex flex-1 flex-col items-start px-6 pb-6">
                     <span class="flex w-full items-end justify-between gap-3">
@@ -93,11 +113,7 @@ const description = "Wishes for software nobody else would make: for the office,
                       ) : (
                         <span class="h-6" />
                       )}
-                      <span class="flex items-center gap-1.5 pb-1 text-[13px] font-semibold" style={`color: ${colour[idea.category]}`}>
-                        <span aria-hidden="true" class="size-2 rounded-full" style={`background: ${colour[idea.category]}`} />
-                        {title[idea.category]}
-                        <span class="font-normal text-muted">· {idea.form}</span>
-                      </span>
+                      <span class="pb-1 text-muted" set:html={formIcon(idea.form)} />
                     </span>
                     <span class="mt-3 font-display text-2xl font-bold tracking-tight">{idea.name}</span>
                     <span class="mt-1 text-[15px] text-muted">{idea.who}</span>
@@ -139,14 +155,14 @@ const description = "Wishes for software nobody else would make: for the office,
         type="button"
         data-close
         aria-label="Close"
-        class="absolute top-4 right-4 grid size-8 place-items-center rounded-full bg-panel/90 text-muted backdrop-blur transition hover:text-ink focus-visible:outline-2 focus-visible:outline-graphite"
+        class="absolute top-4 right-4 grid size-8 cursor-pointer place-items-center rounded-full bg-panel/90 text-muted backdrop-blur transition hover:text-ink focus-visible:outline-2 focus-visible:outline-graphite"
       >
         <svg aria-hidden="true" viewBox="0 0 16 16" class="size-3.5 fill-none stroke-current stroke-2 [stroke-linecap:round]"><path d="M4 4l8 8M12 4l-8 8" /></svg>
       </button>
       <div class="flex items-center gap-4">
         <img data-icon alt="" width="64" height="64" class="size-16 drop-shadow-[0_6px_12px_rgba(0,0,0,0.18)]" hidden />
         <div>
-          <p data-kind class="flex items-center gap-1.5 text-[13px] font-semibold"></p>
+          <p data-kind class="flex items-center gap-1.5 text-[13px] font-medium text-muted"></p>
           <h2 id="wish-name" data-name class="mt-1 pr-10 font-display text-3xl font-bold tracking-tight"></h2>
         </div>
       </div>
@@ -164,7 +180,7 @@ const description = "Wishes for software nobody else would make: for the office,
           type="button"
           data-open
           hidden
-          class="mt-3.5 text-[15px] font-medium text-[#b04e0a] underline decoration-[#b04e0a]/40 underline-offset-4 transition hover:decoration-[#b04e0a]"
+          class="mt-3.5 cursor-pointer text-[15px] font-medium text-[#b04e0a] underline decoration-[#b04e0a]/40 underline-offset-4 transition hover:decoration-[#b04e0a]"
         >
           Already have Lamp? Open it with this wish
         </button>
@@ -176,6 +192,8 @@ const description = "Wishes for software nobody else would make: for the office,
 <script>
   import { copyWish, wishLink } from "../../lib/wish.js";
   import { track } from "../lib/analytics";
+  import { formIcon } from "../lib/form-icons";
+  import type { Form } from "../lib/ideas";
 
   // ---------- The filters ----------
   const filters = [...document.querySelectorAll<HTMLButtonElement>("[data-filter]")];
@@ -192,10 +210,6 @@ const description = "Wishes for software nobody else would make: for the office,
       show(id);
       history.replaceState(null, "", id ? `#${id}` : location.pathname);
       if (id) track("ideas_filtered", { category: id });
-      // Back to the first wish, which may have scrolled away, but no further up than the filters.
-      const list = document.querySelector<HTMLElement>("[data-ideas]")!;
-      const top = list.getBoundingClientRect().top + scrollY - 120;
-      if (scrollY > top) scrollTo({ top, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
     }),
   );
   show(location.hash.slice(1));
@@ -217,19 +231,15 @@ const description = "Wishes for software nobody else would make: for the office,
   const fit = () => { text.style.height = "auto"; text.style.height = `${text.scrollHeight + 2}px`; };
   text.addEventListener("input", fit);
 
-  type Idea = { name: string; who: string; wish: string; title: string; colour: string; picture: string; icon: string };
+  type Idea = { name: string; who: string; wish: string; form: Form; title: string; picture: string; icon: string };
   const picture = dialog.querySelector<HTMLImageElement>("[data-picture]")!;
   const icon = dialog.querySelector<HTMLImageElement>("[data-icon]")!;
   let current: Idea | null = null;
   document.querySelectorAll<HTMLButtonElement>("[data-idea]").forEach((card) =>
     card.addEventListener("click", () => {
       current = JSON.parse(card.dataset.idea!) as Idea;
-      kind.replaceChildren();
-      const dot = document.createElement("span");
-      dot.className = "size-2 rounded-full";
-      dot.style.background = current.colour;
-      kind.append(dot, current.title);
-      kind.style.color = current.colour;
+      kind.innerHTML = formIcon(current.form, "size-4");
+      kind.append(current.title);
       picture.hidden = !current.picture;
       if (current.picture) picture.src = current.picture;
       icon.hidden = !current.icon;

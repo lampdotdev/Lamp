@@ -10,22 +10,22 @@
 
 export type Form = "Mac" | "iPhone" | "iPad" | "Menu bar" | "Widget" | "Game";
 
-export type Category = { id: string; title: string; colour: string };
+// Each category's picture in the page's row of categories is src/assets/ideas/objects/<id>.png (scripts/idea-art).
+export type Category = { id: string; title: string };
 
 export type Idea = { category: string; name: string; who: string; form: Form; wish: string };
 
 // In the order the page shows them: office work first, as most people who find Lamp spend their days at a desk.
-// Each has a colour of its own, from the homepage's tiles.
 export const CATEGORIES: Category[] = [
-  { id: "office", title: "At the office", colour: "#3d38c9" },
-  { id: "mac", title: "Around your Mac", colour: "#33302e" },
-  { id: "home", title: "Home & family", colour: "#ff9f1c" },
-  { id: "play", title: "Just for fun", colour: "#e0447f" },
-  { id: "trades", title: "Hands-on work", colour: "#0b5ccc" },
-  { id: "school", title: "School", colour: "#169c91" },
-  { id: "money", title: "Paperwork", colour: "#34c759" },
-  { id: "hobbies", title: "Hobbies", colour: "#ee6446" },
-  { id: "friends", title: "Friends", colour: "#a77bff" },
+  { id: "office", title: "At the office" },
+  { id: "mac", title: "Around your Mac" },
+  { id: "home", title: "Home & family" },
+  { id: "play", title: "Just for fun" },
+  { id: "trades", title: "Hands-on work" },
+  { id: "school", title: "School" },
+  { id: "money", title: "Paperwork" },
+  { id: "hobbies", title: "Hobbies" },
+  { id: "friends", title: "Friends" },
 ];
 
 export const IDEAS: Idea[] = [

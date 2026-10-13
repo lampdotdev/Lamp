@@ -1,6 +1,7 @@
 // Puts generated icon art on Lamp's icon tile, the way Icons.drawnTile does: the object cut out (Vision, when the
 // art isn't already see-through), on a soft gradient rounded square with a highlight, a shadow and a light rim.
-// Usage: tile <art.png> <top hex> <bottom hex> <light 0|1> <out.png> <size>
+// Usage: tile <art.png> <top hex> <bottom hex> <light 0|1> <out.png> <size> [object]
+// With "object" it writes the object alone instead, centred on a transparent square, for the page's categories.
 import AppKit
 import Vision
 import CoreImage
@@ -53,6 +54,21 @@ func visibleBox(_ img: CGImage) -> CGRect {
     return CGRect(x: minX, y: h - 1 - maxY, width: maxX - minX + 1, height: maxY - minY + 1)
 }
 art = art.cropping(to: visibleBox(art)) ?? art
+
+if a.count > 7 && a[7] == "object" {
+    let square = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size, bitsPerSample: 8, samplesPerPixel: 4,
+                                  hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: square)
+    NSGraphicsContext.current?.imageInterpolation = .high
+    let fit = CGFloat(size) / CGFloat(max(art.width, art.height))
+    let w = CGFloat(art.width) * fit, h = CGFloat(art.height) * fit
+    NSImage(cgImage: art, size: NSSize(width: art.width, height: art.height))
+        .draw(in: NSRect(x: (CGFloat(size) - w) / 2, y: (CGFloat(size) - h) / 2, width: w, height: h))
+    NSGraphicsContext.restoreGraphicsState()
+    try! square.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: a[5]))
+    exit(0)
+}
 
 let out = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1024, pixelsHigh: 1024, bitsPerSample: 8, samplesPerPixel: 4,
                            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!

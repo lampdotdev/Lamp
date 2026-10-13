@@ -1,0 +1,9 @@
+office|a paper document with three short bold heading lines and a small star sticker
+mac|a laptop next to a large monitor, with tidy window rectangles on its screen
+home|a bucket of popcorn with a small film clapper
+play|a classic arcade joystick with a glossy red ball on top of a short black stick, on a small rounded base with two round red buttons
+trades|a modern smartphone standing upright in a slight three-quarter view, its screen a soft blue glow
+school|a school satchel with a calendar page tucked in
+money|an envelope with a small paperclip and a tick
+hobbies|a ball of yarn with knitting needles
+friends|a wrapped gift box with a question mark tag

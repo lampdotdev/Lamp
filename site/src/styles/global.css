@@ -43,9 +43,9 @@
   --breakpoint-bento: 72rem;
 }
 
-/* The menu bar's height (MenuBar.astro), which the homepage's opening takes off the window's. */
+/* How much of the top of the window the floating menu bar covers, with the space above it (MenuBar.astro). */
 :root {
-  --menu-height: 3rem;
+  --menu-height: 4.25rem;
 }
 
 @layer base {
@@ -81,11 +81,11 @@
 }
 
 @keyframes hero-card {
-  0%, 18% { min-height: calc(100svh - 0.75rem - var(--menu-height)); }
+  0%, 18% { min-height: calc(100svh - var(--menu-height) - 1.5rem); }
   100% { min-height: 0; }
 }
 @keyframes hero-icon {
-  0%, 18% { translate: 0 calc(50svh - 120px - var(--menu-height) / 2); scale: 2.6; }
+  0%, 18% { translate: 0 calc(50svh - 126px - var(--menu-height) / 2); scale: 2.6; }
   100% { translate: 0 0; scale: 1; }
 }
 @keyframes hero-rise {
@@ -122,6 +122,9 @@
     radial-gradient(45% 40% at 0% 30%, rgb(61 56 201 / 0.35), rgb(61 56 201 / 0) 70%),
     var(--color-night);
 }
+/* The stars lag behind the page as it scrolls, the small ones (further away) more than the large: --drift is how
+   far the sky's middle is from the window's, set by the section's script, and stays 0 for people who've asked
+   for less motion. The layers repeat, so they can shift any distance without an edge showing. */
 .wish-night::before,
 .wish-night::after {
   content: "";
@@ -130,6 +133,8 @@
   pointer-events: none;
   background-repeat: repeat;
 }
+.wish-night::before { background-position: 0 calc(var(--drift, 0) * -0.3px); }
+.wish-night::after { background-position: 0 calc(var(--drift, 0) * -0.14px); }
 .wish-night::before {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cg fill='white'%3E%3Ccircle cx='14' cy='22' r='1'/%3E%3Ccircle cx='96' cy='12' r='.8'/%3E%3Ccircle cx='170' cy='44' r='1.2'/%3E%3Ccircle cx='52' cy='88' r='.7'/%3E%3Ccircle cx='132' cy='104' r='1'/%3E%3Ccircle cx='200' cy='150' r='.8'/%3E%3Ccircle cx='30' cy='170' r='1.1'/%3E%3Ccircle cx='110' cy='196' r='.7'/%3E%3C/g%3E%3C/svg%3E");
   opacity: 0.55;

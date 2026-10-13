@@ -187,7 +187,7 @@ const providers = [
 // On the page the last sentence gets a line of its own; elsewhere (search results, link previews) it's one run.
 // The list stays on one line.
 const pitch = "Made by you, for nobody else. Tools,\u00a0apps,\u00a0games.";
-const noCode = "For Mac and iOS, no coding needed.";
+const noCode = "For Mac and iOS, no coding needed, with AI you already have.";
 const description = `${pitch} ${noCode}`;
 ---
 
@@ -199,7 +199,7 @@ const description = `${pitch} ${noCode}`;
   <main>
     <!-- The hero sits in a card of its own across the window, like the tiles below, to set it apart from what
          follows. -->
-    <div class="px-2 pt-2 sm:px-3 sm:pt-3">
+    <div class="px-2 pt-[calc(var(--menu-height)+1.5rem)] sm:px-3">
     <!--
       Opens like Apple's product pages: the card starts as tall as the window with the icon large in its middle,
       then the card shrinks to its own height as the icon settles and the words come up under it, the button
@@ -221,17 +221,17 @@ const description = `${pitch} ${noCode}`;
       <!-- The name small under the icon, as Apple labels a product, and the promise as the page's heading. -->
       <div class="hero-words flex flex-col items-center">
         <p class="mt-3 text-[15px] font-semibold tracking-tight">Lamp</p>
-        <!-- Full size from xl. It breaks after "wishes", so "selfish software" keeps a line of its own: each half
-             is a block from sm. On a phone, too narrow for either half, it wraps as it likes. -->
-        <h1 class="mt-5 font-display text-5xl leading-[1.05] font-bold tracking-tight sm:text-6xl xl:text-7xl">
-          <span class="sm:inline-block">Lamp turns your wishes</span> <span class="sm:inline-block">into selfish software.</span>
+        <!-- Full size from xl. From md it's always two lines, broken after "software", even where the window is wide
+             enough for one; narrower, the browser balances the lines it needs. -->
+        <h1 class="mt-5 font-display text-5xl leading-[1.05] font-bold tracking-tight text-balance sm:text-6xl xl:text-7xl">
+          Lamp makes software<br class="hidden md:inline" /> crafted just for&nbsp;you.
         </h1>
         <p class="mt-5 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">{together(pitch)}<br />{together(noCode)}</p>
       </div>
       <div class="hero-button relative z-10 mt-9"><DownloadButton place="hero" /></div>
-      <!-- As wide as the card allows, but no taller than leaves the whole card in the window: the words above
-           take about 530px with the space under them, the menu bar 48px more, and the render is 2.98 times as wide
-           as it is tall. -->
+      <!-- As wide as the card allows, but no taller than leaves the whole card in the window, with a little space
+           under it: the menu bar and the words above take about 676px, and the render is 2.98 times as wide as it
+           is tall. -->
       <Image
         src={heroLamp}
         alt=""
@@ -239,13 +239,11 @@ const description = `${pitch} ${noCode}`;
         sizes="100vw"
         loading="eager"
         class="hero-lamp pointer-events-none mt-6 h-auto max-w-none select-none sm:mt-4"
-        style="width: min(100%, calc((100svh - 578px) * 2.98))"
+        style="width: min(100%, calc((100svh - 676px) * 2.98))"
       />
     </section>
 
     </div>
-
-    <FirstIdea />
 
     <section>
       <div class="mx-auto max-w-6xl px-4 pt-20 sm:px-6 sm:pt-24">
@@ -254,11 +252,10 @@ const description = `${pitch} ${noCode}`;
           {together("Something for the task that bugs you, or a game for when you're done.")}<br />{together("Each of these started as a single wish:")}
         </p>
         <Carousel slides={apps} />
-        <p class="-mt-4 pb-6 text-center">
-          <a href="/ideas" class="text-[17px] font-medium text-[#b04e0a] underline decoration-[#b04e0a]/40 underline-offset-4 transition hover:decoration-[#b04e0a]">See 80 more wishes, from the office to family movie night</a>
-        </p>
       </div>
     </section>
+
+    <FirstIdea />
 
     <section class="bg-panel">
       <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">

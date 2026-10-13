@@ -40,4 +40,13 @@ for line in open(os.path.join(here, "briefs.txt")).read().splitlines():
         thumb = f"A polished, charming, colourful picture of a game: {screen}. Soft {tint} tones in the palette."
     jobs.append({"slug": s, "kind": "icon", "prompt": icon})
     jobs.append({"slug": s, "kind": "thumb", "prompt": thumb + " " + common})
+# Each category's own picture for the page's row of categories: an object like an icon's, shown off its tile.
+for line in open(os.path.join(here, "categories.txt")).read().splitlines():
+    id, subject = line.split("|")
+    jobs.append({"slug": f"category-{id}", "kind": "icon", "prompt": (
+        f"A single {subject}, drawn as the object for a macOS app icon in Apple's own icon style: one tangible object with a "
+        f"simple, instantly recognizable silhouette, smooth rounded forms, subtle soft gradients and gentle light from above, "
+        f"front or slight three-quarter view. Two or three colors at most. The object alone, centered, filling about 70% of the "
+        f"frame, on a plain flat light gray background. No scene, no ground, no cast shadow, no background elements, no text, "
+        f"no letters, no border, no frame, no rounded square tile, no app icon shape. Square 1:1.")})
 json.dump(jobs, open(os.path.join(work, "jobs.json"), "w"), indent=1)
