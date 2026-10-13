@@ -183,8 +183,9 @@ final class Dictation: ObservableObject {
     ///
     /// A marked phrase can come again, its words revised ("if if" becoming "if"): the same span of time, or a
     /// long result starting the way the phrase did (a new phrase starts with a word or two), is that phrase,
-    /// not a new one. Unmarked, a phrase is over when a result arrives that has lost it: shorter, and not
-    /// starting the way it did. A result that only revises the phrase's words replaces it.
+    /// not a new one. Every other result revises the phrase, rewording any of it, and replaces it. Should a
+    /// phrase go unmarked, it's over when a result arrives with less than half of it, starting differently:
+    /// revising never takes away that much, and a new phrase starts with a word.
     struct Transcript {
         private var earlier = ""
         private var phrase = ""
@@ -227,7 +228,7 @@ final class Dictation: ObservableObject {
         }
 
         private static func startsAgain(_ text: String, after phrase: String) -> Bool {
-            text.count < phrase.count && shared(text, phrase) * 2 < text.count
+            text.count * 2 < phrase.count && shared(text, phrase) * 2 < text.count
         }
 
         /// A finished phrase sent again: beginning the same way for at least half its length. A short phrase

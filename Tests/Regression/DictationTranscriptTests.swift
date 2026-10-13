@@ -55,6 +55,19 @@ final class DictationTranscriptTests: XCTestCase {
         XCTAssertEqual(transcript.phrases, 1)
     }
 
+    /// Seen dictating: before marking a long phrase finished, the recognizer reworded its middle, which also
+    /// made it shorter. That's the same phrase, not a new one.
+    func testRewordingALongPhraseReplacesIt() {
+        var transcript = Dictation.Transcript()
+        _ = transcript.take("Really don't know what to say. I'm trying to find out, but do you know what they say here I leave")
+        let reworded = "Really don't know what to say. I'm trying to find out but do you know I say here I live"
+        XCTAssertEqual(transcript.take(reworded), reworded)
+        XCTAssertEqual(transcript.take("All right"), reworded + " All right")
+        XCTAssertEqual(transcript.take("Right"), reworded + " Right")
+        XCTAssertEqual(transcript.take("Right, can I pause like this?"), reworded + " Right, can I pause like this?")
+        XCTAssertEqual(transcript.phrases, 2)
+    }
+
     func testAnEmptyResultLosesNothing() {
         var transcript = Dictation.Transcript()
         _ = transcript.take("Make a timer.", endsPhrase: true)
