@@ -44,7 +44,7 @@ final class HealthTests: XCTestCase {
         XCTAssertTrue(simulator.contains("<key>application-identifier</key><string>ABCDE12345.\(both.bundleID)</string>"))
         XCTAssertTrue(simulator.contains("<key>com.apple.developer.team-identifier</key><string>ABCDE12345</string>"))
         XCTAssertFalse(Template.Capabilities().simulatorEntitlementsPlist(for: both).contains("application-identifier"))
-        XCTAssertTrue(try String(contentsOf: both.dir.appendingPathComponent("build.sh"), encoding: .utf8).contains("-sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker \"$ENT\""))
+        XCTAssertTrue(try String(contentsOf: both.dir.appendingPathComponent("build.sh"), encoding: .utf8).contains("-sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker \"$HASHED\""))
         var mac = both; mac.platform = .mac
         try Template.saveMeta(mac)
         try Template.writeOwnedFiles(for: mac)
@@ -73,6 +73,10 @@ final class HealthTests: XCTestCase {
         for kind in LampHealth.Kind.allCases {
             print(kind.rawValue, kind.unitName, kind.isCumulative ? "sum" : "latest", kind.unit.unitString)
         }
+        let night = Date(timeIntervalSince1970: 0)
+        func at(_ hours: Double) -> Date { night.addingTimeInterval(hours * 3600) }
+        // A watch's stages over the same hours as a sleep app's one record: eight hours, not sixteen.
+        print("asleep", LampHealth.asleepSeconds([(at(0), at(8)), (at(0), at(3)), (at(3), at(5.5)), (at(6), at(8)), (at(10), at(11))]) / 3600)
         """
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-health-unit-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
@@ -81,7 +85,8 @@ final class HealthTests: XCTestCase {
         let built = try run(Shell.compatibleSDK + "xcrun swiftc -o health main.swift 2>&1", in: work)
         XCTAssertEqual(built.status, 0, built.output)
         let lines = try run("./health", in: work).output.split(separator: "\n").map(String.init)
-        XCTAssertEqual(lines.count, 31)
+        XCTAssertEqual(lines.count, 32)
+        XCTAssertTrue(lines.contains("asleep 9.0"))
         XCTAssertTrue(lines.contains("steps steps sum count"))
         XCTAssertTrue(lines.contains("heartRate bpm latest count/min"))
         XCTAssertTrue(lines.contains("caloriesEaten kcal sum kcal"))

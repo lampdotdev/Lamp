@@ -316,7 +316,13 @@ enum Template {
     # The simulator takes an app's entitlements (Health, iCloud) from a section of its binary, as Xcode puts
     # them, and refuses an app whose signature claims them without a provisioning profile. Lamp writes the file.
     ENT=".lamp/entitlements.plist"
-    if [[ -f "$ENT" ]]; then FLAGS+=(-Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$ENT"); fi
+    if [[ -f "$ENT" ]]; then
+      # Named after its contents: the linker isn't told its inputs' dates, but a new name is a new link.
+      mkdir -p .build
+      HASHED=".build/entitlements-$(shasum -a 256 "$ENT" | cut -c1-16).plist"
+      cp "$ENT" "$HASHED"
+      FLAGS+=(-Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$HASHED")
+    fi
     swift build "${FLAGS[@]}" 2>&1
     BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"
     APP="build/{{EXE}}.app"
@@ -3543,7 +3549,7 @@ enum Template {
         }
 
         struct Sample: Identifiable, Codable {
-            var id = UUID()
+            var id: UUID              // HealthKit's own, so the same record reads as the same item every time
             var kind: Kind
             var value: Double
             var date: Date
@@ -3552,7 +3558,7 @@ enum Template {
         }
 
         struct Workout: Identifiable, Codable {
-            var id = UUID()
+            var id: UUID            // HealthKit's own
             var name: String        // "Running", "Cycling", "Strength Training"…
             var start: Date
             var end: Date
@@ -3644,9 +3650,27 @@ enum Template {
             }
             let asleep: Set<Int> = [HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue, HKCategoryValueSleepAnalysis.asleepCore.rawValue,
                                     HKCategoryValueSleepAnalysis.asleepDeep.rawValue, HKCategoryValueSleepAnalysis.asleepREM.rawValue]
-            let seconds = found.compactMap { $0 as? HKCategorySample }.filter { asleep.contains($0.value) }
-                .reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
-            return seconds / 3600
+            // A watch's stages and a sleep app's one long record cover the same hours: counted once, as the
+            // union of the stretches asleep, within the night.
+            let stretches = found.compactMap { $0 as? HKCategorySample }.filter { asleep.contains($0.value) }
+                .map { (max($0.startDate, evening), min($0.endDate, noon)) }.filter { $0.0 < $0.1 }
+            return asleepSeconds(stretches) / 3600
+        }
+
+        /// Seconds covered by the stretches, overlaps counted once.
+        static func asleepSeconds(_ stretches: [(Date, Date)]) -> Double {
+            var total = 0.0
+            var current: (Date, Date)?
+            for stretch in stretches.sorted(by: { $0.0 < $1.0 }) {
+                if let open = current, stretch.0 <= open.1 {
+                    current = (open.0, max(open.1, stretch.1))
+                } else {
+                    if let open = current { total += open.1.timeIntervalSince(open.0) }
+                    current = stretch
+                }
+            }
+            if let open = current { total += open.1.timeIntervalSince(open.0) }
+            return total
         }
 
         /// Workouts in the last `days` days, newest first.
@@ -3665,7 +3689,7 @@ enum Template {
                 let calories = workout.statistics(for: HKQuantityType(.activeEnergyBurned))?.sumQuantity()?.doubleValue(for: .kilocalorie())
                 let distance = [HKQuantityTypeIdentifier.distanceWalkingRunning, .distanceCycling, .distanceSwimming]
                     .compactMap { workout.statistics(for: HKQuantityType($0))?.sumQuantity()?.doubleValue(for: .meterUnit(with: .kilo)) }.first
-                return Workout(name: name(of: workout.workoutActivityType), start: workout.startDate, end: workout.endDate, calories: calories, distance: distance)
+                return Workout(id: workout.uuid, name: name(of: workout.workoutActivityType), start: workout.startDate, end: workout.endDate, calories: calories, distance: distance)
             }
         }
 
@@ -3715,7 +3739,7 @@ enum Template {
                 store.execute(query)
             }
             return found.compactMap { $0 as? HKQuantitySample }.map {
-                Sample(kind: kind, value: $0.quantity.doubleValue(for: kind.unit) * kind.scale, date: $0.endDate, source: $0.sourceRevision.source.name)
+                Sample(id: $0.uuid, kind: kind, value: $0.quantity.doubleValue(for: kind.unit) * kind.scale, date: $0.endDate, source: $0.sourceRevision.source.name)
             }
         }
 
