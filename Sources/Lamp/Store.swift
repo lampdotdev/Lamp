@@ -194,9 +194,11 @@ extension QueuedMessage {
         return saved
     }
 
+    /// `ask` is what the card was called in a request kept by an earlier Lamp: read, so that an answer
+    /// still waiting from then can be taken back and its card opens again.
     init(saved: [String: Any], attachments: [URL]) {
         self.init(text: saved["text"] as? String ?? "", attachments: attachments,
-                  card: (saved["card"] as? String).flatMap(UUID.init(uuidString:)))
+                  card: ((saved["card"] ?? saved["ask"]) as? String).flatMap(UUID.init(uuidString:)))
     }
 }
 
