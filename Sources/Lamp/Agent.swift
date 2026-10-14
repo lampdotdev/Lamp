@@ -39,7 +39,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,ask,show_result"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,ask,show_result"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -131,7 +131,8 @@ enum Agent {
     `ask` for anything you need to ask (they click an answer, type their own, or leave it to you); \
     `show_result` for what a new app or a big change came to, with your guesses as buttons, and for what an \
     ordinary change added, with the new things as rows; `plan` for what \
-    you're building; `offer_setup` for setting up AI. When a piece fits, use it instead of writing the same \
+    you're building; `offer_setup` for setting up AI; `make_app_for` when they want the app on other devices \
+    (the iPhone or the Mac). When a piece fits, use it instead of writing the same \
     thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
     message, the same as something typed. If they type something that isn't one of your options, that's their \
     answer: follow it.
@@ -214,7 +215,7 @@ enum Agent {
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
                      Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
-                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), Rules.universalShare, Rules.store, Rules.kinds(mac: true),
+                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
                      Rules.universalTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
@@ -235,7 +236,7 @@ enum Agent {
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.macShare, Rules.permissions] }
         rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules.append(Rules.computer) }
-        if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneShare, Rules.icloud] }
+        if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.iPhoneShare, Rules.icloud] }
         rules += [Rules.store, Rules.kinds(mac: mac), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
                   Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
@@ -311,7 +312,8 @@ enum Agent {
         - `look_at_app` builds the app for where Try On points (this Mac, or the {{DEVICE}} simulator) and shows you \
         it there; `use_app` works on the same. You can't move it yourself: when a change is for the other half, say \
         so plainly and ask the user to switch under Try On if they want you to try it there, and check that half \
-        by building it instead. Everything the Mac and iPhone rules say about trying an app holds for its half.
+        by building it instead. Everything the Mac and iPhone rules say about trying an app holds for its half; \
+        the iPhone half's log and pictures are in .lamp/runtime/ios/ instead of .lamp/runtime/.
         """
 
         static let iPhoneHeader = """
@@ -903,6 +905,29 @@ enum Agent {
         15 and later but the 16e have one; iPads don't): `look_at_app` says which simulator the app is open on, \
         and when it has none, say so and that the person can choose one under Try On. Only the person can add a widget to the home screen, and Lamp shows them how: don't \
         explain it, and say in a sentence that it's ready to add.
+        """
+
+        static let iPhoneWatch = """
+        - The app can have an Apple Watch app with complications. Make one when the user asks, or when a glance \
+        or a tap on the wrist suits it (a timer, a workout, a tally, a checklist). Write it in SwiftUI in a \
+        `Watch/` folder at the app's root, starting with Watch/WatchApp.swift: one `@main` App whose WindowGroup \
+        ends in `.lampWatch()`, which keeps complications current while the watch app is closed, and a screen or two \
+        of big controls. Complications go in Watch/Complications/: one `@main` `WidgetBundle` of \
+        `StaticConfiguration`s with `.supportedFamilies` from `.accessoryCircular`, `.accessoryRectangular`, \
+        `.accessoryInline` and `.accessoryCorner`, and `.containerBackground(.fill.tertiary, for: .widget)`. \
+        Neither shares code with Sources/ or has LampSupport.swift: declare the Codable types they read in each \
+        folder. The data: in the app, `LampWatch.share(Today(…), as: "today")` at launch and whenever it changes; \
+        on the watch, `@LampWatched("today") var today: Today?` in a view, or `LampWatch.read(Today.self, from: \
+        "today")` in a complication's timeline, nil until the phone has first shared. A tap \
+        on the watch: `LampWatch.send("addGlass", 1)`, done in the app by `LampWatch.onAction { name, payload in \
+        … }` set at launch (`payload.decode(Int.self)`), which shares what changed. Watch/LampWatchSupport.swift \
+        and its copy in Complications/ are Lamp's: never edit them. A workout on the watch, saved to Health with \
+        heart rate, calories and distance: `@StateObject private var workout = LampWorkout()` from that file, \
+        `try await workout.start(.running)`, `pause()`, `resume()`, `await workout.end()`, with `{"healthkit": \
+        true}` in capabilities.json; the simulator's watch measures nothing, so check it starts and ends. The watch \
+        app's icon is the app's. Lamp opens the watch app on an Apple Watch \
+        simulator beside the iPhone; `look_at_app` and `use_app` see only the iPhone, so don't try them on the \
+        watch. Say in a sentence that it's on the watch, and that a complication is added by editing a watch face.
         """
 
         /// What `LampNotifications` does beyond a plain message, said in both kinds' blocks.

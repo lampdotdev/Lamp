@@ -230,6 +230,14 @@ enum Versions {
             // Before the restore is committed, so what comes back is already this Lamp's: the library's names
             // and the bundle id (an app copied from the other edition), with no change left over afterwards.
             Migration.normalize(project.dir, commit: false)
+            // A version from before the app was made for other devices brings back its kind with its code, so
+            // Lamp's own files and its next build are for what that code was written for (Store.followRestoredKind).
+            var project = project
+            if let kind = Template.platform(fromPackageIn: project.dir), kind != project.platform {
+                project.platform = kind
+                if !kind.hasIOS { project.device = nil }
+                try? Template.saveMeta(project)
+            }
             try? Template.writeOwnedFiles(for: project)   // the build writes them again, and stops if it can't
         }
         return ok
@@ -422,9 +430,12 @@ enum VersionTitles {
         _ = await Versions.git("git show --format= --name-only \"$LAMP_VERSION\"", cwd: project.dir,
                             env: ["LAMP_VERSION": version.id]) { if !$0.trimmed.isEmpty { files.append($0.trimmed) } }
         // Lamp refreshing the support code it puts in every app isn't a change the user made.
-        if !files.isEmpty, files.allSatisfy({ $0 == "Sources/LampSupport.swift" || $0 == Template.widgetFolder + "/" + Template.widgetSupportFile || $0 == Template.shareFolder + "/" + Template.shareSupportFile }) { return "Lamp update" }
+        if !files.isEmpty, files.allSatisfy({ $0 == "Sources/LampSupport.swift" || $0 == Template.widgetFolder + "/" + Template.widgetSupportFile
+                                              || $0 == Template.shareFolder + "/" + Template.shareSupportFile
+                                              || Template.watchSupportPaths.contains($0) }) { return "Lamp update" }
         var diff = ""
-        _ = await Versions.git("git show --format= --unified=1 \"$LAMP_VERSION\" -- . ':!Sources/LampSupport.swift' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!\(Template.shareFolder)/\(Template.shareSupportFile)' ':!\(Attachments.folder)'",
+        let watchSupport = Template.watchSupportPaths.map { " ':!\($0)'" }.joined()
+        _ = await Versions.git("git show --format= --unified=1 \"$LAMP_VERSION\" -- . ':!Sources/LampSupport.swift' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!\(Template.shareFolder)/\(Template.shareSupportFile)'\(watchSupport) ':!\(Attachments.folder)'",
                             cwd: project.dir, env: ["LAMP_VERSION": version.id]) { line in
             if diff.count < 8000 { diff += line + "\n" }
         }

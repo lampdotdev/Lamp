@@ -20,7 +20,7 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `ask`, `show_result`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `ask`, `show_result`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
@@ -31,7 +31,7 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `ask`, `show_result`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `ask`, `show_result`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **How the agent talks** (`Talk`, `TalkCards.swift`): in a sentence or two and in cards, not paragraphs. Its
   pieces are tools: `ask` puts questions in the chat as a card answered by clicking, laid out as the agent
@@ -178,7 +178,19 @@ Xcode, the person's own Claude Code and Codex or tools from the PATH; a new chec
 
 ## iPhone apps
 
-A new app's intro (`NewAppIntro`) and the welcome's first-app step (`IdeaStep`) have a row of kinds to pick from, Mac / iPhone & iPad / Mac, iPhone & iPad (`AppKind`, `Store.setKind`), and the starter ideas follow the choice (`Ideas.phonePool`). New App makes a draft, a folder with only `.lamp/meta.json`
+Nobody picks what a new app runs on. The first request's naming call (`AppName.suggest`) also lists the devices it
+runs on (`mac`, `iphone` for iPhone and iPad; `Platform(devices:)`) and whether the person said so; `Store.chooseKind` takes that before anything is
+written: a kind the person didn't say only when this Mac can build it now (`PhoneTools.checked`: Xcode, and a team for
+both), else a Mac app, and one they said either way (the build says what's missing). A line in the chat says so for
+anything but a Mac app. The starter ideas mix Mac and iPhone ones (`Ideas.mixed`). Later, "make it work on my
+iPhone too" is the agent's `make_app_for` (`Store.convert`), given every device the app runs on from then on (a
+new kind of device is one more name in `Platform(devices:)` and the tool's schema; "watch" brings the iPhone with it,
+and the answer tells the agent to add or remove `Watch/` with the watch rule): it checks this Mac can build the new kind (opening the
+setup steps if not), quits every copy, changes the kind in meta.json, rewrites Lamp's own files, copies the Mac
+settings (UserDefaults) to a new signed id, and answers with the rules for the new kind, which stay in the
+conversation; the agent then adapts the code. A Mac app's data doesn't move: LampSupport keeps it under the app's
+plain id (`{{DATAID}}`, `Edition.appBundlePrefix` and the folder name) whatever it's signed as, and moves it there
+once from a folder named after its signed id. New App makes a draft, a folder with only `.lamp/meta.json`
 (`Template.draft`), so its kind and name are just that file; the scaffold is written and committed when it first
 builds (`Store.materialize`, in the first turn after naming and in `run`), and `LampProject.scaffolded` tells the two apart. An iOS app is one app for both devices, as Apple has it; **Try On** (in the toolbar and the app's right-click menu) picks which simulator it opens in (`LampProject.family`, iPhone to begin with), or one simulator by name under Choose Simulator (`LampProject.simulator`, kept in `meta.json`; the list is `Simulator.choices`), for what only some models have, such as the Dynamic Island. Lamp's own pick of the family is used when the chosen one is no longer installed, and `look_at_app` tells the agent which simulator the app is open on. It runs in the iPhone or iPad simulator on this Mac (`LampProject.platform == .iphone`,
 kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools: `Simulator`
@@ -264,7 +276,12 @@ An app can be made for both (`Platform.universal`, the "Mac, iPhone & iPad" choi
 Xcode's multiplatform apps are: one code, with what differs under `#if os(macOS)` and `#if os(iOS)`, built for
 one place at a time. Where it opens is `LampProject.destination`: a Mac app's is always the Mac and an iPhone
 app's always iOS, and an app for both goes where Try On last put it (`chosen`, `target` in `meta.json`; "My Mac"
-in `TryOnChoices`, `Store.setMac`, and the simulator and phone choices move it to iOS). Everything about running,
+in `TryOnChoices`, `Store.setMac`, and the simulator and phone choices move it to iOS). It can be open in both places at once: Play
+and Stop (and the app menu's Quit) are for where Try On points (`Store.isOpen`, from `openOnMac` and `openOnIOS`),
+moving Try On closes nothing, and Stop quits only that copy (`quit(only:)`; a Mac build replaces only the Mac
+copy). Each copy keeps its log and pictures in its own folder: the Mac copy's in `.lamp/runtime` (`Runtime.macFolder`,
+which the app writes itself, and where what only a Mac copy has, such as a held build or its quit reply, is read),
+the iPhone copy's in `.lamp/runtime/ios` (`Runtime.folder` while Try On points at iOS). Everything about running,
 looking and using branches on `destination` (`onIOS`); what an app could have, such as the Try On menu or the
 phone's away-from-the-Mac keys, branches on `Platform.hasIOS` / `hasMac`. Its scaffold and owned files are
 their own (`Template.universalAppSwift`, `universalPackageSwift` listing both platforms, `universalBuildSh`,
@@ -278,7 +295,7 @@ in Settings → Building, so the app can use what Apple ties to a team, which La
 platforms (`LampProject.bundleID`), and `Store.deploy` seals what it adds (icon, assets, Info.plist) with the
 team's certificate and the entitlements Xcode gave it (`Devices.signingIdentity`), never Lamp's. The agent gets
 both kinds' rules, each marked for its half, after one rule on sharing the code (`Agent.universalPrompt`). An app
-for both can't be shared as a `.lampapp` yet; its widgets and Live Activities are the iPhone half's (below).
+for both is shared as a `.lampapp` like any other (the file says what it's made for, format 6, and carries `Watch/` when it has one); its widgets and Live Activities are the iPhone half's (below).
 
 ## iCloud
 
@@ -534,6 +551,36 @@ holding home screen widgets and Live Activities (`ActivityConfiguration`) in one
   lock screen) before the picture. Only the person can add a widget to the home screen; the chat's `WidgetCard`
   says how in iOS words (`WidgetCard.phoneStatus`), and iOS doesn't say whether they did, so it always does.
 
+### Apple Watch
+
+An iPhone app, and the iPhone half of an app for both, can have an Apple Watch app: Swift in `Watch/`
+(`Template.hasWatch`, asked before every build) is a SwiftUI watch app, and Swift in `Watch/Complications/`
+(`hasComplications`) its complications, a WidgetKit extension inside it. The rule is `Agent.Rules.iPhoneWatch`.
+
+- **Building.** `Template.withWatch` adds the watch's targets to Package.swift (`.watchOS(.v10)`, the
+  complications as an extension like the widget, the watch app's target excluding Complications/) and to
+  build.sh: the iPhone app is built by product name, so the watch code isn't compiled for iOS, and
+  `watchBuildSteps` builds for the watch simulator SDK into `<App>.app/Watch/<Exe>Watch.app` (`WKApplication`,
+  `WKCompanionAppBundleIdentifier`, id `<app's id>.watchkitapp`) with `PlugIns/<Exe>WatchComplications.appex`,
+  each signed before what holds it, the app group linked into their binaries as for the iPhone app. Without the
+  watch SDK the iPhone app builds without it, with a warning. On a phone and for an app for both,
+  `withWatchTarget` adds a watchOS app target embedded by an Embed Watch Content phase (`platformFilter = ios`)
+  and the complications' extension target embedded in it; Xcode takes synchronized-group exceptions per file, not
+  per folder, so the Complications/ files are listed each time the project is written.
+- **Data.** `LampWatch` in LampSupport (WatchConnectivity on iOS, calls that do nothing on the Mac) sends
+  everything shared as the session's application context and takes the watch's actions (`onAction`, once each
+  by id). The watch's half is `lampWatchSupportSwift`, written into both folders (`writeWatchSupport`; the
+  complications' copy compiles with `LAMP_COMPLICATION` and only reads): `@LampWatched` and `LampWatch.read` read
+  what the watch app kept in the folder it shares with its complications, and `send` goes as a message, which
+  wakes the iPhone app, or a transfer when the phone is away. While a complication is on the watch face, each
+  change also goes as a complication transfer (`transferCurrentComplicationUserInfo`, about 50 a day), which
+  wakes the watch app out of sight: `.lampWatch()` on its WindowGroup takes it (`backgroundTask(.watchConnectivity)`)
+  and redraws the complications.
+- **Simulator.** After the iPhone app opens, `Store.openWatchApp` installs and opens the watch app on the watch
+  simulator paired with that iPhone (`Simulator.pairedWatch`, which pairs a new one when Xcode has a watchOS
+  that pairs; `LAMP_PRETEND_MISSING=watch`); with none, one line in the chat says how to add watchOS. The agent
+  can't look at or use the watch. A shared `.lampapp` carries `Watch/` (format 6), without Lamp's files there.
+
 ### App Intents
 
 An app's actions reach Siri, Shortcuts, Spotlight, the Action button, a widget's buttons and Control Center as
@@ -601,7 +648,7 @@ handler has run.
   `AppSigning.command(share:)` signs it before the app); signed with Lamp's certificate it's taken out, since it
   would take what people share and lose it, and `look_at_app` says why (`Store.shareHint`). macOS keeps a new share
   extension off until the person turns it on (Edit Extensions… in a Share menu), which the rule tells the agent.
-- A shared app (`.lampapp`) carries `Share/` without Lamp's file and says it is format 5.
+- A shared app (`.lampapp`) carries `Share/` without Lamp's file and says it is format 7.
 
 `LampSpotlight.index(id:title:details:keywords:)`, `remove` and `removeAll` keep the app's own things in Core
 Spotlight, and `.lampSpotlightOpen { id in … }` on a view hears which one was tapped (SwiftUI's

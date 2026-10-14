@@ -423,7 +423,7 @@ struct AppMenu: View {
         Button("Rebuild & Open") { store.runPrepared(project) }
             .disabled(busy)
         Button("Quit") { Task { await store.quitApp(project) } }
-            .disabled(!store.openApps.contains(project.id))
+            .disabled(!store.isOpen(project))
         if project.platform.hasIOS {
             // Which simulator the app opens in (it's built for both), or which of the person's own phones.
             Menu("Try On") { TryOnChoices(project: project) }
@@ -971,8 +971,9 @@ struct ProjectView: View {
             ToolbarItem(placement: .navigation) { titleIcon }
         }
         ToolbarItem {
-            // One button: Play while the app is closed, Stop while it's open.
-            if store.openApps.contains(project.id) {
+            // One button: Play while the app is closed, Stop while it's open, where Try On points (an app for
+            // both can be open on this Mac and in a simulator at once).
+            if store.isOpen(project) {
                 Button { Task { await store.quitApp(project) } } label: {
                     Label("Quit App", systemImage: "stop.fill")
                 }
@@ -1411,10 +1412,6 @@ struct NewAppIntro: View {
 
     private var busy: Bool { store.busy.contains(project.id) }
 
-    private var kind: Binding<AppKind> {
-        Binding { AppKind(project) } set: { store.setKind(project, $0) }
-    }
-
     var body: some View {
         VStack(spacing: 14) {
             // Catches the light once the reveal has passed it.
@@ -1442,22 +1439,16 @@ struct NewAppIntro: View {
                 .help("Rename this app")
             Text(project.untitled && project.fromWish ? "Here's your wish. Change anything you like."
                  : project.untitled
-                 ? "Describe the \(AppKind(project).rawValue) app you wish you had, and Lamp will build it."
+                 ? "Describe the app you wish you had, for your Mac, iPhone or both, and Lamp will build it."
                  : "Describe what \(project.name) should do. Lamp builds it and opens it for you.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 400)
-            if !project.scaffolded {   // a draft, so its kind is still open (Store.setKind)
-                KindPicker(selection: kind)
-                    .disabled(busy)
-                    .padding(.top, 4)
-            }
             if fresh && draft.trimmed.isEmpty && !ideas.isEmpty {
-                StarterIdeas(ideas: ideas, kind: AppKind(project)) { prompt in
+                StarterIdeas(ideas: ideas) { prompt in
                     draft = prompt
                     store.chatFocusRequest += 1
                 }
-                .id(ideas.map(\.title))   // a fresh deck when the kind, and so the ideas, change
                 .padding(.top, 18)
                 .padding(.horizontal, 24)
             }
@@ -1470,14 +1461,12 @@ struct NewAppIntro: View {
             fresh = Template.isScaffold(project)
             if ideas.isEmpty { drawIdeas() }
         }
-        // Ideas for what it's now going to be: a phone's aren't a Mac's.
-        .onChange(of: AppKind(project)) { drawIdeas() }
         .onChange(of: editingName) { if !editingName { commit() } }
     }
 
     private func drawIdeas() {
         let others = store.projects.filter { $0.id != project.id && !$0.untitled }
-        ideas = Ideas.starters(made: others.map(\.name), kind: AppKind(project))
+        ideas = Ideas.starters(made: others.map(\.name))
     }
 
     private func commit() {
@@ -1873,41 +1862,6 @@ struct ApprovalCard: View {
     }
 }
 
-/// What a new app is made as, as a small picture of each device rather than its name: the welcome and a new
-/// app's intro both choose with it. The name is still there for the pointer and VoiceOver.
-struct KindPicker: View {
-    @Binding var selection: AppKind
-    @Environment(\.isEnabled) private var enabled
-    @State private var hovered: AppKind?
-
-    var body: some View {
-        HStack(spacing: 6) {
-            ForEach(AppKind.allCases, id: \.self) { kind in
-                let chosen = kind == selection
-                Button { selection = kind } label: {
-                    Image(systemName: kind.symbol)
-                        .font(.system(size: 20, weight: .regular))
-                        .foregroundStyle(chosen ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                        .frame(width: 46, height: 36)
-                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(chosen ? AnyShapeStyle(.tint.opacity(0.12))
-                                         : AnyShapeStyle(Color.primary.opacity(hovered == kind && enabled ? 0.05 : 0))))
-                        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .strokeBorder(chosen ? AnyShapeStyle(.tint.opacity(0.5)) : AnyShapeStyle(.clear), lineWidth: 1))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .focusEffectDisabled()
-                .onHover { hovered = $0 ? kind : (hovered == kind ? nil : hovered) }
-                .help(kind.rawValue)
-                .accessibilityLabel(kind.rawValue)
-                .accessibilityAddTraits(chosen ? .isSelected : [])
-            }
-        }
-        .animation(.easeOut(duration: 0.15), value: selection)
-    }
-}
-
 /// Apps to start from, under a new app's empty chat. Choosing one fills in the request (it isn't sent) so the
 /// user can make it theirs first. It opens on the six it's given; Show Me Others pages on from there.
 struct StarterIdeas: View {
@@ -1915,9 +1869,9 @@ struct StarterIdeas: View {
     @StateObject private var deck: IdeaDeck
     @State private var hovered: String?
 
-    init(ideas: [Idea], kind: AppKind, choose: @escaping (String) -> Void) {
+    init(ideas: [Idea], choose: @escaping (String) -> Void) {
         self.choose = choose
-        _deck = StateObject(wrappedValue: IdeaDeck(first: ideas, kind: kind))
+        _deck = StateObject(wrappedValue: IdeaDeck(first: ideas))
     }
 
     var body: some View {

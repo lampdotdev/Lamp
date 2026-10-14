@@ -322,6 +322,34 @@
     }
   },
   {
+    "name": "make_app_for",
+    "label": "Change devices",
+    "description": "Changes which devices this app is made for, when the person asks for it somewhere it isn't (\"make it work on my iPhone too\"). List every device it should run on from now on: \"mac\" for this Mac, \"iphone\" for iPhone and iPad, \"watch\" for an Apple Watch app, which comes with the iPhone app. Lamp checks this Mac can build it, rewrites the build files and keeps the app's data; the reply says how to adapt the code, which you then do in the same request. Not for a change the person didn't ask for.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "devices"
+      ],
+      "properties": {
+        "devices": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "mac",
+              "iphone",
+              "watch"
+            ]
+          },
+          "description": "Every device the app runs on from now on"
+        }
+      }
+    }
+  },
+  {
     "name": "ask",
     "label": "Ask",
     "description": "Asks the person something as a card in the chat that they answer with a click, instead of questions written in your reply. Each question comes with 2 to 4 likely answers, each with a `symbol` that pictures it; the person can also type their own, or leave it to you. `layout` is how it's shown: `steps` is one question at a time (the usual choice); `together` puts short questions on one card with their answers as chips, for two or three quick picks that don't depend on each other. Asking ends your turn: change nothing and call nothing after it. The answer is the next message, each question followed by its answer.",
