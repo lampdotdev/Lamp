@@ -5021,14 +5021,8 @@ final class Store: ObservableObject {
         let id = (message["id"] as? String).flatMap { UUID(uuidString: $0) != nil ? $0 : nil }
         if message["op"] as? String == "send", let id, !wandTaken.contains(id) {
             // Whatever happens to it, the id is taken now: a copy sent later never asks for what was turned away.
-            let count = wandTaken.count(for: project.id)
             let text = (message["text"] as? String)?.trimmed ?? ""
-            var refusal: String?
-            if text.isEmpty { refusal = "There's nothing to send." }
-            else if text.count > 4000 { refusal = "That's too long. Say it in fewer words." }
-            else if !setup.ready { refusal = "Lamp on your Mac isn't ready yet." }
-            else if count >= PhoneWand.dailyLimit { refusal = "That's all the changes from your iPhone for today. Lamp on your Mac still takes them." }
-            if let refusal {
+            if let refusal = PhoneWand.refusal(of: text, ready: setup.ready, sentToday: wandTaken.count(for: project.id)) {
                 _ = wandTaken.take(id, for: project.id, counted: false)
                 reply["refused"] = refusal
             } else if let going = wandRequests.values.first(where: { $0.project == project.id && $0.ended == nil }) {

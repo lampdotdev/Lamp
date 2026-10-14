@@ -465,7 +465,9 @@ both, whose Try On points at the person's phone (`PhoneWand.isAvailable`); only 
 never from this Mac, where the agent, the simulator's copy and the Mac half of an app for both can all read the
 secret (the network listener answers on every address, the Mac's own and `::1` among them, so `Gateway.isThisMac`
 tells those connections apart), and only from the subnet of the Mac's Wi‑Fi or wired interface
-(`Gateway.isOnLocalNetwork`), not a VPN's peers or a virtual machine's bridge, which could be handed the secret; one
+(`Gateway.isOnLocalNetwork`), not a VPN's peers or a virtual machine behind the Mac's own network, which could be
+handed the secret (a virtual machine bridged onto the Wi‑Fi with its own address passes like a phone, and only the
+token and the phone secret stop it); one
 change from the phone at a time, and at most `PhoneWand.dailyLimit` a day for
 an app (counting only messages sent on), since the app's own code could otherwise keep the agent working; and every request is an ordinary message in the app's
 chat, marked "From iPhone" (`LogLine.fromPhone`), so it runs as a normal turn with the same agent, approvals, sandbox,

@@ -34,6 +34,16 @@ enum PhoneWand {
     /// handful; the app's own code, which can send them too, mustn't be able to keep the agent working for ever.
     static let dailyLimit = 30
 
+    /// Why a message from the phone is turned away, if it is: counted before it's taken, so the message after
+    /// the day's last one is refused, not sent on.
+    static func refusal(of text: String, ready: Bool, sentToday: Int) -> String? {
+        if text.isEmpty { return "There's nothing to send." }
+        if text.count > 4000 { return "That's too long. Say it in fewer words." }
+        if !ready { return "Lamp on your Mac isn't ready yet." }
+        if sentToday >= dailyLimit { return "That's all the changes from your iPhone for today. Lamp on your Mac still takes them." }
+        return nil
+    }
+
     /// Whether this app's wand works now: the app opens on the person's phone, where the change will be
     /// installed. Otherwise the app hides its wand.
     @MainActor static func isAvailable(for project: LampProject) -> Bool {

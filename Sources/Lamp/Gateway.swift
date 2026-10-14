@@ -109,8 +109,10 @@ final class Gateway: @unchecked Sendable {
     }
 
     /// Whether a connection comes from the Wi‑Fi or wired network this Mac is on: an address in the subnet of
-    /// one of its Ethernet-like interfaces (Wi‑Fi among them, "en…"). Not a VPN's peers ("utun…"), virtual
-    /// machines on this Mac ("bridge…"), or anywhere further away: the phone is on the same Wi‑Fi.
+    /// one of its Ethernet-like interfaces (Wi‑Fi among them, "en…"). That leaves out a VPN's peers ("utun…"), a
+    /// virtual machine behind this Mac's own network ("bridge…") and anywhere further away. It can't tell a phone
+    /// from any other device on that network, a virtual machine bridged onto it with its own address among them:
+    /// those pass here, and only the app's token and phone secret stop them.
     static func isOnLocalNetwork(_ endpoint: NWEndpoint) -> Bool {
         guard case .hostPort(let host, _) = endpoint else { return false }
         let peer: Data

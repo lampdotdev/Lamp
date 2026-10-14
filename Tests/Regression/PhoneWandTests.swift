@@ -117,6 +117,24 @@ final class PhoneWandTests: XCTestCase {
         XCTAssertFalse(Gateway.isOnLocalNetwork(endpoint("192.0.2.44")), "a host beyond the Mac's networks")
     }
 
+    /// What the route asks before it takes a message: the day's last one goes through, the one after is turned away.
+    func testTheMessageAfterTheDaysLastIsRefused() {
+        XCTAssertNil(PhoneWand.refusal(of: "Make it blue", ready: true, sentToday: PhoneWand.dailyLimit - 1))
+        XCTAssertNotNil(PhoneWand.refusal(of: "Make it blue", ready: true, sentToday: PhoneWand.dailyLimit))
+        var taken = PhoneWand.Taken(file: nil)
+        var sentOn = 0
+        for index in 0...PhoneWand.dailyLimit {   // 31 messages
+            if PhoneWand.refusal(of: "Change \(index)", ready: true, sentToday: taken.count(for: "app")) == nil {
+                _ = taken.take("\(index)", for: "app")
+                sentOn += 1
+            } else {
+                _ = taken.take("\(index)", for: "app", counted: false)
+            }
+        }
+        XCTAssertEqual(sentOn, PhoneWand.dailyLimit)
+        XCTAssertEqual(taken.count(for: "app"), PhoneWand.dailyLimit)
+    }
+
     func testMessagesTurnedAwayDontCountTowardTheDaysLimit() {
         var taken = PhoneWand.Taken(file: nil)
         XCTAssertTrue(taken.take("A", for: "app"))
