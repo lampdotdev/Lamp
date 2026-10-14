@@ -5,8 +5,8 @@ import CryptoKit
 /// While the experiment is on, a Mac app is built live (build.sh with LAMP_LIVE: debug, -interposable, from the
 /// copy of its sources in `.lamp/live` with each view's body wrapped). After a change, the files it touched are
 /// compiled into a library, and the running app loads it (`LampLive` in LampSupport.swift), keeping its state.
-/// What can't go in that way (a stored property or an enum case added or removed, a file added or removed, the
-/// App itself, Lamp's own file) is installed as before, by quitting and reopening the app.
+/// What can't go in that way (a stored property or an enum case added, removed or changed, a file removed, the
+/// App itself, Lamp's own file, the app's assets or settings) is installed as before, by reopening the app.
 enum LiveReload {
     /// Whether the app is built live: an experiment, for a Mac app, or the Mac half of an app for both while
     /// Try On points at this Mac, with nothing built beside it (a widget or share extension, which share no
@@ -74,12 +74,19 @@ enum LiveReload {
     /// nil when something has to go in by reopening it, or when nothing changed.
     static func reloadable(_ project: LampProject) -> [String]? {
         let built = swiftFiles(in: sources(project)), open = swiftFiles(in: running(project))
-        guard !open.isEmpty, Set(built.keys) == Set(open.keys),
+        // A new file only brings new types and functions, which the library holds; one taken away may have held
+        // something the open app still uses.
+        guard !open.isEmpty, Set(open.keys).isSubset(of: built.keys),
               (try? String(contentsOf: runningInputs(project), encoding: .utf8)) == inputs(project) else { return nil }
         var changed: [String] = []
         for (path, url) in built.sorted(by: { $0.key < $1.key }) {
-            guard let new = try? String(contentsOf: url, encoding: .utf8),
-                  let old = open[path].flatMap({ try? String(contentsOf: $0, encoding: .utf8) }) else { return nil }
+            guard let new = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+            guard let old = open[path].flatMap({ try? String(contentsOf: $0, encoding: .utf8) }) else {
+                // Added: its types are new to the app, so their layout is whatever it says, but not the App.
+                guard !declaresApp(new) else { return nil }
+                changed.append(path)
+                continue
+            }
             guard new != old else { continue }
             guard (path as NSString).lastPathComponent != "LampSupport.swift", shape(of: new) == shape(of: old),
                   !declaresApp(new) else { return nil }

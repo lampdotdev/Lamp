@@ -437,7 +437,7 @@ built live: build.sh with `LAMP_LIVE=1` copies Sources into `.lamp/live` with ea
 every view draws again on a reload with its state kept), and builds that copy unoptimized, testable, with
 `LAMP_LIVE` and `-Xlinker -interposable` (SwiftPM for a Mac app; Xcode for an app for both, from a copy of the
 device project, with its debug library off so the code is in the one binary). After a build, `Store.install` tries
-`reloadInPlace` first: when the app is open, was built live, and the change only touched existing files without
+`reloadInPlace` first: when the app is open, was built live, and the change only touched or added files (none removed) without
 changing their stored properties, enum cases or the App (`LiveReload.reloadable`, comparing with the sources the
 open app runs, kept in `.lamp/live/running`), the whole module is compiled from the live copy and the changed files'
 objects linked into a library, which the app loads when asked with a request signed with its token, only from its
