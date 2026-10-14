@@ -238,7 +238,7 @@ private struct SidebarPicture: View {
             }
             Divider().padding(.top, 8)
             if surface.actions.contains(where: { $0.readsPage }) {
-                Text("Using this page shares its text with \(surface.title) and its AI.").font(.caption).foregroundStyle(.secondary)
+                Text("Using this page shares its text with \(app) and its AI.").font(.caption).foregroundStyle(.secondary)
             }
             ForEach(Array(surface.actions.enumerated()), id: \.offset) { index, action in
                 Text(action.label).font(.system(size: 14, weight: .semibold))
@@ -257,21 +257,33 @@ private struct SidebarPicture: View {
     }
 }
 
-/// Opens a web page out of sight and reads it with the extension's own capture script, for the preview.
+/// Opens a web page out of sight and reads it with the extension's own capture script, for the preview. The page
+/// is someone else's: the script runs in a world of its own, as Chrome runs the extension's, so the page's scripts
+/// can't change what it reports; only public https addresses are opened, redirects included; and loading and
+/// reading each have a time limit.
 @MainActor
 final class PageReader: NSObject, WKNavigationDelegate {
     struct Page { var url: String; var title: String; var text: String; var truncated: Bool; var present: Set<String> }
     private var finished: CheckedContinuation<Error?, Never>?
+    private var refused: String?
 
     static func read(_ address: String, selectors: [String]) async -> Result<Page, BrowserCompanions.Problem> {
-        guard let url = URL(string: address), url.scheme == "https", url.host != nil else {
-            return .failure(.init("`page` must be a web address starting with https://."))
+        guard let url = URL(string: address), isPublic(url) else {
+            return .failure(.init("`page` must be the https address of a public web page."))
         }
         guard let script = try? String(contentsOf: BrowserSetup.source.appendingPathComponent("extension/surface-capture.js"), encoding: .utf8) else {
             return .failure(.init("This Lamp has no browser extension to read the page with."))
         }
         let reader = PageReader()
         return await reader.load(url, script: script, selectors: selectors)
+    }
+
+    /// https, and a host on the internet: not this Mac, the local network or a bare IP address.
+    static func isPublic(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https", url.user == nil, url.password == nil, let host = url.host?.lowercased(),
+              host.contains("."), !host.hasSuffix(".local"), !host.hasSuffix(".localhost"), !host.hasSuffix(".internal") else { return false }
+        let ip = host.range(of: #"^[0-9.]+$"#, options: .regularExpression) != nil || host.contains(":")
+        return !ip && host != "localhost"
     }
 
     private func load(_ url: URL, script: String, selectors: [String]) async -> Result<Page, BrowserCompanions.Problem> {
@@ -284,28 +296,52 @@ final class PageReader: NSObject, WKNavigationDelegate {
         web.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
         window.contentView = web
         web.navigationDelegate = self
-        defer { web.stopLoading(); window.close() }
+        defer { web.stopLoading(); web.navigationDelegate = nil; window.contentView = nil; window.close() }
         web.load(URLRequest(url: url, timeoutInterval: 20))
-        let failure = await withCheckedContinuation { finished = $0
-            Task { [weak self] in try? await Task.sleep(for: .seconds(25)); self?.finish(URLError(.timedOut)) }
-        }
+        let failure = await wait(25)
+        if let refused { return .failure(.init(refused)) }
         if let failure { return .failure(.init("Lamp couldn't open \(url.absoluteString): \(failure.localizedDescription)")) }
         try? await Task.sleep(for: .seconds(2))   // what the page draws after loading
+        guard let landed = web.url, Self.isPublic(landed) else { return .failure(.init("\(url.absoluteString) went to an address that isn't a public https page.")) }
         let list = (try? JSONSerialization.data(withJSONObject: selectors)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
         let call = script + "\n;JSON.stringify({page: (() => { try { return __lampCaptureSurface('page'); } catch (e) { return {error: String(e.message)}; } })(), " +
             "present: \(list).map(s => { try { return !!document.querySelector(s); } catch { return false; } })})"
-        guard let json = try? await web.evaluateJavaScript(call) as? String,
+        // In a world of the reader's own, and given ten seconds: a page that spins forever doesn't hold the builder up.
+        let json: String? = await withCheckedContinuation { done in
+            var answered = false
+            func answer(_ value: String?) { if !answered { answered = true; done.resume(returning: value) } }
+            web.evaluateJavaScript(call, in: nil, in: .defaultClient) { result in answer(try? result.get() as? String) }
+            Task { try? await Task.sleep(for: .seconds(10)); answer(nil) }
+        }
+        guard let json, json.utf8.count < 400_000,
               let value = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
-              let page = value["page"] as? [String: Any] else { return .failure(.init("Lamp opened \(url.absoluteString) but couldn't read it.")) }
-        if let error = page["error"] as? String { return .failure(.init("Lamp couldn't read \(url.absoluteString): \(error)")) }
+              let page = value["page"] as? [String: Any] else { return .failure(.init("Lamp opened \(url.absoluteString) but couldn't read it in time.")) }
+        if let error = page["error"] as? String { return .failure(.init("Lamp couldn't read \(url.absoluteString): \(error.prefix(200))")) }
         let present = zip(selectors, value["present"] as? [Bool] ?? []).filter(\.1).map(\.0)
-        return .success(Page(url: page["url"] as? String ?? url.absoluteString, title: page["title"] as? String ?? "",
-                             text: page["text"] as? String ?? "", truncated: page["truncated"] as? Bool ?? false, present: Set(present)))
+        return .success(Page(url: landed.absoluteString, title: String((page["title"] as? String ?? "").prefix(300)),
+                             text: String((page["text"] as? String ?? "").prefix(24000)), truncated: page["truncated"] as? Bool ?? false,
+                             present: Set(present)))
     }
 
+    private func wait(_ seconds: Double) async -> Error? {
+        await withCheckedContinuation { finished = $0
+            Task { [weak self] in try? await Task.sleep(for: .seconds(seconds)); self?.finish(URLError(.timedOut)) }
+        }
+    }
     private func finish(_ error: Error?) {
         finished?.resume(returning: error)
         finished = nil
+    }
+    /// Every navigation, the first and any redirect or script's, has to be to a public https page.
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+        guard let url = navigationAction.request.url, Self.isPublic(url) || url.absoluteString == "about:blank" else {
+            if navigationAction.targetFrame?.isMainFrame != false {
+                refused = "The page went to \(navigationAction.request.url?.absoluteString.prefix(200) ?? "another address"), which isn't a public https page, so Lamp stopped reading it."
+                finish(nil)
+            }
+            return decisionHandler(.cancel)
+        }
+        decisionHandler(.allow)
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finish(nil) }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finish(error) }

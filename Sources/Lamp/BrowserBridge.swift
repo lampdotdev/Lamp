@@ -19,6 +19,7 @@ final class BrowserBridge {
     static var secretURL: URL { folder.appendingPathComponent("secret") }
     private var secret = ""
     private var nonces: [String: Date] = [:]
+    private var setupShown: [String: Date] = [:]
 
     func prepare() throws {
         let fm = FileManager.default
@@ -68,6 +69,9 @@ final class BrowserBridge {
             }
             return result
         case "/browser/setup":
+            // Once a minute at most: each call brings Lamp forward.
+            if let last = setupShown[app.id], now.timeIntervalSince(last) < 60 { return (200, ["opened": true]) }
+            setupShown[app.id] = now
             Store.shared.offerSetup(app, SetupOffer(capability: .browser), because: "\(app.name) also works in Chrome. Connect Lamp to Chrome to use it beside a page.", fromAgent: true)
             Store.shared.showChat(app.id)
             return (200, ["opened": true])
@@ -77,14 +81,14 @@ final class BrowserBridge {
     }
 
     private func native(_ body: [String: Any], projects: [LampProject]) -> [String: Any] {
-        guard body["session"] is String, let profile = body["profile"] as? String,
-              UUID(uuidString: profile) != nil else { return ["error": "Missing browser identity."] }
+        guard body["session"] is String, let profile = body["profile"] as? String, UUID(uuidString: profile) != nil,
+              let run = body["run"] as? String, UUID(uuidString: run) != nil else { return ["error": "Missing browser identity."] }
         let op = body["op"] as? String ?? ""
         if op == "companion-hello" {
             BrowserSetup.shared.receiveHello(version: body["version"] as? Int ?? 0)
             return ["connected": BrowserSetup.shared.connected, "fits": BrowserCompanions.shared.fitsKey(projects)]
         }
         guard op.hasPrefix("surface-") else { return ["error": "Unknown action."] }
-        return BrowserCompanions.shared.native(body, tab: BrowserCompanions.tabKey(profile: profile, tab: body["tab"]), projects: projects)
+        return BrowserCompanions.shared.native(body, tab: BrowserCompanions.tabKey(profile: profile, run: run, tab: body["tab"]), projects: projects)
     }
 }

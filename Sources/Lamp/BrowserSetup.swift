@@ -146,6 +146,9 @@ struct BrowserSetupGuide: View {
             }
             if let problem = browser.problem { Text(problem).foregroundStyle(.red) }
             if !browser.connected { HStack { Spacer(); Button("Close") { dismiss() } } }
-        }.padding(24).frame(width: 480)
+        }
+        // Wrapped, not cut off: the steps are long sentences in a fixed-width sheet.
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(24).frame(width: 480)
     }
 }

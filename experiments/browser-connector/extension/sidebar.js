@@ -70,8 +70,10 @@ function render(state) {
     input.oninput = () => typed(field, input.value);
     label.append(input); $('fields').append(label);
   }
-  $('consent').textContent = s.actions.some(a => a.readsPage) ? `Using this page shares its text with ${s.title} and its AI.`
-    : s.actions.some(a => a.readsSelection) ? `Using a selection shares only that passage with ${s.title} and its AI.` : '';
+  // Named as Lamp knows the app, not by the title it gives its own sidebar.
+  const name = apps.find(a => a.id === selected)?.name || 'this app';
+  $('consent').textContent = s.actions.some(a => a.readsPage) ? `Using this page shares its text with ${name} and its AI.`
+    : s.actions.some(a => a.readsSelection) ? `Using a selection shares only that passage with ${name} and its AI.` : '';
   for (const action of s.actions) {
     const button = document.createElement('button'); button.textContent = action.label;
     button.disabled = busy || state.busy || s.busy;

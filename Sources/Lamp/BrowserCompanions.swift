@@ -83,7 +83,8 @@ final class BrowserCompanions {
                 case "\"", "'": quote = c
                 case "[", "(": bracket += 1
                 case "]", ")": bracket -= 1
-                case " ", ">", "+", "~", ",": if bracket == 0 { return "\"\(selector)\" in browser.json combines selectors; Chrome only takes one compound selector per fit, like div.recipe-card or [itemtype*=\"schema.org/Recipe\"]. Give each its own fit." }
+                case _ where c.isWhitespace || ">+~,".contains(c):
+                    return "\"\(selector)\" in browser.json combines selectors; Chrome only takes one compound selector per fit, like div.recipe-card or [itemtype*=\"schema.org/Recipe\"]. Give each its own fit."
                 default: break
                 }
             }
@@ -103,6 +104,8 @@ final class BrowserCompanions {
         var event: [String: Any]?
         var eventDate: Date?
         var accepted: [String] = []
+        /// Revisions a click was handled under. Never valid again, even for a tab the app has stopped drawing for.
+        var spent: [String] = []
     }
     private var apps: [String: Registration] = [:]
     /// The tabs each app's sidebar is open in, by when each was last drawn.
@@ -153,6 +156,11 @@ final class BrowserCompanions {
     /// A handled or expired click: its tab gets a new revision, so the buttons it was pressed on are spent.
     private func finish(_ entry: inout Registration) {
         let tab = entry.event?["tab"] as? String ?? ""
+        if let used = entry.event?["revision"] as? String {
+            entry.spent = Array((entry.spent + [used]).suffix(256))
+            // A tab the app hadn't drawn for was shown the shared surface's revision: that one is spent too.
+            if entry.revisions[""] == used { entry.revisions[""] = UUID().uuidString }
+        }
         entry.event = nil; entry.eventDate = nil
         entry.revisions[tab] = UUID().uuidString
         if tab != "" && entry.surfaces[tab] == nil { entry.surfaces[tab] = entry.surfaces[""] }
@@ -187,9 +195,10 @@ final class BrowserCompanions {
     }
 
     /// The tab a request is about, as the app sees it: an opaque name, the same for one tab in one Chrome profile.
-    static func tabKey(profile: String, tab: Any?) -> String? {
+    /// `run` is Chrome's current run: tab ids start again after a restart, and a new tab must not get an old one's draft.
+    static func tabKey(profile: String, run: String, tab: Any?) -> String? {
         guard let number = (tab as? Int) ?? (tab as? NSNumber)?.intValue ?? (tab as? String).flatMap(Int.init), number >= 0 else { return nil }
-        return "t" + SHA256.hash(data: Data("\(profile):\(number)".utf8)).prefix(6).map { String(format: "%02x", $0) }.joined()
+        return "t" + SHA256.hash(data: Data("\(profile):\(run):\(number)".utf8)).prefix(6).map { String(format: "%02x", $0) }.joined()
     }
 
     /// What a sidebar (the extension's or Lamp's preview) asks: the list of apps, one app's surface for a tab,
@@ -228,13 +237,13 @@ final class BrowserCompanions {
         }
         if entry.accepted.contains(eventID) { return ["accepted": true] }
         let surface = entry.surfaces[tab] ?? entry.surfaces[""]!
-        guard body["revision"] as? String == revision(entry, tab), !surface.busy, entry.event == nil,
+        guard let shown = body["revision"] as? String, shown == revision(entry, tab), !entry.spent.contains(shown), !surface.busy, entry.event == nil,
               let action = surface.actions.first(where: { $0.id == body["action"] as? String }),
               let fields = body["fields"] as? [String: String], fields.count <= 12,
               fields.allSatisfy({ key, value in surface.fields.contains { $0.id == key } && value.count <= 4000 }) else {
             return ["error": "The app changed. Wait a moment, then try again."]
         }
-        var event: [String: Any] = ["id": eventID, "tab": tab, "action": action.id, "fields": fields]
+        var event: [String: Any] = ["id": eventID, "tab": tab, "action": action.id, "fields": fields, "revision": shown]
         if action.readsPage || action.readsSelection == true {
             guard let page = body["page"] as? [String: Any], let url = page["url"] as? String,
                   let u = URLComponents(string: url), u.user == nil, u.password == nil, u.scheme == "https",

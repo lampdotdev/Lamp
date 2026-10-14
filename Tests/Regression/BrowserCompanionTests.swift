@@ -108,8 +108,41 @@ final class BrowserCompanionTests: XCTestCase {
 
     // The same tab in two Chrome profiles is two sidebars.
     func testTabKeysDifferByProfile() {
-        let one = BrowserCompanions.tabKey(profile: UUID().uuidString, tab: 12), other = BrowserCompanions.tabKey(profile: UUID().uuidString, tab: 12)
+        let run = UUID().uuidString
+        let one = BrowserCompanions.tabKey(profile: UUID().uuidString, run: run, tab: 12), other = BrowserCompanions.tabKey(profile: UUID().uuidString, run: run, tab: 12)
         XCTAssertNotNil(one); XCTAssertNotEqual(one, other)
-        XCTAssertNil(BrowserCompanions.tabKey(profile: "p", tab: "x"))
+        XCTAssertNil(BrowserCompanions.tabKey(profile: "p", run: run, tab: "x"))
+    }
+
+    // Found by an independent attack on the bridge: a button drawn before a click acted again once the app's next
+    // update left its tab out (the app draws only the tabs open most recently).
+    func testASpentButtonStaysSpentWhenTheAppStopsDrawingItsTab() throws {
+        let bridge = BrowserCompanions()
+        let app = LampProject(id: "box", name: "Box", exe: "Box", dir: URL(fileURLWithPath: "/tmp/box"), instance: "box")
+        let boot = UUID().uuidString, main = surface(actions: [["id": "save", "label": "Save", "readsPage": false]])
+        func view() -> String { bridge.native(["op": "surface-view", "app": app.id], tab: "t17", projects: [app])["revision"] as? String ?? "" }
+        func click(_ revision: String) -> [String: Any] {
+            bridge.native(["op": "surface-action", "app": app.id, "id": UUID().uuidString, "revision": revision, "action": "save",
+                           "fields": [String: String]()], tab: "t17", projects: [app])
+        }
+        _ = bridge.exchange(["boot": boot, "surface": main], app: app)
+        let drawn = view()
+        XCTAssertEqual(click(drawn)["accepted"] as? Bool, true)
+        let first = try XCTUnwrap(bridge.exchange(["boot": boot, "surface": main], app: app).1["event"] as? [String: Any])
+        _ = bridge.exchange(["boot": boot, "surface": main, "ack": first["id"]!], app: app)
+        XCTAssertNotNil(click(drawn)["error"])
+        _ = bridge.exchange(["boot": boot, "surface": main], app: app)
+        XCTAssertNotNil(click(drawn)["error"], "the button drawn before the first click acted again")
+        XCTAssertEqual(click(view())["accepted"] as? Bool, true, "the tab's fresh buttons still work")
+    }
+
+    // Chrome takes one compound selector per fit; any whitespace in CSS is a descendant combinator.
+    func testSelectorsWithAnyCombinatorAreRefused() {
+        for selector in ["div a", "div\ta", "div\na", "div>a", "a,b", ":not(div a)"] {
+            XCTAssertNotNil(BrowserCompanions.Declaration.selectorProblem(selector), selector)
+        }
+        for selector in [".wprm-recipe-container", "[itemtype*=\"schema.org/Recipe\"]", "[data-x=\"a b\"]", "div.recipe-card"] {
+            XCTAssertNil(BrowserCompanions.Declaration.selectorProblem(selector), selector)
+        }
     }
 }

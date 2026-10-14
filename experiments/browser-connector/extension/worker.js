@@ -2,13 +2,16 @@
 // itself lights the toolbar icon on pages an app says it fits (declarativeContent), and a page's text is read only
 // when a sidebar button that reads it is clicked, with the access that click on the toolbar icon gave.
 let port, outstanding, chain = Promise.resolve();
+// Which Chrome profile this is, and which run of Chrome: tab ids start again after a restart, so the run keeps a new
+// tab from being handed an old tab's draft.
 const profileReady = (async () => {
-  const saved = await chrome.storage.local.get('profile');
-  const profile = saved.profile || crypto.randomUUID();
-  if (!saved.profile) await chrome.storage.local.set({profile});
   await chrome.storage.local.setAccessLevel({accessLevel: 'TRUSTED_CONTEXTS'});
   await chrome.storage.session.setAccessLevel({accessLevel: 'TRUSTED_CONTEXTS'});
-  return profile;
+  const saved = await chrome.storage.local.get('profile'), now = await chrome.storage.session.get('run');
+  const profile = saved.profile || crypto.randomUUID(), run = now.run || crypto.randomUUID();
+  if (!saved.profile) await chrome.storage.local.set({profile});
+  if (!now.run) await chrome.storage.session.set({run});
+  return {profile, run};
 })();
 function connect() {
   if (port) return;
@@ -24,32 +27,28 @@ function connect() {
 // One question to Lamp at a time: the native host answers in order and holds no queue of its own.
 function native(body) {
   const next = chain.then(async () => {
-    const profile = await profileReady;
+    const {profile, run} = await profileReady;
     connect();
-    return new Promise((resolve, reject) => { outstanding = {resolve, reject}; port.postMessage({...body, profile}); });
+    return new Promise((resolve, reject) => { outstanding = {resolve, reject}; port.postMessage({...body, profile, run}); });
   });
   chain = next.catch(() => {});
   return next;
 }
 
-// The icon is dim until a page fits an app; then Chrome swaps in the lit one with a dot, for that tab only.
-async function icon(lit) {
+// The icon is dim (the manifest's) until a page fits an app; then Chrome swaps in the lit one with a dot, for that
+// tab only. Never set an icon for every tab in code: Chrome then shows that one and ignores the declarative one.
+async function litIcon() {
   const result = {};
   for (const size of [16, 32]) {
     const bitmap = await createImageBitmap(await (await fetch(chrome.runtime.getURL(`icons/lamp-${size}.png`))).blob());
     const canvas = new OffscreenCanvas(size, size), g = canvas.getContext('2d');
-    if (!lit) { g.filter = 'grayscale(1)'; g.globalAlpha = 0.5; }
     g.drawImage(bitmap, 0, 0, size, size);
-    if (lit) {
-      g.filter = 'none'; g.globalAlpha = 1;
-      g.beginPath(); g.arc(size * 0.78, size * 0.22, size * 0.2, 0, 2 * Math.PI);
-      g.fillStyle = '#e8772e'; g.fill(); g.lineWidth = Math.max(1, size / 16); g.strokeStyle = 'white'; g.stroke();
-    }
+    g.beginPath(); g.arc(size * 0.78, size * 0.22, size * 0.2, 0, 2 * Math.PI);
+    g.fillStyle = '#e8772e'; g.fill(); g.lineWidth = Math.max(1, size / 16); g.strokeStyle = 'white'; g.stroke();
     result[size] = g.getImageData(0, 0, size, size);
   }
   return result;
 }
-const dimmed = icon(false).then(imageData => chrome.action.setIcon({imageData})).catch(() => {});
 
 // What fits an app is what it declared to Lamp: sites (and a path) and CSS selectors Chrome matches by itself.
 const siteFits = (fit, url) => url.protocol === 'https:' &&
@@ -62,15 +61,17 @@ function matchers(fit) {
 }
 let rulesKey;
 async function syncRules(apps) {
-  const fits = apps.flatMap(app => app.fits || []);
-  const key = JSON.stringify(fits);
+  const key = JSON.stringify(apps.map(app => [app.id, app.fits || []]));
   if (rulesKey === undefined) rulesKey = (await chrome.storage.local.get('rulesKey')).rulesKey ?? '';
   if (key === rulesKey) return;
   await chrome.declarativeContent.onPageChanged.removeRules(undefined);
-  const conditions = fits.flatMap(matchers);
-  if (conditions.length) {
-    const imageData = await icon(true);
-    await chrome.declarativeContent.onPageChanged.addRules([{conditions, actions: [new chrome.declarativeContent.SetIcon({imageData})]}]);
+  const imageData = await litIcon();
+  // One rule per app, so a fit Chrome refuses costs only that app its lit icon.
+  for (const app of apps) {
+    const conditions = (app.fits || []).flatMap(matchers);
+    if (!conditions.length) continue;
+    await chrome.declarativeContent.onPageChanged.addRules([{id: 'app:' + app.id, conditions,
+      actions: [new chrome.declarativeContent.SetIcon({imageData})]}]).catch(() => {});
   }
   rulesKey = key;
   await chrome.storage.local.set({rulesKey});
@@ -169,4 +170,4 @@ chrome.runtime.onStartup.addListener(() => { void hello(); });
 chrome.runtime.onInstalled.addListener(() => { rulesKey = ''; chrome.storage.local.remove('rulesKey'); void hello(); });
 // A connected native port keeps the worker alive, so Lamp hears from it every two seconds while Chrome is open.
 setInterval(hello, 2000);
-void dimmed.then(hello);
+void hello();
