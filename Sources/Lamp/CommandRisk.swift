@@ -213,6 +213,10 @@ enum CommandRisk {
         var verdict: Verdict
         /// Set when the verdict is risky.
         var reason: Reason?
+        /// Whether what the command does was judged at all: false when the decision model couldn't be reached
+        /// or left a question about the command unanswered. Such a verdict is unsure, and stays a card even
+        /// where an unsure one that was judged runs (a confined command, `Store.approveCommand`).
+        var judged = true
     }
 
     /// One command, judged, for every engine: the questions put to `decide` (the decision model), and the
@@ -222,7 +226,7 @@ enum CommandRisk {
         let asked = questions(hasRequest: !request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         let aboutCommand = asked.filter { $0.key != requestQuestion }
         guard let given = try? await decide(state(command: command, folder: folder), aboutCommand),
-              var answers = Answers(given, asked: aboutCommand) else { return Judgment(verdict: .unsure) }
+              var answers = Answers(given, asked: aboutCommand) else { return Judgment(verdict: .unsure, judged: false) }
         // Risky on what the command does is settled here: nothing about the request can lift it, and neither
         // can the request's question going unanswered.
         if verdict(answers) == .risky { return Judgment(verdict: .risky, reason: reason(answers)) }
