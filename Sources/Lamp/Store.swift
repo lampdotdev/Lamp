@@ -1807,7 +1807,7 @@ final class Store: ObservableObject {
     /// Puts the app's real window on its build card, once it has opened and saved a picture of itself.
     private func showResult(of project: LampProject) async {
         guard let started = progress[project.id]?.started,
-              NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first != nil,
+              macCopies(of: project).first != nil,
               let picture = await Runtime.screenshots(of: project, since: started, waiting: 4).first,
               let image = NSImage(contentsOf: picture) else { return }
         progress[project.id]?.screenshot = image
@@ -1889,8 +1889,18 @@ final class Store: ObservableObject {
     }
 
     /// Whether the app is open on this Mac.
-    private func isRunning(_ project: LampProject) -> Bool {
-        NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == project.bundleID && !$0.isTerminated }
+    private func isRunning(_ project: LampProject) -> Bool { !macCopies(of: project).isEmpty }
+
+    /// Every copy of the app open on this Mac: by its id, and by where Lamp installs it. One found only by its
+    /// place has another id: built before the app's id changed, or by Lamp with other settings (after a fresh
+    /// start, or for an app of the same name since deleted). It's still in the way: replacing its files under it
+    /// is what `HeldInstalls` never does, and macOS brings it forward instead of opening the new one.
+    func macCopies(of project: LampProject) -> [NSRunningApplication] {
+        let place = project.installedURL.standardizedFileURL.resolvingSymlinksInPath()
+        return NSWorkspace.shared.runningApplications.filter { app in
+            !app.isTerminated && (app.bundleIdentifier == project.bundleID
+                || app.bundleURL?.standardizedFileURL.resolvingSymlinksInPath() == place)
+        }
     }
 
     /// Puts the build, with the icon as it is now, in the apps folder, unless the app is open: then it waits
@@ -2040,7 +2050,7 @@ final class Store: ObservableObject {
         } else if let look = turns[project.id]?.look, look.installed {
             crash = look.crash
             if crash == nil {
-                if let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first {
+                if let app = macCopies(of: project).first {
                     // The look opened it behind the user's windows. Now it's theirs: it shows itself, as when it's
                     // opened again. An app that lives in the menu bar opens its panel (see LampWindows).
                     DistributedNotificationCenter.default().postNotificationName(
@@ -2547,7 +2557,7 @@ final class Store: ObservableObject {
         // Built by an older Lamp: rebuild it first, so it gets this Lamp's fixes and building blocks.
         // Not while it's running (that would quit it under the user); if the build fails, the old one opens.
         if stamps[project.id]?.isOutdated == true, !busy.contains(project.id),
-           NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).isEmpty {
+           macCopies(of: project).isEmpty {
             if await updateForThisForge(project) { return }
         }
         // Its App Intents or its share extension were left out for want of a team to sign it for, and there is one
@@ -2555,10 +2565,10 @@ final class Store: ObservableObject {
         let intentsBack = await Self.intentsCanComeBack(project)
         let shareBack = await Self.shareCanComeBack(project)
         if intentsBack || shareBack, !busy.contains(project.id),
-           NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).isEmpty {
+           macCopies(of: project).isEmpty {
             if await updateForThisForge(project, because: "Signing \(project.name) for your Apple team…") { return }
         }
-        if let running = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first {
+        if let running = macCopies(of: project).first {
             // Ask the app to show a window (opening a new one if all were closed); see LampWindows. The app
             // says when it has: a window, or the panel of an app that lives in the menu bar, which isn't an
             // ordinary window and wouldn't be found below.
@@ -2611,7 +2621,7 @@ final class Store: ObservableObject {
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         // Not in the copy the person kept open: what it holds is theirs, and it isn't the agent's change.
         if Runtime.holdsBuild(project), isRunning(project) { return (409, ["error": Self.keptOpenNote]) }
-        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first else {
+        guard let app = macCopies(of: project).first else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
         guard Self.binary(of: project, contains: "lampUseAppSignature") else {
@@ -4042,8 +4052,12 @@ final class Store: ObservableObject {
             }
         }
 
-        // What the copy being replaced was signed as, to notice when this build is signed differently.
-        let replaced = await AppSigning.requirement(of: project.installedURL)
+        // What the copy being replaced was signed as, to notice when this build is signed differently. Only a copy
+        // of this app, by its id: one of another id at the same place (an app of the same name since deleted, or
+        // made by Lamp with other settings) had no permissions of this app's to lose.
+        // Read from the file, not `Bundle`, which keeps what it read of a path for as long as Lamp runs.
+        let previousID = NSDictionary(contentsOf: project.installedURL.appendingPathComponent("Contents/Info.plist"))?["CFBundleIdentifier"] as? String
+        let replaced = previousID == project.bundleID ? await AppSigning.requirement(of: project.installedURL) : nil
 
         try fm.createDirectory(at: Self.installDir, withIntermediateDirectories: true)
         AppsLink.ensure()
@@ -4445,7 +4459,7 @@ final class Store: ObservableObject {
         // Nobody is waiting once the turn is stopped or over. Not `stopped`, which the agent's exit clears.
         let stopped = { owner.map { self.turns[project.id] !== $0 || $0.wasStopped } ?? false }
         var closed = true
-        for app in NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID) {
+        for app in macCopies(of: project) {
             let gone = await AppQuit.close(app, id: project.id, runtime: Runtime.macFolder(project), stopped: stopped, asking: {
                 // Its question may be behind Lamp's window: in front, the person sees what is being waited for,
                 // and a build says in the chat that it's waiting.
@@ -5043,7 +5057,7 @@ final class Store: ObservableObject {
         if turn.keptOpen, isRunning(project) { return (200, ["text": Self.keptOpenNote]) }
         var since = Date()
         // A copy kept open in an earlier request is older than the build too: it's asked to quit, once.
-        if !changed, !Runtime.holdsBuild(project), NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first != nil {
+        if !changed, !Runtime.holdsBuild(project), macCopies(of: project).first != nil {
             // Nothing to rebuild and the app is open: ask it for fresh pictures instead of relaunching it.
             let asked = Date()
             since = asked
