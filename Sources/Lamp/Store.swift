@@ -812,6 +812,11 @@ final class Store: ObservableObject {
         guard url.scheme == Edition.urlScheme,
               let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "app" })?.value else { return }
+        // The app's 🪄: its chat beside it, with Lamp's own window left where it is.
+        if url.host == "magic" {
+            let frame = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "frame" }?.value
+            return MagicPanel.shared.show(slug, beside: frame.map(NSRectFromString))
+        }
         showChat(slug)
     }
 
