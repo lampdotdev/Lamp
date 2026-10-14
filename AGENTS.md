@@ -521,8 +521,10 @@ of the app and its widget and signs with Lamp's certificate. Moving between the 
 which macOS treats as a new app: its permissions are cleared once and the chat says so (the same path as any
 change of certificate). The team's certificate keeps its name through Apple's yearly renewal, which is what the
 signature's requirement names, so permissions last as long as with Lamp's own. The agent is told the rule
-(`Agent.Rules.macIntents`), and `look_at_app` says when a Mac app with intents has no team to sign with
-(`Store.intentsHint`). Settings → Building shows the team (`PhoneSigningSection`, "Signing") with an iPhone or
+(`Agent.Rules.macIntents`), and `look_at_app` says why when a Mac app with intents was installed without them
+(`Store.intentsHint`, read off the installed copy: no Xcode, no team, or a team whose key wasn't allowed). A team
+chosen later brings them back: it's part of such an app's fingerprint, and opening one installed without them
+builds it again once a team can sign it (`Store.intentsCanComeBack`). Settings → Building shows the team (`PhoneSigningSection`, "Signing") with an iPhone or
 iPad app, which needs one, or when this Mac has a team's certificate; with only Mac apps, None is a choice and
 nothing is chosen for the person.
 

@@ -37,6 +37,9 @@ enum Runtime {
         var hasher = SHA256()
         // An app for both is a different build for each place, so moving it under Try On is a change.
         if project.platform == .universal { hasher.update(data: Data(project.destination.rawValue.utf8)) }
+        // A Mac app's App Intents are kept or left out by whether it can be signed for a team, so a new team is a
+        // change for an app that has them (Store.intentsCanComeBack).
+        if project.platform == .mac, Store.usesAppIntents(project) { hasher.update(data: Data(Devices.team.utf8)) }
         let roots = ["Sources", Template.widgetFolder, "Package.swift", "icon.json", "capabilities.json"].map { project.dir.appendingPathComponent($0) }
         for root in roots {
             let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])
