@@ -7554,7 +7554,8 @@ enum Template {
             } catch {
                 guard mine == generation else { throw error }
                 let message = (error as? LocalizedError)?.errorDescription ?? "Couldn't connect to \(name)."
-                state = error is CancellationError ? .notConnected : .failed(message)
+                let signedIn = Saved.read(id)?.accessToken != nil
+                state = error is CancellationError ? (signedIn ? .connected : .notConnected) : .failed(message)
                 throw error
             }
         }
@@ -7619,7 +7620,7 @@ enum Template {
         private var generation = 0
         private var pending: Callback?
         private var session: String?
-        private var refreshing: Task<Void, Error>?
+        private var refreshing: (generation: Int, task: Task<Void, Error>)?
         /// How the sign-in page is shown: the browser. Replaced only by a harness that has no person to click.
         fileprivate static var openPage: (URL) -> Void = { NSWorkspace.shared.open($0) }
 
@@ -7688,8 +7689,16 @@ enum Template {
                     made.close(with: CancellationError())
                     throw Failure(message: "\(name) doesn't let apps connect by themselves.")
                 }
-                saved = try await register(at: endpoint, redirect: "http://127.0.0.1:\(made.port)/callback", found: found)
-                saved?.save(id)
+                do {
+                    saved = try await register(at: endpoint, redirect: "http://127.0.0.1:\(made.port)/callback", found: found)
+                } catch {
+                    made.close(with: error)
+                    throw error
+                }
+                guard saved?.save(id) == true else {
+                    made.close(with: CancellationError())
+                    throw Failure(message: "Couldn't keep the connection to \(name) on this Mac.")
+                }
             }
             guard let callback, var saved else { throw Failure(message: "Couldn't connect to \(name).") }
             guard mine == generation else { callback.close(with: CancellationError()); throw CancellationError() }
@@ -7723,7 +7732,7 @@ enum Template {
             guard mine == generation else { throw CancellationError() }
             try saved.take(tokens)
             saved.revocationEndpoint = found.revocationEndpoint?.absoluteString
-            saved.save(id)
+            guard saved.save(id) else { throw Failure(message: "Couldn't keep the connection to \(name) on this Mac.") }
             session = nil
         }
 
@@ -7749,8 +7758,8 @@ enum Template {
         /// A new access token from the one that renews it. The sign-in is forgotten only when the service says
         /// it's over; a network failure keeps it for next time. A Disconnect meanwhile wins.
         private func renew() async throws {
-            if let refreshing { return try await refreshing.value }
             let mine = generation
+            if let refreshing, refreshing.generation == mine { return try await refreshing.task.value }
             let task = Task { @MainActor in
                 guard var saved = Saved.read(self.id), let refresh = saved.refreshToken else {
                     throw Failure(message: "Connect \(self.name) again.", needsConnection: true)
@@ -7771,8 +7780,8 @@ enum Template {
                     throw Failure(message: "Connect \(self.name) again.", needsConnection: true)
                 }
             }
-            refreshing = task
-            defer { refreshing = nil }
+            refreshing = (mine, task)
+            defer { if refreshing?.generation == mine { refreshing = nil } }
             try await task.value
         }
 
@@ -7840,13 +7849,18 @@ enum Template {
             if notification { return nil }
             var answer: [String: Any]?
             if http?.value(forHTTPHeaderField: "Content-Type")?.contains("text/event-stream") == true {
-                // Each event's data is one message; the answer is the one with this request's id.
-                for try await line in bytes.lines where line.hasPrefix("data:") {
-                    let data = Data(line.dropFirst(5).trimmingCharacters(in: .whitespaces).utf8)
-                    if let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any], message["id"] as? Int == messageID {
-                        answer = message
-                        break
-                    }
+                // An event's data may span several lines, so what has come so far is read after each one; another
+                // field (event:, id:) starts the next event. The answer is the response (not a request the server
+                // makes of the app) with this request's id.
+                var event: [String] = []
+                for try await line in bytes.lines {
+                    guard line.hasPrefix("data:") else { event = []; continue }
+                    var value = line.dropFirst(5)
+                    if value.first == " " { value = value.dropFirst() }
+                    event.append(String(value))
+                    guard let message = try? JSONSerialization.jsonObject(with: Data(event.joined(separator: "\n").utf8)) as? [String: Any] else { continue }
+                    event = []
+                    if message["method"] == nil, message["id"] as? Int == messageID { answer = message; break }
                 }
             } else {
                 var data = Data()
@@ -7922,7 +7936,8 @@ enum Template {
         }
 
         /// What's kept for one service: the app's registration with it and, while connected, the sign-in.
-        /// In the Keychain, this device only: never in the app's folder or a backup that leaves the Mac.
+        /// In the person's Keychain under this app's id, never in the app's folder: a shared copy has a different id
+        /// and doesn't see it, and another program can't read it without the person's password.
         fileprivate struct Saved: Codable {
             var clientID: String
             var clientSecret: String?
@@ -7955,16 +7970,20 @@ enum Template {
                 return try? JSONDecoder().decode(Saved.self, from: data)
             }
 
-            func save(_ id: String) {
-                guard let data = try? JSONEncoder().encode(self) else { return }
+            /// False when the Keychain refused it (the person clicked Deny, or the keychain is locked).
+            @discardableResult
+            func save(_ id: String) -> Bool {
+                guard let data = try? JSONEncoder().encode(self) else { return false }
                 let query = Saved.query(id)
-                if SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound {
+                var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+                if status == errSecItemNotFound {
                     var add = query
                     add[kSecValueData as String] = data
                     add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-                    let status = SecItemAdd(add as CFDictionary, nil)
-                    if status != errSecSuccess { fputs("LampService: couldn't keep the sign-in (\(status))\n", stderr) }
+                    status = SecItemAdd(add as CFDictionary, nil)
                 }
+                if status != errSecSuccess { fputs("LampService: couldn't keep the sign-in (\(status))\n", stderr) }
+                return status == errSecSuccess
             }
         }
 
