@@ -3592,6 +3592,7 @@ enum Template {
 
         /// Pointing at part of the window for Lamp's chat: what's under the pointer is outlined, a click
         /// sends what it is and a picture of it to Lamp, and Escape (or a click outside anything named) ends it.
+        /// Lamp is told when it ends either way: its chat may have stepped aside meanwhile.
         @MainActor private final class Picker: NSView {
             private static var current: Picker?
             private var items: [LampScreen.Item] = []
@@ -3604,7 +3605,7 @@ enum Template {
             /// The outline is drawn in a clear window of its own laid over the app's window (a child, so it moves
             /// with it), which takes the clicks without bringing the app in front first.
             static func start() {
-                current?.stop()
+                current?.stop(tell: false)
                 guard let window = NSApp.keyWindow.flatMap({ isAppWindow($0) ? $0 : nil })
                         ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible }) else { return }
                 let glass = NSPanel(contentRect: window.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -3630,7 +3631,8 @@ enum Template {
                 current = picker
             }
 
-            func stop() {
+            /// `tell` is false when Lamp hears instead that something was picked, or pointing starts over.
+            func stop(tell: Bool = true) {
                 keyMonitor.map(NSEvent.removeMonitor)
                 keyMonitor = nil
                 if let glass = window {
@@ -3638,6 +3640,10 @@ enum Template {
                     glass.orderOut(nil)
                 }
                 if Picker.current === self { Picker.current = nil }
+                if tell {
+                    DistributedNotificationCenter.default().postNotificationName(
+                        Notification.Name("{{NOTE}}pickEnded"), object: Bundle.main.bundleIdentifier, userInfo: nil, deliverImmediately: true)
+                }
             }
 
             override func cursorUpdate(with event: NSEvent) { NSCursor.crosshair.set() }
@@ -3668,7 +3674,7 @@ enum Template {
                 guard let index = item(at: convert(event.locationInWindow, from: nil)), let window = target else { return stop() }
                 let item = items[index]
                 let scale = scale
-                stop()
+                stop(tell: false)
                 // The picture is taken once the outline is off the screen, a little wider than the thing itself.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { MainActor.assumeIsolated {
                     // What it is and what it says; Lamp names the picture with them.

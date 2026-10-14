@@ -11,6 +11,9 @@ final class TalkTests: XCTestCase {
         let read = try JSONDecoder().decode(Talk.Result.self, from: withRows)
         XCTAssertEqual(read.summary, "Save a meal")
         XCTAssertEqual(read.version, "abc")
+        // Where to find what it made stays on the card, through the chat being saved again.
+        let saved = try JSONDecoder().decode(Talk.Result.self, from: JSONEncoder().encode(read))
+        XCTAssertEqual(saved.text, "Save a meal\n- Save a meal: The star beside its name")
     }
 
     /// A result card as an agent really wrote one, for a wish to plan a family's dinners: its summary was shown as

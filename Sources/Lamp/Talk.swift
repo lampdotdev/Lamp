@@ -118,10 +118,20 @@ enum Talk {
         var request: String
     }
 
+    /// Something a change added and where it is, from cards saved while the card listed them as rows. The
+    /// agent isn't asked for them any more; the ones already in a chat are kept and shown with the summary, so
+    /// an older card still says where to find what it made.
+    struct News: Codable, Equatable {
+        var what: String
+        var place: String
+    }
+
     struct Result: Codable, Equatable {
         var summary: String
         var guesses: [Guess]
         var idea: Idea?
+        /// Only on cards saved while there were rows of what's new (see `News`).
+        var news: [News]?
         /// What the agent built and didn't try in the running app, offered back as something to try.
         var untried: String?
         /// The version this request made, for its picture.
@@ -130,7 +140,7 @@ enum Talk {
         var switched: [Int]?
 
         var text: String {
-            ([summary] + guesses.map { "- \($0.guess) (or: \($0.instead))" } + (idea.map { ["- Idea: \($0.title)"] } ?? [])
+            ([summary] + (news ?? []).map { "- \($0.what): \($0.place)" } + guesses.map { "- \($0.guess) (or: \($0.instead))" } + (idea.map { ["- Idea: \($0.title)"] } ?? [])
                 + (untried.map { ["- Not tried: \($0)"] } ?? []))
                 .joined(separator: "\n")
         }

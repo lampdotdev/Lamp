@@ -41,7 +41,7 @@ A capability given to one engine must be given to all of them that can take it, 
   chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own), and `show_result` is
   the card for what a request came to: for a new app or a big change the agent's guesses as buttons, for an
   ordinary change that adds things to find its one sentence saying what's new and where (no rows: under the
-  picture they read as captions of it) and what wasn't tried as a Try It button. The card takes the place of the reply and of the line saying the app is ready (`LogLine.visible`); a
+  picture they read as captions of it; a card saved while it had them keeps them as lines under its sentence, `Talk.News`) and what wasn't tried as a Try It button. The card takes the place of the reply and of the line saying the app is ready (`LogLine.visible`); a
   small change or a fix keeps one sentence and that line. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
   tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the
@@ -59,7 +59,8 @@ A capability given to one engine must be given to all of them that can take it, 
   second `ask` before the answer is turned away, and a one-at-a-time card is laid out for all its questions
   at once (`AskSteps`), so nothing moves under the pointer. Its questions are kept the same height, so the card
   never shows room to spare under one of them: a question's answers are one row however many there are, and its
-  tiles fill whatever another question's wording needed (`TileRows`). Asking ends the turn: nothing is built or saved
+  tiles fill whatever another question's wording needed (`TileRows`). Only where a row would break a word (the
+  wand's narrow panel) do they go two by two or one under another, with the symbol above the words (`TileFace`). Asking ends the turn: nothing is built or saved
   until the answer, and an agent that goes on to another step after `ask` is ended by Lamp, the way a
   runaway one is (`Store.endOnQuestions`), whichever engine it is. Once the card is answered the chat
   follows its end again (`ChatFollow.followThroughSettling`). Only the card that waits is drawn as a card: answered, it folds to a line with what was chosen, and a notes receipt is a line too, so one thing in the chat asks for attention at a time. A new piece is a tool there, its view, and a line in `talkRules`. The agent still
@@ -415,7 +416,8 @@ show the wand only while the file `MagicPanel.flag` beside their folders says it
 comes forward): `LampMagic` in LampSupport.swift puts a wand in each of its windows'
 title bars, which opens `<scheme>://magic?app=<slug>&frame=<its window>` without bringing Lamp forward. Lamp shows
 that app's chat (`ProjectView`, the same chat as in its window) in a non-activating floating panel beside the app's
-window (`MagicPanel`), which the app keeps placed by posting its window's frame as it moves. Lamp draws the chat,
+window (`MagicPanel`), which the app keeps placed by posting its window's frame as it moves. What's half done in one
+of the two chats goes on in the other: the message box's draft, and a question card's answers so far (`AskProgresses`). Lamp draws the chat,
 never the app: whatever the app's process can do, its own generated code can, so it has no way to speak to the
 agent that builds it, only to say where its window is. The panel shows while the app or Lamp is in front, and while
 the app is closed for a change to go in. A change still reopens the app; the rule (`Agent.Rules.macGenerated`) asks
@@ -424,8 +426,9 @@ look like the window changing in place: as the app quits it leaves a picture of 
 in its runtime folder (`LampMagic.leaveCover`); while the app's turn is going, Lamp shows that picture where the
 window was (`MagicPanel.showCover`, a borderless window marked "Updating…"), the new copy opens its first window in
 the same place (`putBack`), and the picture fades out once the new copy reports its window (or goes when the turn
-ends without it). The panel's crosshair button lets the person point at part of the app: the app lays a clear
-window over its own (`LampMagic.Picker`), outlines the smallest named thing under the pointer from its own
+ends without it). The panel's crosshair button lets the person point at part of the app: the panel steps aside
+while it lies over the app, until the app says the pointing ended (`pickEnded`) or what was picked, and the app lays
+a clear window over its own (`LampMagic.Picker`), outlines the smallest named thing under the pointer from its own
 accessibility tree (`LampDriver.elements`), and on a click leaves a cropped picture of it in its runtime folder and
 says what it is; Lamp attaches that picture to the message, named after the thing ("Save button.png",
 `MagicPanel.name`), and takes a picture only from that folder.

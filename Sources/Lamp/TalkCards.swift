@@ -36,6 +36,19 @@ struct AskProgress: Equatable {
     func all(_ count: Int) -> [String] { (0..<count).map { answers[$0] ?? Talk.youDecide } }
 }
 
+/// How far each open card has been answered, by its line. Kept apart from the card's view because the same
+/// card is drawn in Lamp's window and in the wand's panel beside the app (`MagicPanel`): an answer begun in one
+/// is carried on in the other, not started over.
+@MainActor
+final class AskProgresses: ObservableObject {
+    static let shared = AskProgresses()
+    @Published private var progress: [UUID: AskProgress] = [:]
+
+    func binding(for line: UUID) -> Binding<AskProgress> {
+        Binding(get: { self.progress[line] ?? AskProgress() }, set: { self.progress[line] = $0 })
+    }
+}
+
 /// A set of questions in the chat. Open, it's answered by clicking; after that it shows what was chosen, or
 /// just what was asked when the person typed their answer instead.
 struct AskCard: View {
@@ -43,7 +56,8 @@ struct AskCard: View {
     let dir: URL
     let isOpen: Bool
     @ObservedObject private var store = Store.shared
-    @State private var progress = AskProgress()
+    @ObservedObject private var progresses = AskProgresses.shared
+    private var progress: Binding<AskProgress> { progresses.binding(for: line.id) }
 
     var body: some View {
         if let ask = line.ask, let project = store.projects.first(where: { $0.dir == dir }) {
@@ -54,7 +68,7 @@ struct AskCard: View {
                     if ask.layout == .together && ask.questions.count > 1 {
                         together(ask, project)
                     } else {
-                        AskSteps(ask: ask, progress: $progress) { answers in withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: answers, in: project) } }
+                        AskSteps(ask: ask, progress: progress) { answers in withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: answers, in: project) } }
                     }
                 }
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
@@ -67,28 +81,29 @@ struct AskCard: View {
 
     /// Every question at once, each answered by a chip.
     private func together(_ ask: Talk.Ask, _ project: LampProject) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let progress = progress
+        return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
                 if index > 0 { Divider() }
                 VStack(alignment: .leading, spacing: 8) {
                     Text(question.question).font(.headline)
-                    ChipRow(options: question.options, chosen: progress.answers[index],
-                            own: Binding(get: { progress.own[index] ?? "" }, set: { progress.type($0, for: index) })) {
-                        progress.choose($0, for: index)
+                    ChipRow(options: question.options, chosen: progress.wrappedValue.answers[index],
+                            own: Binding(get: { progress.wrappedValue.own[index] ?? "" }, set: { progress.wrappedValue.type($0, for: index) })) {
+                        progress.wrappedValue.choose($0, for: index)
                     }
                 }
                 .padding(.horizontal, 16).padding(.vertical, 12)
             }
             Divider()
             HStack {
-                if progress.answers.isEmpty {
-                    Button(Talk.youDecide) { withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: progress.all(ask.questions.count), in: project) } }
+                if progress.wrappedValue.answers.isEmpty {
+                    Button(Talk.youDecide) { withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: progress.wrappedValue.all(ask.questions.count), in: project) } }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Send") { withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: progress.all(ask.questions.count), in: project) } }
+                Button("Send") { withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: progress.wrappedValue.all(ask.questions.count), in: project) } }
                     .buttonStyle(.borderedProminent)
-                    .disabled(progress.answers.isEmpty)
+                    .disabled(progress.wrappedValue.answers.isEmpty)
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
         }
@@ -154,9 +169,10 @@ struct AskSteps: View {
                             .font(.title3.weight(.semibold))
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        TileRows {
+                        let widest = OptionTile.widestWord(in: question.options)
+                        TileRows(least: widest + OptionTile.padding * 2) {
                             ForEach(Array(question.options.enumerated()), id: \.offset) { _, option in
-                                OptionTile(option: option, chosen: progress.answers[index] == option.title) {
+                                OptionTile(option: option, widest: widest, chosen: progress.answers[index] == option.title) {
                                     pick(option.title)
                                 }
                             }
@@ -224,19 +240,24 @@ private struct Tallest: Layout {
 
 /// A question's answers as tiles of one size, filling the height they are given. One row: two rows for four
 /// answers made that question a row taller than the others on its card, which showed as a gap under theirs.
-/// Four go two by two only where a row would leave each too narrow to read.
+/// Fewer to a row only where a row would leave each too narrow to read: four go two by two, and any number
+/// goes one under another when even that would break a word (in the wand's narrow panel).
 private struct TileRows: Layout {
+    /// The narrowest a tile can be without breaking a word of its answer.
+    let least: CGFloat
     static let spacing: CGFloat = 10
-    /// Narrower than this, a tile has no room for a word beside its symbol.
+    /// Narrower than this, four tiles in a row look cramped even when their words fit.
     static let narrowest: CGFloat = 120
 
-    static func columns(for count: Int, width: CGFloat) -> Int {
-        let inOneRow = (width - spacing * CGFloat(count - 1)) / CGFloat(max(count, 1))
-        return count == 4 && inOneRow < narrowest ? 2 : max(count, 1)
+    static func columns(for count: Int, width: CGFloat, least: CGFloat) -> Int {
+        func tile(_ columns: Int) -> CGFloat { (width - spacing * CGFloat(columns - 1)) / CGFloat(columns) }
+        let count = max(count, 1)
+        let tries = count == 4 ? [4, 2] : [count]
+        return tries.first { tile($0) >= max(least, $0 == 4 ? narrowest : 0) } ?? 1
     }
 
     private func grid(_ subviews: Subviews, width: CGFloat) -> (columns: Int, rows: Int, tile: CGSize) {
-        let columns = Self.columns(for: subviews.count, width: width)
+        let columns = Self.columns(for: subviews.count, width: width, least: least)
         let tileWidth = max(0, (width - Self.spacing * CGFloat(columns - 1)) / CGFloat(columns))
         let height = subviews.map { $0.sizeThatFits(ProposedViewSize(width: tileWidth, height: nil)).height }.max() ?? 0
         return (columns, (subviews.count + columns - 1) / columns, CGSize(width: tileWidth, height: height))
@@ -264,12 +285,27 @@ private struct TileRows: Layout {
 /// An answer to click: its symbol, its name and a few words.
 private struct OptionTile: View {
     let option: Talk.Option
+    /// The longest word of any answer to its question, so every tile of a question is laid out the same way.
+    let widest: CGFloat
     let chosen: Bool
     let action: () -> Void
+    static let padding: CGFloat = 11
+
+    /// The widest single word in these answers, as the tiles set them. A tile narrower than that would break it
+    /// in the middle ("Scre / ensh / ots").
+    static func widestWord(in options: [Talk.Option]) -> CGFloat {
+        let title = NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .body).pointSize, weight: .semibold)
+        let detail = NSFont.preferredFont(forTextStyle: .callout)
+        func widest(_ text: String?, _ font: NSFont) -> CGFloat {
+            (text ?? "").split(whereSeparator: \.isWhitespace)
+                .map { ceil(NSAttributedString(string: String($0), attributes: [.font: font]).size().width) }.max() ?? 0
+        }
+        return options.map { max(widest($0.title, title), widest($0.detail, detail)) }.max().map { $0 + 2 } ?? 0
+    }
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
+            TileFace(widest: widest) {
                 if let symbol = option.symbol {
                     Image(systemName: symbol)
                         .font(.system(size: 16, weight: .medium))
@@ -285,10 +321,9 @@ private struct OptionTile: View {
                     }
                 }
                 .multilineTextAlignment(.leading)
-                Spacer(minLength: 0)
             }
-            .padding(11)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(Self.padding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .strokeBorder(chosen ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary), lineWidth: chosen ? 2 : 1))
@@ -296,6 +331,53 @@ private struct OptionTile: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(option.title)
+    }
+}
+
+/// A tile's symbol and words: the symbol beside them while the longest word still fits there, else above them.
+private struct TileFace: Layout {
+    let widest: CGFloat
+    static let spacing: CGFloat = 10
+
+    private func beside(_ subviews: Subviews, width: CGFloat?) -> Bool {
+        guard subviews.count == 2 else { return false }
+        guard let width else { return true }
+        return width - subviews[0].sizeThatFits(.unspecified).width - Self.spacing >= widest
+    }
+
+    private func words(_ subviews: Subviews, width: CGFloat?, beside: Bool) -> CGSize {
+        let symbol = subviews.count == 2 ? subviews[0].sizeThatFits(.unspecified).width + Self.spacing : 0
+        return subviews[subviews.count - 1].sizeThatFits(ProposedViewSize(width: width.map { beside ? $0 - symbol : $0 }, height: nil))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard !subviews.isEmpty else { return .zero }
+        let beside = beside(subviews, width: proposal.width)
+        let words = words(subviews, width: proposal.width, beside: beside)
+        guard subviews.count == 2 else { return CGSize(width: proposal.width ?? words.width, height: words.height) }
+        let symbol = subviews[0].sizeThatFits(.unspecified)
+        return beside
+            ? CGSize(width: proposal.width ?? symbol.width + Self.spacing + words.width, height: max(symbol.height, words.height))
+            : CGSize(width: proposal.width ?? max(symbol.width, words.width), height: symbol.height + 8 + words.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard !subviews.isEmpty else { return }
+        let beside = beside(subviews, width: bounds.width)
+        let words = words(subviews, width: bounds.width, beside: beside)
+        let text = subviews[subviews.count - 1]
+        guard subviews.count == 2 else {
+            return text.place(at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(words))
+        }
+        let symbol = subviews[0].sizeThatFits(.unspecified)
+        if beside {
+            subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading, proposal: .unspecified)
+            text.place(at: CGPoint(x: bounds.minX + symbol.width + Self.spacing, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(words))
+        } else {
+            let top = bounds.midY - (symbol.height + 8 + words.height) / 2
+            subviews[0].place(at: CGPoint(x: bounds.minX, y: top), proposal: .unspecified)
+            text.place(at: CGPoint(x: bounds.minX, y: top + symbol.height + 8), proposal: ProposedViewSize(words))
+        }
     }
 }
 
@@ -376,7 +458,15 @@ struct ResultCard: View {
                             .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(.quaternary))
                             .accessibilityHidden(true)
                     }
-                    Text(result.summary).font(.headline).fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(result.summary).font(.headline).fixedSize(horizontal: false, vertical: true)
+                        // A card saved while it had rows of what's new: where to find each, as part of its
+                        // sentence rather than rows under the picture.
+                        ForEach(Array((result.news ?? []).enumerated()), id: \.offset) { _, news in
+                            Text("\(news.what): \(news.place)").font(.callout).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                     Spacer(minLength: 0)
                 }
                 .padding(14)

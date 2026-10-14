@@ -66,6 +66,8 @@ final class MagicPanel: NSObject, NSWindowDelegate {
     private var appFrame: NSRect?
     private var observers: [NSObjectProtocol] = []
     private var busyWatch: AnyCancellable?
+    /// Put away while the person points at part of the app, because it was over the app.
+    private var steppedAside = false
     static let width: CGFloat = 400
     private static let gap: CGFloat = 8
 
@@ -77,6 +79,7 @@ final class MagicPanel: NSObject, NSWindowDelegate {
         let panel = self.panel ?? makePanel(for: project)
         self.panel = panel
         if appFrame != nil { place() } else { panel.center() }
+        steppedAside = false
         panel.makeKeyAndOrderFront(nil)
         listen(for: project)
     }
@@ -90,6 +93,7 @@ final class MagicPanel: NSObject, NSWindowDelegate {
         if let appID, let project = Store.shared.projects.first(where: { $0.id == appID }) { Store.shared.announceDraft(of: project) }
         panel?.orderOut(nil)
         panel = nil
+        steppedAside = false
         appID = nil
         appFrame = nil
     }
@@ -192,18 +196,40 @@ final class MagicPanel: NSObject, NSWindowDelegate {
                 guard let self, let current = Store.shared.projects.first(where: { $0.id == id }),
                       note.object as? String == current.bundleID else { return }
                 self.take(pointed: note.userInfo ?? [:], in: current)
+                self.comeBack()
+            }
+        })
+        // Pointing ended without a pick: Escape, or a click on nothing named.
+        observers.append(DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name(Edition.notificationPrefix + "pickEnded"), object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let current = Store.shared.projects.first(where: { $0.id == id }),
+                      note.object as? String == current.bundleID else { return }
+                self.comeBack()
             }
         })
     }
 
     // MARK: Pointing
 
-    /// Asks the app to let the person point at part of its window, and brings it in front for that.
+    /// Asks the app to let the person point at part of its window, and brings it in front for that. Where the
+    /// panel had no room beside the app and lies over it, it steps aside until the pointing ends, so all of the
+    /// app can be pointed at and the line saying how to stop isn't covered.
     func point() {
         guard let appID, let project = Store.shared.projects.first(where: { $0.id == appID }) else { return }
+        if let panel, let appFrame, panel.frame.intersects(appFrame) {
+            steppedAside = true
+            panel.orderOut(nil)
+        }
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(Edition.notificationPrefix + "pick"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
         Store.shared.macCopies(of: project).first?.activate()
+    }
+
+    private func comeBack() {
+        guard steppedAside else { return }
+        steppedAside = false
+        updateVisibility()
     }
 
     /// The pointed-at thing goes into the message box as a picture named after it ("Save button.png"), so the
@@ -305,7 +331,7 @@ final class MagicPanel: NSObject, NSWindowDelegate {
         let ours = front == ProcessInfo.processInfo.processIdentifier || copies.contains { $0.processIdentifier == front }
         // While the app is closed for a change, the chat is where the change is followed.
         let updating = copies.isEmpty && Store.shared.busy.contains(appID)
-        if ours || updating { panel.orderFront(nil) } else { panel.orderOut(nil) }
+        if steppedAside && !copies.isEmpty { panel.orderOut(nil) } else if ours || updating { panel.orderFront(nil) } else { panel.orderOut(nil) }
     }
 
     /// Beside the app's window, on whichever side has room, as tall as it; over its right edge when neither has.
