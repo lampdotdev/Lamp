@@ -321,38 +321,12 @@ struct SettingsView: View {
             AppsSettings().tabItem { Label("Apps", systemImage: "square.grid.2x2") }.tag("apps")
             ProvidersSettings().tabItem { Label("AI Providers", systemImage: "cpu") }.tag("providers")
             MemorySettings().tabItem { Label("Memory", systemImage: "note.text") }.tag("memory")
-            ExperimentalSettings().tabItem { Label("Experimental", systemImage: "flask") }.tag("experimental")
         }
         .frame(width: 560)
         .onAppear {
             if tab == "local" { tab = "providers" }   // Local Models is now Native Mac AI, under Providers
-            if !["building", "apps", "providers", "memory", "experimental"].contains(tab) { tab = "building" }
+            if !["building", "apps", "providers", "memory"].contains(tab) { tab = "building" }
         }
-    }
-}
-
-/// What's in Lamp but not yet for everyone: each switch here brings a feature into the interface.
-struct ExperimentalSettings: View {
-    @AppStorage(MagicPanel.switchKey) private var magic = false
-    @AppStorage(LiveReload.switchKey) private var live = false
-
-    var body: some View {
-        Form {
-            Section {
-                SettingsCheckboxes {
-                    Toggle("Change apps while using them", isOn: $magic)
-                        .checkboxNote("A wand in each app's title bar opens its chat beside it.")
-                    Toggle("Update open apps without restarting them", isOn: $live)
-                        .checkboxNote("Mac apps are built so most changes go straight into the open app and it keeps what's on screen.")
-                }
-            } header: {
-                // Above the box, in a checkbox note's size and color rather than as a heading.
-                Text("Features the Lamp team is still working on. They may not be ready for prime time.")
-                    .font(.caption).fontWeight(.regular).foregroundStyle(.secondary)
-            }
-        }
-        .settingsPane()
-        .onChange(of: magic) { MagicPanel.syncSwitch() }
     }
 }
 
@@ -500,6 +474,8 @@ struct BuildingSettings: View {
         Binding(get: { CommandApproval(rawValue: approval)?.rawValue ?? CommandApproval.risky.rawValue }, set: { approval = $0 })
     }
     @AppStorage("askOutsideFolder") private var askOutsideFolder = true
+    @AppStorage(MagicPanel.switchKey) private var magic = true
+    @AppStorage(LiveReload.switchKey) private var live = true
     @AppStorage("shareAppLog") private var shareLog = true
     @AppStorage("shareAppPictures") private var sharePictures = true
     @State private var model = Builder.piModel
@@ -748,9 +724,18 @@ struct BuildingSettings: View {
                     }
                 }
             }
+            Section("Changing Open Apps") {
+                SettingsCheckboxes {
+                    Toggle("Show a wand in each app to change it while using it", isOn: $magic)
+                        .checkboxNote("It opens the app's chat beside its window.")
+                    Toggle("Update open apps without restarting them", isOn: $live)
+                        .checkboxNote("Most changes go straight into a Mac app that's open, keeping what's on screen.")
+                }
+            }
             PhoneSigningSection(phoneApps: hasPhoneApps)
         }
         .settingsPane()
+        .onChange(of: magic) { MagicPanel.syncSwitch() }
         .onChange(of: notify) { Notifier.shared.setBadge(store.unread.count) }
         .task { notificationsDenied = await Notifier.shared.isDenied() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in

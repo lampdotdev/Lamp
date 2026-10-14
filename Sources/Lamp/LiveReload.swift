@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-/// Putting a change into a Mac app while it's open, without a restart (Settings → Experimental, its own switch).
+/// Putting a change into a Mac app while it's open, without a restart (Settings → Building, its own switch).
 /// While the experiment is on, a Mac app is built live (build.sh with LAMP_LIVE: debug, -interposable, from the
 /// copy of its sources in `.lamp/live` with each view's body wrapped). After a change, the files it touched are
 /// compiled into a library, and the running app loads it (`LampLive` in LampSupport.swift), keeping its state.
@@ -15,10 +15,11 @@ enum LiveReload {
         isOn && project.platform.hasMac && !project.onIOS && !Template.hasWidget(project) && !Template.hasShare(project)
     }
 
-    /// Settings → Experimental: off by default. Turning it on or off changes how apps are built from their next
-    /// build on (a live build, or the usual one).
+    /// Settings → Building: on unless switched off (someone who chose while it was an experiment keeps that
+    /// choice). Turning it on or off changes how apps are built from their next build on (a live build, or the
+    /// usual one).
     static let switchKey = "experimentLiveReload"
-    static var isOn: Bool { UserDefaults.standard.bool(forKey: switchKey) }
+    static var isOn: Bool { UserDefaults.standard.object(forKey: switchKey) as? Bool ?? true }
 
     static func folder(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/live") }
     /// The sources the build last used, wrapped (build.sh writes them).

@@ -12,10 +12,11 @@ import Combine
 final class MagicPanel: NSObject, NSWindowDelegate {
     static let shared = MagicPanel()
 
-    /// Settings → Experimental. Apps show the wand only while it's on: they look for `flag`, beside the apps'
+    /// Settings → Building. Apps show the wand only while it's on: they look for `flag`, beside the apps'
     /// folders, each time a window of theirs comes to the front, so turning it off takes the wand away too.
     static let switchKey = "experimentMagic"
-    static var isOn: Bool { UserDefaults.standard.bool(forKey: switchKey) }
+    /// On unless switched off: someone who chose while it was an experiment keeps that choice.
+    static var isOn: Bool { UserDefaults.standard.object(forKey: switchKey) as? Bool ?? true }
     static var flag: URL { Store.shared.root.appendingPathComponent(".magic") }
 
     /// An app's wand, when Lamp is running, says so directly rather than by a link (`LampMagic`), so this Lamp
