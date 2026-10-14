@@ -54,6 +54,7 @@ final class MagicPanel: NSObject, NSWindowDelegate {
             DistributedNotificationCenter.default().removeObserver($0) }
         observers = []
         busyWatch = nil
+        dropCover()
         if let appID, let project = Store.shared.projects.first(where: { $0.id == appID }) { Store.shared.announceDraft(of: project) }
         panel?.orderOut(nil)
         panel = nil
@@ -117,6 +118,7 @@ final class MagicPanel: NSObject, NSWindowDelegate {
                 let text = note.userInfo?["frame"] as? String ?? ""
                 self.appFrame = text.isEmpty ? nil : NSRectFromString(text)
                 self.place()
+                if !text.isEmpty { self.revealApp() }
             }
         })
         // Over the app and Lamp only: another app in front puts it away until one of them comes back. Looked at
@@ -126,7 +128,135 @@ final class MagicPanel: NSObject, NSWindowDelegate {
             MainActor.assumeIsolated { self?.updateVisibility() }
         })
         busyWatch = Store.shared.$busy.map { $0.contains(id) }.removeDuplicates().dropFirst()
-            .receive(on: RunLoop.main).sink { [weak self] _ in MainActor.assumeIsolated { self?.updateVisibility() } }
+            .receive(on: RunLoop.main).sink { [weak self] busy in
+                MainActor.assumeIsolated {
+                    self?.updateVisibility()
+                    // The turn is over: if no copy came back, the picture standing in for it goes.
+                    if !busy { DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self?.dropCoverIfAppGone() } }
+                }
+            }
+        // The app quit for a change: its picture stands where its window was until the new copy is up.
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let current = Store.shared.projects.first(where: { $0.id == id }), Store.shared.busy.contains(id),
+                      let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                      app.bundleIdentifier == current.bundleID
+                        || app.bundleURL?.standardizedFileURL == current.installedURL.standardizedFileURL else { return }
+                self.showCover(for: current)
+            }
+        })
+        // What the person pointed at in the app (`LampMagic.Picker`), for their message.
+        observers.append(DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name(Edition.notificationPrefix + "picked"), object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let current = Store.shared.projects.first(where: { $0.id == id }),
+                      note.object as? String == current.bundleID else { return }
+                self.take(pointed: note.userInfo ?? [:], in: current)
+            }
+        })
+    }
+
+    // MARK: Pointing
+
+    /// Asks the app to let the person point at part of its window, and brings it in front for that.
+    func point() {
+        guard let appID, let project = Store.shared.projects.first(where: { $0.id == appID }) else { return }
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(Edition.notificationPrefix + "pick"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
+        Store.shared.macCopies(of: project).first?.activate()
+    }
+
+    /// The pointed-at thing goes into the message box as a picture named after it ("Save button.png"), so the
+    /// person writes their message as they would and the agent sees what it is and what it looks like. Both
+    /// come from the app, so neither is trusted further than that: only a picture the app left in its own
+    /// runtime folder, as Lamp asked, is taken, and its name is made from plain words, shown before it's sent.
+    private func take(pointed info: [AnyHashable: Any], in project: LampProject) {
+        let store = Store.shared
+        let folder = Runtime.macFolder(project).standardizedFileURL.resolvingSymlinksInPath().path + "/"
+        guard let path = info["picture"] as? String else { return }
+        let picture = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+        guard picture.path.hasPrefix(folder), picture.lastPathComponent.hasPrefix("pointed-"), picture.pathExtension == "png" else { return }
+        let name = Self.name(role: info["role"] as? String ?? "", label: info["label"] as? String ?? "")
+        let place = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-pointed-\(UUID().uuidString)")
+        let named = place.appendingPathComponent(name + ".png")
+        guard (try? FileManager.default.createDirectory(at: place, withIntermediateDirectories: true)) != nil,
+              (try? FileManager.default.copyItem(at: picture, to: named)) != nil else { return }
+        store.attach([named], to: project)
+        panel?.makeKeyAndOrderFront(nil)
+        store.chatFocusRequest += 1
+    }
+
+    /// "Save button", "Banana Bread text", "area": what it says, then what it is in everyday words, short
+    /// enough for a file's name and with nothing a file's name can't hold.
+    static func name(role: String, label: String) -> String {
+        let everyday = ["static text": "text", "group": "area", "image": "picture", "cell": "row", "row": "row",
+                        "text field": "field", "scroll area": "area", "web area": "page"]
+        let kind = everyday[role.lowercased()] ?? role.lowercased()
+        var words = label.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            .filter { !"/:\\\0".contains($0) && !$0.isNewline }
+        if words.count > 40 { words = String(words.prefix(39)) + "…" }
+        let name = [words, kind].filter { !$0.isEmpty }.joined(separator: " ")
+        return name.isEmpty ? "Pointed at" : name.prefix(1).uppercased() + name.dropFirst()
+    }
+
+    // MARK: Standing in while the app reopens
+
+    private var cover: NSWindow?
+    private var coverTimeout: DispatchWorkItem?
+
+    /// The picture the app left of its window as it quit (`LampMagic.leaveCover`), where the window was, a
+    /// little dimmed with a note that it's updating, so the change looks made in place rather than the window
+    /// vanishing and coming back elsewhere. Only a fresh picture: one left by an earlier quit would be wrong.
+    private func showCover(for project: LampProject) {
+        let folder = Runtime.macFolder(project)
+        let picture = folder.appendingPathComponent("cover.png")
+        guard let made = (try? picture.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+              Date().timeIntervalSince(made) < 10, let image = NSImage(contentsOf: picture),
+              let text = try? String(contentsOf: folder.appendingPathComponent("cover-frame.txt"), encoding: .utf8) else { return }
+        let frame = NSRectFromString(text)
+        guard frame.width > 0, frame.height > 0 else { return }
+        dropCover()
+        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+        window.ignoresMouseEvents = true
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: CoverView(image: image))
+        window.setFrame(frame, display: true)
+        window.orderFrontRegardless()
+        if let panel, panel.isVisible { panel.orderFrontRegardless() }
+        cover = window
+        // Never for long: a build that fails or a turn that ends without the app leaves nothing standing.
+        let timeout = DispatchWorkItem { [weak self] in self?.dropCover() }
+        coverTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: timeout)
+    }
+
+    /// The new copy said where its window is: the picture fades into it.
+    private func revealApp() {
+        guard let cover else { return }
+        self.cover = nil
+        coverTimeout?.cancel()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.25
+                cover.animator().alphaValue = 0
+            }, completionHandler: { MainActor.assumeIsolated { cover.orderOut(nil) } })
+        }
+    }
+
+    private func dropCover() {
+        coverTimeout?.cancel()
+        cover?.orderOut(nil)
+        cover = nil
+    }
+
+    private func dropCoverIfAppGone() {
+        guard cover != nil, let appID, let project = Store.shared.projects.first(where: { $0.id == appID }),
+              Store.shared.macCopies(of: project).isEmpty, !Store.shared.busy.contains(appID) else { return }
+        dropCover()
     }
 
     private func updateVisibility() {
@@ -161,19 +291,55 @@ private struct MagicChat: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
+                Button {
+                    MagicPanel.shared.point()
+                } label: {
+                    Image(systemName: "scope")
+                }
+                .help("Point at what you want to change")
+                .accessibilityLabel("Point at Something")
                 Spacer()
-                Button("Open in Lamp") {
+                Button {
                     store.showChat(project.id)
                     MagicPanel.shared.close()
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
                 }
-                .buttonStyle(.link)
-                .font(.callout)
+                .help("Open this chat in Lamp")
+                .accessibilityLabel("Open in Lamp")
             }
+            // Plain, in the text's own color like the rest of the chat's controls: a borderless button takes the
+            // accent color.
+            .buttonStyle(.plain)
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(.primary)
+            .contentShape(Rectangle())
             .padding(.horizontal, 14).padding(.vertical, 6)
             Divider()
             ProjectView(project: store.current(project) ?? project)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .frame(minWidth: 320, minHeight: 360)
+    }
+}
+
+/// The app's last picture of itself, standing in its window's place while a change goes in.
+private struct CoverView: View {
+    let image: NSImage
+
+    var body: some View {
+        Image(nsImage: image)
+            .resizable()
+            .overlay(Color.black.opacity(0.12))
+            .overlay(alignment: .bottom) {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Updating…").font(.callout.weight(.medium))
+                }
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .background(.regularMaterial, in: Capsule())
+                .padding(.bottom, 18)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }

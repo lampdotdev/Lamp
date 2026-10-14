@@ -419,7 +419,16 @@ window (`MagicPanel`), which the app keeps placed by posting its window's frame 
 never the app: whatever the app's process can do, its own generated code can, so it has no way to speak to the
 agent that builds it, only to say where its window is. The panel shows while the app or Lamp is in front, and while
 the app is closed for a change to go in. A change still reopens the app; the rule (`Agent.Rules.macGenerated`) asks
-the agent to keep what the person was looking at in `@SceneStorage`, so it comes back as they left it.
+the agent to keep what the person was looking at in `@SceneStorage`, so it comes back as they left it. To make that
+look like the window changing in place: as the app quits it leaves a picture of its front window and where it was
+in its runtime folder (`LampMagic.leaveCover`); while the app's turn is going, Lamp shows that picture where the
+window was (`MagicPanel.showCover`, a borderless window marked "Updating…"), the new copy opens its first window in
+the same place (`putBack`), and the picture fades out once the new copy reports its window (or goes when the turn
+ends without it). The panel's crosshair button lets the person point at part of the app: the app lays a clear
+window over its own (`LampMagic.Picker`), outlines the smallest named thing under the pointer from its own
+accessibility tree (`LampDriver.elements`), and on a click leaves a cropped picture of it in its runtime folder and
+says what it is; Lamp attaches that picture to the message, named after the thing ("Save button.png",
+`MagicPanel.name`), and takes a picture only from that folder.
 
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
