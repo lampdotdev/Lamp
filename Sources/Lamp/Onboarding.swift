@@ -56,7 +56,6 @@ struct OnboardingView: View {
     @State private var step = Step.opening
     @State private var forward = true
     @AppStorage(Onboarding.ideaKey) private var prompt = ""
-    @AppStorage(Onboarding.kindKey) private var kind = AppKind.mac
     @State private var leaving = false
     @State private var window: NSWindow?
     /// The wish that came from the site this run (`Wish`), and whether it has yet to be written into the box.
@@ -70,7 +69,7 @@ struct OnboardingView: View {
             ZStack {
                 switch step {
                 case .hello: HelloStep { go(to: .idea) }
-                case .idea: IdeaStep(prompt: $prompt, kind: $kind, wish: wish, unwritten: $wishUnwritten, paste: { receive($0) },
+                case .idea: IdeaStep(prompt: $prompt, wish: wish, unwritten: $wishUnwritten, paste: { receive($0) },
                                      back: { go(to: .hello) }) { go(to: .setup) }
                 case .setup: SetupStep(back: { go(to: .idea) }, start: finish)
                 }
@@ -168,13 +167,12 @@ struct OnboardingView: View {
         Task {
             try? await Task.sleep(for: .seconds(0.3))
             let idea = prompt.trimmed
-            let kind = kind
             let window = window
             let started = UserDefaults.standard.object(forKey: Onboarding.startedKey) as? Date
             Analytics.capture(.welcomeDone, [
                 "agent": Builder.Choice.current(engine: Builder.engine.rawValue, piProvider: Builder.piProvider, ready: true)
                     .map(Analytics.agent) ?? "none",
-                "kind": Analytics.kind(kind), "has_idea": !idea.isEmpty,
+                "has_idea": !idea.isEmpty,
                 "seconds": started.map { Int(Date().timeIntervalSince($0)) } ?? -1,
             ])
             // The welcome is over: nothing to come back to.
@@ -196,7 +194,6 @@ struct OnboardingView: View {
             if idea.isEmpty && importing { return }
             store.create(fromWelcome: true)
             guard let project = store.selected else { return }
-            store.setKind(project, kind)
             guard !idea.isEmpty else { return }
             // An iPhone or iPad app needs Xcode and a simulator first, checked as the chat's Send does, and the
             // idea is kept the same way while that runs: in the message box (so it's on disk if Lamp quits) and
@@ -261,7 +258,6 @@ private struct HelloStep: View {
 /// 2. The first idea: in their own words, or from a tile.
 private struct IdeaStep: View {
     @Binding var prompt: String
-    @Binding var kind: AppKind
     /// The wish that came from the site, if one did, and whether it still has to be written into the box.
     let wish: String?
     @Binding var unwritten: Bool
@@ -292,20 +288,12 @@ private struct IdeaStep: View {
             // below stops the content running into them when the window is small.
             Spacer(minLength: 40)
             // The site's own sentence over the wish it wrote, so this reads as the same moment.
-            Heading(title: wish == nil ? "What do you wish your \(kind.rawValue) did?" : "Here's your wish. Change anything you like.")
-
-            KindPicker(selection: $kind)
-            .padding(.top, 18)
-            .onChange(of: kind) {
-                // An idea picked for the other kind goes with it; anything typed stays.
-                if chosen != nil { prompt = ""; chosen = nil }
-                deck.show(kind)
-                Analytics.capture(.welcomeKind, ["kind": Analytics.kind(kind)])
-            }
+            // Mac, iPhone or both is worked out from what they ask for (Store.chooseKind), so nobody chooses.
+            Heading(title: wish == nil ? "What app do you wish you had?" : "Here's your wish. Change anything you like.")
 
             HStack(alignment: .top, spacing: 10) {
                 TextField("", text: box,
-                          prompt: Text("I wish my \(kind.rawValue)…").foregroundStyle(.tertiary), axis: .vertical)
+                          prompt: Text("I wish I had an app that…").foregroundStyle(.tertiary), axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 17))
                     .lineSpacing(3)
@@ -358,7 +346,7 @@ private struct IdeaStep: View {
                 Spacer()
                 Button {
                     deck.more()
-                    Analytics.capture(.welcomeMoreIdeas, ["kind": Analytics.kind(kind)])
+                    Analytics.capture(.welcomeMoreIdeas)
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: IdeaDeck.moreSymbol)
@@ -390,14 +378,14 @@ private struct IdeaStep: View {
             Footer(back: back) {
                 BigButton(title: "Continue") {
                     let source = chosen != nil ? "picked" : picked ? "edited" : wish != nil ? "site" : "typed"
-                    Analytics.capture(.welcomeIdeaDone, ["kind": Analytics.kind(kind), "source": source, "dictated": dictated])
+                    Analytics.capture(.welcomeIdeaDone, ["source": source, "dictated": dictated])
                     next()
                 }
                 .disabled(prompt.trimmed.isEmpty)
             } aside: {
                 if prompt.trimmed.isEmpty {
                     Button("Skip") {
-                        Analytics.capture(.welcomeIdeaSkipped, ["kind": Analytics.kind(kind)])
+                        Analytics.capture(.welcomeIdeaSkipped)
                         next()
                     }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
@@ -405,7 +393,6 @@ private struct IdeaStep: View {
             }
         }
         .onAppear {
-            deck.show(kind)   // back on this step with a phone chosen earlier
             deck.prefetch()
             pasteOffered = Wish.offersPaste()
             // After the step has slid in: focus can't land while the old step still holds it.
@@ -459,7 +446,7 @@ private struct IdeaStep: View {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { chosen = idea.id }
         prompt = idea.prompt
         picked = true
-        Analytics.capture(.welcomeIdeaPicked, ["kind": Analytics.kind(kind), "idea": Analytics.idea(idea, kind: kind)])
+        Analytics.capture(.welcomeIdeaPicked, ["idea": Analytics.idea(idea)])
         focused = true
     }
 

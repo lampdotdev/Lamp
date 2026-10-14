@@ -170,6 +170,7 @@ enum Template {
     static func writeSupport(for project: LampProject) throws {
         let contents = lampSupportSwift
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
+            .replacingOccurrences(of: "{{DATAID}}", with: Edition.appBundlePrefix + project.id)
             .replacingOccurrences(of: "{{TOKEN}}", with: token(for: project))
             .replacingOccurrences(of: "{{PORT}}", with: String(Gateway.port))
             .replacingOccurrences(of: "{{SCHEME}}", with: Edition.urlScheme)
@@ -1754,6 +1755,14 @@ enum Template {
     /// The background task an iPhone app that works in the background is woken for (`LampSchedule` on iOS).
     static let scheduleTask = "lamp.schedule"
 
+    /// What an app is made for, read off its Package.swift, which every version keeps: the platforms it lists.
+    /// A version restored from before `make_app_for` brings its kind back with its code (`Versions.restoreFiles`).
+    static func platform(fromPackageIn dir: URL) -> Platform? {
+        guard let text = try? String(contentsOf: dir.appendingPathComponent("Package.swift"), encoding: .utf8) else { return nil }
+        let mac = text.contains(".macOS("), ios = text.contains(".iOS(")
+        return mac && ios ? .universal : ios ? .iphone : mac ? .mac : nil
+    }
+
     /// The folder a Mac app and its widget share when Lamp signs them for the person's team: the team's id and
     /// the app's. macOS honours a group named so from the signature alone; one named "group.…" would need a
     /// provisioning profile, which Lamp's builds don't have.
@@ -2953,7 +2962,20 @@ enum Template {
     enum LampStore {
         static let folder: URL = {
             let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            #if os(macOS)
+            // On a Mac the data is kept under the app's plain id, whatever the app is signed as: an app made for
+            // the Mac and later made for the iPhone too carries its team in its id, and its data stays where it
+            // was. One that was kept under its signed id before is moved here once.
+            let url = base.appendingPathComponent("{{DATAID}}")
+            if let signed = Bundle.main.bundleIdentifier, signed != "{{DATAID}}" {
+                let old = base.appendingPathComponent(signed)
+                if FileManager.default.fileExists(atPath: old.path), !FileManager.default.fileExists(atPath: url.path) {
+                    try? FileManager.default.moveItem(at: old, to: url)
+                }
+            }
+            #else
             let url = base.appendingPathComponent(Bundle.main.bundleIdentifier ?? "{{EXE}}")
+            #endif
             try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
             return url
         }()

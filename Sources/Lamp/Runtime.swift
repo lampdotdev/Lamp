@@ -6,7 +6,17 @@ import CryptoKit
 /// Template.lampSupportSwift), and macOS writes a report when it crashes. All of it goes to the
 /// agent, which otherwise only sees the code.
 enum Runtime {
-    static func folder(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/runtime") }
+    /// Where the copy Try On points at keeps what it prints and its pictures. An app for both can be open on
+    /// this Mac and in a simulator at once, so its iPhone copy has a folder of its own beside the Mac copy's,
+    /// and neither writes over the other.
+    static func folder(_ project: LampProject) -> URL {
+        project.platform == .universal && project.onIOS ? macFolder(project).appendingPathComponent("ios") : macFolder(project)
+    }
+    /// The Mac copy's folder, which the app itself writes to (`LampRuntime`): what only a Mac copy has, such as
+    /// its answer to being asked to quit or a build held while it stays open, is read here wherever Try On points.
+    static func macFolder(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/runtime") }
+    /// `folder` as the agent names it, from the app's folder.
+    static func folderPath(_ project: LampProject) -> String { String(folder(project).path.dropFirst(project.dir.path.count + 1)) }
     static func logURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("log.txt") }
     private static func builtURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("built") }
 
@@ -20,9 +30,9 @@ enum Runtime {
     /// A build that hasn't been installed because the person kept the app open when it was asked to quit. The
     /// copy that's open, and the one in the apps folder, are older than the build until it closes. Kept on
     /// disk, so the build still goes in after Lamp itself has been quit and opened again.
-    private static func heldURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("held-build") }
+    private static func heldURL(_ project: LampProject) -> URL { macFolder(project).appendingPathComponent("held-build") }
     static func holdBuild(_ project: LampProject) {
-        try? FileManager.default.createDirectory(at: folder(project), withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: macFolder(project), withIntermediateDirectories: true)
         try? Data().write(to: heldURL(project))
     }
     static func releaseBuild(_ project: LampProject) { try? FileManager.default.removeItem(at: heldURL(project)) }
@@ -101,7 +111,7 @@ enum Runtime {
 
 
         Note from Lamp: the app has crashed since it was last built. Fix the cause as part of this request.\
-        \(Privacy.sharesLog ? "\nWhat it printed is in .lamp/runtime/log.txt (the latest launch) and .lamp/runtime/previous-log.txt (the launch before)." : "")
+        \(Privacy.sharesLog ? "\nWhat it printed is in \(folderPath(project))/log.txt (the latest launch) and \(folderPath(project))/previous-log.txt (the launch before)." : "")
 
         \(crash)
         """
@@ -123,9 +133,9 @@ enum Runtime {
         return """
 
 
-        Note from Lamp: .lamp/runtime/screenshot.png is a picture of the app's front window, taken at \
+        Note from Lamp: \(folderPath(project))/screenshot.png is a picture of the app's front window, taken at \
         \(taken.formatted(date: .omitted, time: .shortened)), just after it opened or when the user last switched away from it\
-        \(more.isEmpty ? "" : " (other open windows: " + more.map { ".lamp/runtime/" + $0 }.joined(separator: ", ") + ")"). \
+        \(more.isEmpty ? "" : " (other open windows: " + more.map { folderPath(project) + "/" + $0 }.joined(separator: ", ") + ")"). \
         If you can view images, look at it when this request is about how the app looks or behaves.
         """
     }

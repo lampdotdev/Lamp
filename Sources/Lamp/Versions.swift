@@ -230,6 +230,14 @@ enum Versions {
             // Before the restore is committed, so what comes back is already this Lamp's: the library's names
             // and the bundle id (an app copied from the other edition), with no change left over afterwards.
             Migration.normalize(project.dir, commit: false)
+            // A version from before the app was made for other devices brings back its kind with its code, so
+            // Lamp's own files and its next build are for what that code was written for (Store.followRestoredKind).
+            var project = project
+            if let kind = Template.platform(fromPackageIn: project.dir), kind != project.platform {
+                project.platform = kind
+                if !kind.hasIOS { project.device = nil }
+                try? Template.saveMeta(project)
+            }
             try? Template.writeOwnedFiles(for: project)   // the build writes them again, and stops if it can't
         }
         return ok

@@ -39,7 +39,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,ask,show_result"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,ask,show_result"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -131,7 +131,8 @@ enum Agent {
     `ask` for anything you need to ask (they click an answer, type their own, or leave it to you); \
     `show_result` for what a new app or a big change came to, with your guesses as buttons, and for what an \
     ordinary change added, with the new things as rows; `plan` for what \
-    you're building; `offer_setup` for setting up AI. When a piece fits, use it instead of writing the same \
+    you're building; `offer_setup` for setting up AI; `make_app_for` when they want the app on other devices \
+    (the iPhone or the Mac). When a piece fits, use it instead of writing the same \
     thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
     message, the same as something typed. If they type something that isn't one of your options, that's their \
     answer: follow it.
@@ -311,7 +312,8 @@ enum Agent {
         - `look_at_app` builds the app for where Try On points (this Mac, or the {{DEVICE}} simulator) and shows you \
         it there; `use_app` works on the same. You can't move it yourself: when a change is for the other half, say \
         so plainly and ask the user to switch under Try On if they want you to try it there, and check that half \
-        by building it instead. Everything the Mac and iPhone rules say about trying an app holds for its half.
+        by building it instead. Everything the Mac and iPhone rules say about trying an app holds for its half; \
+        the iPhone half's log and pictures are in .lamp/runtime/ios/ instead of .lamp/runtime/.
         """
 
         static let iPhoneHeader = """
