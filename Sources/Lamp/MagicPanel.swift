@@ -167,26 +167,37 @@ final class MagicPanel: NSObject, NSWindowDelegate {
         Store.shared.macCopies(of: project).first?.activate()
     }
 
-    /// The pointed-at thing goes into the message box: its words at the front, its picture as an attachment.
-    /// Both come from the app, so neither is trusted further than that: the words are shown before anything
-    /// is sent, and only a picture the app left in its own runtime folder, as Lamp asked, is taken.
+    /// The pointed-at thing goes into the message box as a picture named after it ("Save button.png"), so the
+    /// person writes their message as they would and the agent sees what it is and what it looks like. Both
+    /// come from the app, so neither is trusted further than that: only a picture the app left in its own
+    /// runtime folder, as Lamp asked, is taken, and its name is made from plain words, shown before it's sent.
     private func take(pointed info: [AnyHashable: Any], in project: LampProject) {
         let store = Store.shared
-        var draft = store.draft(for: project)
-        if let what = (info["what"] as? String)?.replacingOccurrences(of: "\n", with: " ").prefix(160), !what.isEmpty {
-            let mention = "The \(what): "
-            draft.text = draft.text.trimmed.isEmpty ? mention : draft.text + "\n" + mention
-        }
-        store.updateDraft(draft, for: project)
         let folder = Runtime.macFolder(project).standardizedFileURL.resolvingSymlinksInPath().path + "/"
-        if let path = info["picture"] as? String {
-            let url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
-            if url.path.hasPrefix(folder), url.lastPathComponent.hasPrefix("pointed-"), url.pathExtension == "png" {
-                store.attach([url], to: project)
-            }
-        }
+        guard let path = info["picture"] as? String else { return }
+        let picture = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+        guard picture.path.hasPrefix(folder), picture.lastPathComponent.hasPrefix("pointed-"), picture.pathExtension == "png" else { return }
+        let name = Self.name(role: info["role"] as? String ?? "", label: info["label"] as? String ?? "")
+        let place = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-pointed-\(UUID().uuidString)")
+        let named = place.appendingPathComponent(name + ".png")
+        guard (try? FileManager.default.createDirectory(at: place, withIntermediateDirectories: true)) != nil,
+              (try? FileManager.default.copyItem(at: picture, to: named)) != nil else { return }
+        store.attach([named], to: project)
         panel?.makeKeyAndOrderFront(nil)
         store.chatFocusRequest += 1
+    }
+
+    /// "Save button", "Banana Bread text", "area": what it says, then what it is in everyday words, short
+    /// enough for a file's name and with nothing a file's name can't hold.
+    static func name(role: String, label: String) -> String {
+        let everyday = ["static text": "text", "group": "area", "image": "picture", "cell": "row", "row": "row",
+                        "text field": "field", "scroll area": "area", "web area": "page"]
+        let kind = everyday[role.lowercased()] ?? role.lowercased()
+        var words = label.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            .filter { !"/:\\\0".contains($0) && !$0.isNewline }
+        if words.count > 40 { words = String(words.prefix(39)) + "…" }
+        let name = [words, kind].filter { !$0.isEmpty }.joined(separator: " ")
+        return name.isEmpty ? "Pointed at" : name.prefix(1).uppercased() + name.dropFirst()
     }
 
     // MARK: Standing in while the app reopens

@@ -3490,14 +3490,12 @@ enum Template {
             override func mouseDown(with event: NSEvent) {
                 guard let index = item(at: convert(event.locationInWindow, from: nil)), let window = target else { return stop() }
                 let item = items[index]
-                var words = item.role
-                if !item.label.isEmpty { words += " \"\(item.label)\"" }
-                if !item.value.isEmpty, item.value != item.label { words += " showing \"\(item.value)\"" }
                 let scale = scale
                 stop()
                 // The picture is taken once the outline is off the screen, a little wider than the thing itself.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { MainActor.assumeIsolated {
-                    var info: [String: String] = ["what": words]
+                    // What it is and what it says; Lamp names the picture with them.
+                    var info: [String: String] = ["role": item.role, "label": item.label.isEmpty ? item.value : item.label]
                     if let png = LampRuntime.picture(of: window), let image = NSBitmapImageRep(data: png)?.cgImage {
                         let margin = 12 * scale
                         let crop = item.frame.insetBy(dx: -margin, dy: -margin)
