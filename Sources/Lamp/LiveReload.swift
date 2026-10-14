@@ -33,6 +33,7 @@ enum LiveReload {
         try? fm.removeItem(at: running(project))
         try? fm.copyItem(at: sources(project), to: running(project))
         try? inputs(project).write(to: runningInputs(project), atomically: true, encoding: .utf8)
+        try? fm.removeItem(at: runningLayout(project))
     }
 
     private static func runningInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-inputs.txt") }
@@ -94,31 +95,49 @@ enum LiveReload {
             if declaresApp(new) { return .reopen("\(path) is the app's entry point") }
             changed.append(path)
         }
-        guard !changed.isEmpty else { return .unchanged }
-        // What the types in the changed files hold, by the compiler, before and after (types in the files that
-        // didn't change can't have changed). Each file's own types only, with the rest read for context: fast.
-        let existed = changed.filter { open[$0] != nil }
-        async let after = layout(of: sources(project), files: changed, module: project.exe)
-        guard let before = await layout(of: running(project), files: existed, module: project.exe) else {
-            return .reopen("the compiler couldn't say what the open app's types hold")
+        return changed.isEmpty ? .unchanged : .reload(changed)
+    }
+
+    /// Whether the whole new code type-checks and leaves every type the open app has holding what it did:
+    /// nil when so, with the new code's layout to keep once it's gone in; else why not. The whole module, not
+    /// just the changed files: a changed function can change what a property in another file is inferred to
+    /// hold, and an unchanged caller can stop compiling, which compiling the changed files alone wouldn't show
+    /// (then the usual build runs and the agent sees its errors). The open app's layout is kept from the last
+    /// time, so only the new code is type-checked, alongside the changed files' compile.
+    @MainActor static func layoutProblem(_ project: LampProject) async -> (problem: String?, layout: [String]?) {
+        async let after = layout(of: sources(project), files: nil, module: project.exe)
+        let saved = (try? String(contentsOf: runningLayout(project), encoding: .utf8)).map { $0.components(separatedBy: "\n").filter { !$0.isEmpty } }
+        var before = saved
+        if before == nil {
+            before = await layout(of: running(project), files: nil, module: project.exe)
+            if let before { try? before.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8) }
         }
-        guard let now = await after else { return .reopen("the compiler couldn't say what the new code's types hold") }
+        guard let now = await after else { return ("the new code doesn't type-check as a whole", nil) }
+        guard let before else { return ("the compiler couldn't say what the open app's types hold", nil) }
         // Type by type, each "Owner<tab>member": a type the open app has must hold just what it did, in order;
-        // a new type (a new view with its own state) is the library's to lay out. A type taken away from these
-        // files may still have objects in the open app.
+        // a new type (a new view with its own state) is the library's to lay out. A type taken away may still
+        // have objects in the open app.
         func byType(_ entries: [String]) -> [String: [String]] {
             Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
         }
         let old = byType(before), new = byType(now)
         for (type, members) in old.sorted(by: { $0.key < $1.key }) {
-            guard let current = new[type] else { return .reopen("\(type) was taken away") }
+            guard let current = new[type] else { return ("\(type) was taken away", nil) }
             if current != members {
                 let what = (current.first { !members.contains($0) } ?? members.first { !current.contains($0) }.map { "no longer " + $0 } ?? "the order of its fields")
                     .replacingOccurrences(of: "\t", with: ".")
-                return .reopen("\(type) changed what it holds (\(what))")
+                return ("\(type) changed what it holds (\(what))", nil)
             }
         }
-        return .reload(changed)
+        return (nil, now)
+    }
+
+    /// What the open app's types hold, kept beside the sources it runs: written when a change goes in (the new
+    /// code's), gone when the app is installed (worked out again at the next change).
+    private static func runningLayout(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-layout.txt") }
+
+    static func keepLayout(_ layout: [String], for project: LampProject) {
+        try? layout.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8)
     }
 
     /// A path for a shell command line, quoted.
@@ -152,10 +171,10 @@ enum LiveReload {
     /// they carry, in order, from the type-checked syntax tree (`-dump-ast`). Comparing the open app's with the new
     /// code's says whether a library can go in: no reading of the text, which formatting, comments, strings and
     /// inferred types all fool. Nil when the compiler can't say (the code doesn't type-check).
-    static func layout(of folder: URL, files: [String], module: String) async -> [String]? {
-        guard !files.isEmpty else { return [] }
+    static func layout(of folder: URL, files: [String]?, module: String) async -> [String]? {
+        if files?.isEmpty == true { return [] }
         var output: [String] = []
-        let status = await Shell.run(frontend("-dump-ast", in: folder, primaries: files, module: module) + " 2>/dev/null",
+        let status = await Shell.run(frontend("-dump-ast", in: folder, primaries: files ?? [], module: module) + " 2>/dev/null",
                                      cwd: folder) { output.append($0) }
         guard status == 0 else { return nil }
         return members(inDump: output.joined(separator: "\n"))

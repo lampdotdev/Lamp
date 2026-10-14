@@ -3582,11 +3582,15 @@ final class Store: ObservableObject {
             if status == 0 {
                 BuildStamp.write(to: current.builtURL)
                 LiveReload.awaitInstall(current)
-                if self.heldInstalls.mayInstall(current.id, running: self.isRunning(current)) { self.installHeldIcons(for: [current.id]) }
+                // Waiting for the app to close; closed already (while this built), it goes in now.
+                _ = self.heldInstalls.mayInstall(current.id, running: true)
+                if !self.isRunning(current) { self.installHeldIcons(for: [current.id]) }
             } else {
-                // What the open app runs compiled file by file; the whole didn't. Built again next time.
+                // The whole code was checked before the change went in, so this is rare: said in the chat, and
+                // built again (with its errors for the agent) at the next request or look.
                 Runtime.forgetBuilt(current)
-                print("Building \(current.name) after a change went in live failed:\n" + output.suffix(30).joined(separator: "\n"))
+                self.log(current, .detail, "Building all of \(current.name) after the change went in failed; it's built again next time:\n"
+                         + output.suffix(30).joined(separator: "\n"))
             }
         }
         return true
@@ -3615,13 +3619,21 @@ final class Store: ObservableObject {
             return false
         }
         note("Updating \(project.name) in place…", for: project)
-        let (library, problem) = await LiveReload.compile(project, changed: changed)
-        guard let library else {
+        // The changed files' compile and the whole code's check go side by side; the check decides.
+        async let compiled = LiveReload.compile(project, changed: changed)
+        let check = await LiveReload.layoutProblem(project)
+        let (library, problem) = await compiled
+        if let why = check.problem {
+            log(project, .detail, "Reopening \(project.name) for this change: \(why).")
+            return false
+        }
+        guard let library, let layout = check.layout else {
             print("Live reload of \(project.name) didn't compile:\n\(problem ?? "")")
             return false
         }
         guard await LiveReload.send(library, to: project, token: Template.token(for: project)) else { return false }
         LiveReload.markRunning(project)
+        LiveReload.keepLayout(layout, for: project)
         watchAfterReload(project, app: app)
         LiveReload.awaitInstall(project)
         _ = heldInstalls.mayInstall(project.id, running: true)
