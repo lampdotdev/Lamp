@@ -6401,7 +6401,7 @@ enum Template {
         private let time: (hour: Int, minute: Int)?
         private let work: () async -> Void
         private var timer: Timer?
-        private var running: Task<Void, Never>?
+        fileprivate var running: Task<Void, Never>?
 
         static func daily(_ name: String, hour: Int, minute: Int = 0, _ work: @escaping () async -> Void) -> LampSchedule {
             LampSchedule(name: name, interval: nil, time: (hour, minute), work: work)
@@ -6489,9 +6489,17 @@ enum Template {
             do { try BGTaskScheduler.shared.submit(request) } catch { print("LampSchedule: iOS turned down running it in the background (the simulator always does): \(error.localizedDescription)") }
         }
 
-        /// What iOS's wake runs (`lampBackground()`): everything due, then the next request.
+        /// What iOS's wake runs (`lampBackground()`). The next wake is asked for first: iOS gives a refresh about
+        /// half a minute, and work that outlasts it must not leave the app with none booked. Then everything due
+        /// runs, and the wake waits for each run, also one the app's own timer started a moment before, since iOS
+        /// suspends the app as soon as this returns. A run cut short by iOS is done again at the next wake.
         static func runDue() async {
-            for schedule in all.values where schedule.due <= Date() { await schedule.fire().value }
+            askForTime()
+            var runs: [Task<Void, Never>] = []
+            for schedule in all.values {
+                if let running = schedule.running { runs.append(running) } else if schedule.due <= Date() { runs.append(schedule.fire()) }
+            }
+            for run in runs { await run.value }
             askForTime()
         }
     }
@@ -7198,6 +7206,22 @@ enum Template {
             }
         }
         private static let presenter = Presenter()
+        /// Sets of buttons are added one after another: the system replaces the whole list each time, so two at
+        /// once would lose one.
+        private static let categories = DispatchQueue(label: "LampNotifications.categories")
+        /// For each id, which send or cancel came last: a send whose permission prompt was still up when a later
+        /// send or a cancel came for the same id doesn't add its notification afterwards.
+        private static let latestLock = NSLock()
+        nonisolated(unsafe) private static var latest: [String: Int] = [:]
+        private static func next(_ id: String) -> Int {
+            latestLock.lock(); defer { latestLock.unlock() }
+            latest[id, default: 0] += 1
+            return latest[id]!
+        }
+        private static func isLatest(_ id: String, _ turn: Int) -> Bool {
+            latestLock.lock(); defer { latestLock.unlock() }
+            return latest[id] == turn
+        }
         nonisolated(unsafe) fileprivate static var handler: (@MainActor (String, String) -> Void)?
         nonisolated(unsafe) fileprivate static var unhandled: [(String, String)] = []
 
@@ -7215,6 +7239,8 @@ enum Template {
                          actions: [String] = [], timeSensitive: Bool = false) {
             let center = UNUserNotificationCenter.current()
             if center.delegate == nil { center.delegate = presenter }
+            let id = id ?? UUID().uuidString
+            let turn = next(id)
             center.requestAuthorization(options: [.alert, .sound]) { granted, error in
                 guard granted else {
                     print("LampNotifications: not allowed\(error.map { " (\($0.localizedDescription))" } ?? "")")
@@ -7228,20 +7254,26 @@ enum Template {
                 if timeSensitive { content.interruptionLevel = .timeSensitive }
                 #endif
                 let add = {
+                    guard isLatest(id, turn) else { return }
                     let trigger = date.map {
                         UNCalendarNotificationTrigger(dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: $0), repeats: false)
                     }
-                    center.add(UNNotificationRequest(identifier: id ?? UUID().uuidString, content: content, trigger: trigger))
+                    center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger))
                 }
                 guard !actions.isEmpty else { return add() }
                 // A set of buttons is a category the system must know before the notification is shown: one per
-                // set, named after its buttons, added to those the app already has.
+                // set, named after its buttons, added to those the app already has, one change at a time.
                 let category = "lamp." + actions.joined(separator: "|")
                 content.categoryIdentifier = category
-                center.getNotificationCategories { known in
-                    guard !known.contains(where: { $0.identifier == category }) else { return add() }
-                    let buttons = actions.map { UNNotificationAction(identifier: $0, title: $0, options: []) }
-                    center.setNotificationCategories(known.union([UNNotificationCategory(identifier: category, actions: buttons, intentIdentifiers: [])]))
+                categories.async {
+                    let fetched = DispatchSemaphore(value: 0)
+                    var known = Set<UNNotificationCategory>()
+                    center.getNotificationCategories { known = $0; fetched.signal() }
+                    fetched.wait()
+                    if !known.contains(where: { $0.identifier == category }) {
+                        let buttons = actions.map { UNNotificationAction(identifier: $0, title: $0, options: []) }
+                        center.setNotificationCategories(known.union([UNNotificationCategory(identifier: category, actions: buttons, intentIdentifiers: [])]))
+                    }
                     add()
                 }
             }
@@ -7249,6 +7281,7 @@ enum Template {
 
         /// Takes back a notification sent with `at` that hasn't been shown yet, or clears one that has.
         static func cancel(_ id: String) {
+            _ = next(id)
             UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id])
             UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
         }
