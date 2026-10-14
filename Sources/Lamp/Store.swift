@@ -2919,6 +2919,8 @@ final class Store: ObservableObject {
         guard let kind = Platform(devices: devices) else {
             return (400, ["error": "`devices` must list one or more of mac, iphone and watch."])
         }
+        // Asked before the change: once an app isn't for the iPhone, its Watch/ no longer counts as a watch app.
+        let hadWatch = current(project).map(Template.hasWatch) ?? false
         let (status, answer) = await convert(project, to: kind)
         guard status == 200, let text = answer["text"] as? String, !text.hasPrefix("Not yet"), !text.hasPrefix("Nothing changed"),
               let now = current(project) else { return (status, answer) }
@@ -2927,7 +2929,7 @@ final class Store: ObservableObject {
         if watch, !Template.hasWatch(now) {
             return (200, ["text": text + "\n\nThen add its Apple Watch app in Watch/:\n" + Agent.Rules.iPhoneWatch])
         }
-        if !watch, Template.hasWatch(now) {
+        if !watch, hadWatch || Template.hasWatch(now) {
             return (200, ["text": text + "\n\nThen take its Apple Watch app away: delete the files in Watch/ with delete_file."])
         }
         return (200, answer)
