@@ -415,6 +415,7 @@ struct PlaygroundIconSheet: ViewModifier {
 
 struct AppMenu: View {
     @EnvironmentObject private var store: Store
+    @ObservedObject private var agentTools = AppTools.shared
     let project: LampProject
 
     var body: some View {
@@ -438,6 +439,15 @@ struct AppMenu: View {
             .disabled(busy || project.untitled)
         Button("Show in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
+        }
+        // Only once the app has tools to give: until then the choice would do nothing.
+        if !agentTools.tools(of: project).isEmpty {
+            Divider()
+            Toggle("Let Other AI Agents Use It", isOn: Binding(get: { agentTools.isOn(project) },
+                                                              set: { store.setAgentTools($0, for: project) }))
+            if agentTools.isOn(project) {
+                Button("Copy Address for AI Agents") { store.copyAgentAddress(project) }
+            }
         }
         Divider()
         if store.canShare(project) {

@@ -20,14 +20,17 @@ final class Gateway: @unchecked Sendable {
     private var networkListener: NWListener?
     private let queue = DispatchQueue(label: "dev.lamp.gateway")
     private let handler: @Sendable (Request) async -> (Int, [String: Any])
+    /// Lamp's own port, except in a harness that must not take the port of a Lamp running on the same Mac.
+    private let port: UInt16
 
-    init(handler: @escaping @Sendable (Request) async -> (Int, [String: Any])) {
+    init(port: UInt16 = Gateway.port, handler: @escaping @Sendable (Request) async -> (Int, [String: Any])) {
+        self.port = port
         self.handler = handler
     }
 
     func start() throws {
         let params = NWParameters.tcp
-        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: Self.port)!)
+        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!)
         params.allowLocalEndpointReuse = true
         let listener = try NWListener(using: params)
         listener.newConnectionHandler = { [weak self] connection in
@@ -51,7 +54,7 @@ final class Gateway: @unchecked Sendable {
             guard networkListener == nil else { return }
             let params = NWParameters.tcp
             params.allowLocalEndpointReuse = true
-            guard let listener = try? NWListener(using: params, on: NWEndpoint.Port(rawValue: Self.port)!) else { return }
+            guard let listener = try? NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!) else { return }
             listener.newConnectionHandler = { [weak self] connection in
                 connection.start(queue: self?.queue ?? .main)
                 self?.receive(connection, buffer: Data(), fromNetwork: true)

@@ -7278,6 +7278,166 @@ enum Template {
         }
     }
 
+    // MARK: - Tools for other AI agents
+
+    /// The app's data and actions as tools another AI agent can call (the person's own assistant, another app's
+    /// agent), once the person lets agents use the app in Lamp. Declare them at launch, in the App's init, with
+    /// the same code the app's own buttons and intents call:
+    ///
+    ///     LampTools.add("add_item", "Adds an item to the grocery list.",
+    ///                   [.string("item", "What to add"), .number("count", "How many", optional: true)]) { input in
+    ///         let item = input.string("item") ?? ""
+    ///         Groceries.shared.add(item, count: Int(input.number("count") ?? 1))
+    ///         return "Added \(item)."
+    ///     }
+    ///
+    /// A handler runs on the main thread and returns text, or `LampTools.json(value)` for data; what it throws
+    /// goes back to the agent as the reason. Lamp passes a call on only while the app is open (on a Mac it opens
+    /// the app for the call), and the required inputs are checked before the handler runs.
+    enum LampTools {
+        struct Parameter {
+            let name: String
+            let description: String
+            let type: String
+            let optional: Bool
+
+            static func string(_ name: String, _ description: String, optional: Bool = false) -> Parameter {
+                Parameter(name: name, description: description, type: "string", optional: optional)
+            }
+            static func number(_ name: String, _ description: String, optional: Bool = false) -> Parameter {
+                Parameter(name: name, description: description, type: "number", optional: optional)
+            }
+            static func bool(_ name: String, _ description: String, optional: Bool = false) -> Parameter {
+                Parameter(name: name, description: description, type: "boolean", optional: optional)
+            }
+        }
+
+        /// What the agent sent. A required input is always there; an optional one may be nil.
+        struct Input {
+            let values: [String: Any]
+            func string(_ name: String) -> String? {
+                if let text = values[name] as? String { return text }
+                return (values[name] as? NSNumber).map { "\($0)" }
+            }
+            func number(_ name: String) -> Double? {
+                if let text = values[name] as? String { return Double(text) }
+                return (values[name] as? NSNumber)?.doubleValue
+            }
+            func bool(_ name: String) -> Bool? {
+                if let text = values[name] as? String { return ["true", "yes", "1"].contains(text.lowercased()) }
+                return (values[name] as? NSNumber)?.boolValue
+            }
+        }
+
+        /// Throw this from a handler to tell the agent why it couldn't (any error's description does as well).
+        struct Failure: LocalizedError {
+            let message: String
+            init(_ message: String) { self.message = message }
+            var errorDescription: String? { message }
+        }
+
+        private struct Tool {
+            let description: String
+            let parameters: [Parameter]
+            let handler: @MainActor (Input) async throws -> String
+        }
+
+        @MainActor private static var tools: [String: Tool] = [:]
+        @MainActor private static var listening = false
+
+        /// Declares a tool. `name` is short snake_case ("add_item"), `description` one line on what it does.
+        /// Adding one with a name already declared replaces it.
+        @MainActor static func add(_ name: String, _ description: String, _ parameters: [Parameter] = [],
+                                   _ handler: @escaping @MainActor (Input) async throws -> String) {
+            tools[name] = Tool(description: description, parameters: parameters, handler: handler)
+            listen()
+        }
+
+        /// Data as JSON text, for a handler to return.
+        static func json<T: Encodable>(_ value: T) -> String {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            return (try? encoder.encode(value)).map { String(decoding: $0, as: UTF8.self) } ?? "null"
+        }
+
+        /// What Lamp is told the app offers: sent with every wait for a call, so a new build's tools replace
+        /// the last one's as soon as it runs.
+        @MainActor private static var declarations: [[String: Any]] {
+            tools.sorted { $0.key < $1.key }.map { name, tool in
+                ["name": name, "description": tool.description,
+                 "parameters": tool.parameters.map { ["name": $0.name, "description": $0.description, "type": $0.type, "optional": $0.optional] }]
+            }
+        }
+
+        /// Waits at Lamp for calls, one wait at a time, for as long as the app runs. Lamp holds each wait until
+        /// a call comes or for half a minute, so an idle app costs one quiet connection. When Lamp can't be
+        /// reached (not running, or a phone away from the Mac) it tries again a little later, and never starts it.
+        @MainActor private static func listen() {
+            guard !listening else { return }
+            listening = true
+            Task { @MainActor in
+                // Every tool declared in the same init goes with the first wait.
+                try? await Task.sleep(for: .milliseconds(300))
+                while true {
+                    if let calls = await next() {
+                        for call in calls { Task { @MainActor in await perform(call) } }
+                    } else {
+                        try? await Task.sleep(for: .seconds(15))
+                    }
+                }
+            }
+        }
+
+        @MainActor private static func next() async -> [[String: Any]]? {
+            let reply = await post("/ai/tools/next", ["tools": declarations], timeout: 45)
+            return reply?["calls"] as? [[String: Any]]
+        }
+
+        @MainActor private static func perform(_ call: [String: Any]) async {
+            guard let id = call["id"] as? String else { return }
+            let name = call["name"] as? String ?? ""
+            let input = Input(values: call["arguments"] as? [String: Any] ?? [:])
+            var text: String, failed = true
+            if let tool = tools[name] {
+                let missing = tool.parameters.first { parameter in
+                    guard !parameter.optional else { return false }
+                    switch parameter.type {
+                    case "number": return input.number(parameter.name) == nil
+                    case "boolean": return input.bool(parameter.name) == nil
+                    default: return input.string(parameter.name) == nil
+                    }
+                }
+                if let missing {
+                    text = "\(name) needs \(missing.name) (\(missing.type)): \(missing.description)"
+                } else {
+                    do {
+                        text = try await tool.handler(input)
+                        failed = false
+                    } catch {
+                        text = error.localizedDescription
+                    }
+                }
+            } else {
+                text = "This app has no tool named \(name)."
+            }
+            _ = await post("/ai/tools/answer", ["id": id, "text": text, "isError": failed], timeout: 20)
+        }
+
+        private static func post(_ path: String, _ body: [String: Any], timeout: TimeInterval) async -> [String: Any]? {
+            guard let data = try? JSONSerialization.data(withJSONObject: body) else { return nil }
+            var request = URLRequest(url: URL(string: lampGateway + path)!)
+            request.httpMethod = "POST"
+            request.timeoutInterval = timeout
+            request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = data
+            guard let (reply, response) = try? await URLSession.shared.data(for: request),
+                  (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            return (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
+        }
+    }
+
     // MARK: - Mac building blocks
 
     #if os(macOS)

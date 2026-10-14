@@ -2394,6 +2394,7 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return
         }
+        AppTools.shared.forget(project)
         let index = projects.firstIndex { $0.id == project.id }
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil
@@ -4483,7 +4484,10 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/kind", "/agent/art", "/agent/talk", "/mcp", "/pi/key"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/kind", "/agent/art", "/agent/talk", "/mcp", "/pi/key",
+                     "/ai/tools/next", "/ai/tools/answer"]
+        // Another agent using an app's own tools, at the address the person gave it (AppTools).
+        if route.hasPrefix("/apps/") { return await outsideAgentRequest(request, route: route) }
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -4537,6 +4541,15 @@ final class Store: ObservableObject {
         // setup incomplete, and that's exactly when the phone has to hear that its copy should go.
         if route == "/ai/keys" { return keysForPhone(project) }
         if route == "/ai/status" { return await aiStatus(for: project) }
+        // The app waiting for, and answering, other agents' calls to its tools: no AI setup needed.
+        if route == "/ai/tools/next" || route == "/ai/tools/answer" {
+            let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+            if route == "/ai/tools/answer" {
+                AppTools.shared.answer(body, from: project)
+                return (200, [:])
+            }
+            return (200, ["calls": await AppTools.shared.next(for: project, offering: body).map(\.json)])
+        }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
     }

@@ -214,7 +214,7 @@ enum Agent {
         let rules = [Rules.edit, Rules.ask, Rules.shell, Rules.universal, Rules.universalFrameworks,
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
-                     Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
+                     Rules.script, Rules.intents, Rules.agentTools, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
                      half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
@@ -234,7 +234,7 @@ enum Agent {
                      mac ? Rules.macFrameworks : Rules.iPhoneFrameworks,
                      mac ? Rules.macBlocks : Rules.iPhoneBlocks]
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.macShare, Rules.permissions] }
-        rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
+        rules += [Rules.script, Rules.intents, Rules.agentTools] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules.append(Rules.computer) }
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.iPhoneShare, Rules.icloud] }
         rules += [Rules.store, Rules.kinds(mac: mac), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
@@ -532,6 +532,19 @@ enum Agent {
         works but the system doesn't see its intents: say so. Nothing here can run an intent, so check that the \
         build succeeds and that what perform calls works in the app, then tell the user in a sentence what to say \
         to Siri or search for.
+        """
+
+        /// Tools other AI agents call (`LampTools`, served by Lamp as MCP through `AppTools`). The person turns
+        /// them on per app in Lamp, so declaring them costs nothing until then.
+        static let agentTools = """
+        - Give other AI agents the app's data and main actions too, without being asked, when someone might ask \
+        their own assistant for them (read the list, add an item, log a workout): in the App's init, \
+        `LampTools.add("add_item", "Adds an item to the grocery list.", [.string("item", "What to add"), \
+        .number("count", "How many", optional: true)]) { input in ...; return "Added \\(item)." }`, with \
+        `input.string("item")`, `.number`, `.bool`. Call the same code as the app's buttons and intents, so its \
+        windows show the change. A handler runs on the main thread and returns text, or `LampTools.json(value)` \
+        for data; what it throws is the agent's answer. The user turns this on in Lamp (right-click the app, Let \
+        Other AI Agents Use It, which copies the address to give their agent); say so only when asked.
         """
 
         /// A Mac app's intents run only when it's signed for a team (`Store.intentsHint` says when it isn't).
