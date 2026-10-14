@@ -7,6 +7,10 @@
 # It works on the development build (Lamp Dev) unless EDITION=release is given, which sets aside the
 # installed Lamp's state instead: the one you use is the one you least want reset by accident.
 #
+# The apps Lamp made are set aside too: ~/Applications/<Lamp Dev Apps> and each app's own data folder
+# (~/Library/Application Support/<app id>), after quitting the ones that are open. Left in place, a new app with
+# an old one's name would be installed over it and open its data. Their small settings (UserDefaults) stay.
+#
 # Lamp keeps everything in three places: ~/Library/Application Support/Lamp (apps, keys.json, pi's config,
 # the signing keychain, downloaded models), the defaults domain dev.lamp.host (engine, provider, models,
 # privacy switches, Sparkle's update state) and, for notarized builds, Keychain items with service
@@ -23,7 +27,9 @@ set -euo pipefail
 # The checkout this script is in, taken here: inside a function zsh gives $0 the function's name.
 here="${0:A:h}/.."
 support="$HOME/Library/Application Support"
-if [ "${EDITION:-dev}" = release ]; then name="Lamp"; domain="dev.lamp.host"; else name="Lamp Dev"; domain="dev.lamp.host.dev"; fi
+if [ "${EDITION:-dev}" = release ]; then name="Lamp"; domain="dev.lamp.host"; prefix="dev.lamp.app."
+else name="Lamp Dev"; domain="dev.lamp.host.dev"; prefix="dev.lamp.dev.app."; fi
+apps="$HOME/Applications/$name Apps"
 state="$support/$name"
 backup="$support/$name-fresh-start"
 
@@ -34,6 +40,22 @@ keychain_accounts() {
     /"svce"<blob>=/ { svce = $0; sub(/.*"svce"<blob>=/, "", svce); if (svce == svc) print acct }'
 }
 
+# The ids of the apps Lamp made that are running, one per line: not their widgets or share extensions, which
+# macOS runs and ends by itself.
+running_apps() {
+  lsappinfo list 2>/dev/null | sed -n "s/.*bundleID=\"\(${prefix}[^\"]*\)\".*/\1/p" | grep -vE '\.(widget|share)$' | sort -u
+}
+
+# Asks each of them to quit, as Lamp does. One that stays (it asked about unsaved work and was kept) stops the
+# script: its files aren't moved from under it.
+quit_apps() {
+  running_apps | while read -r id; do osascript -e "tell application id \"$id\" to quit" >/dev/null 2>&1 || true; done
+  for _ in 1 2 3 4 5 6 7 8 9 10; do [ -z "$(running_apps)" ] && return 0; sleep 1; done
+  echo "These apps are still open: close them and run this again. Nothing was changed." >&2
+  running_apps >&2
+  exit 1
+}
+
 begin() {
   if [ -e "$backup" ]; then
     echo "A fresh start is already in progress ($backup). Run 'restore' first." >&2
@@ -41,6 +63,7 @@ begin() {
   fi
   osascript -e "quit app \"$name\"" >/dev/null 2>&1 || true
   sleep 1
+  quit_apps
   mkdir -p "$backup"
   chmod 700 "$backup"
   # Keychain items can't be moved, so copy each one's account and secret into a file only you can read.
@@ -59,6 +82,9 @@ begin() {
   [ -d "$backup" ] || exit 1   # the loop runs in a subshell; it removed the backup on failure
   # A Mac that never ran Lamp has no folder: remember that, so restore can take the fresh one away.
   if [ -e "$state" ]; then mv "$state" "$backup/Lamp"; else touch "$backup/no-folder"; fi
+  [ -e "$apps" ] && mv "$apps" "$backup/Apps"
+  mkdir -p "$backup/app-data"
+  for folder in "$support/$prefix"*(N); do mv "$folder" "$backup/app-data/"; done
   defaults export "$domain" "$backup/defaults.plist" 2>/dev/null || true
   defaults delete "$domain" >/dev/null 2>&1 || true
   # Settings from before the rename would be migrated back in on the next launch: set them aside too.
@@ -96,6 +122,7 @@ restore() {
   fi
   osascript -e "quit app \"$name\"" >/dev/null 2>&1 || true
   sleep 1
+  quit_apps
   # The steps that can fail come first, while the backup is untouched, so a failed restore can simply be
   # run again. Whatever the fresh run saved in the Keychain goes, then the original items come back.
   keychain_accounts | while read -r account; do
@@ -116,6 +143,16 @@ restore() {
   elif [ -e "$backup/no-folder" ]; then
     rm -rf "$state"
     rm -f "$backup/no-folder"
+  fi
+  # The apps, likewise: the fresh run's go, and yours come back.
+  if [ -e "$backup/Apps" ]; then
+    rm -rf "$apps"
+    mv "$backup/Apps" "$apps"
+  fi
+  if [ -d "$backup/app-data" ]; then
+    for folder in "$support/$prefix"*(N); do rm -rf "$folder"; done
+    for folder in "$backup/app-data/"*(N); do mv "$folder" "$support/"; done
+    rmdir "$backup/app-data"
   fi
   rm -rf "$backup"
   echo "Your $name setup is back."
