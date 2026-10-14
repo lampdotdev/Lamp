@@ -220,6 +220,36 @@ final class PhoneWandTests: XCTestCase {
         XCTAssertEqual(said["pollsAfterDone"], "false")
     }
 
+    /// The app keeps the message it follows, and the one whose Done it already showed, in its settings. Read back
+    /// as the app opens, the second must survive the first being restored, or every launch shows the old Done again.
+    func testAReopenedAppDoesntShowAnOldDoneAgain() throws {
+        let support = Template.lampSupportSwift
+        let start = try XCTUnwrap(support.range(of: "struct LampWandFlow {"))
+        let end = try XCTUnwrap(support.range(of: "// end LampWandSaved", range: start.upperBound..<support.endIndex))
+        let suite = "lamp-wand-test-\(UUID().uuidString)"
+        let program = """
+        import Foundation
+        import Combine
+        \(support[start.lowerBound..<end.lowerBound])
+        let defaults = UserDefaults(suiteName: "\(suite)")!
+        defer { defaults.removePersistentDomain(forName: "\(suite)") }
+        defaults.set("A", forKey: LampWandSaved.requestKey)
+        defaults.set("A", forKey: LampWandSaved.shownKey)
+        let saved = LampWandSaved(defaults)
+        print("shown=\\(saved.flow.shown ?? "nil")")
+        print("kept=\\(defaults.string(forKey: LampWandSaved.shownKey) ?? "nil")")
+        print("rises=\\(saved.flow.apply(["on": true, "id": "A", "phase": "done", "changed": true], sheetOpen: false))")
+        """
+        var said: [String: String] = [:]
+        for line in try run(program).split(separator: "\n") {
+            let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
+            if parts.count == 2 { said[parts[0]] = parts[1] }
+        }
+        XCTAssertEqual(said["shown"], "A")
+        XCTAssertEqual(said["kept"], "A", "restoring the followed message mustn't wipe the one already shown")
+        XCTAssertEqual(said["rises"], "false", "a Done already shown doesn't rise again")
+    }
+
     private func sealedBody(_ message: [String: Any], secret: String) throws -> Data {
         let box = try AES.GCM.seal(JSONSerialization.data(withJSONObject: message), using: PhoneWand.key(secret: secret))
         return try JSONSerialization.data(withJSONObject: ["sealed": try XCTUnwrap(box.combined).base64EncodedString()])

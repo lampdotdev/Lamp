@@ -2907,6 +2907,7 @@ enum Template {
     // shortcuts that work in every app, login items, the clipboard) is under `#if os(macOS)`; the rest is the
     // same on both.
     import SwiftUI
+    import Combine
     import SQLite3
     import JavaScriptCore
     import EventKit
@@ -3326,14 +3327,13 @@ enum Template {
 
         @Published private(set) var on = false
         @Published private(set) var lines: [Line] = []
-        /// Where the change is and what the box holds; the message followed is kept across the relaunch an
-        /// install brings.
-        @Published private var flow = LampWandFlow() {
-            didSet {
-                defaults.set(flow.request, forKey: "lamp.wand.request")
-                defaults.set(flow.shown, forKey: "lamp.wand.shown")
-            }
+        /// Where the change is and what the box holds, kept in the app's settings as it changes.
+        private let saved = LampWandSaved()
+        private var flow: LampWandFlow {
+            get { saved.flow }
+            set { saved.flow = newValue }
         }
+        private var forwarding: AnyCancellable?
 
         var phase: Phase { flow.phase }
         var question: Bool { flow.question }
@@ -3346,15 +3346,13 @@ enum Template {
             set { flow.draft = newValue }
         }
 
-        private let defaults = UserDefaults.standard
         private var button: UIViewController?
         private weak var sheet: UIViewController?
         private var dismissal: Dismissal?
         private var polling: Task<Void, Never>?
 
         private init() {
-            flow.request = defaults.string(forKey: "lamp.wand.request")
-            flow.shown = defaults.string(forKey: "lamp.wand.shown")
+            forwarding = saved.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         }
 
         private static var started = false
@@ -3628,6 +3626,31 @@ enum Template {
         }
     }
     // end LampWandFlow
+
+    /// The wand's flow, kept in the app's settings as it changes, so the message followed and the one whose end
+    /// was already shown outlast the relaunch an install brings.
+    final class LampWandSaved: ObservableObject {
+        static let requestKey = "lamp.wand.request"
+        static let shownKey = "lamp.wand.shown"
+        private let defaults: UserDefaults
+
+        @Published var flow: LampWandFlow {
+            didSet {
+                defaults.set(flow.request, forKey: Self.requestKey)
+                defaults.set(flow.shown, forKey: Self.shownKey)
+            }
+        }
+
+        init(_ defaults: UserDefaults = .standard) {
+            self.defaults = defaults
+            // Both are read before the flow is set: setting it saves both, and would wipe one not read yet.
+            var restored = LampWandFlow()
+            restored.request = defaults.string(forKey: Self.requestKey)
+            restored.shown = defaults.string(forKey: Self.shownKey)
+            flow = restored
+        }
+    }
+    // end LampWandSaved
 
     /// The wand: round, in the corner the thumb reaches. While a change is going it says so (a turning ring, an
     /// orange dot when it waits for the person, a check when it's done), so the sheet can be closed meanwhile.
