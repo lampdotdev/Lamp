@@ -3348,9 +3348,32 @@ enum Template {
                     MainActor.assumeIsolated {
                         guard let window = note.object as? NSWindow, isAppWindow(window) else { return }
                         guard isOn else { return detach(from: window) }
+                        putBack(window)
                         attach(to: window)
                         report(window)
                     }
+                }
+                // Opened behind the person's windows (Lamp's looks during a change), no window becomes key: the
+                // first one is put back in place and reported once launching is done all the same.
+                center.addObserver(forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main) { _ in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        MainActor.assumeIsolated {
+                            guard isOn, let window = NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible }) else { return }
+                            putBack(window)
+                            report(window)
+                        }
+                    }
+                }
+                // A change reopens the app: its window, as it was, is left for Lamp to show in its place
+                // meanwhile, and where it was, for the new copy to open there.
+                center.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
+                    MainActor.assumeIsolated { leaveCover() }
+                }
+                // Lamp's panel asks for something on the screen to be pointed at.
+                DistributedNotificationCenter.default().addObserver(
+                    forName: Notification.Name("{{NOTE}}pick"), object: Bundle.main.bundleIdentifier, queue: .main
+                ) { _ in
+                    MainActor.assumeIsolated { Picker.start() }
                 }
                 for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification,
                              NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
@@ -3364,6 +3387,161 @@ enum Template {
                 }
             }
         }()
+
+        private static var cover: URL { LampRuntime.folder.appendingPathComponent("cover.png") }
+        private static var coverFrame: URL { LampRuntime.folder.appendingPathComponent("cover-frame.txt") }
+
+        /// The front window's picture and place, as the app quits. Lamp shows the picture where the window was
+        /// until the new copy is up; the new copy opens its window in that place (`putBack`).
+        @MainActor private static func leaveCover() {
+            guard isOn, let window = NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible && ($0.isKeyWindow || $0.isMainWindow) })
+                    ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible }),
+                  !window.isMiniaturized, !window.styleMask.contains(.fullScreen),
+                  let picture = LampRuntime.picture(of: window) else { return }
+            try? picture.write(to: cover)
+            try? NSStringFromRect(window.frame).write(to: coverFrame, atomically: true, encoding: .utf8)
+        }
+
+        /// The first window of a copy started for a change goes where the last one was, once.
+        @MainActor private static func putBack(_ window: NSWindow) {
+            guard let text = try? String(contentsOf: coverFrame, encoding: .utf8),
+                  let made = (try? coverFrame.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate else { return }
+            try? FileManager.default.removeItem(at: coverFrame)
+            let frame = NSRectFromString(text)
+            guard Date().timeIntervalSince(made) < 600, frame.width > 0, frame.height > 0,
+                  NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) else { return }
+            window.setFrame(frame, display: true)
+        }
+
+        /// Pointing at part of the window for Lamp's chat: what's under the pointer is outlined, a click
+        /// sends what it is and a picture of it to Lamp, and Escape (or a click outside anything named) ends it.
+        @MainActor private final class Picker: NSView {
+            private static var current: Picker?
+            private var items: [LampScreen.Item] = []
+            private var scale: CGFloat = 1
+            private var hovered: Int?
+            private var keyMonitor: Any?
+
+            private weak var target: NSWindow?
+
+            /// The outline is drawn in a clear window of its own laid over the app's window (a child, so it moves
+            /// with it), which takes the clicks without bringing the app in front first.
+            static func start() {
+                current?.stop()
+                guard let window = NSApp.keyWindow.flatMap({ isAppWindow($0) ? $0 : nil })
+                        ?? NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible }) else { return }
+                let glass = NSPanel(contentRect: window.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+                glass.isOpaque = false
+                glass.backgroundColor = .clear
+                glass.hasShadow = false
+                glass.isReleasedWhenClosed = false
+                glass.becomesKeyOnlyIfNeeded = false
+                let picker = Picker(frame: NSRect(origin: .zero, size: window.frame.size))
+                picker.autoresizingMask = [.width, .height]
+                picker.items = LampDriver.elements(in: window).map(\.item)
+                picker.scale = LampRuntime.scale(of: window)
+                picker.target = window
+                glass.contentView = picker
+                window.addChildWindow(glass, ordered: .above)
+                glass.makeKeyAndOrderFront(nil)
+                picker.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeAlways, .inVisibleRect, .cursorUpdate],
+                                                      owner: picker, userInfo: nil))
+                picker.keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                    if event.keyCode == 53 { picker.stop(); return nil }
+                    return event
+                }
+                current = picker
+            }
+
+            func stop() {
+                keyMonitor.map(NSEvent.removeMonitor)
+                keyMonitor = nil
+                if let glass = window {
+                    glass.parent?.removeChildWindow(glass)
+                    glass.orderOut(nil)
+                }
+                if Picker.current === self { Picker.current = nil }
+            }
+
+            override func cursorUpdate(with event: NSEvent) { NSCursor.crosshair.set() }
+            override var acceptsFirstResponder: Bool { true }
+            override func keyDown(with event: NSEvent) { if event.keyCode == 53 { stop() } else { super.keyDown(with: event) } }
+
+            override var isFlipped: Bool { true }
+            override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+            /// An item's frame in this view's points: the items are in the picture's pixels, from its top left.
+            private func rect(_ item: LampScreen.Item) -> NSRect {
+                NSRect(x: item.frame.minX / scale, y: item.frame.minY / scale, width: item.frame.width / scale, height: item.frame.height / scale)
+            }
+
+            /// The smallest named thing under the point: a button inside a row, not the row.
+            private func item(at point: NSPoint) -> Int? {
+                items.indices.filter { rect(items[$0]).contains(point) }
+                    .min { rect(items[$0]).width * rect(items[$0]).height < rect(items[$1]).width * rect(items[$1]).height }
+            }
+
+            override func mouseMoved(with event: NSEvent) {
+                NSCursor.crosshair.set()
+                let found = item(at: convert(event.locationInWindow, from: nil))
+                if found != hovered { hovered = found; needsDisplay = true }
+            }
+
+            override func mouseDown(with event: NSEvent) {
+                guard let index = item(at: convert(event.locationInWindow, from: nil)), let window = target else { return stop() }
+                let item = items[index]
+                var words = item.role
+                if !item.label.isEmpty { words += " \"\(item.label)\"" }
+                if !item.value.isEmpty, item.value != item.label { words += " showing \"\(item.value)\"" }
+                let scale = scale
+                stop()
+                // The picture is taken once the outline is off the screen, a little wider than the thing itself.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { MainActor.assumeIsolated {
+                    var info: [String: String] = ["what": words]
+                    if let png = LampRuntime.picture(of: window), let image = NSBitmapImageRep(data: png)?.cgImage {
+                        let margin = 12 * scale
+                        let crop = item.frame.insetBy(dx: -margin, dy: -margin)
+                            .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+                        if let part = image.cropping(to: crop),
+                           let data = NSBitmapImageRep(cgImage: part).representation(using: .png, properties: [:]) {
+                            let url = LampRuntime.folder.appendingPathComponent("pointed-\(UUID().uuidString.prefix(8)).png")
+                            if (try? data.write(to: url)) != nil { info["picture"] = url.path }
+                        }
+                    }
+                    DistributedNotificationCenter.default().postNotificationName(
+                        Notification.Name("{{NOTE}}picked"), object: Bundle.main.bundleIdentifier, userInfo: info, deliverImmediately: true)
+                } }
+            }
+
+            override func rightMouseDown(with event: NSEvent) { stop() }
+
+            /// Says what the mode is for, at the top of the window under its title bar: the pointer can only
+            /// change for the app in front, so this is what tells the person they're pointing.
+            private func drawHint() {
+                let text = NSAttributedString(string: "Click the part you mean  ·  Esc to cancel", attributes: [
+                    .font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.white])
+                let size = text.size()
+                let titlebar = (target.map { $0.frame.height - $0.contentLayoutRect.height } ?? 28)
+                let box = NSRect(x: (bounds.width - size.width) / 2 - 14, y: titlebar + 10, width: size.width + 28, height: size.height + 12)
+                NSColor.controlAccentColor.setFill()
+                NSBezierPath(roundedRect: box, xRadius: box.height / 2, yRadius: box.height / 2).fill()
+                text.draw(at: NSPoint(x: box.minX + 14, y: box.minY + 6))
+            }
+
+            override func draw(_ dirtyRect: NSRect) {
+                NSColor.black.withAlphaComponent(0.08).setFill()
+                bounds.fill()
+                drawHint()
+                guard let hovered else { return }
+                let box = rect(items[hovered]).insetBy(dx: -3, dy: -3)
+                let path = NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6)
+                NSColor.controlAccentColor.withAlphaComponent(0.15).setFill()
+                path.fill()
+                NSColor.controlAccentColor.setStroke()
+                path.lineWidth = 2
+                path.stroke()
+            }
+        }
 
         /// Whether Lamp's experiment is on (Settings → Experimental): a file Lamp keeps beside the apps' folders.
         private static var isOn: Bool { FileManager.default.fileExists(atPath: "{{APPS}}/.magic") }
