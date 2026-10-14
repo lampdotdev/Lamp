@@ -1,11 +1,16 @@
 import XCTest
 @testable import Lamp
 
-/// A result card saved before there were rows for what's new still reads.
 final class TalkTests: XCTestCase {
-    func testAnEarlierResultStillReads() throws {
-        let saved = Data(#"{"summary":"Done","guesses":[]}"#.utf8)
-        XCTAssertNil(try JSONDecoder().decode(Talk.Result.self, from: saved).news)
+    /// Result cards saved before there were rows for what's new, and while there were, still read: a chat line
+    /// that can't be read loses the whole chat.
+    func testEarlierResultsStillRead() throws {
+        let before = Data(#"{"summary":"Done","guesses":[]}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(Talk.Result.self, from: before).summary, "Done")
+        let withRows = Data(#"{"summary":"Save a meal","guesses":[],"news":[{"what":"Save a meal","place":"The star beside its name"}],"version":"abc"}"#.utf8)
+        let read = try JSONDecoder().decode(Talk.Result.self, from: withRows)
+        XCTAssertEqual(read.summary, "Save a meal")
+        XCTAssertEqual(read.version, "abc")
     }
 
     /// A result card as an agent really wrote one, for a wish to plan a family's dinners: its summary was shown as
