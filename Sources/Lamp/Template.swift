@@ -3347,6 +3347,7 @@ enum Template {
                 center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { note in
                     MainActor.assumeIsolated {
                         guard let window = note.object as? NSWindow, isAppWindow(window) else { return }
+                        guard isOn else { return detach(from: window) }
                         attach(to: window)
                         report(window)
                     }
@@ -3363,6 +3364,15 @@ enum Template {
                 }
             }
         }()
+
+        /// Whether Lamp's experiment is on (Settings → Experimental): a file Lamp keeps beside the apps' folders.
+        private static var isOn: Bool { FileManager.default.fileExists(atPath: "{{APPS}}/.magic") }
+
+        @MainActor private static func detach(from window: NSWindow) {
+            while let index = window.titlebarAccessoryViewControllers.firstIndex(where: { $0.view.identifier == identifier }) {
+                window.removeTitlebarAccessoryViewController(at: index)
+            }
+        }
 
         /// A window of the app's own: not a panel (menus, popovers, the menu bar's), a sheet or an alert.
         @MainActor private static func isAppWindow(_ window: NSWindow) -> Bool {

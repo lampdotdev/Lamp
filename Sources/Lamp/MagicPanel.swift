@@ -12,6 +12,22 @@ import Combine
 final class MagicPanel: NSObject, NSWindowDelegate {
     static let shared = MagicPanel()
 
+    /// Settings → Experimental. Apps show the wand only while it's on: they look for `flag`, beside the apps'
+    /// folders, each time a window of theirs comes to the front, so turning it off takes the wand away too.
+    static let switchKey = "experimentMagic"
+    static var isOn: Bool { UserDefaults.standard.bool(forKey: switchKey) }
+    static var flag: URL { Store.shared.root.appendingPathComponent(".magic") }
+
+    /// The flag apps read, made to agree with the switch: when it changes, and at launch.
+    static func syncSwitch() {
+        if isOn {
+            FileManager.default.createFile(atPath: flag.path, contents: nil)
+        } else {
+            try? FileManager.default.removeItem(at: flag)
+            shared.close()
+        }
+    }
+
     private var panel: NSPanel?
     private(set) var appID: String?
     /// The app's window as it last said, in screen coordinates; nil when it's out of sight.
@@ -22,7 +38,7 @@ final class MagicPanel: NSObject, NSWindowDelegate {
     private static let gap: CGFloat = 8
 
     func show(_ id: String, beside frame: NSRect? = nil) {
-        guard let project = Store.shared.projects.first(where: { $0.id == id }) else { return }
+        guard Self.isOn, let project = Store.shared.projects.first(where: { $0.id == id }) else { return }
         if appID != project.id { close() }
         appID = project.id
         if let frame, frame.width > 0, frame.height > 0 { appFrame = frame }
