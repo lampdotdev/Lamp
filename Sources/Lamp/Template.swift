@@ -94,32 +94,35 @@ enum Template {
     static func writeOwnedFiles(for project: LampProject) throws {
         try writeSupport(for: project)
         let widget = hasWidget(project)
-        // The simulator build's entitlements, for build.sh to put in the binary (see iPhoneBuildSh), and the
-        // widget extension's beside them.
+        let share = hasShare(project)
+        // The simulator build's entitlements, for build.sh to put in the binary (see iPhoneBuildSh), and each
+        // extension's beside them.
         if project.platform.hasIOS {
             try Capabilities.load(project).simulatorEntitlementsPlist(for: project)
                 .write(to: project.dir.appendingPathComponent(".lamp/entitlements.plist"), atomically: true, encoding: .utf8)
-            let widgetEntitlements = project.dir.appendingPathComponent(".lamp/widget-entitlements.plist")
-            if widget {
-                try simulatorWidgetEntitlementsPlist(for: project).write(to: widgetEntitlements, atomically: true, encoding: .utf8)
-            } else {
-                try? FileManager.default.removeItem(at: widgetEntitlements)
+            for (has, suffix) in [(widget, "widget"), (share, "share")] {
+                let entitlements = project.dir.appendingPathComponent(".lamp/\(suffix)-entitlements.plist")
+                if has {
+                    try simulatorExtensionEntitlementsPlist(for: project, suffix: suffix).write(to: entitlements, atomically: true, encoding: .utf8)
+                } else {
+                    try? FileManager.default.removeItem(at: entitlements)
+                }
             }
             try linkSharedWidgetCode(for: project)
         }
         switch project.platform {
         case .mac:
-            try write(buildSh(widget: widget, widgetOnly: isWidgetOnly(project)), to: "build.sh", for: project, executable: true)
-            try write(packageSwift(widget: widget), to: "Package.swift", for: project)
+            try write(buildSh(widget: widget, share: share, widgetOnly: isWidgetOnly(project)), to: "build.sh", for: project, executable: true)
+            try write(packageSwift(widget: widget, share: share), to: "Package.swift", for: project)
         case .iphone:
-            try write(iPhoneBuildSh(widget: widget), to: "build.sh", for: project, executable: true)
-            try write(iPhonePackageSwift(widget: widget), to: "Package.swift", for: project)
+            try write(iPhoneBuildSh(widget: widget, share: share), to: "build.sh", for: project, executable: true)
+            try write(iPhonePackageSwift(widget: widget, share: share), to: "Package.swift", for: project)
         case .universal:
             // The Mac build is Xcode's, from a project Lamp writes beside the phone's (it is the phone's: one
             // project, both platforms), signed for the person's team: that is what lets the app use what Apple
             // ties to a team, which Lamp's own signing can't give it.
-            try write(universalBuildSh(widget: widget), to: "build.sh", for: project, executable: true)
-            try write(universalPackageSwift(widget: widget), to: "Package.swift", for: project)
+            try write(universalBuildSh(widget: widget, share: share), to: "build.sh", for: project, executable: true)
+            try write(universalPackageSwift(widget: widget, share: share), to: "Package.swift", for: project)
             try writeDeviceProject(for: project, team: Devices.team)
         }
     }
@@ -162,6 +165,7 @@ enum Template {
             try contents.write(to: url, atomically: true, encoding: .utf8)
         }
         try writeWidgetSupport(for: project)
+        try writeShareSupport(for: project)
     }
 
     // MARK: - App Intents
@@ -246,30 +250,41 @@ enum Template {
 
     """
 
-    /// Package.swift for an iPhone app. With a widget it has a second program, built from Widget/ the way
-    /// Xcode builds an extension, as a Mac app's widget is.
-    static func iPhonePackageSwift(widget: Bool) -> String {
-        guard widget else { return iPhonePackageSwift }
-        return withWidgetTargets(iPhonePackageSwift)
+    /// Package.swift for an iPhone app. With a widget or a share extension each is a program of its own,
+    /// built from its folder the way Xcode builds an extension, as a Mac app's are.
+    static func iPhonePackageSwift(widget: Bool, share: Bool = false) -> String {
+        withExtensionTargets(iPhonePackageSwift, widget: widget, share: share)
     }
 
-    private static func withWidgetTargets(_ package: String) -> String {
+    private static func withExtensionTargets(_ package: String, widget: Bool, share: Bool, widgetDefine: Bool = true) -> String {
+        guard widget || share else { return package }
         let one = "    targets: [.executableTarget(name: \"{{EXE}}\", path: \"Sources\")]\n"
         precondition(package.contains(one), "the package template changed")
-        return package.replacingOccurrences(of: one, with: widgetTargets)
+        return package.replacingOccurrences(of: one, with: extensionTargets(widget: widget, share: share, widgetDefine: widgetDefine))
     }
 
-    /// The app and its widget extension, as Package.swift lists them. The extension compiles with LAMP_WIDGET, so
+    /// The app and its extensions, as Package.swift lists them. Each is started by the system's extension runner
+    /// rather than its own `main`, and may call only what extensions may. The widget compiles with LAMP_WIDGET, so
     /// code in Widget/Shared/ can leave out what only the app has (an intent whose work the system does in the app).
-    private static let widgetTargets = """
-            targets: [
-                .executableTarget(name: "{{EXE}}", path: "Sources"),
-                .executableTarget(name: "{{EXE}}Widget", path: "Widget",
-                                  swiftSettings: [.unsafeFlags(["-application-extension"]), .define("LAMP_WIDGET")],
-                                  linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]),
-            ]
-
-    """
+    private static func extensionTargets(widget: Bool, share: Bool, widgetDefine: Bool = true) -> String {
+        let entry = "linkerSettings: [.unsafeFlags([\"-Xlinker\", \"-e\", \"-Xlinker\", \"_NSExtensionMain\"])]"
+        var lines = ["        .executableTarget(name: \"{{EXE}}\", path: \"Sources\"),"]
+        if widget {
+            lines.append("""
+                    .executableTarget(name: "{{EXE}}Widget", path: "\(widgetFolder)",
+                                      swiftSettings: [.unsafeFlags(["-application-extension"])\(widgetDefine ? ", .define(\"LAMP_WIDGET\")" : "")],
+                                      \(entry)),
+            """)
+        }
+        if share {
+            lines.append("""
+                    .executableTarget(name: "{{EXE}}Share", path: "\(shareFolder)",
+                                      swiftSettings: [.unsafeFlags(["-application-extension"])],
+                                      \(entry)),
+            """)
+        }
+        return "    targets: [\n" + lines.joined(separator: "\n") + "\n    ]\n"
+    }
 
     /// Where the code an iPhone app and its widget both compile lives: Swift in Widget/Shared/ is linked into
     /// Sources/ as `sharedWidgetLink`, so each target compiles it (SwiftPM refuses one file in two targets,
@@ -341,11 +356,10 @@ enum Template {
 
     """
 
-    /// With a widget, the iPhone half's extension is a second target; the Mac half has none (`swift build
-    /// --product <app>` builds the Mac half alone).
-    static func universalPackageSwift(widget: Bool) -> String {
-        guard widget else { return universalPackageSwift }
-        return withWidgetTargets(universalPackageSwift)
+    /// With a widget or a share extension, the iPhone half's extensions are targets of their own; the Mac half
+    /// has none (`swift build --product <app>` builds the Mac half alone).
+    static func universalPackageSwift(widget: Bool, share: Bool = false) -> String {
+        withExtensionTargets(universalPackageSwift, widget: widget, share: share)
     }
 
     static let universalAppSwift = """
@@ -409,10 +423,10 @@ enum Template {
     /// Lamp writes under .lamp/device, signed for the team Lamp was given (LAMP_TEAM, from Settings → Building).
     static var universalBuildSh: String { universalBuildSh(widget: false) }
 
-    static func universalBuildSh(widget: Bool) -> String {
+    static func universalBuildSh(widget: Bool, share: Bool = false) -> String {
         // Not indented: the iPhone script writes Info.plist with a heredoc, whose end line must start the line.
         // The iOS half's build goes to its own folder, so checking one half never replaces the other's build.
-        let ios = iPhoneBuildSh(widget: widget).components(separatedBy: "\n").dropFirst(4).joined(separator: "\n")   // after the shebang, the comment, set and cd
+        let ios = iPhoneBuildSh(widget: widget, share: share).components(separatedBy: "\n").dropFirst(4).joined(separator: "\n")   // after the shebang, the comment, set and cd
             .replacingOccurrences(of: "APP=\"build/{{EXE}}.app\"", with: "APP=\"build/iOS/{{EXE}}.app\"")
         return """
         #!/bin/zsh
@@ -494,40 +508,46 @@ enum Template {
 
     """
 
-    /// build.sh for an iPhone app. With a widget, the extension is built as its own product, with its own
-    /// entitlements in its binary (the app group), and put into the app as PlugIns/<Exe>Widget.appex, signed
-    /// before the app around it. The app says it has Live Activities and which folder it shares.
-    static func iPhoneBuildSh(widget: Bool) -> String {
-        guard widget else { return iPhoneBuildSh }
+    /// build.sh for an iPhone app. A widget or a share extension is built as its own product, with its own
+    /// entitlements in its binary (the app group), and put into the app as PlugIns/<Exe>Widget.appex or
+    /// <Exe>Share.appex, signed before the app around it. The app says which folder it shares with them, and with
+    /// a widget that it has Live Activities.
+    static func iPhoneBuildSh(widget: Bool, share: Bool = false) -> String {
+        guard widget || share else { return iPhoneBuildSh }
         func swap(_ script: String, _ old: String, _ new: String) -> String {
             precondition(script.contains(old), "iPhoneBuildSh changed: \(old)")
             return script.replacingOccurrences(of: old, with: new)
         }
         var script = iPhoneBuildSh
-        // The widget's flags are the app's, App Intents' included, before the app's entitlements are added.
+        // An extension's flags are the app's, App Intents' included, before the app's entitlements are added.
         script = swap(script, "# The simulator takes an app's entitlements", "BASE=(\"${FLAGS[@]}\")\n# The simulator takes an app's entitlements")
-        script = swap(script, "swift build \"${FLAGS[@]}\" 2>&1\n", """
-            # The widget extension's entitlements, linked into its own binary the same way.
-            WFLAGS=("${BASE[@]}")
-            WENT=".lamp/widget-entitlements.plist"
-            if [[ -f "$WENT" ]]; then
+        // Each extension's entitlements, linked into its own binary the same way.
+        func extensionBuild(_ product: String, _ suffix: String) -> String {
+            """
+            XFLAGS=("${BASE[@]}")
+            XENT=".lamp/\(suffix)-entitlements.plist"
+            if [[ -f "$XENT" ]]; then
               mkdir -p .build
-              WHASHED=".build/widget-entitlements-$(shasum -a 256 "$WENT" | cut -c1-16).plist"
-              cp "$WENT" "$WHASHED"
-              WFLAGS+=(-Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$WHASHED")
+              XHASHED=".build/\(suffix)-entitlements-$(shasum -a 256 "$XENT" | cut -c1-16).plist"
+              cp "$XENT" "$XHASHED"
+              XFLAGS+=(-Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$XHASHED")
             fi
-            swift build "${FLAGS[@]}" --product {{EXE}} 2>&1
-            swift build "${WFLAGS[@]}" --product {{EXE}}Widget 2>&1
+            swift build "${XFLAGS[@]}" --product {{EXE}}\(product) 2>&1
 
-            """)
-        script = swap(script, "{{USAGE}}\n</dict></plist>\nPLIST\n", "{{USAGE}}\n" + widgetAppPlistLines(group: "group.{{BUNDLE}}") + "\n</dict></plist>\nPLIST\n")
-        script = swap(script, appSigningLine, iPhoneWidgetBuildSteps + appSigningLine)
+            """
+        }
+        script = swap(script, "swift build \"${FLAGS[@]}\" 2>&1\n", "swift build \"${FLAGS[@]}\" --product {{EXE}} 2>&1\n"
+                      + (widget ? extensionBuild("Widget", "widget") : "") + (share ? extensionBuild("Share", "share") : ""))
+        script = swap(script, "{{USAGE}}\n</dict></plist>\nPLIST\n",
+                      "{{USAGE}}\n" + appGroupPlistLines(group: "group.{{BUNDLE}}", liveActivities: widget) + "\n</dict></plist>\nPLIST\n")
+        script = swap(script, appSigningLine, (widget ? iPhoneWidgetBuildSteps : "") + (share ? iPhoneShareBuildSteps : "") + appSigningLine)
         return script
     }
 
-    /// What an app with a widget says in its Info.plist: that it has Live Activities, and the folder it shares.
-    static func widgetAppPlistLines(group: String) -> String {
-        "  <key>NSSupportsLiveActivities</key><true/>\n  <key>LampAppGroup</key><string>\(group.xmlEscaped)</string>"
+    /// What an app with extensions says in its Info.plist: the folder it shares with them, and with a widget
+    /// that it has Live Activities.
+    static func appGroupPlistLines(group: String, liveActivities: Bool) -> String {
+        (liveActivities ? "  <key>NSSupportsLiveActivities</key><true/>\n" : "") + "  <key>LampAppGroup</key><string>\(group.xmlEscaped)</string>"
     }
 
     /// The folder an iPhone app shares with its widget: an app group named after the app, as it's signed (with
@@ -536,13 +556,14 @@ enum Template {
         "group." + (onDevice ? project.deviceBundleID(team: team) : project.bundleID)
     }
 
-    /// The widget extension's entitlements for the simulator: the app group, with the app's identity when
-    /// there's a team, as the app's own have it (`Capabilities.simulatorEntitlementsPlist`).
-    static func simulatorWidgetEntitlementsPlist(for project: LampProject) -> String {
+    /// An extension's entitlements for the simulator (the widget's, "widget", or the share extension's, "share"):
+    /// the app group, with the extension's identity when there's a team, as the app's own have it
+    /// (`Capabilities.simulatorEntitlementsPlist`).
+    static func simulatorExtensionEntitlementsPlist(for project: LampProject, suffix: String) -> String {
         let plist = Capabilities().entitlementsPlist(container: nil, platform: .ios, appGroup: appGroup(for: project, onDevice: false))
         let team = Devices.team
         guard !team.isEmpty else { return plist }
-        let identity = "  <key>application-identifier</key><string>\(team).\(project.bundleID.xmlEscaped).widget</string>\n" +
+        let identity = "  <key>application-identifier</key><string>\(team).\(project.bundleID.xmlEscaped).\(suffix)</string>\n" +
             "  <key>com.apple.developer.team-identifier</key><string>\(team)</string>\n"
         return plist.replacingOccurrences(of: "<plist version=\"1.0\"><dict>\n", with: "<plist version=\"1.0\"><dict>\n" + identity)
     }
@@ -581,6 +602,56 @@ enum Template {
 
         """
     }
+
+    /// The share extension inside the simulator's bundle.
+    private static var iPhoneShareBuildSteps: String {
+        """
+        SHARE="$APP/PlugIns/{{EXE}}Share.appex"
+        mkdir -p "$SHARE"
+        cp "$(dirname "$BIN")/{{EXE}}Share" "$SHARE/{{EXE}}Share"
+        cat > "$SHARE/Info.plist" <<PLIST
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+          <key>CFBundleDevelopmentRegion</key><string>en</string>
+          <key>CFBundleExecutable</key><string>{{EXE}}Share</string>
+          <key>CFBundleIdentifier</key><string>{{BUNDLE}}.share</string>
+          <key>CFBundleName</key><string>{{NAME}}</string>
+          <key>CFBundleDisplayName</key><string>{{NAME}}</string>
+          <key>CFBundlePackageType</key><string>XPC!</string>
+          <key>CFBundleShortVersionString</key><string>0.1</string>
+          <key>CFBundleVersion</key><string>$(date +%s)</string>
+          <key>MinimumOSVersion</key><string>17.0</string>
+          <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+          <key>DTPlatformName</key><string>iphonesimulator</string>
+          <key>CFBundleSupportedPlatforms</key><array><string>iPhoneSimulator</string></array>
+          <key>LampAppGroup</key><string>group.{{BUNDLE}}</string>
+        \(shareExtensionPlistLines)
+        </dict></plist>
+        PLIST
+        codesign --force -s - "$SHARE"
+
+        """
+    }
+
+    /// The share extension's entry in its Info.plist, the same on every platform: the share sheet's extension
+    /// point, Lamp's controller (`LampShareController`, in the extension's own support file), and what it's
+    /// offered for. Text, links, pictures, films and files: the app's own code decides what it keeps.
+    static let shareExtensionPlistLines = """
+      <key>NSExtension</key><dict>
+        <key>NSExtensionPointIdentifier</key><string>com.apple.share-services</string>
+        <key>NSExtensionPrincipalClass</key><string>LampShareController</string>
+        <key>NSExtensionAttributes</key><dict>
+          <key>NSExtensionActivationRule</key><dict>
+            <key>NSExtensionActivationSupportsText</key><true/>
+            <key>NSExtensionActivationSupportsWebURLWithMaxCount</key><integer>1</integer>
+            <key>NSExtensionActivationSupportsImageWithMaxCount</key><integer>20</integer>
+            <key>NSExtensionActivationSupportsMovieWithMaxCount</key><integer>5</integer>
+            <key>NSExtensionActivationSupportsFileWithMaxCount</key><integer>20</integer>
+          </dict>
+        </dict>
+      </dict>
+    """
 
     /// The widget extension's Info.plist in the Xcode project, for a phone or an app for both.
     static let deviceWidgetInfoPlist = """
@@ -636,6 +707,66 @@ enum Template {
         // Xcode's synchronized group doesn't follow the Sources/WidgetShared link SwiftPM builds through, so
         // the app target gets Widget/Shared/ as a group of its own; the widget has it within Widget/.
         text = swap(text, "fileSystemSynchronizedGroups = (A00000000000000000000007 /* Sources */);", "fileSystemSynchronizedGroups = (A00000000000000000000007 /* Sources */, B0000000000000000000000C /* Shared */);")
+        return text
+    }
+
+    /// The share extension's Info.plist in the Xcode project, for a phone or an app for both.
+    static let deviceShareInfoPlist = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0"><dict>
+      <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+      <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+      <key>CFBundleName</key><string>{{NAME}}</string>
+      <key>CFBundleDisplayName</key><string>{{NAME}}</string>
+      <key>CFBundlePackageType</key><string>XPC!</string>
+      <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+      <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+      <key>LampAppGroup</key><string>{{APP_GROUP}}</string>
+    \(shareExtensionPlistLines)
+    </dict></plist>
+
+    """
+
+    /// The device or universal project with the share extension as a target of its own, as the widget is
+    /// (`withWidgetTarget`, which runs first when there's both): its folder as a synchronized group, built for
+    /// iOS only, embedded in the app's PlugIns and signed by automatic signing with the app.
+    static func withShareTarget(_ pbxproj: String) -> String {
+        func swap(_ text: String, _ old: String, _ new: String) -> String {
+            precondition(text.contains(old), "the project template changed: \(old)")
+            return text.replacingOccurrences(of: old, with: new)
+        }
+        let embedded = "C00000000000000000000008 /* {{EXE}}Share.appex in Embed Foundation Extensions */"
+        let hasWidget = pbxproj.contains("B00000000000000000000009 /* Embed Foundation Extensions */")
+        var objects = """
+        \t\tC00000000000000000000001 /* {{EXE}}Share.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "{{EXE}}Share.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+        \t\tC00000000000000000000002 /* Share */ = {isa = PBXFileSystemSynchronizedRootGroup; name = Share; path = ../../Share; sourceTree = "<group>"; };
+        \t\tC00000000000000000000003 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        \t\tC00000000000000000000004 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        \t\tC00000000000000000000005 /* {{EXE}}Share */ = {isa = PBXNativeTarget; buildConfigurationList = C00000000000000000000006; buildPhases = (C00000000000000000000003 /* Sources */, C00000000000000000000004 /* Frameworks */); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (C00000000000000000000002 /* Share */); name = "{{EXE}}Share"; packageProductDependencies = (); productName = "{{EXE}}Share"; productReference = C00000000000000000000001 /* {{EXE}}Share.appex */; productType = "com.apple.product-type.app-extension"; };
+        \t\tC00000000000000000000006 /* Build configuration list for the share extension */ = {isa = XCConfigurationList; buildConfigurations = (C00000000000000000000007 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        \t\tC00000000000000000000007 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = Share.entitlements; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = "Share-Info.plist"; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}.share"; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+        \t\t\(embedded) = {isa = PBXBuildFile; fileRef = C00000000000000000000001 /* {{EXE}}Share.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+        \t\tC0000000000000000000000A /* PBXTargetDependency */ = {isa = PBXTargetDependency; platformFilter = ios; target = C00000000000000000000005 /* {{EXE}}Share */; targetProxy = C0000000000000000000000B /* PBXContainerItemProxy */; };
+        \t\tC0000000000000000000000B /* PBXContainerItemProxy */ = {isa = PBXContainerItemProxy; containerPortal = A0000000000000000000000F /* Project object */; proxyType = 1; remoteGlobalIDString = C00000000000000000000005; remoteInfo = "{{EXE}}Share"; };
+
+        """
+        var text = pbxproj
+        if hasWidget {
+            // One phase embeds every extension.
+            text = swap(text, "files = (B00000000000000000000008 /* {{EXE}}Widget.appex in Embed Foundation Extensions */);",
+                        "files = (B00000000000000000000008 /* {{EXE}}Widget.appex in Embed Foundation Extensions */, \(embedded));")
+            text = swap(text, "dependencies = (B0000000000000000000000A /* PBXTargetDependency */);",
+                        "dependencies = (B0000000000000000000000A /* PBXTargetDependency */, C0000000000000000000000A /* PBXTargetDependency */);")
+        } else {
+            objects += "\t\tC00000000000000000000009 /* Embed Foundation Extensions */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = \"\"; dstSubfolderSpec = 13; files = (\(embedded)); name = \"Embed Foundation Extensions\"; runOnlyForDeploymentPostprocessing = 0; };\n"
+            text = swap(text, "buildPhases = (A0000000000000000000000D /* Sources */, A00000000000000000000008 /* Frameworks */, A0000000000000000000000E /* Resources */); buildRules = (); dependencies = ();",
+                        "buildPhases = (A0000000000000000000000D /* Sources */, A00000000000000000000008 /* Frameworks */, A0000000000000000000000E /* Resources */, C00000000000000000000009 /* Embed Foundation Extensions */); buildRules = (); dependencies = (C0000000000000000000000A /* PBXTargetDependency */);")
+        }
+        text = swap(text, "\t\tA00000000000000000000010 /* Build configuration list for PBXProject */", objects + "\t\tA00000000000000000000010 /* Build configuration list for PBXProject */")
+        text = swap(text, "targets = (A0000000000000000000000B /* {{EXE}} */", "targets = (A0000000000000000000000B /* {{EXE}} */, C00000000000000000000005 /* {{EXE}}Share */")
+        text = swap(text, "children = (A00000000000000000000006 /* {{EXE}}.app */", "children = (A00000000000000000000006 /* {{EXE}}.app */, C00000000000000000000001 /* {{EXE}}Share.appex */")
+        text = swap(text, "children = (A00000000000000000000007 /* Sources */, ", "children = (A00000000000000000000007 /* Sources */, C00000000000000000000002 /* Share */, ")
         return text
     }
 
@@ -795,7 +926,7 @@ enum Template {
         /// nothing is declared, so a plain app stays plain.
         func simulatorEntitlementsPlist(for project: LampProject) -> String {
             let plist = entitlementsPlist(for: project, platform: .ios,
-                                          appGroup: Template.hasWidget(project) ? Template.appGroup(for: project, onDevice: false) : nil)
+                                          appGroup: Template.hasExtension(project) ? Template.appGroup(for: project, onDevice: false) : nil)
             let team = Devices.team
             guard !team.isEmpty, plist.contains("<key>") else { return plist }
             let identity = "  <key>application-identifier</key><string>\(team).\(project.bundleID.xmlEscaped)</string>\n" +
@@ -965,12 +1096,14 @@ enum Template {
         let hasIcon = fm.fileExists(atPath: Icons.squareURL(project).path)
         if hasIcon { try fm.copyItem(at: Icons.squareURL(project), to: iconset.appendingPathComponent("AppIcon.png")) }
         let capabilities = Capabilities.load(project)
-        let widget = hasWidget(project)
+        let widget = hasWidget(project), share = hasShare(project)
         let group = appGroup(for: project, onDevice: true, team: team)
-        let pbxproj = universal ? universalPbxproj : devicePbxproj
+        var pbxproj = universal ? universalPbxproj : devicePbxproj
+        if widget { pbxproj = withWidgetTarget(pbxproj) }
+        if share { pbxproj = withShareTarget(pbxproj) }
         var files: [(String, String)] = [
-            ("\(project.exe).xcodeproj/project.pbxproj", widget ? withWidgetTarget(pbxproj) : pbxproj),
-            ("App.entitlements", capabilities.entitlementsPlist(for: project, platform: .ios, appGroup: widget ? group : nil)),
+            ("\(project.exe).xcodeproj/project.pbxproj", pbxproj),
+            ("App.entitlements", capabilities.entitlementsPlist(for: project, platform: .ios, appGroup: widget || share ? group : nil)),
             ("\(project.exe).xcodeproj/xcshareddata/xcschemes/\(project.exe).xcscheme", deviceScheme),
             ("Info.plist", deviceInfoPlist),
             ("Assets.xcassets/Contents.json", #"{ "info": { "author": "xcode", "version": 1 } }"#),
@@ -988,7 +1121,12 @@ enum Template {
             files.append(("Widget-Info.plist", deviceWidgetInfoPlist))
             files.append(("Widget.entitlements", Capabilities().entitlementsPlist(container: nil, platform: .ios, appGroup: group)))
         }
-        let widgetPlist = widget ? widgetAppPlistLines(group: group) : ""
+        // The share extension's, the same way.
+        if share {
+            files.append(("Share-Info.plist", deviceShareInfoPlist))
+            files.append(("Share.entitlements", Capabilities().entitlementsPlist(container: nil, platform: .ios, appGroup: group)))
+        }
+        let widgetPlist = widget || share ? appGroupPlistLines(group: group, liveActivities: widget) : ""
         for (path, template) in files {
             let contents = template
                 .replacingOccurrences(of: "{{WIDGET_PLIST}}", with: widgetPlist)
@@ -1510,6 +1648,322 @@ enum Template {
         }
     }
 
+    // MARK: - Share extensions
+
+    /// Where an app's share extension is written: a folder beside Sources/, because the extension is a program
+    /// of its own (the system runs it inside the app that shares, in a sandbox) and SwiftPM builds one program
+    /// per folder.
+    static let shareFolder = "Share"
+
+    /// What Lamp writes into it: the extension's half of `LampShare`, the controller the system starts, and
+    /// the ready-made sheet.
+    static let shareSupportFile = "LampShareSupport.swift"
+
+    /// Whether the app has a share extension to build: Swift in its Share folder, Lamp's own file aside. Asked
+    /// before every build, like `hasWidget`.
+    static func hasShare(_ project: LampProject) -> Bool {
+        let folder = project.dir.appendingPathComponent(shareFolder)
+        let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        return files.contains { $0.pathExtension == "swift" && $0.lastPathComponent != shareSupportFile }
+    }
+
+    /// Whether the app has an extension that shares a folder with it (an app group): a widget or a share extension.
+    static func hasExtension(_ project: LampProject) -> Bool { hasWidget(project) || hasShare(project) }
+
+    /// The share extension inside a built or installed copy of a Mac app.
+    static func shareURL(in app: URL, of project: LampProject) -> URL {
+        app.appendingPathComponent("Contents/PlugIns/\(project.exe)Share.appex")
+    }
+
+    /// Lamp's own file in the Share folder, written like LampSupport.swift: before every turn and build.
+    static func writeShareSupport(for project: LampProject) throws {
+        guard hasShare(project) else { return }
+        let url = project.dir.appendingPathComponent(shareFolder).appendingPathComponent(shareSupportFile)
+        if (try? String(contentsOf: url, encoding: .utf8)) != lampShareSupportSwift {
+            try lampShareSupportSwift.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
+    /// The share extension's side of `LampShare`, one source for the Mac and iOS. The system starts
+    /// `LampShareController` (named in the extension's Info.plist), which reads what was shared into the folder
+    /// the extension shares with the app and shows the agent's `ShareView`; `send` leaves it there for the app
+    /// (`LampShare.onReceive` in LampSupport.swift) and nudges the app, `cancel` throws it away.
+    static let lampShareSupportSwift = #"""
+    // Generated by Lamp before every build. Don't edit: changes are overwritten.
+    import SwiftUI
+    import UniformTypeIdentifiers
+    #if os(iOS)
+    import UIKit
+    #else
+    import AppKit
+    #endif
+
+    /// What someone is sharing to the app, and the way to hand it over. Share/ShareView.swift is the sheet:
+    ///
+    ///     struct ShareView: View {
+    ///         let items: [LampShare.Item]
+    ///         var body: some View { LampShareSheet(items: items) }   // what's shared, Cancel and Save
+    ///     }
+    ///
+    /// A sheet of its own ends with `LampShare.send(items)` (the app's `LampShare.onReceive` gets them, also when
+    /// it was closed) or `LampShare.cancel()`.
+    enum LampShare {
+        struct Item: Codable, Identifiable, Hashable {
+            enum Kind: String, Codable { case text, link, image, file }
+            var id = UUID().uuidString
+            var kind: Kind
+            /// The text; for a link its title, when the sharing app gave one.
+            var text: String?
+            /// The link.
+            var url: URL?
+            /// A picture's or file's name as it was shared.
+            var name: String?
+            /// Where the picture or file is kept, within the share's folder.
+            var file: String?
+            var folder: URL?
+            enum CodingKeys: String, CodingKey { case id, kind, text, url, name, file }
+
+            init(text: String) { kind = .text; self.text = text }
+            init(link: URL, title: String? = nil) { kind = .link; url = link; text = title }
+            fileprivate init(kind: Kind, text: String? = nil, url: URL? = nil, name: String? = nil, file: String? = nil, folder: URL? = nil) {
+                self.kind = kind; self.text = text; self.url = url; self.name = name; self.file = file; self.folder = folder
+            }
+
+            var fileURL: URL? { file.flatMap { folder?.appendingPathComponent($0) } }
+            var data: Data? { fileURL.flatMap { try? Data(contentsOf: $0) } }
+            #if os(iOS)
+            var image: UIImage? { kind == .image ? fileURL.flatMap { UIImage(contentsOfFile: $0.path) } : nil }
+            #else
+            var image: NSImage? { kind == .image ? fileURL.flatMap { NSImage(contentsOf: $0) } : nil }
+            #endif
+        }
+
+        /// Hands these to the app and closes the sheet. Usually the items the sheet was given; it may add
+        /// to them (`Item(text: note)`) or leave some out.
+        @MainActor static func send(_ items: [Item]) { LampShareController.current?.finish(sending: items) }
+
+        /// Closes the sheet and gives the app nothing.
+        @MainActor static func cancel() { LampShareController.current?.finish(sending: nil) }
+
+        fileprivate static var group: String? { Bundle.main.object(forInfoDictionaryKey: "LampAppGroup") as? String }
+
+        fileprivate static var folder: URL? {
+            guard let group, let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return nil }
+            return root.appendingPathComponent("lamp-share", isDirectory: true)
+        }
+
+        /// Reads what was shared, in the order it came, keeping pictures and files in `staging`.
+        fileprivate static func load(_ inputs: [NSExtensionItem], into staging: URL, then: @escaping ([Item]) -> Void) {
+            let group = DispatchGroup()
+            let lock = NSLock()
+            var found: [(Int, Item)] = []
+            var order = 0
+            for input in inputs {
+                let title = input.attributedTitle?.string ?? input.attributedContentText?.string
+                for provider in input.attachments ?? [] {
+                    let place = order
+                    order += 1
+                    group.enter()
+                    item(from: provider, title: title, into: staging) { item in
+                        if let item { lock.lock(); found.append((place, item)); lock.unlock() }
+                        group.leave()
+                    }
+                }
+            }
+            group.notify(queue: .main) { then(found.sorted { $0.0 < $1.0 }.map(\.1)) }
+        }
+
+        private static func item(from provider: NSItemProvider, title: String?, into staging: URL, then: @escaping (Item?) -> Void) {
+            func has(_ type: UTType) -> Bool { provider.hasItemConformingToTypeIdentifier(type.identifier) }
+            func keep(_ url: URL, kind: Item.Kind) -> Item? {
+                let name = url.lastPathComponent
+                let stored = UUID().uuidString + "-" + name
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                guard (try? FileManager.default.copyItem(at: url, to: staging.appendingPathComponent(stored))) != nil else { return nil }
+                return Item(kind: kind, name: name, file: stored, folder: staging)
+            }
+            func keep(_ data: Data, type: UTType, kind: Item.Kind) -> Item? {
+                let name = (provider.suggestedName ?? kind.rawValue) + (type.preferredFilenameExtension.map { "." + $0 } ?? "")
+                let stored = UUID().uuidString + "-" + name
+                guard (try? data.write(to: staging.appendingPathComponent(stored))) != nil else { return nil }
+                return Item(kind: kind, name: name, file: stored, folder: staging)
+            }
+            if has(.url), !has(.fileURL) {
+                provider.loadItem(forTypeIdentifier: UTType.url.identifier) { value, _ in
+                    let url = (value as? URL) ?? (value as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
+                    then(url.map { Item(link: $0, title: title) })
+                }
+            } else if has(.fileURL) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { value, _ in
+                    let url = (value as? URL) ?? (value as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
+                    let isImage = url.flatMap { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) } ?? false
+                    then(url.flatMap { keep($0, kind: isImage ? .image : .file) })
+                }
+            } else if has(.image) || has(.movie) || has(.data) {
+                // A picture or file handed over as a file of its own, or only as data.
+                let kind: Item.Kind = has(.image) ? .image : .file
+                let type = provider.registeredTypeIdentifiers.compactMap { UTType($0) }.first { $0.conforms(to: kind == .image ? .image : .data) } ?? .data
+                provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
+                    if let url, let item = keep(url, kind: kind) { return then(item) }
+                    provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in
+                        then(data.flatMap { keep($0, type: type, kind: kind) })
+                    }
+                }
+            } else if has(.plainText) || has(.text) {
+                provider.loadItem(forTypeIdentifier: (has(.plainText) ? UTType.plainText : UTType.text).identifier) { value, _ in
+                    let text = (value as? String) ?? (value as? NSAttributedString)?.string ?? (value as? Data).flatMap { String(data: $0, encoding: .utf8) }
+                    then(text.map { Item(text: $0) })
+                }
+            } else {
+                then(nil)
+            }
+        }
+    }
+
+    /// The ready-made share sheet: what's being shared, with Cancel and Save.
+    struct LampShareSheet: View {
+        let items: [LampShare.Item]
+        private var appName: String {
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "this app"
+        }
+
+        var body: some View {
+            #if os(iOS)
+            NavigationStack {
+                list
+                    .navigationTitle(appName)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { LampShare.cancel() } }
+                        ToolbarItem(placement: .confirmationAction) { Button("Save") { LampShare.send(items) }.disabled(items.isEmpty) }
+                    }
+            }
+            #else
+            VStack(alignment: .leading, spacing: 12) {
+                Text(appName).font(.headline)
+                list.frame(minHeight: 140)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { LampShare.cancel() }.keyboardShortcut(.cancelAction)
+                    Button("Save") { LampShare.send(items) }.keyboardShortcut(.defaultAction).disabled(items.isEmpty)
+                }
+            }
+            .padding()
+            .frame(width: 380)
+            #endif
+        }
+
+        private var list: some View {
+            List(items) { item in
+                HStack(spacing: 12) {
+                    if let image = item.image {
+                        #if os(iOS)
+                        Image(uiImage: image).resizable().scaledToFill().frame(width: 44, height: 44).clipShape(RoundedRectangle(cornerRadius: 6))
+                        #else
+                        Image(nsImage: image).resizable().scaledToFill().frame(width: 44, height: 44).clipShape(RoundedRectangle(cornerRadius: 6))
+                        #endif
+                    } else {
+                        Image(systemName: item.kind == .link ? "link" : item.kind == .text ? "text.alignleft" : "doc")
+                            .foregroundStyle(.secondary).frame(width: 44)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.text ?? item.name ?? item.url?.host() ?? "").lineLimit(3)
+                        if item.kind == .link, let url = item.url { Text(url.absoluteString).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                    }
+                }
+            }
+            .overlay { if items.isEmpty { Text("Nothing here \(appName) can keep.").foregroundStyle(.secondary) } }
+        }
+    }
+
+    #if os(iOS)
+    typealias LampShareBase = UIViewController
+    #else
+    typealias LampShareBase = NSViewController
+    #endif
+
+    /// What the system starts when the person picks the app in a share sheet (named in the extension's
+    /// Info.plist). It reads what was shared, then shows `ShareView`, which the app's Share/ folder has.
+    @objc(LampShareController)
+    final class LampShareController: LampShareBase {
+        @MainActor fileprivate static weak var current: LampShareController?
+        private let model = Model()
+        private var staging: URL?
+        private var finished = false
+
+        final class Model: ObservableObject {
+            @Published var items: [LampShare.Item]?
+        }
+
+        private struct Root: View {
+            @ObservedObject var model: Model
+            var body: some View {
+                if let items = model.items { ShareView(items: items) } else { ProgressView().padding(40) }
+            }
+        }
+
+        #if os(iOS)
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            let host = UIHostingController(rootView: Root(model: model))
+            addChild(host)
+            host.view.frame = view.bounds
+            host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            view.addSubview(host.view)
+            host.didMove(toParent: self)
+            start()
+        }
+        #else
+        override func loadView() {
+            let host = NSHostingView(rootView: Root(model: model))
+            host.frame = NSRect(x: 0, y: 0, width: 380, height: 280)
+            view = host
+            start()
+        }
+        #endif
+
+        private func start() {
+            Self.current = self
+            guard let folder = LampShare.folder else {
+                print("LampShare: this extension has no folder shared with its app, so nothing can reach the app")
+                model.items = []
+                return
+            }
+            let staging = folder.appendingPathComponent(".incoming-" + UUID().uuidString, isDirectory: true)
+            try? FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+            self.staging = staging
+            LampShare.load(extensionContext?.inputItems as? [NSExtensionItem] ?? [], into: staging) { [weak self] items in
+                self?.model.items = items
+            }
+        }
+
+        /// Leaves the share for the app, whole, under a name that sorts by time: the app reads only a share
+        /// whose name doesn't start with a dot, so it never reads one half written.
+        fileprivate func finish(sending items: [LampShare.Item]?) {
+            guard !finished else { return }
+            finished = true
+            let fm = FileManager.default
+            if let items, let staging, let folder = LampShare.folder, let group = LampShare.group,
+               let data = try? JSONEncoder().encode(items), (try? data.write(to: staging.appendingPathComponent("items.json"))) != nil,
+               (try? fm.moveItem(at: staging, to: folder.appendingPathComponent(String(format: "%015.0f-", Date().timeIntervalSince1970 * 1000) + UUID().uuidString))) != nil {
+                CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                                     CFNotificationName((group + ".lamp-share") as CFString), nil, nil, true)
+                extensionContext?.completeRequest(returningItems: nil)
+                return
+            }
+            if let staging { try? fm.removeItem(at: staging) }
+            if items == nil {
+                extensionContext?.cancelRequest(withError: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
+            } else {
+                print("LampShare: what was shared couldn't be handed to the app")
+                extensionContext?.completeRequest(returningItems: nil)
+            }
+        }
+    }
+
+    """#
+
     static let lampWidgetSupportIOSSwift = #"""
     // Generated by Lamp before every build. Don't edit: changes are overwritten.
     import Foundation
@@ -1613,31 +2067,15 @@ enum Template {
     /// Package.swift for a Mac app. With a widget it has a second program, built from Widget/ the way Xcode
     /// builds an extension: only what extensions may call, and started by the system's extension runner
     /// rather than its own `main`.
-    static func packageSwift(widget: Bool) -> String {
-        guard widget else { return packageSwift }
-        return """
-        // swift-tools-version:5.9
-        import PackageDescription
-
-        let package = Package(
-            name: "{{EXE}}",
-            platforms: [.macOS(.v14)],
-            targets: [
-                .executableTarget(name: "{{EXE}}", path: "Sources"),
-                .executableTarget(name: "{{EXE}}Widget", path: "\(widgetFolder)",
-                                  swiftSettings: [.unsafeFlags(["-application-extension"])],
-                                  linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]),
-            ]
-        )
-
-        """
+    static func packageSwift(widget: Bool, share: Bool = false) -> String {
+        withExtensionTargets(packageSwift, widget: widget, share: share, widgetDefine: false)
     }
 
     /// build.sh for a Mac app. With a widget, the second program goes into the app as its widget extension
     /// before the app is signed: an extension is signed first, with its own entitlements, and the app around it.
-    static func buildSh(widget: Bool, widgetOnly: Bool = false) -> String {
-        guard widget else { return buildSh }
-        var script = buildSh.replacingOccurrences(of: appSigningLine, with: widgetBuildSteps + appSigningLine)
+    static func buildSh(widget: Bool, share: Bool = false, widgetOnly: Bool = false) -> String {
+        guard widget || share else { return buildSh }
+        var script = buildSh.replacingOccurrences(of: appSigningLine, with: (widget ? widgetBuildSteps : "") + (share ? shareBuildSteps : "") + appSigningLine)
         // An app that is only its widget says so to macOS in the way apps without a Dock icon do, so it
         // never shows in the Dock or the app switcher, not even for the moment it takes to start.
         if widgetOnly { script = script.replacingOccurrences(of: highResolutionLine, with: highResolutionLine + "\n  <key>LSUIElement</key><true/>") }
@@ -1677,6 +2115,52 @@ enum Template {
         \(widgetEntitlementsPlist)PLIST
         intents {{EXE}}Widget "$WIDGET" "{{BUNDLE}}.widget" Widget
         codesign --force -s - --entitlements "build/{{EXE}}Widget.entitlements" "$WIDGET"
+
+        """
+    }
+
+    /// A Mac app's share extension, put in like the widget. It hands what it was given to the app through the
+    /// folder they share, which macOS allows only to an app signed for a team: `Store.deploy` gives it that
+    /// folder then, and takes the extension out of an app it can't sign so (`macShareEntitlementsPlist`).
+    private static var shareBuildSteps: String {
+        """
+        SHARE="$APP/Contents/PlugIns/{{EXE}}Share.appex"
+        mkdir -p "$SHARE/Contents/MacOS"
+        cp "$(dirname "$BIN")/{{EXE}}Share" "$SHARE/Contents/MacOS/{{EXE}}Share"
+        cat > "$SHARE/Contents/Info.plist" <<PLIST
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+          <key>CFBundleDevelopmentRegion</key><string>en</string>
+          <key>CFBundleExecutable</key><string>{{EXE}}Share</string>
+          <key>CFBundleIdentifier</key><string>{{BUNDLE}}.share</string>
+          <key>CFBundleName</key><string>{{NAME}}</string>
+          <key>CFBundleDisplayName</key><string>{{NAME}}</string>
+          <key>CFBundlePackageType</key><string>XPC!</string>
+          <key>CFBundleShortVersionString</key><string>0.1</string>
+          <key>CFBundleVersion</key><string>$(date +%s)</string>
+          <key>LSMinimumSystemVersion</key><string>14.0</string>
+        \(shareExtensionPlistLines)
+        </dict></plist>
+        PLIST
+        cat > "build/{{EXE}}Share.entitlements" <<PLIST
+        \(macShareEntitlementsPlist(appGroup: nil))PLIST
+        codesign --force -s - --entitlements "build/{{EXE}}Share.entitlements" "$SHARE"
+
+        """
+    }
+
+    /// What a Mac share extension is signed with: the sandbox, without which macOS runs no extension, and the
+    /// folder it shares with the app.
+    static func macShareEntitlementsPlist(appGroup: String?) -> String {
+        let lines = ["  <key>com.apple.security.app-sandbox</key><true/>"]
+            + (appGroup.map { ["  <key>com.apple.security.application-groups</key><array><string>\($0.xmlEscaped)</string></array>"] } ?? [])
+        return """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+        \(lines.joined(separator: "\n"))
+        </dict></plist>
 
         """
     }
@@ -1750,6 +2234,7 @@ enum Template {
     import CoreLocation
     import WeatherKit
     import MusicKit
+    import CoreSpotlight
     @preconcurrency import Vision
     #if os(macOS)
     import AppKit
@@ -7297,6 +7782,164 @@ enum Template {
         }
     }
 
+    /// What people sent this app from another app's share sheet (a link from Safari, photos, text, files), through
+    /// its share extension (the Share/ folder). The extension leaves each share in the folder the two have in
+    /// common, and the app takes them from there: at once when it's running, else when it next starts.
+    ///
+    ///     LampShare.onReceive { items in
+    ///         for item in items where item.kind == .link { model.add(item.url!, title: item.text) }
+    ///     }
+    ///
+    /// Set it once, at launch. Each share comes once, in the order they were made; its files (`fileURL`, `data`,
+    /// `image`) are there while the handler runs and are deleted after it, so keep what's needed.
+    enum LampShare {
+        struct Item: Codable, Identifiable, Hashable {
+            enum Kind: String, Codable { case text, link, image, file }
+            var id = UUID().uuidString
+            var kind: Kind
+            /// The text; for a link its title, when the sharing app gave one.
+            var text: String?
+            /// The link.
+            var url: URL?
+            /// A picture's or file's name as it was shared.
+            var name: String?
+            /// Where the picture or file is kept, within the share's folder.
+            var file: String?
+            var folder: URL?
+            enum CodingKeys: String, CodingKey { case id, kind, text, url, name, file }
+
+            var fileURL: URL? { file.flatMap { folder?.appendingPathComponent($0) } }
+            var data: Data? { fileURL.flatMap { try? Data(contentsOf: $0) } }
+            var image: LampImage? { fileURL.flatMap { LampImage(contentsOfFile: $0.path) } }
+        }
+
+        private static let queue = DispatchQueue(label: "LampShare")
+        nonisolated(unsafe) private static var handler: (@MainActor ([Item]) -> Void)?
+        nonisolated(unsafe) private static var taking: Set<String> = []
+        nonisolated(unsafe) private static var watching = false
+        nonisolated(unsafe) private static var told = false
+
+        static func onReceive(_ handle: @escaping @MainActor ([Item]) -> Void) {
+            queue.async {
+                handler = handle
+                watch()
+                take()
+            }
+        }
+
+        /// The app group the app shares with its extensions: always on iPhone, and on the Mac when Lamp signed
+        /// the app for an Apple team. Named in Info.plist.
+        private static var group: String? { Bundle.main.object(forInfoDictionaryKey: "LampAppGroup") as? String }
+
+        private static var folder: URL? {
+            guard let group, let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return nil }
+            return root.appendingPathComponent("lamp-share", isDirectory: true)
+        }
+
+        /// The extension nudges a running app after each share; an app that was in the background looks again
+        /// when it comes to the front, since a nudge may not reach it there.
+        private static func watch() {
+            guard !watching else { return }
+            watching = true
+            if let group {
+                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), nil, { _, _, _, _, _ in
+                    LampShare.queue.async { LampShare.take() }
+                }, (group + ".lamp-share") as CFString, nil, .deliverImmediately)
+            }
+            #if os(macOS)
+            let active = NSApplication.didBecomeActiveNotification
+            #else
+            let active = UIApplication.didBecomeActiveNotification
+            #endif
+            NotificationCenter.default.addObserver(forName: active, object: nil, queue: nil) { _ in queue.async { take() } }
+        }
+
+        /// Hands over every finished share, oldest first, and deletes each once its handler has run. A share the
+        /// extension is still writing has a name starting with a dot, and is left alone unless it's a day old.
+        private static func take() {
+            guard let handler else { return }
+            guard let folder else {
+                if !told {
+                    told = true
+                    #if os(macOS)
+                    print("LampShare: nothing can be shared to this app: it has no share extension (Share/), or Lamp couldn't sign it for an Apple team, which a Mac app's share extension needs")
+                    #else
+                    print("LampShare: nothing can be shared to this app: it has no share extension (Share/)")
+                    #endif
+                }
+                return
+            }
+            let fm = FileManager.default
+            let shares = ((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.creationDateKey])) ?? [])
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            for share in shares {
+                let name = share.lastPathComponent
+                if name.hasPrefix(".") {
+                    let made = (try? share.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? Date()
+                    if made < Date().addingTimeInterval(-86_400) { try? fm.removeItem(at: share) }
+                    continue
+                }
+                guard !taking.contains(name) else { continue }
+                guard let data = try? Data(contentsOf: share.appendingPathComponent("items.json")),
+                      var items = try? JSONDecoder().decode([Item].self, from: data) else {
+                    try? fm.removeItem(at: share)
+                    continue
+                }
+                for index in items.indices { items[index].folder = share }
+                taking.insert(name)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { handler(items) }
+                    queue.async {
+                        try? fm.removeItem(at: share)
+                        taking.remove(name)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The app's own things in Spotlight (notes, recipes, places, people): a search there finds them, and a tap
+    /// opens the app on the one tapped.
+    ///
+    ///     LampSpotlight.index(id: recipe.id, title: recipe.name, details: recipe.summary, keywords: recipe.tags)
+    ///     LampSpotlight.remove(recipe.id)
+    ///     .lampSpotlightOpen { id in selected = id }      // on the view that shows them
+    ///
+    /// Index a thing when it's added or changed (the same id replaces it) and remove it when it's deleted.
+    enum LampSpotlight {
+        static func index(id: String, title: String, details: String = "", keywords: [String] = [], image: LampImage? = nil) {
+            let attributes = CSSearchableItemAttributeSet(contentType: .content)
+            attributes.title = title
+            attributes.displayName = title
+            attributes.contentDescription = details.isEmpty ? nil : details
+            attributes.keywords = keywords.isEmpty ? nil : keywords
+            attributes.thumbnailData = image?.lampPNGData
+            let item = CSSearchableItem(uniqueIdentifier: id, domainIdentifier: "lamp", attributeSet: attributes)
+            item.expirationDate = .distantFuture
+            CSSearchableIndex.default().indexSearchableItems([item]) { error in
+                if let error { print("LampSpotlight: \(title) couldn't be added: \(error.localizedDescription)") }
+            }
+        }
+
+        static func remove(_ id: String) {
+            CSSearchableIndex.default().deleteSearchableItems(withIdentifiers: [id]) { _ in }
+        }
+
+        static func removeAll() {
+            CSSearchableIndex.default().deleteAllSearchableItems { _ in }
+        }
+    }
+
+    extension View {
+        /// Called with the id of what was tapped in Spotlight (`LampSpotlight.index`), when it opens the app or
+        /// brings it to the front.
+        func lampSpotlightOpen(_ perform: @escaping (String) -> Void) -> some View {
+            onContinueUserActivity(CSSearchableItemActionType) { activity in
+                if let id = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String { perform(id) }
+            }
+        }
+    }
+
     #if os(macOS)
     /// The whole app, when a widget is all the person asked for. macOS has no widget without an app to carry
     /// it, so this is that app and nothing more: no window, no Dock icon, no menus, and nobody ever opens it.
@@ -7358,7 +8001,7 @@ enum Template {
         /// person is likely adding it, then now and then.
         static let start: Void = {
             let plugIns = (try? FileManager.default.contentsOfDirectory(atPath: Bundle.main.builtInPlugInsPath ?? "")) ?? []
-            guard plugIns.contains(where: { $0.hasSuffix(".appex") }) else { return }
+            guard plugIns.contains(where: { $0.hasSuffix("Widget.appex") }) else { return }   // not a share extension
             ask(times: 0)
         }()
 

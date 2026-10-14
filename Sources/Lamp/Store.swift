@@ -2058,7 +2058,7 @@ final class Store: ObservableObject {
     /// request's attachments before the agent starts.
     private func agentChangedFiles(_ project: LampProject) async -> Bool {
         var output = ""
-        let ignored = "':!Sources/LampSupport.swift' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!icon.json' ':!\(Attachments.folder)'"
+        let ignored = "':!Sources/LampSupport.swift' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!\(Template.shareFolder)/\(Template.shareSupportFile)' ':!icon.json' ':!\(Attachments.folder)'"
         _ = await Versions.git("git status --porcelain -- . \(ignored)", cwd: project.dir) {
             output += $0
         }
@@ -2768,7 +2768,7 @@ final class Store: ObservableObject {
         guard !relative.isEmpty else { return (400, ["error": "Only files inside the app's folder can be deleted."]) }
         // Compared without regard to case: the Mac's usual file system treats "package.swift" as the same file.
         let protected = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift",
-                         Template.widgetFolder + "/" + Template.widgetSupportFile]
+                         Template.widgetFolder + "/" + Template.widgetSupportFile, Template.shareFolder + "/" + Template.shareSupportFile]
         let lowered = relative.lowercased()
         if protected.contains(where: { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + "/") }) {
             return (400, ["error": "\(relative) belongs to Lamp and can't be deleted."])
@@ -3733,7 +3733,13 @@ final class Store: ObservableObject {
         let hasWidget = fm.fileExists(atPath: widget.path)
         let entitlements = project.dir.appendingPathComponent(".lamp/widget-entitlements.plist")
         if hasWidget { try Template.widgetEntitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8) }
-        var signingEnv = ["LAMP_APP": project.builtURL.path, "LAMP_WIDGET": widget.path, "LAMP_WIDGET_ENTITLEMENTS": entitlements.path]
+        // A share extension the same way. It hands what it's given to the app through a folder they share,
+        // which macOS allows only to a signature with a team, so it stays only in an app signed for one.
+        let share = Template.shareURL(in: project.builtURL, of: project)
+        var hasShare = project.platform == .mac && fm.fileExists(atPath: share.path)
+        let shareEntitlements = project.dir.appendingPathComponent(".lamp/share-entitlements.plist")
+        var signingEnv = ["LAMP_APP": project.builtURL.path, "LAMP_WIDGET": widget.path, "LAMP_WIDGET_ENTITLEMENTS": entitlements.path,
+                          "LAMP_SHARE": share.path, "LAMP_SHARE_ENTITLEMENTS": shareEntitlements.path]
         // An app for both was signed by Xcode for the person's team; what was put in since is sealed with the
         // same certificate and the same entitlements, never Lamp's own, which could carry neither.
         let identity = project.platform == .universal ? (await Devices.signingIdentity(for: Devices.team) ?? "-") : await AppSigning.identity()
@@ -3748,22 +3754,26 @@ final class Store: ObservableObject {
             // A Mac app is signed for the person's Apple team when there is one: macOS runs an app's App Intents
             // (Siri, Shortcuts, Spotlight) only for an app signed with a team. Otherwise Lamp's own certificate.
             if project.platform == .mac, let team = await Devices.signingIdentity(for: Devices.team) {
-                // Signed for a team, the app and its widget can share a folder, where the widget's buttons queue
-                // what they ask of the app (`LampWidget.perform`); both are told its name in their Info.plist.
+                // Signed for a team, the app and its extensions can share a folder, where the widget's buttons queue
+                // what they ask of the app (`LampWidget.perform`) and the share extension leaves what it was given
+                // (`LampShare`); each is told its name in its Info.plist.
                 var env = signingEnv.merging(["LAMP_IDENTITY": team]) { $1 }
-                if hasWidget {
+                if hasWidget || hasShare {
                     let group = Template.macAppGroup(team: Devices.team, for: project)
-                    Self.setAppGroup(group, in: [project.builtURL, widget])
+                    Self.setAppGroup(group, in: [project.builtURL] + (hasWidget ? [widget] : []) + (hasShare ? [share] : []))
                     let appEntitlements = project.dir.appendingPathComponent(".lamp/app-entitlements.plist")
                     try Template.Capabilities().entitlementsPlist(container: nil, platform: .mac, appGroup: group)
                         .write(to: appEntitlements, atomically: true, encoding: .utf8)
-                    try Template.widgetEntitlementsPlist(appGroup: group).write(to: entitlements, atomically: true, encoding: .utf8)
+                    if hasWidget { try Template.widgetEntitlementsPlist(appGroup: group).write(to: entitlements, atomically: true, encoding: .utf8) }
+                    if hasShare { try Template.macShareEntitlementsPlist(appGroup: group).write(to: shareEntitlements, atomically: true, encoding: .utf8) }
                     env["LAMP_APP_ENTITLEMENTS"] = appEntitlements.path
                 }
                 var output: [String] = []
-                signed = await Shell.run(AppSigning.command(adHoc: false, widget: hasWidget, ownKeychain: false, appEntitlements: hasWidget),
+                signed = await Shell.run(AppSigning.command(adHoc: false, widget: hasWidget, share: hasShare, ownKeychain: false,
+                                                            appEntitlements: hasWidget || hasShare),
                                          cwd: project.dir, env: env) { output.append($0) } == 0
                     && AppSigning.isCertificateSigned(project.builtURL) && (!hasWidget || AppSigning.isCertificateSigned(widget))
+                    && (!hasShare || AppSigning.isCertificateSigned(share))
                 if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
                 Self.rememberTeamSigning(failed: !signed, for: project)
             }
@@ -3775,6 +3785,12 @@ final class Store: ObservableObject {
                 if hasWidget {
                     Self.setAppGroup(nil, in: [project.builtURL, widget])
                     try Template.widgetEntitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8)
+                }
+                // A share extension with no folder to leave things in would take what people share and lose it:
+                // it's left out, and `look_at_app` says why (`shareHint`).
+                if hasShare {
+                    try? fm.removeItem(at: share)
+                    hasShare = false
                 }
             }
         }
@@ -4821,6 +4837,7 @@ final class Store: ObservableObject {
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         text += Self.handingHint(for: project)
         text += await Self.intentsHint(for: project)
+        text += Self.shareHint(for: project)
         // The front window in words, beside its picture, from the app itself (LampScreen in LampSupport.swift).
         if Privacy.sharesPictures, !screenshots.isEmpty, Self.binary(of: project, contains: Self.screenTextMarker),
            let words = await Runtime.screenText(of: project, since: since) { text += "\n\n" + words }
@@ -4855,6 +4872,18 @@ final class Store: ObservableObject {
         return "\n\nSiri, Shortcuts and Spotlight can't use this app's App Intents: Lamp couldn't sign it for the user's Apple team, most " +
             "likely because macOS asked for access to the team's signing key and it wasn't allowed. Tell the user to choose Always Allow " +
             "when macOS asks during the next build."
+    }
+
+    /// For a Mac app with a share extension that its installed copy doesn't carry: `deploy` leaves it out of an
+    /// app it couldn't sign for an Apple team, since without a team the extension has no folder to leave what
+    /// it's given for the app.
+    nonisolated static func shareHint(for project: LampProject) -> String {
+        guard project.platform == .mac, Template.hasShare(project),
+              FileManager.default.fileExists(atPath: project.installedURL.path),
+              !FileManager.default.fileExists(atPath: Template.shareURL(in: project.installedURL, of: project).path) else { return "" }
+        return "\n\nThe app isn't in other apps' share menus yet: on a Mac, Lamp can only add its share extension to an app it signs for " +
+            "an Apple developer team. Tell the user it comes on once they choose their team in Lamp's Settings → Building (it needs " +
+            "Xcode signed in to their Apple account)."
     }
 
     /// Whether a bundle carries App Intents for the system to find.

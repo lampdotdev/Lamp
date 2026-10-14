@@ -34,13 +34,16 @@ enum AppSigning {
     /// With `ownKeychain` false the identity is looked for where codesign looks by itself (the login keychain,
     /// where Xcode keeps the person's Apple Development certificates).
     /// With `appEntitlements` the app is signed with those in `LAMP_APP_ENTITLEMENTS` (the app group it shares
-    /// with its widget, when signed for a team).
-    static func command(adHoc: Bool, widget: Bool, ownKeychain: Bool = true, appEntitlements: Bool = false) -> String {
+    /// with its extensions, when signed for a team). A share extension (`share`) is signed like the widget, from
+    /// `LAMP_SHARE` with `LAMP_SHARE_ENTITLEMENTS`.
+    static func command(adHoc: Bool, widget: Bool, share: Bool = false, ownKeychain: Bool = true, appEntitlements: Bool = false) -> String {
         let keychain = ownKeychain ? " --keychain \"$LAMP_KEYCHAIN\"" : ""
         let sign = adHoc ? "codesign --force -s -" : "codesign --force\(keychain) -s \"$LAMP_IDENTITY\""
         let app = "\(sign)\(appEntitlements ? " --entitlements \"$LAMP_APP_ENTITLEMENTS\"" : "") \"$LAMP_APP\" 2>&1"
-        guard widget else { return app }
-        return "\(sign) --entitlements \"$LAMP_WIDGET_ENTITLEMENTS\" \"$LAMP_WIDGET\" 2>&1 && " + app
+        var steps: [String] = []
+        if widget { steps.append("\(sign) --entitlements \"$LAMP_WIDGET_ENTITLEMENTS\" \"$LAMP_WIDGET\" 2>&1") }
+        if share { steps.append("\(sign) --entitlements \"$LAMP_SHARE_ENTITLEMENTS\" \"$LAMP_SHARE\" 2>&1") }
+        return (steps + [app]).joined(separator: " && ")
     }
 
     /// The identity to sign with, or "-" (ad-hoc) if one can't be made.

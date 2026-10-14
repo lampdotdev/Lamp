@@ -577,6 +577,38 @@ the app without it, and the work changes the data and calls `LampWidget.share`. 
 exist on macOS, so in an app for both it goes under `#if os(iOS)`. A Mac widget shares no code with the app, so
 its buttons can only change what the widget keeps itself.
 
+### Share extensions and Spotlight
+
+An app takes things in without being opened through a share extension: Swift in `Share/` at the app's root
+(`Template.hasShare`), built like the widget on every route and beside it when there's both. The agent writes only
+`ShareView` (`struct ShareView: View { let items: [LampShare.Item] … }`, usually just `LampShareSheet(items:)`);
+Lamp owns `Share/LampShareSupport.swift` (`Template.writeShareSupport`, one source for both platforms), which holds
+`LampShareController`, the principal class the extension's Info.plist names (`shareExtensionPlistLines`: the
+`com.apple.share-services` point and what it's offered for), the item loading and the ready-made sheet.
+`LampShare.send(items)` writes the share into the app group as a folder of its own (written under a dot name, then
+renamed, so the app never reads half of one) and posts a Darwin notification; the app's `LampShare.onReceive` in
+LampSupport takes each finished share at launch, when nudged and when it comes to the front, and deletes it once its
+handler has run.
+
+- **iPhone**: a third SwiftPM product (`extensionTargets`), its entitlements in its binary
+  (`.lamp/share-entitlements.plist`, `simulatorExtensionEntitlementsPlist`), `PlugIns/<Exe>Share.appex` signed before
+  the app (`iPhoneShareBuildSteps`); on a phone and for an app for both a target of its own in the Xcode project
+  (`withShareTarget`, sharing the widget's Embed Foundation Extensions phase when both exist), iOS only. The app group
+  is the widget's (`appGroup(for:onDevice:)`): the app carries it and `LampAppGroup` whenever it has either extension.
+- **Mac**: build.sh puts it in `Contents/PlugIns/<Exe>Share.appex`, sandboxed (`macShareEntitlementsPlist`). macOS
+  allows the shared folder only to a signature with a team, so `Store.deploy` keeps the extension only when it signs
+  the app for the person's team (the folder is `macAppGroup`, set in every Info.plist with `setAppGroup`, and
+  `AppSigning.command(share:)` signs it before the app); signed with Lamp's certificate it's taken out, since it
+  would take what people share and lose it, and `look_at_app` says why (`Store.shareHint`). macOS keeps a new share
+  extension off until the person turns it on (Edit Extensions… in a Share menu), which the rule tells the agent.
+- A shared app (`.lampapp`) carries `Share/` without Lamp's file and says it is format 5.
+
+`LampSpotlight.index(id:title:details:keywords:)`, `remove` and `removeAll` keep the app's own things in Core
+Spotlight, and `.lampSpotlightOpen { id in … }` on a view hears which one was tapped (SwiftUI's
+`onContinueUserActivity` for `CSSearchableItemActionType`, which also gets the tap that launched the app): a view
+modifier, since an app has no other place that's told. The rules are `Agent.Rules.share` (as `macShare`,
+`iPhoneShare` and `universalShare`) and the Spotlight part of `Rules.sharedBlocks`.
+
 ## Naming: Lamp and Lamp
 
 The app is called **Lamp**: that's the name in everything the user reads (the interface, Help, the agent's
