@@ -583,26 +583,36 @@ enum Agent {
         """
 
         static let macAccounts = """
-        - The person's calendar, reminders, contacts and email are available through the accounts already on the \
-        Mac, with no sign-in or key, from LampSupport.swift: `LampCalendar.events(from:to:)` / `.add(...)`, \
+        - When a wish needs the person's calendar, reminders, contacts, mail or files, reach first for what this Mac \
+        is already signed in to, before any service's API, sign-in, key or connector. Their calendar, reminders, \
+        contacts and email come through the accounts already on the Mac (iCloud, Google, Exchange, Outlook), with no \
+        sign-in or key, from LampSupport.swift: `LampCalendar.events(from:to:)` / `.add(...)`, \
         `LampReminders.open()` / `.add(...)` / `.complete(id)`, `LampContacts.search("name")` / `.find(email:)`, \
         and `LampMail.inbox(limit:)` / `.search(text)` / `.body(of:)` / `.draft(to:subject:body:)` (a draft opens in \
-        Mail for the person to send; nothing is sent by the app). macOS asks the person once per kind of data; each \
+        Mail for the person to send; nothing is sent by the app). Their files in Google Drive, Dropbox, OneDrive or \
+        iCloud Drive are folders on the Mac: `LampFolders.synced` lists them and `LampFolders.synced("Google Drive")` \
+        gives one; read, write and watch them as files. So a wish that names a service ("my Google Calendar", "my \
+        Gmail", "my Outlook contacts", "my Dropbox") means these: never call the service's web API, never ask for a \
+        key, a sign-in or a developer registration, and don't ask which service they use. When their account or \
+        folder isn't on the Mac, the app says in one line where to add it (System Settings → Internet Accounts, the \
+        service's own Mac app, or Mail) and works once it's there. macOS asks the person once per kind of data; each \
         call throws a plain message if refused, so show `error.localizedDescription`. Prefer these to LampComputer \
-        for mail, calendar and people: they're instant and free.
+        for mail, calendar, people and files: they're instant and free.
         """
 
         static let iPhoneAccounts = """
-        - The person's calendar, reminders and contacts are available through the accounts already on the device, \
-        with no sign-in or key, from LampSupport.swift: `LampCalendar.events(from:to:)` / `.add(...)`, \
-        `LampReminders.open()` / `.add(...)` / `.complete(id)`, `LampContacts.search("name")` / `.find(email:)`. \
-        iOS asks the person once per kind of data; each call throws a plain message if refused, so show \
-        `error.localizedDescription`.
+        - When a wish needs the person's calendar, reminders or contacts, reach first for the accounts already on \
+        the device (iCloud, Google, Exchange, Outlook), before any service's API, sign-in, key or connector: \
+        `LampCalendar.events(from:to:)` / `.add(...)`, `LampReminders.open()` / `.add(...)` / `.complete(id)`, \
+        `LampContacts.search("name")` / `.find(email:)`, from LampSupport.swift. A wish that names a service ("my \
+        Google Calendar") means these: never call the service's web API, never ask for a key or a sign-in, and \
+        don't ask which service they use. iOS asks the person once per kind of data; each call throws a plain \
+        message if refused, so show `error.localizedDescription`.
         """
 
         static let computer = """
-        - When the information or the job lives in another app the person uses (Slack, Mail, Messages, Notes, or a \
-        site in their browser such as Gmail, LinkedIn or a CRM), use `LampComputer.ask("…")` to read it or \
+        - When the information or the job lives in another app the person uses and the accounts and synced folders \
+        above can't reach it (Slack, Messages, Notes, or a site in their browser such as LinkedIn or a CRM), use `LampComputer.ask("…")` to read it or \
         `LampComputer.perform("…")` to act there, from LampSupport.swift. It works with what they're already signed \
         in to, with no API keys or connectors, and returns text (ask for JSON in the task when the app needs \
         structure). Calls take 10–60 seconds, so run them when the person asks (a button), never on a timer, and \

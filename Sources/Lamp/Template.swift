@@ -7825,6 +7825,51 @@ enum Template {
             return desktop
         }
 
+        /// A folder the Mac keeps in step with a cloud service the person is already signed in to.
+        struct Synced {
+            /// "iCloud Drive", "Google Drive", "Dropbox", "OneDrive", "Box", or the folder's own name for others.
+            let service: String
+            /// The account, when the folder's name carries one (Google Drive's email, OneDrive's "Personal").
+            let account: String?
+            /// Where its files are: for Google Drive, its My Drive folder (Shared drives sit beside it).
+            let url: URL
+        }
+
+        /// The person's synced folders: iCloud Drive, and Google Drive, Dropbox, OneDrive, Box and the others that
+        /// sync through Finder. They're ordinary folders: read, write and watch them like any other, with no sign-in
+        /// or key. macOS may ask the person once before an app reads a service's folder. Empty when none is set up.
+        static var synced: [Synced] {
+            let fm = FileManager.default
+            var found: [Synced] = []
+            let iCloud = home.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs")
+            if fm.fileExists(atPath: iCloud.path) { found.append(Synced(service: "iCloud Drive", account: nil, url: iCloud)) }
+            // Each File Provider service has a folder here named "Service-account" ("GoogleDrive-sam@example.com").
+            let storage = home.appendingPathComponent("Library/CloudStorage")
+            let names = ((try? fm.contentsOfDirectory(atPath: storage.path)) ?? []).filter { !$0.hasPrefix(".") }.sorted()
+            for name in names {
+                let parts = name.split(separator: "-", maxSplits: 1).map(String.init)
+                let known = ["GoogleDrive": "Google Drive", "Dropbox": "Dropbox", "OneDrive": "OneDrive", "Box": "Box"]
+                let service = known[parts[0]] ?? name
+                var url = storage.appendingPathComponent(name)
+                if service == "Google Drive", fm.fileExists(atPath: url.appendingPathComponent("My Drive").path) {
+                    url = url.appendingPathComponent("My Drive")
+                }
+                found.append(Synced(service: service, account: parts.count > 1 && known[parts[0]] != nil ? parts[1] : nil, url: url))
+            }
+            // Dropbox from before macOS's File Provider kept its folder in the home folder.
+            let oldDropbox = home.appendingPathComponent("Dropbox")
+            if !found.contains(where: { $0.service == "Dropbox" }), fm.fileExists(atPath: oldDropbox.path) {
+                found.append(Synced(service: "Dropbox", account: nil, url: oldDropbox))
+            }
+            return found
+        }
+
+        /// The first synced folder of a service ("Google Drive", "Dropbox", "iCloud Drive", "OneDrive"), or nil when
+        /// it isn't set up on this Mac.
+        static func synced(_ service: String) -> URL? {
+            synced.first { $0.service.caseInsensitiveCompare(service) == .orderedSame }?.url
+        }
+
         /// Files directly in a folder, newest first, skipping hidden ones.
         static func files(in folder: URL) -> [URL] {
             let keys: [URLResourceKey] = [.contentModificationDateKey, .isRegularFileKey]
