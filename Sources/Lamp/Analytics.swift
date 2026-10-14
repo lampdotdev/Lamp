@@ -13,7 +13,6 @@ enum Analytics {
     enum Event: String {
         // The welcome, in the order it's met.
         case welcomeStep = "onboarding_step_viewed"           // step
-        case welcomeKind = "onboarding_kind_chosen"           // kind
         case welcomeMoreIdeas = "onboarding_ideas_shuffled"   // kind
         case welcomeIdeaPicked = "onboarding_idea_picked"     // kind, idea
         case welcomeDictation = "onboarding_dictation_started"
@@ -117,7 +116,7 @@ enum Analytics {
     static func agent(_ engine: Engine) -> String { engine == .codex ? "chatgpt" : engine.rawValue }
 
     /// A built-in idea by its title; one made up on this Mac only as "invented", since its words came from a model.
-    static func idea(_ idea: Idea, kind: AppKind) -> String {
-        Ideas.pool(for: kind).contains { $0.title == idea.title } ? idea.title : "invented"
+    static func idea(_ idea: Idea) -> String {
+        Ideas.pool.contains { $0.title == idea.title } || Ideas.phonePool.contains { $0.title == idea.title } ? idea.title : "invented"
     }
 }
