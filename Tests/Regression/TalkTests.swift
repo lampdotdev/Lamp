@@ -8,9 +8,9 @@ final class TalkTests: XCTestCase {
         XCTAssertNil(try JSONDecoder().decode(Talk.Result.self, from: saved).news)
     }
 
-    /// The card a real new-app turn sent on 2026-10-14 (pi, Opus 5.5, "I wish I had something to help my family
-    /// plan dinners for the week"): its summary was shown as a bold paragraph over long chips. It goes back to the
-    /// agent to say shorter; the same card with short words is shown.
+    /// A result card as an agent really wrote one, for a wish to plan a family's dinners: its summary was shown as
+    /// a bold paragraph over long chips. It goes back to the agent to say shorter; the same card with short words
+    /// is shown.
     func testALongCardIsTurnedBack() {
         func card(_ summary: String, _ guess: String) -> [String: Any] {
             ["summary": summary,
@@ -25,5 +25,16 @@ final class TalkTests: XCTestCase {
         guard case .success = Talk.result(from: card("A week of dinners and a grocery list.", "One A–Z grocery list")) else {
             return XCTFail("a short card was turned back")
         }
+    }
+
+    /// A card answered by clicking folds to a line that reads on its own: two questions both answered "Both"
+    /// must still say what each "Both" was for.
+    func testAFoldedCardSaysWhatWasAsked() {
+        let options = [Talk.Option(title: "Grocery list"), Talk.Option(title: "Both")]
+        let ask = Talk.Ask(layout: .steps,
+                           questions: [Talk.Question(question: "Where should dinner ideas come from?", options: options),
+                                       Talk.Question(question: "What else should it do?", options: options)],
+                           answers: ["Both", "Both"])
+        XCTAssertEqual(ask.folded, "Where should dinner ideas come from? Both\nWhat else should it do? Both")
     }
 }

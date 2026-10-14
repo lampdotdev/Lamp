@@ -84,6 +84,17 @@ enum Talk {
             }
         }
 
+        /// What the card says once it's folded after a click: each question with what was chosen for it, a line
+        /// each. The answers alone don't read on their own ("Both · Both"), and the card isn't there any more.
+        var folded: String? {
+            guard let answers else { return nil }
+            return questions.indices.map { index in
+                let question = questions[index].question
+                let asked = question.last.map { ".?!…:".contains($0) } == true ? question : question + "?"
+                return asked + " " + (answers.indices.contains(index) ? answers[index] : Talk.youDecide)
+            }.joined(separator: "\n")
+        }
+
         /// The questions as plain words, for everything that reads a chat line's text.
         var text: String {
             questions.map { question in
