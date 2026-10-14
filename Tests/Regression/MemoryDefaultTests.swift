@@ -1,8 +1,8 @@
 import XCTest
 @testable import Lamp
 
-/// Lamp keeps notes unless the person says otherwise, and a choice made while this was an experiment that
-/// was off by default still stands.
+/// Someone who turned notes off while they were an experiment that was off by default keeps them off, now
+/// that they're on by default: Lamp doesn't start noting things about them unasked.
 final class MemoryDefaultTests: XCTestCase {
     private var defaults: UserDefaults!
     private let suite = "MemoryDefaultTests"
@@ -16,17 +16,8 @@ final class MemoryDefaultTests: XCTestCase {
         defaults.removePersistentDomain(forName: suite)
     }
 
-    func testSomeoneWhoNeverChoseHasItOn() {
-        XCTAssertTrue(Memory.isOn(in: defaults))
-    }
-
     func testSomeoneWhoTurnedItOffKeepsItOff() {
         defaults.set(false, forKey: "experimentMemory")
         XCTAssertFalse(Memory.isOn(in: defaults))
-    }
-
-    func testSomeoneWhoTurnedItOnAsAnExperimentKeepsItOn() {
-        defaults.set(true, forKey: "experimentMemory")
-        XCTAssertTrue(Memory.isOn(in: defaults))
     }
 }

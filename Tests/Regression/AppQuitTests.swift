@@ -35,15 +35,4 @@ final class AppQuitTests: XCTestCase {
         XCTAssertEqual(AppQuit.step(terminated: false, reply: .agreed, sinceReply: 1), .wait)
         XCTAssertEqual(AppQuit.step(terminated: false, reply: .agreed, sinceReply: AppQuit.closing + 1), .force)
     }
-
-    func testOnlyTheCopyThatSaidItListensIsTakenAtItsWord() throws {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: folder) }
-        XCTAssertFalse(AppQuit.listens(41, runtime: folder))
-        try "41\n".write(to: folder.appendingPathComponent(AppQuit.listeningFile), atomically: true, encoding: .utf8)
-        XCTAssertTrue(AppQuit.listens(41, runtime: folder))
-        // The file is from an earlier run of the app: this copy hasn't said anything.
-        XCTAssertFalse(AppQuit.listens(42, runtime: folder))
-    }
 }

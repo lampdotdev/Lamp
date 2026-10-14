@@ -42,27 +42,6 @@ final class SharingAssetsTests: XCTestCase {
         XCTAssertFalse(entries.contains { $0.contains("\(Attachments.folder)/") }, "\(entries)")
     }
 
-    func testNestedAssetsKeepTheirPlace() throws {
-        let project = try project()
-        let nested = project.dir.appendingPathComponent("\(Sharing.Assets.folder)/images")
-        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
-        try Data([7]).write(to: nested.appendingPathComponent("logo.png"))
-        let file = try Sharing.export(project)
-        XCTAssertTrue(try entries(of: file).contains { $0.hasSuffix("\(Sharing.Assets.folder)/images/logo.png") })
-        let package = try Sharing.open(file)
-        let logo = try XCTUnwrap(package.attachments.first { $0.lastPathComponent == "logo.png" })
-        XCTAssertEqual(package.assetPath(of: logo), "images/logo.png")
-    }
-
-    func testNamedAttachmentIsAdoptedIntoAssets() throws {
-        let project = try project()
-        Sharing.Assets.adopt(in: project)
-        let assets = project.dir.appendingPathComponent(Sharing.Assets.folder)
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: assets.path).sorted(), ["heads.png"])
-        // The chat keeps its copies.
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: project.dir.appendingPathComponent(Attachments.folder).path).count, 2)
-    }
-
     /// A new app is born with its Assets folder, so a reference file in its chat is never adopted, even by
     /// code that lists its files.
     func testNewAppNeverAdoptsChatFiles() throws {

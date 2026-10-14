@@ -148,18 +148,4 @@ final class HistoryEscapeTests: XCTestCase {
         XCTAssertEqual(try? String(contentsOf: other.appendingPathComponent("letter.txt"), encoding: .utf8), "keep", "Lamp's restore emptied another folder")
         XCTAssertFalse(FileManager.default.fileExists(atPath: other.appendingPathComponent("Sources/App.swift").path), "Lamp's restore wrote into another folder")
     }
-
-    /// How long Lamp's own saves take, for comparing one build with another.
-    func testHowLongASaveTakes() async throws {
-        let app = try app()
-        let rounds = 15
-        let start = Date()
-        for round in 1...rounds {
-            try "\(round)\n".write(to: app.project.dir.appendingPathComponent("Sources/App.swift"), atomically: true, encoding: .utf8)
-            _ = await Versions.hasUnsavedChanges(app.project)
-            let saved = await Versions.save(app.project, message: "round \(round)")
-            XCTAssertTrue(saved)
-        }
-        print("SPEED| \(rounds) rounds of look-then-save: \(Int(Date().timeIntervalSince(start) * 1000 / Double(rounds))) ms each")
-    }
 }

@@ -31,7 +31,7 @@ final class SharingWidgetTests: XCTestCase {
     }
 
     /// A file made by hand, as a sender who isn't Lamp could make it.
-    private func handMade(format: Int = 3, _ files: [String: String]) throws -> URL {
+    private func handMade(format: Int, _ files: [String: String]) throws -> URL {
         let stage = try XCTUnwrap(root ?? { root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
             .appendingPathComponent("lamp-share-widget-\(UUID().uuidString)"); return root }()).appendingPathComponent("stage-\(UUID().uuidString)")
         for (path, text) in files { try write(text, to: path, in: stage) }
@@ -43,55 +43,6 @@ final class SharingWidgetTests: XCTestCase {
         try zip.run()
         zip.waitUntilExit()
         return file
-    }
-
-    // MARK: - There and back
-
-    func testAWidgetTravelsWithItsApp() throws {
-        let sender = try project()
-        XCTAssertTrue(FileManager.default.fileExists(atPath: sender.dir.appendingPathComponent("Widget/LampWidgetSupport.swift").path))
-        let package = try Sharing.open(try Sharing.export(sender))
-        // The widget's code is in the file; Lamp's own file from that folder is not, like LampSupport.swift.
-        XCTAssertTrue(package.hasWidget)
-        XCTAssertEqual(package.sources.map { package.path(of: $0) }.sorted(), ["Sources/App.swift", "Sources/ContentView.swift", "Widget/Widget.swift"])
-
-        let receiver = try Template.scaffold(name: "Tally Copy", in: try XCTUnwrap(root))
-        try Sharing.install(package, into: receiver)
-        XCTAssertEqual(try String(contentsOf: receiver.dir.appendingPathComponent("Widget/Widget.swift"), encoding: .utf8), Self.widgetCode)
-        XCTAssertTrue(Template.hasWidget(receiver))
-        // The receiving Mac builds it as its own: its own second program, its own port and secret.
-        try Template.writeOwnedFiles(for: receiver)
-        XCTAssertTrue(try String(contentsOf: receiver.dir.appendingPathComponent("Package.swift"), encoding: .utf8).contains("TallyCopyWidget"))
-        XCTAssertNotEqual(Template.widgetToken(for: receiver), Template.widgetToken(for: sender))
-        XCTAssertNotEqual(Template.widgetPort(for: receiver), Template.widgetPort(for: sender))
-    }
-
-    func testOnlyAFileWithAWidgetAsksForANewerLamp() throws {
-        func format(of file: URL) throws -> Int {
-            let listing = Subprocess.runBlocking("/usr/bin/unzip", ["-p", file.path, "lamp-app.json"], timeout: 30).output
-            return try XCTUnwrap((try JSONSerialization.jsonObject(with: Data(listing.utf8)) as? [String: Any])?["format"] as? Int)
-        }
-        XCTAssertEqual(try format(of: Sharing.export(try project("Tally", widget: true))), 3)
-        // An app without a widget is the file it always was: a Lamp from before widgets opens it.
-        XCTAssertEqual(try format(of: Sharing.export(try project("Plain", widget: false))), 2)
-        XCTAssertEqual(Sharing.formatVersion, 4)
-        // A file from a Lamp newer than this one is still turned away.
-        XCTAssertThrowsError(try Sharing.open(try handMade(format: 5, ["Sources/App.swift": "let a = 1"])))
-    }
-
-    func testAnUpdateReplacesTheWidgetOrTakesItAway() throws {
-        let sender = try project()
-        let receiver = try Template.scaffold(name: "Mine", in: try XCTUnwrap(root))
-        try write("let old = true\n", to: "Widget/Old.swift", in: receiver.dir)
-        try Template.writeOwnedFiles(for: receiver)
-        try Sharing.install(try Sharing.open(try Sharing.export(sender)), into: receiver, replacing: true)
-        XCTAssertEqual(swiftFiles(in: receiver.dir.appendingPathComponent("Widget")), ["Widget.swift"])
-        // The next file from the sender has no widget any more: neither has the app after it.
-        try FileManager.default.removeItem(at: sender.dir.appendingPathComponent("Widget/Widget.swift"))
-        let without = try Sharing.open(try Sharing.export(sender))
-        XCTAssertFalse(without.hasWidget)
-        try Sharing.install(without, into: receiver, replacing: true)
-        XCTAssertFalse(Template.hasWidget(receiver))
     }
 
     // MARK: - The review

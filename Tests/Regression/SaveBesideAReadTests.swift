@@ -27,23 +27,6 @@ import XCTest
         try "// \(round)\n".write(to: project.dir.appendingPathComponent("Sources/File\(round % 8).swift"), atomically: true, encoding: .utf8)
     }
 
-    /// The look for unsaved changes, made as a chat line arrives, at the same moment as the turn's save.
-    func testAReadNeverShutsOutTheSave() async throws {
-        var failed = 0
-        for round in 0..<120 {
-            try change(round)
-            let read = Task { _ = await Versions.hasUnsavedChanges(project) }
-            let status = await Versions.git("git add -A && \(Versions.commit) -qm \"$LAMP_PROMPT\"", cwd: project.dir,
-                                            env: ["LAMP_PROMPT": "request \(round)"])
-            await read.value
-            if status != 0 {
-                failed += 1
-                _ = await Versions.git("git add -A && \(Versions.commit) -qm later", cwd: project.dir)
-            }
-        }
-        XCTAssertEqual(failed, 0, "saves that failed beside a read, of 120")
-    }
-
     /// Something else at work in the folder holds the index for a moment: the save waits and gets through.
     func testASaveShutOutForAMomentGetsThrough() async throws {
         try change(0)

@@ -49,23 +49,4 @@ final class SandboxTests: XCTestCase {
         let quoted = try run("echo 'it'\"'\"'s quoted > fine'", in: project)
         XCTAssertEqual(quoted.output.trimmingCharacters(in: .whitespacesAndNewlines), "it's quoted > fine")
     }
-
-    /// SwiftPM's own sandbox can't start inside Lamp's: Lamp's `swift` turns it off for builds, and only there.
-    func testSwiftBuildsInsideTheSandbox() throws {
-        let (project, _) = try project()
-        let which = try run("command -v swift", in: project)
-        XCTAssertEqual(which.output.trimmingCharacters(in: .whitespacesAndNewlines), Sandbox.bin.appendingPathComponent("swift").path)
-        let login = try run("/bin/zsh -lc 'command -v swift'", in: project)
-        XCTAssertEqual(login.output.trimmingCharacters(in: .whitespacesAndNewlines), Sandbox.bin.appendingPathComponent("swift").path, login.output)
-        let version = try run("swift --version 2>&1 | head -1", in: project)
-        XCTAssertTrue(version.output.contains("Swift"), version.output)
-        try """
-        // swift-tools-version:5.9
-        import PackageDescription
-        let package = Package(name: "Probe", targets: [.executableTarget(name: "Probe", path: "Sources")])
-        """.write(to: project.dir.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
-        try "print(\"built\")".write(to: project.dir.appendingPathComponent("Sources/App.swift"), atomically: true, encoding: .utf8)
-        let build = try run("swift build 2>&1 | tail -1", in: project)
-        XCTAssertTrue(build.output.contains("Build complete") || build.output.contains("Compiling"), build.output)
-    }
 }

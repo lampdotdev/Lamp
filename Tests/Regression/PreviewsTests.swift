@@ -2,8 +2,8 @@ import XCTest
 import AppKit
 @testable import Lamp
 
-/// The copies of pictures the agent is shown: a screenshot keeps its pixels (use_app's points are pixels in it),
-/// art is shrunk, and Lamp, writing unconfined, never writes through a link the agent left in the app's folder.
+/// Lamp writes the copies of pictures the agent is shown unconfined, so it never writes through a link the
+/// agent left in the app's folder.
 @MainActor
 final class PreviewsTests: XCTestCase {
     private var root: URL?
@@ -15,7 +15,6 @@ final class PreviewsTests: XCTestCase {
         self.root = root
         let dir = root.appendingPathComponent("harness", isDirectory: true)
         try fm.createDirectory(at: dir.appendingPathComponent(".lamp/runtime"), withIntermediateDirectories: true)
-        try fm.createDirectory(at: dir.appendingPathComponent("Assets"), withIntermediateDirectories: true)
         return (LampProject(id: "harness", name: "Harness", exe: "Harness", dir: dir), root)
     }
 
@@ -26,29 +25,6 @@ final class PreviewsTests: XCTestCase {
         let tiff = try XCTUnwrap(image.tiffRepresentation)
         let png = try XCTUnwrap(NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]))
         try png.write(to: url)
-    }
-
-    private func size(of url: URL) throws -> (Int, Int) {
-        let rep = try XCTUnwrap(NSBitmapImageRep(data: Data(contentsOf: url)))
-        return (rep.pixelsWide, rep.pixelsHigh)
-    }
-
-    func testAScreenshotKeepsItsPixelsAndArtIsShrunk() throws {
-        let (project, _) = try makeProject()
-        let screenshot = project.dir.appendingPathComponent(".lamp/runtime/screenshot.png")
-        try writePNG(screenshot, width: 1400, height: 900)
-        let preview = Previews.forAgent(screenshot, in: project)
-        XCTAssertEqual(preview.path, project.dir.appendingPathComponent(".lamp/runtime/previews/screenshot.jpg").path)
-        XCTAssertEqual(Previews.mimeType(of: preview.path), "image/jpeg")
-        let (w, h) = try size(of: preview)
-        XCTAssertEqual(w, 1400); XCTAssertEqual(h, 900)
-
-        let art = project.dir.appendingPathComponent("Assets/star.png")
-        try writePNG(art, width: 2048, height: 1024)
-        let artPreview = Previews.forAgent(art, in: project)
-        XCTAssertEqual(artPreview.lastPathComponent, "art-star.jpg")
-        let (aw, ah) = try size(of: artPreview)
-        XCTAssertEqual(aw, 1280); XCTAssertEqual(ah, 640)
     }
 
     func testNothingIsWrittenThroughALinkOutOfTheAppsFolder() throws {

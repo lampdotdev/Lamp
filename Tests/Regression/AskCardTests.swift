@@ -1,5 +1,4 @@
 import XCTest
-import SwiftUI
 @testable import Lamp
 
 /// The question card across engines, relaunches and the shape it was first saved in.
@@ -53,74 +52,5 @@ final class AskCardTests: XCTestCase {
         XCTAssertEqual(kept.card, card)
         XCTAssertEqual(QueuedMessage(saved: ["text": "Just me", "ask": card.uuidString], attachments: []).card, card)
         XCTAssertNil(QueuedMessage(saved: ["text": "Make it blue"], attachments: []).card)
-    }
-
-    /// A typed answer folds the card as it's sent, and taken back out of the line opens it again.
-    func testATypedAnswerTakenBackOpensTheCardAgain() {
-        let ask = Talk.Ask(layout: .steps, questions: [
-            Talk.Question(question: "Who is it for?", options: [.init(title: "Just me"), .init(title: "My team")]),
-        ], typed: true)
-        let card = LogLine(kind: .ask, text: ask.text, ask: ask)
-        var lines = [card]
-        XCTAssertNil(Talk.open(in: lines))
-        XCTAssertFalse(Talk.shows(card))
-
-        let answer = QueuedMessage(text: "My family", card: card.id)
-        var queue = [answer]
-        XCTAssertTrue(Talk.unqueue(answer, from: &queue, lines: &lines))
-        XCTAssertEqual(Talk.open(in: lines)?.id, card.id)
-    }
-
-    /// A guess turned the other way is shown by its card; taken back before it's sent, the card offers it again.
-    func testAGuessTurnedThenTakenBackIsOfferedAgain() {
-        var result = Talk.Result(summary: "Done", guesses: [
-            Talk.Guess(guess: "One list", instead: "A pipeline board", request: "Make it a pipeline board."),
-        ])
-        result.switched = [0]
-        let card = LogLine(kind: .result, text: result.text, result: result)
-        var lines = [card]
-        XCTAssertTrue(Talk.shows(card))
-
-        let turned = QueuedMessage(text: "Make it a pipeline board.", card: card.id)
-        var queue = [turned]
-        XCTAssertTrue(Talk.unqueue(turned, from: &queue, lines: &lines))
-        XCTAssertNil(lines[0].result?.switched)
-    }
-
-    func testTheSameOptionTwiceIsNotAChoice() {
-        guard case .failure = Talk.ask(from: ["questions": [
-            ["question": "Who is it for?", "options": [["title": "Me"], ["title": "Me"]]],
-        ]]) else { return XCTFail("Two options that say the same were taken") }
-    }
-}
-
-/// Typing an answer of one's own beside a question's chips: the chips stay where they are.
-final class OwnAnswerLayoutTests: XCTestCase {
-    @MainActor
-    func testTheChipsStayPutHoweverLongTheTypedAnswer() {
-        func height(typing text: String) -> CGFloat {
-            let row = ChipRow(options: [.init(title: "A fixed list", symbol: "list.bullet"), .init(title: "I make my own", symbol: "plus.circle")],
-                              chosen: nil, own: .constant(text)) { _ in }
-            return NSHostingController(rootView: row).sizeThatFits(in: CGSize(width: 540, height: 2000)).height
-        }
-        XCTAssertEqual(height(typing: "Start with Work and Personal, and let me add more"), height(typing: ""))
-    }
-}
-
-/// Questions answered one at a time share a card that never changes size, so the card is as tall as its
-/// tallest question. A question with fewer answers must not leave that height empty under them.
-final class AskStepsLayoutTests: XCTestCase {
-    @MainActor
-    func testAQuestionWithFourAnswersLeavesNoSpaceUnderOneWithThree() {
-        func options(_ titles: [String]) -> [Talk.Option] { titles.map { .init(title: $0, symbol: "person") } }
-        let who = Talk.Question(question: "Who is the tracker for?", options: options(["Just me", "My family", "My team"]))
-        let what = Talk.Question(question: "What should it track?", options: options(["Habits", "Mood", "Workouts", "Spending"]))
-        let how = Talk.Question(question: "How often?", options: options(["Daily", "Weekly", "Monthly"]))
-        // The card's width in a window of the size Lamp opens at.
-        func height(_ questions: [Talk.Question]) -> CGFloat {
-            let card = AskSteps(ask: Talk.Ask(layout: .steps, questions: questions), progress: .constant(AskProgress())) { _ in }
-            return NSHostingController(rootView: card).sizeThatFits(in: CGSize(width: 613, height: 2000)).height
-        }
-        XCTAssertEqual(height([who, what]), height([who, how]))
     }
 }

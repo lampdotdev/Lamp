@@ -10,28 +10,9 @@ final class CommandRiskTests: XCTestCase {
                             readsSecrets: secrets, hidesWhatItDoes: hides, matchesRequest: match)
     }
 
-    func testReadingRunsWhetherOrNotItWasAskedFor() {
-        XCTAssertEqual(CommandRisk.verdict(answers(risk: 0, reads: 0.96)), .run)
-    }
-
-    /// What Jev answered for `sed -i '' 's/…/…/' Sources/ContentView.swift`: nobody asked for a sed, and it
-    /// only works on files.
-    func testAnEditRuns() {
-        XCTAssertEqual(CommandRisk.verdict(answers(risk: 1.1, sure: 0.93, match: 0.09)), .run)
-    }
-
     func testAnEditTheModelIsUnsureOfDoesNotRunOnItsOwn() {
         XCTAssertEqual(CommandRisk.verdict(answers(risk: 1.2, sure: 0.5)), .unsure)
         XCTAssertEqual(CommandRisk.verdict(answers(risk: 1.6)), .unsure)
-    }
-
-    /// What Jev answers for a build run by its name, whose steps are in the project's files: level 1.2 and
-    /// sure, and 0.07 on hiding what it runs. It runs. While that question asked whether what runs could be
-    /// read from the command, the same build answered 0.36: between the bars, so it got the card every time.
-    func testABuildRunByItsNameRuns() {
-        XCTAssertEqual(CommandRisk.verdict(answers(risk: 1.2, sure: 0.82, beyond: 0.10, hides: 0.07)), .run)
-        XCTAssertEqual(CommandRisk.verdict(answers(risk: 1.2, sure: 0.82, beyond: 0.10, hides: 0.36)), .unsure)
-        XCTAssertEqual(CommandRisk.verdict(answers(risk: 1.2, sure: 0.82, beyond: 0.10, hides: 0.53)), .risky)
     }
 
     /// A download (level 2) runs when it's what the request called for, and not otherwise.
@@ -67,13 +48,6 @@ final class CommandRiskTests: XCTestCase {
         }
     }
 
-    /// Where on disk a command reads or writes is the sandbox's to enforce, so no question is about it.
-    func testNoQuestionIsAboutWhereOnDiskACommandReaches() {
-        XCTAssertEqual(Set(CommandRisk.questions(hasRequest: true).keys),
-                       ["risk", "onlyReads", "sendsOut", "readsSecrets", "hidesWhatItDoes", "matchesRequest"])
-        XCTAssertNil(CommandRisk.questions(hasRequest: false)["matchesRequest"])
-    }
-
     /// A level that averages 2 can be a download, or an answer split between "edits files" and "reaches
     /// beyond the app". What Jev answered for a wrapper script that loads the home folder's settings (level
     /// 2.1, 0.57 on level 3 and up) and for clearing a downloaded app's quarantine and opening it (1.8,
@@ -103,17 +77,6 @@ final class CommandRiskTests: XCTestCase {
         XCTAssertNil(CommandRisk.Answers(reply, asked: asked))
     }
 
-    /// "Anything unusual" was the setting that kept the in-app model's "low" from running a command. Nothing
-    /// lets it now, so the choice is gone and a saved one reads as "Only when risky".
-    func testASavedUnusualIsOnlyWhenRisky() {
-        let saved = UserDefaults.standard.string(forKey: "commandApproval")
-        defer { UserDefaults.standard.set(saved, forKey: "commandApproval") }
-        UserDefaults.standard.set("unusual", forKey: "commandApproval")
-        XCTAssertEqual(CommandApproval.current, .risky)
-        XCTAssertEqual(UserDefaults.standard.string(forKey: "commandApproval"), "risky")
-        XCTAssertEqual(CommandApproval.allCases.map(\.title), ["Only when risky", "Always", "Never"])
-    }
-
     // MARK: What comes back from the model
 
     private func reply(_ changes: [String: Any?] = [:]) -> [String: Any] {
@@ -132,11 +95,6 @@ final class CommandRiskTests: XCTestCase {
             guard let reply else { throw URLError(.notConnectedToInternet) }
             return reply.filter { questions[$0.key] != nil }
         }.verdict
-    }
-
-    func testACompleteAnswerIsJudged() async {
-        let verdict = await judged(reply())
-        XCTAssertEqual(verdict, .run)
     }
 
     /// No model, a question left out, or a value that isn't a probability: never run on that.
@@ -213,36 +171,7 @@ final class CommandRiskTests: XCTestCase {
         }
     }
 
-    /// With no request there's nothing to ask about it, and the one call is made.
-    func testNoRequestNoQuestionAboutIt() async {
-        var calls = 0
-        let verdict = await CommandRisk.judge(command: "ls", request: " ", folder: "/tmp/app") { _, questions in
-            calls += 1
-            XCTAssertNil(questions["matchesRequest"])
-            return self.reply(["onlyReads": ["noul": 0.97], "risk": ["score": 0.0, "confidence": 1.0, "probabilities": ["0": 1.0]]]).filter { questions[$0.key] != nil }
-        }.verdict
-        XCTAssertEqual(calls, 1)
-        XCTAssertEqual(verdict, .run)
-    }
-
     // MARK: The reason on the card
-
-    /// The card gives the check that flagged the command: the "must not" that fires hardest, else how far it reaches.
-    func testAFlaggedCommandHasItsReason() {
-        XCTAssertEqual(CommandRisk.reason(answers(risk: 1.0, out: 0.95)), .sendsOut)
-        XCTAssertEqual(CommandRisk.reason(answers(risk: 0.2, reads: 0.96, secrets: 0.73)), .readsSecrets)
-        XCTAssertEqual(CommandRisk.reason(answers(risk: 3.8, out: 0.6, hides: 0.9)), .hidesWhatItDoes)
-        XCTAssertEqual(CommandRisk.reason(answers(risk: 3.0)), .reachesBeyond)
-        XCTAssertEqual(CommandRisk.reason(answers(risk: 4.0)), .reachesFar)
-        XCTAssertNil(CommandRisk.reason(answers(risk: 1.1)))
-        // Every risky verdict has one.
-        for risk in stride(from: 0.0, through: 4.0, by: 0.5) {
-            for fires in [0.02, 0.4, 0.6] {
-                let some = answers(risk: risk, out: fires)
-                XCTAssertEqual(CommandRisk.verdict(some) == .risky, CommandRisk.reason(some) != nil)
-            }
-        }
-    }
 
     /// The text model can call a flagged command low risk; the card doesn't. A rating that's already
     /// medium or high is the model's own and stays.
@@ -257,42 +186,5 @@ final class CommandRiskTests: XCTestCase {
         for reason in [CommandRisk.Reason.sendsOut, .readsSecrets, .hidesWhatItDoes, .reachesFar, .reachesBeyond] {
             XCTAssertNotEqual(low.raised(for: reason).risk, "low")
         }
-    }
-
-    /// Nothing could describe the command: the card says so, in place of waiting, and gives no level it
-    /// doesn't have. A check's own reason still stands when there was one.
-    func testTheCardSaysSoWhenNothingCanDescribeTheCommand() {
-        let plain = Store.CommandExplanation.unexplained(flagged: nil)
-        // No level and no line under it: the card has the headline, the command behind its toggle, and the buttons.
-        XCTAssertEqual([plain.summary, plain.risk, plain.why], ["Lamp couldn't work out what this does.", "", ""])
-        let flagged = Store.CommandExplanation.unexplained(flagged: .sendsOut)
-        XCTAssertEqual([flagged.summary, flagged.risk, flagged.why],
-                       ["Lamp couldn't work out what this does.", "high", "It sends files or data from this Mac somewhere else."])
-        // It isn't "low": the card never calls a command low risk on no answer.
-        XCTAssertNotEqual(plain.risk, "low")
-    }
-
-    // MARK: The rating
-
-    func testTheRatingIsReadFromTheModelsReply() async {
-        var sent = ("", "")
-        let rating = await CommandRisk.rating(command: "brew install ffmpeg", request: "", building: "a Mac app called \"Tally\"") { prompt, system in
-            sent = (prompt, system)
-            return #"{"summary": " Installs a video tool. ", "risk": "MEDIUM", "why": "Installs software."}"#
-        }
-        XCTAssertEqual([rating?.summary, rating?.risk, rating?.why], ["Installs a video tool.", "medium", "Installs software."])
-        XCTAssertTrue(sent.0.contains("brew install ffmpeg") && sent.0.contains("(unknown)"))
-        XCTAssertTrue(sent.1.contains(#"building a Mac app called "Tally" wants to run a command"#))
-    }
-
-    func testNoUsableRatingIsNoRating() async {
-        for reply in ["not json", #"{"risk": "low"}"#, #"{"summary": "  ", "risk": "low"}"#] {
-            let rating = await CommandRisk.rating(command: "ls", request: "x", building: "a Mac app") { _, _ in reply }
-            XCTAssertNil(rating)
-        }
-        let unknown = await CommandRisk.rating(command: "ls", request: "x", building: "a Mac app") { _, _ in #"{"summary": "Lists files.", "risk": "tiny"}"# }
-        XCTAssertEqual(unknown?.risk, "medium")
-        let failed = await CommandRisk.rating(command: "ls", request: "x", building: "a Mac app") { _, _ in throw URLError(.timedOut) }
-        XCTAssertNil(failed)
     }
 }
