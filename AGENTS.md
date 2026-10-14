@@ -410,6 +410,17 @@ stepper takes a number or a step, and what has no action of its own, or isn't li
 is clicked at a point, pixels in the picture. Lamp tells an app built before the list existed by a line of the
 heading in its binary (`Store.screenTextMarker`): such an app is told to be rebuilt when a target is used.
 
+A Mac app can be changed while it's in use (an experiment: Settings → Experimental, `MagicPanel.switchKey`; apps
+show the wand only while the file `MagicPanel.flag` beside their folders says it's on, checked each time a window
+comes forward): `LampMagic` in LampSupport.swift puts a wand in each of its windows'
+title bars, which opens `<scheme>://magic?app=<slug>&frame=<its window>` without bringing Lamp forward. Lamp shows
+that app's chat (`ProjectView`, the same chat as in its window) in a non-activating floating panel beside the app's
+window (`MagicPanel`), which the app keeps placed by posting its window's frame as it moves. Lamp draws the chat,
+never the app: whatever the app's process can do, its own generated code can, so it has no way to speak to the
+agent that builds it, only to say where its window is. The panel shows while the app or Lamp is in front, and while
+the app is closed for a change to go in. A change still reopens the app; the rule (`Agent.Rules.macGenerated`) asks
+the agent to keep what the person was looking at in `@SceneStorage`, so it comes back as they left it.
+
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
 "cancelled" when the person keeps the app open and doesn't come while the question is still up. Until then Lamp
@@ -698,7 +709,7 @@ card), check:
 
 Each tab has one job: **Building**, how Lamp builds apps; **Apps**, what apps use while they run; **AI
 Providers**, what's on this Mac, then cloud providers, with keys, sign-ins and downloads (other tabs' menus
-end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (none now: bring `ExperimentalSettings` back with the next one).
+end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (now: changing apps while using them).
 Lay out with the shared pieces in `Setup.swift`, and extend one rather than lay out by hand:
 `SettingsCheckboxes` (on/off is a checkbox, box first, never a switch), `.underCheckbox()`,
 `.checkboxNote(…)`, `NotReadyBadge`, `NotReadyRow`, `CapabilityNote` (the gray why-and-fix under Not Ready),

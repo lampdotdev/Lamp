@@ -3324,6 +3324,7 @@ enum Template {
             LampRuntime.start
             LampWindows.start
             LampWidget.start
+            LampMagic.start
         }
 
         var body: some Commands {
@@ -3332,6 +3333,114 @@ enum Template {
                     NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
                 }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
+            }
+        }
+    }
+
+    /// The 🪄 in each window's title bar: it opens this app's chat in Lamp beside the window, to change the app
+    /// while using it. Lamp draws that chat, not the app, so the app's own code can't speak to the agent that
+    /// builds it. The app only says where its window is, so Lamp can keep the chat beside it.
+    enum LampMagic {
+        static let start: Void = {
+            MainActor.assumeIsolated {
+                let center = NotificationCenter.default
+                center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { note in
+                    MainActor.assumeIsolated {
+                        guard let window = note.object as? NSWindow, isAppWindow(window) else { return }
+                        guard isOn else { return detach(from: window) }
+                        attach(to: window)
+                        report(window)
+                    }
+                }
+                for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification,
+                             NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
+                             NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+                    center.addObserver(forName: name, object: nil, queue: .main) { note in
+                        MainActor.assumeIsolated {
+                            guard let window = note.object as? NSWindow, isAppWindow(window), window.isKeyWindow || window.isMainWindow else { return }
+                            report(window)
+                        }
+                    }
+                }
+            }
+        }()
+
+        /// Whether Lamp's experiment is on (Settings → Experimental): a file Lamp keeps beside the apps' folders.
+        private static var isOn: Bool { FileManager.default.fileExists(atPath: "{{APPS}}/.magic") }
+
+        @MainActor private static func detach(from window: NSWindow) {
+            while let index = window.titlebarAccessoryViewControllers.firstIndex(where: { $0.view.identifier == identifier }) {
+                window.removeTitlebarAccessoryViewController(at: index)
+            }
+        }
+
+        /// A window of the app's own: not a panel (menus, popovers, the menu bar's), a sheet or an alert.
+        @MainActor private static func isAppWindow(_ window: NSWindow) -> Bool {
+            !(window is NSPanel) && window.styleMask.contains(.titled) && window.canBecomeMain && window.sheetParent == nil
+        }
+
+        /// A round button like the toolbar's own, centered in the title bar whatever its height (a window with a
+        /// toolbar has a tall one, one without a short one). SwiftUI may add its toolbar after the window first
+        /// shows, so it's sized again each time the window comes to the front (`fit`).
+        @MainActor private static func attach(to window: NSWindow) {
+            if let holder = window.titlebarAccessoryViewControllers.first(where: { $0.view.identifier == identifier })?.view {
+                return fit(holder, in: window)
+            }
+            let symbol = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Change This App")!
+                .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))!
+            let button = NSButton(image: symbol, target: Opener.shared, action: #selector(Opener.open))
+            button.toolTip = "Change this app with Lamp"
+            if #available(macOS 26, *) {
+                button.bezelStyle = .glass
+                button.borderShape = .circle
+            } else {
+                button.bezelStyle = .accessoryBarAction
+                button.isBordered = false
+            }
+            let holder = NSView()
+            holder.identifier = identifier
+            holder.addSubview(button)
+            let accessory = NSTitlebarAccessoryViewController()
+            accessory.view = holder
+            accessory.layoutAttribute = .trailing
+            window.addTitlebarAccessoryViewController(accessory)
+            fit(holder, in: window)
+            DispatchQueue.main.async { fit(holder, in: window) }
+        }
+
+        /// The button as tall as the toolbar's buttons when there's a toolbar, smaller in a plain title bar, in
+        /// the middle of the title bar's height.
+        @MainActor private static func fit(_ holder: NSView, in window: NSWindow) {
+            guard let button = holder.subviews.first else { return }
+            let titlebar = max(window.frame.height - window.contentLayoutRect.height, 28)
+            let side: CGFloat = titlebar > 40 ? 34 : 22
+            holder.frame.size = NSSize(width: side + 14, height: titlebar)
+            button.frame = NSRect(x: 4, y: ((titlebar - side) / 2).rounded(), width: side, height: side)
+        }
+
+        private static let identifier = NSUserInterfaceItemIdentifier("lampMagic")
+
+        /// Where the window is, in screen coordinates, for Lamp to set its chat beside it; nothing when it's out
+        /// of sight (in the Dock, or full screen, where there's no room beside it).
+        @MainActor private static func report(_ window: NSWindow) {
+            let shown = window.isVisible && !window.isMiniaturized && !window.styleMask.contains(.fullScreen)
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name("{{NOTE}}windowFrame"), object: Bundle.main.bundleIdentifier,
+                userInfo: ["frame": shown ? NSStringFromRect(window.frame) : ""], deliverImmediately: true)
+        }
+
+        @MainActor private final class Opener: NSObject {
+            static let shared = Opener()
+            @objc func open() {
+                var link = URLComponents(string: "{{SCHEME}}://magic?app={{SLUG}}")!
+                // Where the window is goes with the link, so the chat opens beside it rather than waiting to be told.
+                if let window = NSApp.keyWindow ?? NSApp.mainWindow, isAppWindow(window) {
+                    link.queryItems?.append(URLQueryItem(name: "frame", value: NSStringFromRect(window.frame)))
+                }
+                // Without bringing Lamp in front: the chat opens beside this window, which stays where it is.
+                let configuration = NSWorkspace.OpenConfiguration()
+                configuration.activates = false
+                NSWorkspace.shared.open(link.url!, configuration: configuration)
             }
         }
     }

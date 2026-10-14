@@ -733,6 +733,12 @@ final class Store: ObservableObject {
         draftUpdates[project.id] = UUID()
     }
 
+    /// Tells every chat view of the app to take up its saved draft: what was typed in one editor (the wand's
+    /// panel, `MagicPanel`) reaches the other.
+    func announceDraft(of project: LampProject) {
+        draftUpdates[project.id] = UUID()
+    }
+
     /// A drop can finish loading after its original chat view has gone away. Add its files to the
     /// latest saved input rather than writing that view's old words and replacement state back.
     func attach(_ files: [URL], to project: LampProject) {
@@ -812,6 +818,11 @@ final class Store: ObservableObject {
         guard url.scheme == Edition.urlScheme,
               let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "app" })?.value else { return }
+        // The app's 🪄: its chat beside it, with Lamp's own window left where it is.
+        if url.host == "magic" {
+            let frame = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "frame" }?.value
+            return MagicPanel.shared.show(slug, beside: frame.map(NSRectFromString))
+        }
         showChat(slug)
     }
 
