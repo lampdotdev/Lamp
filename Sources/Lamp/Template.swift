@@ -3380,6 +3380,11 @@ enum Template {
         }()
 
         private var loaded: Set<String> = []
+        /// Every replacement so far, by name, and the images whose calls go through pointers: the app and each
+        /// library loaded before. A later change has to reach calls made from an earlier change's code too, and
+        /// a library's calls to functions it doesn't hold were bound to the app's first copies.
+        private var latest: [String: UnsafeRawPointer] = [:]
+        private var images: [String] = []
 
         private func load(_ path: String?, signature: String?) {
             let folder = "{{APPS}}/{{SLUG}}/.lamp/live/"
@@ -3400,11 +3405,15 @@ enum Template {
             }
             guard let image = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == path }),
                   let header = _dyld_get_image_header(image) else { return }
-            var replacements: [String: UnsafeRawPointer] = [:]
             for (name, address) in Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image)) where Self.isCode(name) {
-                replacements[name] = address
+                latest[name] = address
             }
-            let rebound = Self.rebind(image: 0, to: replacements)
+            images.append(path)
+            var rebound = Self.rebind(image: 0, to: latest)
+            for earlier in images {
+                guard let index = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == earlier }) else { continue }
+                rebound += Self.rebind(image: index, to: latest)
+            }
             generation += 1
             result = "ok \(rebound)"
         }

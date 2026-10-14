@@ -21,11 +21,33 @@ enum LiveReload {
     /// The sources the open app is running: what was installed, and every change put into it since.
     static func running(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running") }
 
-    /// After an install: the open app is the build, so what it runs is what the build used.
+    /// After an install: the open app is the build, so what it runs is what the build used, with the other
+    /// things the build puts in the app as they were.
     static func markRunning(_ project: LampProject) {
         let fm = FileManager.default
         try? fm.removeItem(at: running(project))
         try? fm.copyItem(at: sources(project), to: running(project))
+        try? inputs(project).write(to: runningInputs(project), atomically: true, encoding: .utf8)
+    }
+
+    private static func runningInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-inputs.txt") }
+
+    /// What else goes into the installed app besides the code, which a library can't bring: the app's own
+    /// files (Assets), what it declares (capabilities.json), the package and the icon. A change to any of them
+    /// is installed by reopening the app.
+    static func inputs(_ project: LampProject) -> String {
+        var lines: [String] = []
+        let fm = FileManager.default
+        for name in ["Package.swift", Template.Capabilities.file, "icon.json"] {
+            let data = fm.contents(atPath: project.dir.appendingPathComponent(name).path) ?? Data()
+            lines.append(name + " " + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined())
+        }
+        let assets = project.dir.appendingPathComponent(Sharing.Assets.folder)
+        for file in Sharing.assetFiles(of: project).sorted(by: { $0.path < $1.path }) {
+            let data = fm.contents(atPath: file.path) ?? Data()
+            lines.append(Sharing.relativePath(of: file, in: assets) + " " + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined())
+        }
+        return lines.joined(separator: "\n")
     }
 
     static func forget(_ project: LampProject) {
@@ -47,7 +69,8 @@ enum LiveReload {
     /// nil when something has to go in by reopening it, or when nothing changed.
     static func reloadable(_ project: LampProject) -> [String]? {
         let built = swiftFiles(in: sources(project)), open = swiftFiles(in: running(project))
-        guard !open.isEmpty, Set(built.keys) == Set(open.keys) else { return nil }
+        guard !open.isEmpty, Set(built.keys) == Set(open.keys),
+              (try? String(contentsOf: runningInputs(project), encoding: .utf8)) == inputs(project) else { return nil }
         var changed: [String] = []
         for (path, url) in built.sorted(by: { $0.key < $1.key }) {
             guard let new = try? String(contentsOf: url, encoding: .utf8),
@@ -67,17 +90,18 @@ enum LiveReload {
                           uniquingKeysWith: { first, _ in first })
     }
 
-    /// What a type's memory is made of, as far as the text shows it: the stored properties (a `let` or `var`
-    /// line that opens no body, not static) and the enum cases (a `case` line with no colon, so not a
-    /// switch's). The open app's objects were laid out by the old ones; a change to these needs a fresh start.
+    /// What a type's memory is made of, as far as the text shows it, in the order written (a field's place is
+    /// part of the layout): the stored properties (a `let` or `var` line that opens no body, not static) and the
+    /// enum cases with what they carry (a `case` naming one or more cases, not a switch's `case .x:` or
+    /// `case let`). The open app's objects were laid out by the old ones; a change to these needs a fresh start.
     static func shape(of source: String) -> [String] {
         let stored = try! NSRegularExpression(pattern: #"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:private|fileprivate|internal|public|open)(?:\(set\))?\s+)*(?:weak\s+|unowned\s+|lazy\s+)*(?:let|var)\s+\w+[^{]*$"#)
-        let enumCase = try! NSRegularExpression(pattern: #"^\s*(?:indirect\s+)?case\s+[^:]*$"#)
+        let enumCase = try! NSRegularExpression(pattern: #"^\s*(?:indirect\s+)?case\s+(?!let\b|var\b)[A-Za-z_]\w*(?:\(.*\))?\s*(?:=\s*[^:]+)?\s*(?:,\s*[A-Za-z_]\w*(?:\(.*\))?\s*)*$"#)
         return source.split(separator: "\n", omittingEmptySubsequences: true).map(String.init).filter { line in
             let range = NSRange(line.startIndex..., in: line)
             guard !line.contains("static "), !line.contains("class var") else { return false }
             return stored.firstMatch(in: line, range: range) != nil || enumCase.firstMatch(in: line, range: range) != nil
-        }.map { $0.trimmingCharacters(in: .whitespaces) }.sorted()
+        }.map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
     /// The App runs once, at launch: a change to it can't show in an app that's already open.
@@ -105,7 +129,7 @@ enum LiveReload {
             xcrun swiftc -c "$@" -module-name "$LAMP_EXE" -parse-as-library -Onone -enable-testing \
               -D DEBUG -D LAMP_LIVE -target arm64-apple-macosx14.0 -sdk "$SDK" -plugin-path "$PLUGINS" 2>&1
             xcrun swiftc -emit-library ${(Q)${(z)LAMP_OBJECTS}} -o "$LAMP_LIBRARY" -target arm64-apple-macosx14.0 -sdk "$SDK" \
-              -Xlinker -undefined -Xlinker dynamic_lookup 2>&1
+              -Xlinker -undefined -Xlinker dynamic_lookup -Xlinker -interposable 2>&1
             codesign --force -s - "$LAMP_LIBRARY" 2>&1
             """
         var output: [String] = []
