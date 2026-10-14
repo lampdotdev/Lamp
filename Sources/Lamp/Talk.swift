@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 /// The pieces the agent talks to the person with instead of paragraphs: a card of questions answered by
-/// clicking (`ask`), and a card for a finished request whose guesses are buttons (`show_result`). The agent
+/// clicking (`ask`), and a card for what a finished request made (`show_result`). The agent
 /// chooses the piece and fills it in; Lamp draws it (TalkCards.swift) and turns a click into the person's
 /// next message, so to the agent a click and a typed answer arrive the same way. Nothing here waits: the
 /// tool returns at once, the agent ends its reply, and the answer starts the next turn. That keeps it the
@@ -103,7 +103,10 @@ enum Talk {
         }
     }
 
-    /// One thing the agent decided for the person, and the other way it could have gone.
+    /// One thing the agent decided for the person, and the other way it could have gone, from cards saved while
+    /// a new app's card showed them as buttons. The agent isn't asked for them any more: beside the picture they
+    /// made the card a form to go through, when it's the app itself the person wants to try. Kept so those
+    /// chats still read, along with the idea they ended on.
     struct Guess: Codable, Equatable {
         var guess: String
         /// The button: the other way, in a few words.
@@ -128,6 +131,7 @@ enum Talk {
 
     struct Result: Codable, Equatable {
         var summary: String
+        /// Only on cards saved while there were guesses and ideas (see `Guess`); empty or nil on newer ones.
         var guesses: [Guess]
         var idea: Idea?
         /// Only on cards saved while there were rows of what's new (see `News`).
@@ -151,13 +155,12 @@ enum Talk {
 
     static let questionLimit = 4
     static let optionLimit = 4
-    static let guessLimit = 3
 
     /// The most words each piece of a card may have. A card is read at a glance and answered with a click: a
     /// long sentence in it is a paragraph again, set in bold. Too long goes back to the agent to say shorter, so
     /// every engine is held to the same; the tools' descriptions give the same numbers.
     enum Words {
-        static let question = 10, option = 4, summary = 12, guess = 6, instead = 4
+        static let question = 10, option = 4, summary = 12
     }
 
     static func words(in text: String) -> Int { text.split(whereSeparator: \.isWhitespace).count }
@@ -212,26 +215,7 @@ enum Talk {
         let summary = (arguments["summary"] as? String)?.trimmed ?? ""
         guard !summary.isEmpty else { return .failure(.message("Say in `summary` what the person now has, in one sentence.")) }
         if let trouble = tooLong(summary, Words.summary, as: "`summary`") { return .failure(trouble) }
-        let guesses: [Guess] = (arguments["guesses"] as? [[String: Any]] ?? []).compactMap { item in
-            guard let guess = (item["guess"] as? String)?.trimmed.nilIfEmpty,
-                  let instead = (item["instead"] as? String)?.trimmed.nilIfEmpty,
-                  let request = (item["request"] as? String)?.trimmed.nilIfEmpty else { return nil }
-            return Guess(guess: guess, instead: instead, request: request)
-        }
-        guard guesses.count <= guessLimit else {
-            return .failure(.message("At most \(guessLimit) guesses: the ones the person is most likely to want changed."))
-        }
-        for guess in guesses {
-            if let trouble = tooLong(guess.guess, Words.guess, as: "a `guess`") ?? tooLong(guess.instead, Words.instead, as: "`instead`") {
-                return .failure(trouble)
-            }
-        }
-        let idea = (arguments["idea"] as? [String: Any]).flatMap { item -> Idea? in
-            guard let title = (item["title"] as? String)?.trimmed.nilIfEmpty,
-                  let request = (item["request"] as? String)?.trimmed.nilIfEmpty else { return nil }
-            return Idea(title: title, detail: (item["detail"] as? String)?.trimmed.nilIfEmpty, request: request)
-        }
-        return .success(Result(summary: summary, guesses: guesses, idea: idea,
+        return .success(Result(summary: summary, guesses: [],
                                untried: (arguments["untried"] as? String)?.trimmed.nilIfEmpty))
     }
 
