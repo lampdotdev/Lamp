@@ -154,14 +154,13 @@ restore() {
     rm -f "$backup/no-apps"
   fi
   if [ -d "$backup/app-data" ]; then
-    # The fresh run's data goes once, marked done, so a restore run again after some folders came back
-    # can't take those away: it only moves back what's still in the backup.
-    if [ ! -e "$backup/app-data/.fresh-removed" ]; then
+    # The fresh run's data goes once, marked done beside the folder (gone only with the whole backup), so a
+    # restore run again after some folders came back can't take those away: it only moves back what's left.
+    if [ ! -e "$backup/app-data-fresh-removed" ]; then
       for folder in "$support/$prefix"*(N); do rm -rf "$folder"; done
-      touch "$backup/app-data/.fresh-removed"
+      touch "$backup/app-data-fresh-removed"
     fi
     for folder in "$backup/app-data/"*(N); do mv "$folder" "$support/"; done
-    rm -f "$backup/app-data/.fresh-removed"
     rmdir "$backup/app-data"
   fi
   rm -rf "$backup"
