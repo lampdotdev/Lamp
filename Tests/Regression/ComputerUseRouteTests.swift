@@ -1,9 +1,22 @@
 import XCTest
 @testable import Lamp
 
-/// A task in the person's other apps ends at its limit, whatever it is waiting on: a task that ran on would
-/// go on spending the person's money.
+/// A task in the person's other apps sends their windows' text and pictures to whatever answers it, and ends
+/// at its limit, whatever it is waiting on: a task that ran on would go on spending the person's money.
 final class ComputerUseRouteTests: XCTestCase {
+    private func route(_ id: String, _ kind: AppAI.TextRoute.Kind, available: Bool = true) -> AppAI.TextRoute {
+        AppAI.TextRoute(id: id, label: id, group: "", name: id, kind: kind, available: available)
+    }
+
+    /// Someone whose apps' AI stays on this Mac keeps tasks in their other apps there too, though a key and
+    /// a sign-in would answer them.
+    func testSomeoneStayingOnThisMacStaysThere() {
+        let local = route("local:small", .localModel(provider: "local", model: "small"))
+        let cloud = [route("opus", .openRouter(model: "anthropic/claude-opus-5.5")),
+                     route("engine:claude:opus", .engine(.claude, model: "opus"))]
+        XCTAssertEqual(AppAI.computerDefault(among: cloud, builder: .pi, textDefault: local, hasKey: true).id, "local:small")
+    }
+
     /// A call still in flight when the task passes its limit is cut off there, not waited for.
     func testWorkInFlightAtTheLimitIsCutOff() async {
         let began = Date()
