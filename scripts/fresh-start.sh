@@ -82,7 +82,7 @@ begin() {
   [ -d "$backup" ] || exit 1   # the loop runs in a subshell; it removed the backup on failure
   # A Mac that never ran Lamp has no folder: remember that, so restore can take the fresh one away.
   if [ -e "$state" ]; then mv "$state" "$backup/Lamp"; else touch "$backup/no-folder"; fi
-  [ -e "$apps" ] && mv "$apps" "$backup/Apps"
+  if [ -e "$apps" ]; then mv "$apps" "$backup/Apps"; else touch "$backup/no-apps"; fi
   mkdir -p "$backup/app-data"
   for folder in "$support/$prefix"*(N); do mv "$folder" "$backup/app-data/"; done
   defaults export "$domain" "$backup/defaults.plist" 2>/dev/null || true
@@ -145,13 +145,23 @@ restore() {
     rm -f "$backup/no-folder"
   fi
   # The apps, likewise: the fresh run's go, and yours come back.
+  # A backup from before apps were set aside has neither, and their folders are left alone.
   if [ -e "$backup/Apps" ]; then
     rm -rf "$apps"
     mv "$backup/Apps" "$apps"
+  elif [ -e "$backup/no-apps" ]; then
+    rm -rf "$apps"
+    rm -f "$backup/no-apps"
   fi
   if [ -d "$backup/app-data" ]; then
-    for folder in "$support/$prefix"*(N); do rm -rf "$folder"; done
+    # The fresh run's data goes once, marked done, so a restore run again after some folders came back
+    # can't take those away: it only moves back what's still in the backup.
+    if [ ! -e "$backup/app-data/.fresh-removed" ]; then
+      for folder in "$support/$prefix"*(N); do rm -rf "$folder"; done
+      touch "$backup/app-data/.fresh-removed"
+    fi
     for folder in "$backup/app-data/"*(N); do mv "$folder" "$support/"; done
+    rm -f "$backup/app-data/.fresh-removed"
     rmdir "$backup/app-data"
   fi
   rm -rf "$backup"
