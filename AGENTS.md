@@ -321,6 +321,22 @@ keeps what is medical (diagnoses, conditions, symptoms, medications, lab results
 mental-health entries) on the device, and lets everyday activity and fitness numbers such as step counts sync,
 which they aren't. When it's unclear, on the device.
 
+## Work while an iPhone app is closed
+
+`{"background": true}` in capabilities.json means on iPhone what it means on a Mac: the app works while nobody is
+looking. A Mac app opens at login and keeps running (`LampBackground`); an iPhone app is woken by iOS to run its
+`LampSchedule`s, the same calls as the Mac's (`daily`, `every`), from the iOS copy in LampSupport. Lamp declares
+one task for it (`Template.scheduleTask`, "lamp.schedule", with the fetch mode, in `Capabilities.lists`), and the
+app's WindowGroup carries `.lampBackground()`, SwiftUI's `backgroundTask(.appRefresh)` running everything due and
+asking for the next time (a no-op on the Mac, so an app for both shares the code). iOS ends an app that asks for a
+task it has no handler for, so a request is made only once `.lampBackground()` has run and only when the app goes
+to the back or after a background run, never as a schedule is made. iOS decides when: near the time, a few times
+an hour at most, less for an app rarely opened; the simulator refuses every request, so the work is tried by
+running it from the app. Notifications go with it (`LampNotifications`, both platforms): `at:` for later,
+`id:`/`cancel` to replace or take one back, `actions:` buttons that work without opening the app, handled by
+`LampNotifications.onAction` set at launch, and on iPhone `timeSensitive:` with `{"timeSensitive": true}`, the
+entitlement. The rule is `Agent.Rules.iPhoneBackground`, and `Rules.notifications` in both kinds' blocks.
+
 ## Photos, location, weather, music and the home
 
 Five more building blocks in LampSupport.swift, each the one place for its framework: `LampPhotos` (Photos: the

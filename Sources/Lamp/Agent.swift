@@ -214,7 +214,7 @@ enum Agent {
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
                      Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
-                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneWidget), Rules.store, Rules.kinds(mac: true),
+                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), Rules.store, Rules.kinds(mac: true),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
                      Rules.universalTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
@@ -235,7 +235,7 @@ enum Agent {
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.permissions] }
         rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules.append(Rules.computer) }
-        if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneWidget, Rules.icloud] }
+        if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.icloud] }
         rules += [Rules.store, Rules.kinds(mac: mac), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
                   Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
@@ -381,7 +381,7 @@ enum Agent {
         `await LampText.recognize(in: nsImage)`; `.lampDropFiles { urls in }` on any view and `LampDropZone("Drop \
         screenshots here") { urls in }` for an empty state (Finder files, images from other apps, links); \
         `LampClipboardWatcher { item in }` (item.text / image / fileURLs; keep it alive) and \
-        `LampClipboardWatcher.copy(text)`; `LampNotifications.send("Title", body: "…")`. \
+        `LampClipboardWatcher.copy(text)`; `LampNotifications.send("Title", body: "…")` \(Rules.notifications). \
         \(Rules.sharedBlocks) Make the most of being on the \
         Mac: local files, drag and drop, the menu bar, keyboard shortcuts, and fitting into what the user already does.
         """
@@ -408,7 +408,7 @@ enum Agent {
         photos and screenshots via Live Text, RTF, Word, HTML, plain text, all on the device and free; use it \
         before sending documents to LampAI) and `await LampText.recognize(in: uiImage)`; `.lampDropFiles { urls \
         in }` on any view and `LampDropZone("Drop files here") { urls in }` for an empty state (files and images \
-        dragged in from another app, which matters on iPad); `LampNotifications.send("Title", body: "…")`. This \
+        dragged in from another app, which matters on iPad); `LampNotifications.send("Title", body: "…")` \(Rules.notifications). This \
         app's copy of the library has none of the Mac-only blocks (watching folders, the user's folders, shortcuts \
         that work in every app, opening at login, the clipboard watcher, Mail, other apps, the menu bar, the \
         permission screens): never call them. \(Rules.sharedBlocks) Home: `LampHome` (iPhone only, after \
@@ -876,6 +876,27 @@ enum Agent {
         explain it, and say in a sentence that it's ready to add.
         """
 
+        /// What `LampNotifications` does beyond a plain message, said in both kinds' blocks.
+        static let notifications = """
+        (also `at: date` to show it later, even with the app closed, `id:` to replace or `cancel(id)` one, \
+        `actions: ["Done", "Snooze"]` for buttons that work without opening the app, handled by \
+        `LampNotifications.onAction { action, id in … }` set where the app starts, and on iPhone `timeSensitive: \
+        true`, with `{"timeSensitive": true}` in capabilities.json, for what can't wait, sparingly)
+        """
+
+        /// Work while the app is closed on iPhone, as a Mac app works in the background.
+        static let iPhoneBackground = """
+        - When the app should do something while it's closed (fetch the news before breakfast, check a price, \
+        tidy up, remind), declare `{"background": true}` in capabilities.json, put `.lampBackground()` on its \
+        WindowGroup, and make `@State private var check = LampSchedule.every("prices", minutes: 60) { … }` or \
+        `LampSchedule.daily("briefing", hour: 7) { … }` in the App, the same calls as on a Mac. iOS runs them \
+        while the app is closed when it judges best: near the time, not on the dot, at most a few times an \
+        hour, and less for an app the person rarely opens; while the app is open they run on time. Keep each \
+        run short (seconds) and tell the person what came of it with a notification. Something that must \
+        happen at an exact time and only needs to tell the person is a notification sent with `at:`, not a \
+        schedule. The simulator never wakes a closed app by itself, so try the work by running it from the app.
+        """
+
         static let iPhoneHardware = """
         - The phone itself is the app's best material: use what it has, without being asked, whenever it fits \
         what the user wants. Motion: `LampMotion` from LampSupport.swift (tilt, gravity, acceleration, rotation, \
@@ -895,12 +916,12 @@ enum Agent {
         where it would join their real record; what the app logs for them is only what they told it. A Mac has none at all (`LampHealth.isAvailable` is false): an app for \
         both reads on the iPhone and keeps what the Mac shows in LampSync, if it's activity and fitness that may \
         go to iCloud (see the iCloud rule); medical data stays on the iPhone. NFC tags: CoreNFC. \
-        Notifications at a time or place: UNUserNotificationCenter with a trigger. Siri and Shortcuts: App \
+        Notifications at a place: UNUserNotificationCenter with a location trigger. Siri and Shortcuts: App \
         Intents. AR: ARKit with RealityKit. Music: MusicKit or MediaPlayer. The app already declares why it \
         wants each of these (microphone, speech, camera, photos, location, motion, Bluetooth, Face ID, health, \
         NFC, Siri, nearby devices, music), so just request authorization before use and handle denial in the \
         interface. Health, NFC, Siri, nearby phones and background work need a declaration first: write \
-        `capabilities.json` at the app's root, e.g. `{"healthkit": true, "nfc": true, "siri": true, "weather": true, "homekit": true, \
+        `capabilities.json` at the app's root, e.g. `{"healthkit": true, "nfc": true, "siri": true, "weather": true, "homekit": true, "timeSensitive": true, \
         "backgroundModes": ["audio", "location"], "bonjourServices": ["_myapp._tcp", "_myapp._udp"], \
         "backgroundTasks": ["com.example.refresh"]}`, and Lamp signs the app for them and declares them. Modes: \
         audio, location, fetch, processing, remote-notification, bluetooth-central, bluetooth-peripheral. \
