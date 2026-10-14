@@ -93,24 +93,32 @@ enum Template {
     static func writeOwnedFiles(for project: LampProject) throws {
         try writeSupport(for: project)
         let widget = hasWidget(project)
-        // The simulator build's entitlements, for build.sh to put in the binary (see iPhoneBuildSh).
+        // The simulator build's entitlements, for build.sh to put in the binary (see iPhoneBuildSh), and the
+        // widget extension's beside them.
         if project.platform.hasIOS {
             try Capabilities.load(project).simulatorEntitlementsPlist(for: project)
                 .write(to: project.dir.appendingPathComponent(".lamp/entitlements.plist"), atomically: true, encoding: .utf8)
+            let widgetEntitlements = project.dir.appendingPathComponent(".lamp/widget-entitlements.plist")
+            if widget {
+                try simulatorWidgetEntitlementsPlist(for: project).write(to: widgetEntitlements, atomically: true, encoding: .utf8)
+            } else {
+                try? FileManager.default.removeItem(at: widgetEntitlements)
+            }
+            try linkSharedWidgetCode(for: project)
         }
         switch project.platform {
         case .mac:
             try write(buildSh(widget: widget, widgetOnly: isWidgetOnly(project)), to: "build.sh", for: project, executable: true)
             try write(packageSwift(widget: widget), to: "Package.swift", for: project)
         case .iphone:
-            try write(iPhoneBuildSh, to: "build.sh", for: project, executable: true)
-            try write(iPhonePackageSwift, to: "Package.swift", for: project)
+            try write(iPhoneBuildSh(widget: widget), to: "build.sh", for: project, executable: true)
+            try write(iPhonePackageSwift(widget: widget), to: "Package.swift", for: project)
         case .universal:
             // The Mac build is Xcode's, from a project Lamp writes beside the phone's (it is the phone's: one
             // project, both platforms), signed for the person's team: that is what lets the app use what Apple
             // ties to a team, which Lamp's own signing can't give it.
-            try write(universalBuildSh, to: "build.sh", for: project, executable: true)
-            try write(universalPackageSwift, to: "Package.swift", for: project)
+            try write(universalBuildSh(widget: widget), to: "build.sh", for: project, executable: true)
+            try write(universalPackageSwift(widget: widget), to: "Package.swift", for: project)
             try writeDeviceProject(for: project, team: Devices.team)
         }
     }
@@ -169,6 +177,54 @@ enum Template {
 
     """
 
+    /// Package.swift for an iPhone app. With a widget it has a second program, built from Widget/ the way
+    /// Xcode builds an extension, as a Mac app's widget is.
+    static func iPhonePackageSwift(widget: Bool) -> String {
+        guard widget else { return iPhonePackageSwift }
+        return withWidgetTargets(iPhonePackageSwift)
+    }
+
+    private static func withWidgetTargets(_ package: String) -> String {
+        let one = "    targets: [.executableTarget(name: \"{{EXE}}\", path: \"Sources\")]\n"
+        precondition(package.contains(one), "the package template changed")
+        return package.replacingOccurrences(of: one, with: widgetTargets)
+    }
+
+    /// The app and its widget extension, as Package.swift lists them.
+    private static let widgetTargets = """
+            targets: [
+                .executableTarget(name: "{{EXE}}", path: "Sources"),
+                .executableTarget(name: "{{EXE}}Widget", path: "Widget",
+                                  swiftSettings: [.unsafeFlags(["-application-extension"])],
+                                  linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]),
+            ]
+
+    """
+
+    /// Where the code an iPhone app and its widget both compile lives: Swift in Widget/Shared/ is linked into
+    /// Sources/ as `sharedWidgetLink`, so each target compiles it (SwiftPM refuses one file in two targets,
+    /// and Xcode's project follows the link the same way). The place for an `ActivityAttributes` type.
+    static let sharedWidgetFolder = "Shared"
+    static let sharedWidgetLink = "WidgetShared"
+
+    /// Puts the link in place when Widget/Shared/ exists, and takes it away when it doesn't. Only ever a link
+    /// Lamp made: a real folder of that name is the agent's and stays.
+    static func linkSharedWidgetCode(for project: LampProject) throws {
+        let fm = FileManager.default
+        let link = project.dir.appendingPathComponent("Sources").appendingPathComponent(sharedWidgetLink)
+        let target = "../\(widgetFolder)/\(sharedWidgetFolder)"
+        let isLink = (try? fm.destinationOfSymbolicLink(atPath: link.path)) != nil
+        let shared = project.dir.appendingPathComponent(widgetFolder).appendingPathComponent(sharedWidgetFolder)
+        var isFolder: ObjCBool = false
+        if hasWidget(project), fm.fileExists(atPath: shared.path, isDirectory: &isFolder), isFolder.boolValue {
+            guard (try? fm.destinationOfSymbolicLink(atPath: link.path)) != target else { return }
+            if isLink { try fm.removeItem(at: link) } else if fm.fileExists(atPath: link.path) { return }
+            try fm.createSymbolicLink(atPath: link.path, withDestinationPath: target)
+        } else if isLink {
+            try fm.removeItem(at: link)
+        }
+    }
+
     static let iPhoneAppSwift = """
     import SwiftUI
 
@@ -214,6 +270,13 @@ enum Template {
     )
 
     """
+
+    /// With a widget, the iPhone half's extension is a second target; the Mac half has none (`swift build
+    /// --product <app>` builds the Mac half alone).
+    static func universalPackageSwift(widget: Bool) -> String {
+        guard widget else { return universalPackageSwift }
+        return withWidgetTargets(universalPackageSwift)
+    }
 
     static let universalAppSwift = """
     import SwiftUI
@@ -274,10 +337,12 @@ enum Template {
 
     /// An app for both: the simulator's build is the iPhone's, and the Mac's is Xcode's, from the project
     /// Lamp writes under .lamp/device, signed for the team Lamp was given (LAMP_TEAM, from Settings → Building).
-    static var universalBuildSh: String {
+    static var universalBuildSh: String { universalBuildSh(widget: false) }
+
+    static func universalBuildSh(widget: Bool) -> String {
         // Not indented: the iPhone script writes Info.plist with a heredoc, whose end line must start the line.
         // The iOS half's build goes to its own folder, so checking one half never replaces the other's build.
-        let ios = iPhoneBuildSh.components(separatedBy: "\n").dropFirst(4).joined(separator: "\n")   // after the shebang, the comment, set and cd
+        let ios = iPhoneBuildSh(widget: widget).components(separatedBy: "\n").dropFirst(4).joined(separator: "\n")   // after the shebang, the comment, set and cd
             .replacingOccurrences(of: "APP=\"build/{{EXE}}.app\"", with: "APP=\"build/iOS/{{EXE}}.app\"")
         return """
         #!/bin/zsh
@@ -355,6 +420,149 @@ enum Template {
     echo "Built $APP"
 
     """
+
+    /// build.sh for an iPhone app. With a widget, the extension is built as its own product, with its own
+    /// entitlements in its binary (the app group), and put into the app as PlugIns/<Exe>Widget.appex, signed
+    /// before the app around it. The app says it has Live Activities and which folder it shares.
+    static func iPhoneBuildSh(widget: Bool) -> String {
+        guard widget else { return iPhoneBuildSh }
+        func swap(_ script: String, _ old: String, _ new: String) -> String {
+            precondition(script.contains(old), "iPhoneBuildSh changed: \(old)")
+            return script.replacingOccurrences(of: old, with: new)
+        }
+        var script = iPhoneBuildSh
+        script = swap(script, "FLAGS=(-c release --triple arm64-apple-ios17.0-simulator --sdk \"$SDK\" -Xswiftc -g)\n",
+                      "FLAGS=(-c release --triple arm64-apple-ios17.0-simulator --sdk \"$SDK\" -Xswiftc -g)\nBASE=(\"${FLAGS[@]}\")\n")
+        script = swap(script, "swift build \"${FLAGS[@]}\" 2>&1\n", """
+            # The widget extension's entitlements, linked into its own binary the same way.
+            WFLAGS=("${BASE[@]}")
+            WENT=".lamp/widget-entitlements.plist"
+            if [[ -f "$WENT" ]]; then
+              mkdir -p .build
+              WHASHED=".build/widget-entitlements-$(shasum -a 256 "$WENT" | cut -c1-16).plist"
+              cp "$WENT" "$WHASHED"
+              WFLAGS+=(-Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$WHASHED")
+            fi
+            swift build "${FLAGS[@]}" --product {{EXE}} 2>&1
+            swift build "${WFLAGS[@]}" --product {{EXE}}Widget 2>&1
+
+            """)
+        script = swap(script, "{{USAGE}}\n</dict></plist>\nPLIST\n", "{{USAGE}}\n" + widgetAppPlistLines(group: "group.{{BUNDLE}}") + "\n</dict></plist>\nPLIST\n")
+        script = swap(script, appSigningLine, iPhoneWidgetBuildSteps + appSigningLine)
+        return script
+    }
+
+    /// What an app with a widget says in its Info.plist: that it has Live Activities, and the folder it shares.
+    static func widgetAppPlistLines(group: String) -> String {
+        "  <key>NSSupportsLiveActivities</key><true/>\n  <key>LampAppGroup</key><string>\(group.xmlEscaped)</string>"
+    }
+
+    /// The folder an iPhone app shares with its widget: an app group named after the app, as it's signed (with
+    /// the team on a phone, as the app's id has it there).
+    static func appGroup(for project: LampProject, onDevice: Bool, team: String = Devices.team) -> String {
+        "group." + (onDevice ? project.deviceBundleID(team: team) : project.bundleID)
+    }
+
+    /// The widget extension's entitlements for the simulator: the app group, with the app's identity when
+    /// there's a team, as the app's own have it (`Capabilities.simulatorEntitlementsPlist`).
+    static func simulatorWidgetEntitlementsPlist(for project: LampProject) -> String {
+        let plist = Capabilities().entitlementsPlist(container: nil, platform: .ios, appGroup: appGroup(for: project, onDevice: false))
+        let team = Devices.team
+        guard !team.isEmpty else { return plist }
+        let identity = "  <key>application-identifier</key><string>\(team).\(project.bundleID.xmlEscaped).widget</string>\n" +
+            "  <key>com.apple.developer.team-identifier</key><string>\(team)</string>\n"
+        return plist.replacingOccurrences(of: "<plist version=\"1.0\"><dict>\n", with: "<plist version=\"1.0\"><dict>\n" + identity)
+    }
+
+    /// The extension inside the simulator's bundle. The version changes with every build so iOS reads the
+    /// widget's kinds again instead of keeping the ones it remembers.
+    private static var iPhoneWidgetBuildSteps: String {
+        """
+        WIDGET="$APP/PlugIns/{{EXE}}Widget.appex"
+        mkdir -p "$WIDGET"
+        cp "$(dirname "$BIN")/{{EXE}}Widget" "$WIDGET/{{EXE}}Widget"
+        cat > "$WIDGET/Info.plist" <<PLIST
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+          <key>CFBundleExecutable</key><string>{{EXE}}Widget</string>
+          <key>CFBundleIdentifier</key><string>{{BUNDLE}}.widget</string>
+          <key>CFBundleName</key><string>{{NAME}}</string>
+          <key>CFBundleDisplayName</key><string>{{NAME}}</string>
+          <key>CFBundlePackageType</key><string>XPC!</string>
+          <key>CFBundleShortVersionString</key><string>0.1</string>
+          <key>CFBundleVersion</key><string>$(date +%s)</string>
+          <key>MinimumOSVersion</key><string>17.0</string>
+          <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+          <key>DTPlatformName</key><string>iphonesimulator</string>
+          <key>CFBundleSupportedPlatforms</key><array><string>iPhoneSimulator</string></array>
+          <key>LampAppGroup</key><string>group.{{BUNDLE}}</string>
+          <key>NSExtension</key><dict>
+            <key>NSExtensionPointIdentifier</key><string>com.apple.widgetkit-extension</string>
+          </dict>
+        </dict></plist>
+        PLIST
+        codesign --force -s - "$WIDGET"
+
+        """
+    }
+
+    /// The widget extension's Info.plist in the Xcode project, for a phone or an app for both.
+    static let deviceWidgetInfoPlist = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0"><dict>
+      <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+      <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+      <key>CFBundleName</key><string>{{NAME}}</string>
+      <key>CFBundleDisplayName</key><string>{{NAME}}</string>
+      <key>CFBundlePackageType</key><string>XPC!</string>
+      <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+      <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+      <key>LampAppGroup</key><string>{{APP_GROUP}}</string>
+      <key>NSExtension</key><dict>
+        <key>NSExtensionPointIdentifier</key><string>com.apple.widgetkit-extension</string>
+      </dict>
+    </dict></plist>
+
+    """
+
+    /// The device or universal project with the widget extension as a second target: its folder as a
+    /// synchronized group, built for iOS only, embedded in the app's PlugIns, and signed by automatic signing
+    /// with the app. For an app for both the extension and its embedding are the iPhone half's alone
+    /// (`platformFilter = ios`), so the Mac half builds as it did.
+    static func withWidgetTarget(_ pbxproj: String) -> String {
+        func swap(_ text: String, _ old: String, _ new: String) -> String {
+            precondition(text.contains(old), "the project template changed: \(old)")
+            return text.replacingOccurrences(of: old, with: new)
+        }
+        let objects = """
+        \t\tB00000000000000000000001 /* {{EXE}}Widget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "{{EXE}}Widget.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+        \t\tB00000000000000000000002 /* Widget */ = {isa = PBXFileSystemSynchronizedRootGroup; name = Widget; path = ../../Widget; sourceTree = "<group>"; };
+        \t\tB00000000000000000000003 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        \t\tB00000000000000000000004 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        \t\tB00000000000000000000005 /* {{EXE}}Widget */ = {isa = PBXNativeTarget; buildConfigurationList = B00000000000000000000006; buildPhases = (B00000000000000000000003 /* Sources */, B00000000000000000000004 /* Frameworks */); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (B00000000000000000000002 /* Widget */); name = "{{EXE}}Widget"; packageProductDependencies = (); productName = "{{EXE}}Widget"; productReference = B00000000000000000000001 /* {{EXE}}Widget.appex */; productType = "com.apple.product-type.app-extension"; };
+        \t\tB00000000000000000000006 /* Build configuration list for the widget */ = {isa = XCConfigurationList; buildConfigurations = (B00000000000000000000007 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        \t\tB00000000000000000000007 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = Widget.entitlements; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = "Widget-Info.plist"; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}.widget"; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+        \t\tB00000000000000000000008 /* {{EXE}}Widget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B00000000000000000000001 /* {{EXE}}Widget.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+        \t\tB00000000000000000000009 /* Embed Foundation Extensions */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (B00000000000000000000008 /* {{EXE}}Widget.appex in Embed Foundation Extensions */); name = "Embed Foundation Extensions"; runOnlyForDeploymentPostprocessing = 0; };
+        \t\tB0000000000000000000000A /* PBXTargetDependency */ = {isa = PBXTargetDependency; platformFilter = ios; target = B00000000000000000000005 /* {{EXE}}Widget */; targetProxy = B0000000000000000000000B /* PBXContainerItemProxy */; };
+        \t\tB0000000000000000000000B /* PBXContainerItemProxy */ = {isa = PBXContainerItemProxy; containerPortal = A0000000000000000000000F /* Project object */; proxyType = 1; remoteGlobalIDString = B00000000000000000000005; remoteInfo = "{{EXE}}Widget"; };
+        \t\tB0000000000000000000000C /* Shared */ = {isa = PBXFileSystemSynchronizedRootGroup; name = Shared; path = ../../Widget/Shared; sourceTree = "<group>"; };
+
+        """
+        var text = pbxproj
+        text = swap(text, "\t\tA00000000000000000000010 /* Build configuration list for PBXProject */", objects + "\t\tA00000000000000000000010 /* Build configuration list for PBXProject */")
+        text = swap(text, "buildPhases = (A0000000000000000000000D /* Sources */, A00000000000000000000008 /* Frameworks */, A0000000000000000000000E /* Resources */); buildRules = (); dependencies = ();",
+                    "buildPhases = (A0000000000000000000000D /* Sources */, A00000000000000000000008 /* Frameworks */, A0000000000000000000000E /* Resources */, B00000000000000000000009 /* Embed Foundation Extensions */); buildRules = (); dependencies = (B0000000000000000000000A /* PBXTargetDependency */);")
+        text = swap(text, "targets = (A0000000000000000000000B /* {{EXE}} */);", "targets = (A0000000000000000000000B /* {{EXE}} */, B00000000000000000000005 /* {{EXE}}Widget */);")
+        text = swap(text, "children = (A00000000000000000000006 /* {{EXE}}.app */);", "children = (A00000000000000000000006 /* {{EXE}}.app */, B00000000000000000000001 /* {{EXE}}Widget.appex */);")
+        text = swap(text, "children = (A00000000000000000000007 /* Sources */, ", "children = (A00000000000000000000007 /* Sources */, B00000000000000000000002 /* Widget */, B0000000000000000000000C /* Shared */, ")
+        // Xcode's synchronized group doesn't follow the Sources/WidgetShared link SwiftPM builds through, so
+        // the app target gets Widget/Shared/ as a group of its own; the widget has it within Widget/.
+        text = swap(text, "fileSystemSynchronizedGroups = (A00000000000000000000007 /* Sources */);", "fileSystemSynchronizedGroups = (A00000000000000000000007 /* Sources */, B0000000000000000000000C /* Shared */);")
+        return text
+    }
 
     /// Why the app wants each protected thing, in Info.plist: iOS kills an app on the spot that touches one
     /// without its reason, so every app carries all of them and the agent only has to ask for authorization.
@@ -496,8 +704,8 @@ enum Template {
         /// capability with Apple. Empty when nothing is declared. iCloud brings push with it: CloudKit's
         /// sync engine hears of changes made elsewhere through notifications, whose entitlement is spelled
         /// differently on each platform.
-        func entitlementsPlist(for project: LampProject, platform: Destination = .ios) -> String {
-            entitlementsPlist(container: container(for: project), platform: platform, teamSigned: project.platform.hasIOS)
+        func entitlementsPlist(for project: LampProject, platform: Destination = .ios, appGroup: String? = nil) -> String {
+            entitlementsPlist(container: container(for: project), platform: platform, teamSigned: project.platform.hasIOS, appGroup: appGroup)
         }
 
         /// Whether the app gets the weather: declared, and signed for a team (an iPhone half).
@@ -507,7 +715,8 @@ enum Template {
         /// identity as Xcode writes it, which HealthKit and iCloud look for before they do anything. Empty when
         /// nothing is declared, so a plain app stays plain.
         func simulatorEntitlementsPlist(for project: LampProject) -> String {
-            let plist = entitlementsPlist(for: project, platform: .ios)
+            let plist = entitlementsPlist(for: project, platform: .ios,
+                                          appGroup: Template.hasWidget(project) ? Template.appGroup(for: project, onDevice: false) : nil)
             let team = Devices.team
             guard !team.isEmpty, plist.contains("<key>") else { return plist }
             let identity = "  <key>application-identifier</key><string>\(team).\(project.bundleID.xmlEscaped)</string>\n" +
@@ -515,8 +724,12 @@ enum Template {
             return plist.replacingOccurrences(of: "<plist version=\"1.0\"><dict>\n", with: "<plist version=\"1.0\"><dict>\n" + identity)
         }
 
-        func entitlementsPlist(container: String?, platform: Destination = .ios, teamSigned: Bool = false) -> String {
+        func entitlementsPlist(container: String?, platform: Destination = .ios, teamSigned: Bool = false, appGroup: String? = nil) -> String {
             var lines: [String] = []
+            // The folder an iPhone app shares with its widget extension (`LampWidget`).
+            if let appGroup, platform == .ios {
+                lines.append("  <key>com.apple.security.application-groups</key><array><string>\(appGroup.xmlEscaped)</string></array>")
+            }
             if let container {
                 lines.append("  <key>com.apple.developer.icloud-container-identifiers</key><array><string>\(container.xmlEscaped)</string></array>")
                 lines.append("  <key>com.apple.developer.icloud-services</key><array><string>CloudKit</string></array>")
@@ -665,9 +878,12 @@ enum Template {
         let hasIcon = fm.fileExists(atPath: Icons.squareURL(project).path)
         if hasIcon { try fm.copyItem(at: Icons.squareURL(project), to: iconset.appendingPathComponent("AppIcon.png")) }
         let capabilities = Capabilities.load(project)
+        let widget = hasWidget(project)
+        let group = appGroup(for: project, onDevice: true, team: team)
+        let pbxproj = universal ? universalPbxproj : devicePbxproj
         var files: [(String, String)] = [
-            ("\(project.exe).xcodeproj/project.pbxproj", universal ? universalPbxproj : devicePbxproj),
-            ("App.entitlements", capabilities.entitlementsPlist(for: project, platform: .ios)),
+            ("\(project.exe).xcodeproj/project.pbxproj", widget ? withWidgetTarget(pbxproj) : pbxproj),
+            ("App.entitlements", capabilities.entitlementsPlist(for: project, platform: .ios, appGroup: widget ? group : nil)),
             ("\(project.exe).xcodeproj/xcshareddata/xcschemes/\(project.exe).xcscheme", deviceScheme),
             ("Info.plist", deviceInfoPlist),
             ("Assets.xcassets/Contents.json", #"{ "info": { "author": "xcode", "version": 1 } }"#),
@@ -680,8 +896,16 @@ enum Template {
             files.append(("Info-macOS.plist", universalMacInfoPlist))
             files.append(("App-macOS.entitlements", capabilities.entitlementsPlist(for: project, platform: .mac)))
         }
+        // The widget extension's own Info.plist and entitlements: the app group, and nothing else.
+        if widget {
+            files.append(("Widget-Info.plist", deviceWidgetInfoPlist))
+            files.append(("Widget.entitlements", Capabilities().entitlementsPlist(container: nil, platform: .ios, appGroup: group)))
+        }
+        let widgetPlist = widget ? widgetAppPlistLines(group: group) : ""
         for (path, template) in files {
             let contents = template
+                .replacingOccurrences(of: "{{WIDGET_PLIST}}", with: widgetPlist)
+                .replacingOccurrences(of: "{{APP_GROUP}}", with: group)
                 .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
                 .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name))
                 .replacingOccurrences(of: "{{BACKGROUND}}", with: capabilities.backgroundPlistLine)
@@ -775,6 +999,7 @@ enum Template {
     {{USAGE}}
     {{BACKGROUND}}
     {{ICLOUD}}
+    {{WIDGET_PLIST}}
     </dict></plist>
 
     """
@@ -864,14 +1089,31 @@ enum Template {
     /// own (macOS runs it without the app, in a sandbox) and SwiftPM builds one program per folder.
     static let widgetFolder = "Widget"
 
-    /// Whether the app has a widget to build: a Mac app with Swift in its Widget folder. Asked before every
-    /// build, so writing the first file there or deleting the last one is all it takes to gain or lose one.
-    /// Lamp's own file there doesn't count: it is only written for a widget that exists.
+    /// Whether the app has a widget to build: Swift in its Widget folder. A Mac app's is a desktop widget; an
+    /// iPhone app's (and the iPhone half's of an app for both) is a WidgetKit extension with home screen widgets
+    /// and Live Activities. Asked before every build, so writing the first file there or deleting the last one
+    /// is all it takes to gain or lose one. Lamp's own file there doesn't count: it is only written for a
+    /// widget that exists.
     static func hasWidget(_ project: LampProject) -> Bool {
-        guard project.platform == .mac else { return false }
         let folder = project.dir.appendingPathComponent(widgetFolder)
         let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
         return files.contains { $0.pathExtension == "swift" && $0.lastPathComponent != widgetSupportFile }
+    }
+
+    /// Whether the app's extension holds a widget someone can add: a configuration with a timeline, not only
+    /// Live Activities, which iOS shows by itself and never lists among the widgets to add. Read from the code,
+    /// comments and strings left out, as `isWidgetOnly` does.
+    static func hasHomeScreenWidget(_ project: LampProject) -> Bool {
+        guard hasWidget(project) else { return false }
+        let folder = project.dir.appendingPathComponent(widgetFolder)
+        let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        return files.contains { file in
+            file.pathExtension == "swift" && file.lastPathComponent != widgetSupportFile
+                && ((try? String(contentsOf: file, encoding: .utf8)).map { source in
+                    let text = code(in: source)
+                    return ["StaticConfiguration(", "AppIntentConfiguration(", "IntentConfiguration("].contains { text.contains($0) }
+                } ?? false)
+        }
     }
 
     /// The scene a widget-only app is made of (`LampWidgetOnly` in LampSupport.swift).
@@ -880,7 +1122,7 @@ enum Template {
     /// Whether the app is only there to carry its widget: it has one, and its own code is that one scene.
     /// Such an app has no window and no Dock icon, and Lamp never opens it in front of anyone.
     static func isWidgetOnly(_ project: LampProject) -> Bool {
-        guard hasWidget(project) else { return false }
+        guard project.platform == .mac, hasWidget(project) else { return false }
         let sources = project.dir.appendingPathComponent("Sources")
         let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
         return files.contains { file in
@@ -1048,7 +1290,8 @@ enum Template {
     /// Lamp's own file in a widget's folder, written like LampSupport.swift: before every turn and build.
     static func writeWidgetSupport(for project: LampProject) throws {
         guard hasWidget(project) else { return }
-        let contents = lampWidgetSupportSwift
+        // An iPhone widget reads the folder it shares with its app; a Mac widget asks the app (WidgetSharing).
+        let contents = project.platform.hasIOS ? lampWidgetSupportIOSSwift : lampWidgetSupportSwift
             .replacingOccurrences(of: "{{WIDGET_PORT}}", with: String(widgetPort(for: project)))
             .replacingOccurrences(of: "{{WIDGET_TOKEN}}", with: widgetToken(for: project))
         let url = project.dir.appendingPathComponent(widgetFolder).appendingPathComponent(widgetSupportFile)
@@ -1056,6 +1299,37 @@ enum Template {
             try contents.write(to: url, atomically: true, encoding: .utf8)
         }
     }
+
+    static let lampWidgetSupportIOSSwift = #"""
+    // Generated by Lamp before every build. Don't edit: changes are overwritten.
+    import Foundation
+
+    /// What the app shared for its widgets, with `LampWidget.share(value, as: "summary")`.
+    ///
+    ///     LampWidget.read(Summary.self, from: "summary") { summary in … }
+    ///     let summary = await LampWidget.read(Summary.self, from: "summary")
+    ///
+    /// Gives what the app shared last, from the folder the app and its widget share, also while the app is
+    /// closed. Nil until the app has shared something under that name.
+    enum LampWidget {
+        static func read<T: Decodable>(_ type: T.Type, from name: String = "data", then completion: @escaping (T?) -> Void) {
+            completion(value(type, name))
+        }
+
+        static func read<T: Decodable>(_ type: T.Type, from name: String = "data") async -> T? {
+            value(type, name)
+        }
+
+        private static func value<T: Decodable>(_ type: T.Type, _ name: String) -> T? {
+            guard let group = Bundle.main.object(forInfoDictionaryKey: "LampAppGroup") as? String,
+                  let folder = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return nil }
+            let file = "lamp-widget-" + String(name.map { $0.isLetter || $0.isNumber ? $0 : "-" }) + ".json"
+            guard let data = try? Data(contentsOf: folder.appendingPathComponent(file)) else { return nil }
+            return try? JSONDecoder().decode(T.self, from: data)
+        }
+    }
+
+    """#
 
     /// How a widget gets at what its app has saved, kept in one place so another way can replace it. A
     /// widget runs sandboxed and sees none of the app's files. An app group, the usual way, is refused by
@@ -1065,6 +1339,11 @@ enum Template {
     /// which a sandboxed program may do once its signature allows outgoing
     /// connections; that entitlement is one every widget has anyway, to load from the web. Nothing here is
     /// an exception to the sandbox. What it costs: the widget is only as fresh as the last time the app ran.
+    ///
+    /// An iPhone widget doesn't need any of that: on iOS the app and its extension are both signed by Apple's
+    /// rules for the simulator or by the person's team on a phone, so they share an app group
+    /// (`appGroup(for:onDevice:)`), and the app writes what it shares into the group's folder for the widget to
+    /// read (`LampWidget` under `#if os(iOS)`, `lampWidgetSupportIOSSwift`).
     enum WidgetSharing {
         /// Entitlement lines this way adds to the widget's signature, as plist XML. None: see above.
         static let entitlements: [String] = []
@@ -1248,6 +1527,7 @@ enum Template {
     #else
     import UIKit
     import HomeKit
+    import WidgetKit
     import CoreMotion
     import Security
     /// A picture: NSImage on the Mac, UIImage on iPhone and iPad.
@@ -6691,6 +6971,39 @@ enum Template {
             let code = HMAC<SHA256>.authenticationCode(for: Data(parts.joined(separator: "\n").utf8),
                                                        using: SymmetricKey(data: Data(token.utf8)))
             return code.map { String(format: "%02x", $0) }.joined()
+        }
+    }
+    #endif
+
+    #if os(iOS)
+    /// What the app hands its home screen widgets and Live Activities' views. On an iPhone the app and its
+    /// widget extension share a folder (an app group Lamp signs both for), so the app writes there and the
+    /// widget reads it, also while the app is closed; then the widgets are told to draw again.
+    ///
+    ///     LampWidget.share(Summary(open: 3, next: "Call Ana"), as: "summary")
+    ///
+    /// Share at launch and whenever the data changes. The widget reads it with
+    /// `LampWidget.read(Summary.self, from: "summary")` from Widget/LampWidgetSupport.swift.
+    enum LampWidget {
+        /// The folder the app and its widget share, or nil when the app has no widget (no app group).
+        static var folder: URL? {
+            guard let group = Bundle.main.object(forInfoDictionaryKey: "LampAppGroup") as? String else { return nil }
+            return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
+        }
+
+        static func share<T: Encodable>(_ value: T, as name: String = "data") {
+            guard let folder else {
+                print("LampWidget: this app has no widget to share with (no Widget/ folder), so nothing was shared")
+                return
+            }
+            guard let data = try? JSONEncoder().encode(value) else { return }
+            try? data.write(to: folder.appendingPathComponent(file(name)), options: .atomic)
+            WidgetCenter.shared.reloadAllTimelines()
+        }
+
+        /// One file per name, its name kept to letters and digits.
+        static func file(_ name: String) -> String {
+            "lamp-widget-" + String(name.map { $0.isLetter || $0.isNumber ? $0 : "-" }) + ".json"
         }
     }
     #endif

@@ -24,7 +24,9 @@ enum WidgetCard {
 
     /// A card stays in the chat's record, but is only shown while the app has a widget: once the widget is
     /// taken away there's nothing to add, and saying how would send the person looking for it.
-    static func isShown(for project: LampProject) -> Bool { Template.hasWidget(project) }
+    static func isShown(for project: LampProject) -> Bool {
+        project.platform.hasIOS ? Template.hasHomeScreenWidget(project) : Template.hasWidget(project)
+    }
 
     /// Whether to run a widget-only app out of sight to ask if its widget is placed, on coming back to Lamp.
     /// Asked whatever the last answer was: a widget that was placed can be taken off the desktop again, and
@@ -35,6 +37,12 @@ enum WidgetCard {
 
     static func status(_ name: String, placed: Bool) -> String {
         placed ? "On your desktop" : "Right-click the desktop, choose Edit Widgets, then pick \(name)."
+    }
+
+    /// On an iPhone or iPad, where only the person can add a widget to the home screen and iOS doesn't say
+    /// whether they have, so the card always says how.
+    static func phoneStatus(_ name: String) -> String {
+        "Touch and hold the Home Screen, tap Edit, then Add Widget, and pick \(name)."
     }
 }
 
@@ -60,7 +68,8 @@ struct WidgetCardView: View {
                     .frame(width: 44, height: 44)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(WidgetCard.title(project.name)).font(.headline)
-                    Text(WidgetCard.status(project.name, placed: placed)).font(.body).foregroundStyle(.secondary)
+                    Text(project.platform.hasIOS ? WidgetCard.phoneStatus(project.name) : WidgetCard.status(project.name, placed: placed))
+                        .font(.body).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)

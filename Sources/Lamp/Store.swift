@@ -3291,6 +3291,9 @@ final class Store: ObservableObject {
             // As for a Mac app below: the artwork asked for while the icon was designed, before there was
             // an app, is asked for again now there is one (an icon drawn by hand is only offered then).
             upgradeIconArt(project)
+            // As on the Mac: the widget is built, and adding it to the home screen is the person's to do.
+            // Only for a widget to add: Live Activities alone show by themselves and aren't among the widgets.
+            if problem == nil, Template.hasHomeScreenWidget(project), WidgetCard.isNeeded(after: logs[project.id] ?? []) { log(project, .widget, "") }
             return problem
         }
         // Asked once in a turn: a second build in it leaves the app the person kept open alone.
@@ -3321,7 +3324,7 @@ final class Store: ObservableObject {
             return nil
         }
         // An app with a widget gets its card, once: the widget is built, and adding it is the person's to do.
-        if Template.hasWidget(project), WidgetCard.isNeeded(after: logs[project.id] ?? []) { log(project, .widget, "") }
+        if project.platform == .mac, Template.hasWidget(project), WidgetCard.isNeeded(after: logs[project.id] ?? []) { log(project, .widget, "") }
         // An app that is only its widget is never opened in front of anyone: there's nothing to see. It runs
         // out of sight to tell Lamp when the widget has been placed, and quits by itself.
         if Template.isWidgetOnly(project) {
@@ -3600,8 +3603,12 @@ final class Store: ObservableObject {
         if fm.fileExists(atPath: assets.path) {
             try? fm.copyItem(at: assets, to: app.appendingPathComponent(Sharing.Assets.folder))
         }
-        _ = await Shell.run("xattr -cr \"$LAMP_APP\" && codesign --force -s - \"$LAMP_APP\"", cwd: project.dir,
-                            env: ["LAMP_APP": app.path]) { _ in }
+        // A widget extension inside is signed first, as Xcode does: the app's signature then seals it.
+        _ = await Shell.run("""
+            xattr -cr "$LAMP_APP"
+            for widget in "$LAMP_APP"/PlugIns/*.appex(N); do codesign --force -s - "$widget"; done
+            codesign --force -s - "$LAMP_APP"
+            """, cwd: project.dir, env: ["LAMP_APP": app.path]) { _ in }
     }
 
     /// iPhone apps running in the simulator: which simulator each was launched on, and its process id.

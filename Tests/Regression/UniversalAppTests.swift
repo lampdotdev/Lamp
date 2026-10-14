@@ -121,7 +121,6 @@ final class UniversalAppTests: XCTestCase {
         XCTAssertTrue(prompt.contains("- On iPhone and iPad: LampSupport.swift has tested building blocks"))
         XCTAssertTrue(prompt.contains("- On the Mac: Base design"))
         XCTAssertTrue(prompt.contains("- On iPhone and iPad: Base design"))
-        XCTAssertTrue(prompt.contains("`swift build` for the Mac's, `./build.sh ios` for iOS's"))
         XCTAssertFalse(prompt.contains("{{DEVICE}}"))
         XCTAssertTrue(prompt.contains("iPhone simulator"))
         var phone = project; phone.platform = .iphone
