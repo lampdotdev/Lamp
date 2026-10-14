@@ -264,7 +264,12 @@ An app can be made for both (`Platform.universal`, the "Mac, iPhone & iPad" choi
 Xcode's multiplatform apps are: one code, with what differs under `#if os(macOS)` and `#if os(iOS)`, built for
 one place at a time. Where it opens is `LampProject.destination`: a Mac app's is always the Mac and an iPhone
 app's always iOS, and an app for both goes where Try On last put it (`chosen`, `target` in `meta.json`; "My Mac"
-in `TryOnChoices`, `Store.setMac`, and the simulator and phone choices move it to iOS). Everything about running,
+in `TryOnChoices`, `Store.setMac`, and the simulator and phone choices move it to iOS). It can be open in both places at once: Play
+and Stop (and the app menu's Quit) are for where Try On points (`Store.isOpen`, from `openOnMac` and `openOnIOS`),
+moving Try On closes nothing, and Stop quits only that copy (`quit(only:)`; a Mac build replaces only the Mac
+copy). Each copy keeps its log and pictures in its own folder: the Mac copy's in `.lamp/runtime` (`Runtime.macFolder`,
+which the app writes itself, and where what only a Mac copy has, such as a held build or its quit reply, is read),
+the iPhone copy's in `.lamp/runtime/ios` (`Runtime.folder` while Try On points at iOS). Everything about running,
 looking and using branches on `destination` (`onIOS`); what an app could have, such as the Try On menu or the
 phone's away-from-the-Mac keys, branches on `Platform.hasIOS` / `hasMac`. Its scaffold and owned files are
 their own (`Template.universalAppSwift`, `universalPackageSwift` listing both platforms, `universalBuildSh`,

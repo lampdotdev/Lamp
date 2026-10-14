@@ -277,6 +277,16 @@ final class Store: ObservableObject {
     @Published var progress: [String: TurnProgress] = [:]
     /// Apps that are open right now, however they were started, so Lamp can offer to quit them.
     @Published var openApps: Set<String> = []
+    /// The apps open on this Mac, and those open in a simulator or on a phone: an app for both can be in
+    /// both at once, and its Play and Stop are for the place Try On points at (`isOpen`).
+    @Published private(set) var openOnMac: Set<String> = []
+    @Published private(set) var openOnIOS: Set<String> = []
+
+    /// Whether the app is open where it would open now: for an app for both, where Try On points.
+    func isOpen(_ project: LampProject) -> Bool {
+        guard project.platform == .universal else { return openApps.contains(project.id) }
+        return (project.onIOS ? openOnIOS : openOnMac).contains(project.id)
+    }
     /// The apps whose widget the person has put on the desktop (`WidgetCard`), for their chats' cards.
     @Published var placedWidgets: Set<String> = []
     /// Which Lamp built each installed app (see BuildStamp). Missing for apps that aren't built yet.
@@ -917,9 +927,9 @@ final class Store: ObservableObject {
     /// Which of the person's own phones Play puts the app on, or nil for the simulator. The agent keeps
     /// looking at the simulator either way, since the phone's screen can't be photographed from here.
     /// Which of the person's own phones Play puts the app on, or nil for a simulator, of `family` when given:
-    /// one change, so a choice made from the Mac or from the other simulator lands whole. The app is quit
-    /// when it has to be opened afresh elsewhere: on the other simulator, or, for an app for both leaving
-    /// the Mac, so its Mac copy stops writing its pictures over the iPhone's.
+    /// one change, so a choice made from the Mac or from the other simulator lands whole. The iPhone copy is
+    /// quit when it has to be opened afresh on another simulator; an app for both's Mac copy stays open (each
+    /// copy keeps its pictures in its own folder, `Runtime.folder`).
     /// `simulator` names one simulator for the app's looks and opens (`Simulator.choices`); leaving it out
     /// keeps the one chosen, and `.some(nil)` goes back to Lamp's own pick of the family.
     func setDevice(_ project: LampProject, _ udid: String?, family: DeviceFamily? = nil, simulator: String?? = nil) {
@@ -941,13 +951,16 @@ final class Store: ObservableObject {
         let name = devices.first(where: { $0.udid == udid })?.name
         let said = name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
             ?? "\(changed.name) will open on the \(simulatorName(changed)) simulator from now on."
-        guard moving || (udid == nil && (project.family != family || otherSimulator)) else {
+        // A new place for the iPhone copy (another simulator, a phone, or back from a phone) retires the copy on
+        // the old one, so Play and Stop are about the one chosen; an app for both's Mac copy stays open.
+        let otherTarget = project.device != udid || (udid == nil && (project.family != family || otherSimulator))
+        guard otherTarget else {
             log(changed, .status, said)
             finish(changed)
             return
         }
         Task {
-            await quit(changed)
+            await quit(project, only: .ios)
             log(changed, .status, said)
             finish(changed)
         }
@@ -987,7 +1000,8 @@ final class Store: ObservableObject {
         return devices.first(where: { $0.udid == udid })?.name ?? "Your phone"
     }
 
-    /// An app for both, back on this Mac: Try On's "My Mac". Its next open is a Mac build; the iOS copy is quit.
+    /// An app for both, back on this Mac: Try On's "My Mac". Its next open is a Mac build; the iOS copy stays
+    /// open, and Stop quits it once Try On points there again.
     func setMac(_ project: LampProject) {
         guard project.platform == .universal, project.chosen != .mac, begin(project) != nil else { return }
         var changed = project
@@ -995,11 +1009,8 @@ final class Store: ObservableObject {
         try? Template.saveMeta(changed)
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
         syncLocalNetwork()
-        Task {
-            await quit(changed)
-            log(changed, .status, "\(changed.name) will open on this Mac from now on.")
-            finish(changed)
-        }
+        log(changed, .status, "\(changed.name) will open on this Mac from now on.")
+        finish(changed)
     }
 
     /// Pairs a plugged-in phone that hasn't trusted this Mac yet, then lists again. Told in the app's chat,
@@ -2508,7 +2519,7 @@ final class Store: ObservableObject {
             guard !shown, !Self.hasWindow(running.processIdentifier) else { return noteOpened(true, for: project) }
             // Only if it goes when asked: one that doesn't may hold something, and is left as it is.
             let asked = Date()
-            guard await AppQuit.close(running, id: project.id, runtime: Runtime.folder(project),
+            guard await AppQuit.close(running, id: project.id, runtime: Runtime.macFolder(project),
                                       stopped: { Date().timeIntervalSince(asked) > 15 }) else { return }
         }
         // A build that waited for the app to close, and didn't get in then (Lamp wasn't running): it goes in now.
@@ -3335,7 +3346,7 @@ final class Store: ObservableObject {
         }
         // Asked once in a turn: a second build in it leaves the app the person kept open alone.
         let asked = owner?.keptOpen == true && isRunning(project)
-        guard !asked, await quit(project, for: owner) else {
+        guard !asked, await quit(project, for: owner, only: .mac) else {
             // The person kept the app open, with whatever it holds. It isn't replaced under them (HeldInstalls
             // says what that breaks, too): the build waits, and goes in when the app closes.
             Runtime.holdBuild(project)
@@ -4145,22 +4156,27 @@ final class Store: ObservableObject {
         let prefix = Edition.appBundlePrefix
         // By the app's whole id first: an app for both carries the team in its id, which isn't its folder's name.
         let byBundle = Dictionary(projects.map { ($0.bundleID, $0.id) }, uniquingKeysWith: { first, _ in first })
-        var ids = NSWorkspace.shared.runningApplications
+        let onMac = NSWorkspace.shared.runningApplications
             .compactMap { $0.isTerminated ? nil : $0.bundleIdentifier }
             .compactMap { byBundle[$0] ?? ($0.hasPrefix(prefix) ? String($0.dropFirst(prefix.count)) : nil) }
         simulatorApps = simulatorApps.filter { Simulator.isRunning(pid: $0.value.pid) }
-        ids += simulatorApps.keys
         deviceApps = deviceApps.filter { $0.value.isRunning }
-        ids += deviceApps.keys
-        let closed = openApps.subtracting(ids)
+        let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys)
+        // A build or icon held for a Mac copy goes in when that copy closes, even with its iPhone copy still open.
+        let closedOnMac = openOnMac.subtracting(onMac)
+        if Set(onMac) != openOnMac { openOnMac = Set(onMac) }
+        if Set(onIOS) != openOnIOS { openOnIOS = Set(onIOS) }
+        let ids = onMac + onIOS
+        let closed = openApps.subtracting(ids).union(closedOnMac)
         if Set(ids) != openApps { openApps = Set(ids) }
         if !closed.isEmpty { installHeldIcons(for: closed) }
     }
 
     /// Quits the app, for the Stop button. It's asked, and its answer is waited for: an app asking about
     /// unsaved work stays open until the person has said what to do with it.
+    /// An app for both is quit only where Try On points: its other copy stays open.
     func quitApp(_ project: LampProject) async {
-        await quit(project)
+        await quit(project, only: project.platform == .universal ? project.destination : nil)
         refreshOpenApps()
     }
 
@@ -4179,9 +4195,10 @@ final class Store: ObservableObject {
     /// Asks the app to quit (AppQuit says how its answer is read). False when its Mac copy stays open: the
     /// person kept it, at its question about unsaved work, or `owner`'s turn was stopped while it was asking.
     @discardableResult
-    private func quit(_ project: LampProject, for owner: Turn? = nil) async -> Bool {
-        // An app for both may be open in both places (Try On moved it): each copy is quit.
-        if project.platform.hasIOS {
+    /// `only` quits the copy in one place (an app for both can be open on this Mac and in a simulator at once);
+    /// without it every copy is quit, as deleting or renaming the app needs.
+    private func quit(_ project: LampProject, for owner: Turn? = nil, only place: Destination? = nil) async -> Bool {
+        if project.platform.hasIOS, place != .mac {
             if let attached = deviceApps[project.id] {
                 if attached.isRunning { attached.terminate() }
                 deviceApps[project.id] = nil
@@ -4193,13 +4210,13 @@ final class Store: ObservableObject {
             }
             simulatorApps[project.id] = nil
             refreshOpenApps()
-            if !project.platform.hasMac { return true }
+            if !project.platform.hasMac || place == .ios { return true }
         }
         // Nobody is waiting once the turn is stopped or over. Not `stopped`, which the agent's exit clears.
         let stopped = { owner.map { self.turns[project.id] !== $0 || $0.wasStopped } ?? false }
         var closed = true
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID) {
-            let gone = await AppQuit.close(app, id: project.id, runtime: Runtime.folder(project), stopped: stopped, asking: {
+            let gone = await AppQuit.close(app, id: project.id, runtime: Runtime.macFolder(project), stopped: stopped, asking: {
                 // Its question may be behind Lamp's window: in front, the person sees what is being waited for,
                 // and a build says in the chat that it's waiting.
                 app.activate()

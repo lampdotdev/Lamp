@@ -311,7 +311,8 @@ enum Agent {
         - `look_at_app` builds the app for where Try On points (this Mac, or the {{DEVICE}} simulator) and shows you \
         it there; `use_app` works on the same. You can't move it yourself: when a change is for the other half, say \
         so plainly and ask the user to switch under Try On if they want you to try it there, and check that half \
-        by building it instead. Everything the Mac and iPhone rules say about trying an app holds for its half.
+        by building it instead. Everything the Mac and iPhone rules say about trying an app holds for its half; \
+        the iPhone half's log and pictures are in .lamp/runtime/ios/ instead of .lamp/runtime/.
         """
 
         static let iPhoneHeader = """
