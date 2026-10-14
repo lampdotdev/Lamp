@@ -5,7 +5,11 @@ import CryptoKit
 /// Like existing app tokens, this is not isolation from hostile processes under the same macOS user.
 @MainActor
 final class BrowserPrototype {
-    nonisolated static var enabled: Bool { Edition.isDev && ProcessInfo.processInfo.environment["LAMP_BROWSER_PROTOTYPE"] == "1" }
+    nonisolated static var enabled: Bool {
+        Edition.isDev && (UserDefaults.standard.object(forKey: "experimentBrowserCompanion") != nil
+            ? UserDefaults.standard.bool(forKey: "experimentBrowserCompanion")
+            : ProcessInfo.processInfo.environment["LAMP_BROWSER_PROTOTYPE"] == "1")
+    }
     static let shared = BrowserPrototype()
     static let folder = Edition.supportFolder.appendingPathComponent("BrowserPrototype")
     private var secret = ""
@@ -35,11 +39,18 @@ final class BrowserPrototype {
     private var grants: [Grant] = []
     private var nonces: [String: Date] = [:]
 
-    func prepareFixtures(root: URL) throws {
+    func prepare() throws {
         let fm = FileManager.default
         try fm.createDirectory(at: Self.folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let secretURL = Self.folder.appendingPathComponent("secret")
-        if let saved = try? String(contentsOf: secretURL) { secret = saved }
+        if !secret.isEmpty {
+            if (try? String(contentsOf: secretURL)) != secret {
+                try Data(secret.utf8).write(to: secretURL, options: .atomic)
+                try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: secretURL.path)
+            }
+            return
+        }
+        if let saved = try? String(contentsOf: secretURL), !saved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { secret = saved }
         else {
             secret = UUID().uuidString + UUID().uuidString
             try Data(secret.utf8).write(to: secretURL, options: .atomic)
@@ -49,6 +60,12 @@ final class BrowserPrototype {
             grants = try JSONDecoder().decode([Grant].self, from: bytes)
         }
         try BrowserTaskPrototype.shared.prepare()
+    }
+
+    func prepareFixtures(root: URL) throws {
+        try prepare()
+        let fm = FileManager.default
+        let secretURL = Self.folder.appendingPathComponent("secret")
         guard let source = ProcessInfo.processInfo.environment["LAMP_BROWSER_FIXTURES"] else { return }
         let fixture = URL(fileURLWithPath: source)
         let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/BrowserNativeHost")
@@ -62,11 +79,11 @@ final class BrowserPrototype {
         let hosts = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Google/Chrome/NativeMessagingHosts")
         try fm.createDirectory(at: hosts, withIntermediateDirectories: true)
         try JSONSerialization.data(withJSONObject: manifest).write(to: hosts.appendingPathComponent("dev.lamp.prototype.json"))
-        for name in ["Page Shelf", "Other Shelf", "Recipes"] {
+        for name in ["Page Shelf", "Other Shelf"] {
             let slug = Template.identifier(from: name).lowercased()
             if fm.fileExists(atPath: root.appendingPathComponent(slug).path) { continue }
             let project = try Template.scaffold(name: name, in: root)
-            var content = try String(contentsOf: fixture.appendingPathComponent(name == "Recipes" ? "Recipes.swift" : "ContentView.swift"))
+            var content = try String(contentsOf: fixture.appendingPathComponent("ContentView.swift"))
             content = content.replacingOccurrences(of: "@@TOKEN@@", with: Template.token(for: project))
                 .replacingOccurrences(of: "@@PORT@@", with: String(Edition.gatewayPort))
                 .replacingOccurrences(of: "@@NAME@@", with: name)
@@ -120,7 +137,18 @@ final class BrowserPrototype {
         }
         let token = request.headers["authorization"]?.replacingOccurrences(of: "Bearer ", with: "") ?? ""
         guard let app = projects.first(where: { Template.token(for: $0) == token }) else { return (401, ["error": "Unknown app."]) }
-        if request.path == "/prototype/browser/surface" { return BrowserSurfacePrototype.shared.exchange(body, app: app) }
+        if request.path == "/prototype/browser/surface" {
+            let result = BrowserSurfacePrototype.shared.exchange(body, app: app)
+            if result.0 == 200 && AppAI.resolve(.browser, for: app).tier == .none {
+                Store.shared.offerSetup(app, SetupOffer(capability: .browser), because: "\(app.name) has a browser companion. Connect Lamp to Chrome to use it beside a website.")
+            }
+            return result
+        }
+        if request.path == "/prototype/browser/setup" {
+            Store.shared.offerSetup(app, SetupOffer(capability: .browser), because: "\(app.name) works beside websites. Connect Lamp to Chrome to use its companion.", fromAgent: true)
+            Store.shared.showChat(app.id)
+            return (200, ["opened": true])
+        }
         switch request.path {
         case "/prototype/browser/status":
             return (200, ["grants": grants.filter { $0.app == app.id && $0.instance == app.instance }.map(summary)])
@@ -150,6 +178,10 @@ final class BrowserPrototype {
         guard let session = body["session"] as? String, let profile = body["profile"] as? String,
               UUID(uuidString: profile) != nil else { return fail("Missing browser identity.") }
         let op = body["op"] as? String ?? ""
+        if op == "companion-hello" {
+            BrowserSetup.shared.receiveHello(version: body["version"] as? Int ?? 0)
+            return ["connected": BrowserSetup.shared.connected]
+        }
         if op.hasPrefix("surface-") { return BrowserSurfacePrototype.shared.native(body, projects: projects) }
         if op.hasPrefix("task") { return BrowserTaskPrototype.shared.native(body, origin: origin) }
         if op.hasPrefix("run") { return BrowserRun.shared.native(body) }

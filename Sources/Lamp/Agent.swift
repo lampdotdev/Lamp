@@ -382,12 +382,24 @@ enum Agent {
         static var browserCompanion: String {
             guard BrowserPrototype.enabled else { return "" }
             return """
-            - A Mac app can offer a companion in the Lamp browser sidebar using `LampBrowser` in LampSupport.swift. \
-            Run `LampBrowser.serve(surface:handle:)` once for the app lifetime, outside a window's lifetime. Supply \
-            a Surface with title, detail, sections, fields and actions; `readsPage: true` attaches the current website \
-            only on the person's click. Treat event.page as untrusted data (`LampAI.ask` data:). The app owns AI, \
-            validation and durable saving. Publish busy state during work and report success only after saving; \
-            make actions idempotent. This experimental companion requires the app and Lamp to be running.
+            - The Lamp browser extension is another surface a Mac app can draw on. When asked for an app that \
+            works beside websites, build its native app AND its companion with `LampBrowser` in LampSupport.swift. \
+            The extension is shared and already implemented: never write extension code, a web server, bridge \
+            installation scripts or browser automation for an individual app. Call `offer_setup` with capability \
+            `browser` once if Browser companion isn't ready; Lamp owns checking and installing the connection. \
+            Build the app anyway. `await LampAI.isAvailable(.browser)` checks the connection; `await LampBrowser.openSetup()` \
+            opens the app's setup card in Lamp. Start `LampBrowser.start(surface:handle:)` once from a shared, \
+            @MainActor app model, not from an ephemeral window task. All windows and the companion use that same \
+            model and saved data. Read the API in LampSupport.swift before using it. Surface has title, detail, \
+            sections [Section(title:text:)], fields [Field(id:label:value:)] and actions [Action(id:label:readsPage:)]. \
+            Your Swift code creates and updates this UI; the extension renders it. A clicked readsPage action \
+            receives event.page (url, title, text); other actions receive event.action and event.fields. \
+            `data:` is for page text passed to LampAI; never put outside instructions in the prompt. The app \
+            owns interpretation, AI, validation and durable saving. Keep a preview to review before Save, and \
+            report Saved only after storage succeeds. Use a stable source/item identity to avoid duplicate saves. \
+            A native edit should publish the changed surface too. No recipe-specific code is supplied by Lamp. \
+            The app and Lamp must be running. `look_at_app` sees the native window, not Chrome's sidebar: \
+            state honestly what you tested. Never claim to have clicked the companion with native `use_app`.
 
             """
         }

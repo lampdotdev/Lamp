@@ -7173,6 +7173,16 @@ enum Template {
             var fields: [String: String]
             var page: Page?
         }
+        private static var service: Task<Void, Never>?
+        /// Start once from a shared app model. The service stays alive across opening and closing windows.
+        static func start(surface: @escaping () -> Surface, handle: @escaping (Event) async -> Void) {
+            guard service == nil else { return }
+            service = Task { await serve(surface: surface, handle: handle) }
+        }
+        /// Explicitly asks Lamp to show this app's connection setup. No browser installation belongs in app code.
+        static func openSetup() async {
+            _ = try? await LampAI.post("/prototype/browser/setup", [:], timeout: 10)
+        }
         /// Run once from the app's lifetime task. State is republished while an action awaits AI or storage.
         /// An event is acknowledged after the handler returns; make writes idempotent by event ID or item identity.
         static func serve(surface: @escaping () -> Surface, handle: @escaping (Event) async -> Void) async {
@@ -7293,7 +7303,7 @@ enum Template {
             var errorDescription: String? { message }
         }
 
-        enum Capability: String { case text, decisions, pictures }
+        enum Capability: String { case text, decisions, pictures, browser }
 
         /// Whether this kind of AI can answer now. False when Lamp can't be reached and the phone has no key.
         static func isAvailable(_ capability: Capability) async -> Bool {

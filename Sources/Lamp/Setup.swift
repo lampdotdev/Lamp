@@ -1781,3 +1781,19 @@ private struct LocalAISheet: View {
     }
 }
 
+
+private struct BrowserExperimentalSettings: View {
+    @AppStorage("experimentBrowserCompanion") private var enabled = ProcessInfo.processInfo.environment["LAMP_BROWSER_PROTOTYPE"] == "1"
+    var body: some View {
+        Form {
+            SettingsCheckboxes {
+                Toggle("Browser companions", isOn: $enabled)
+                if enabled { BrowserConnectionUpgrade(compact: true).underCheckbox() }
+            }
+        }.settingsPane()
+        .onChange(of: enabled) { _, value in
+            if value { try? BrowserPrototype.shared.prepare() }
+            BrowserSetup.shared.refresh()
+        }
+    }
+}

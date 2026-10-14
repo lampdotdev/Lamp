@@ -4,7 +4,7 @@ import SwiftUI
 /// is the one place that says which answers now, how well, and what would make it better: the gateway, the
 /// chat's setup card, Settings, the agent's status line and the keys a phone takes away all read it.
 enum Capability: String, CaseIterable, Codable, Identifiable {
-    case text, decisions, pictures
+    case text, decisions, pictures, browser
 
     var id: String { rawValue }
 
@@ -13,6 +13,7 @@ enum Capability: String, CaseIterable, Codable, Identifiable {
         case .text: "Text"
         case .decisions: "Decisions"
         case .pictures: "Pictures"
+        case .browser: "Browser companion"
         }
     }
 
@@ -21,6 +22,7 @@ enum Capability: String, CaseIterable, Codable, Identifiable {
         case .text: "text.bubble"
         case .decisions: "checklist"
         case .pictures: "photo.on.rectangle.angled"
+        case .browser: "sidebar.right"
         }
     }
 }
@@ -43,6 +45,7 @@ enum Upgrade: Hashable, Identifiable {
     /// Drawing each app's icon by hand in Image Playground (`Icons.byHand`): for icon artwork only, and
     /// only on a Mac that has it.
     case drawIcons
+    case browserExtension
 
     var id: String {
         switch self {
@@ -51,6 +54,7 @@ enum Upgrade: Hashable, Identifiable {
         case .decisionModel: "decisionModel"
         case .signIn(let engine): "signIn:\(engine.rawValue)"
         case .drawIcons: "drawIcons"
+        case .browserExtension: "browserExtension"
         }
     }
 }
@@ -94,6 +98,14 @@ extension AppAI {
     /// are made where they're dispatched (`route(for:)`, `pictureRoute`, `decisionModels`); this says what they
     /// amount to, so nothing else has to work that out again.
     @MainActor static func resolve(_ capability: Capability, for project: LampProject? = nil, in context: AIContext = .mac) -> Resolution {
+        if capability == .browser {
+            let available = BrowserPrototype.enabled && project?.platform.hasMac != false && context == .mac
+            let connected = available && BrowserSetup.shared.connected
+            return Resolution(capability: .browser, tier: connected ? .best : .none,
+                              answer: connected ? "Lamp in Chrome" : nil, provider: connected ? "browser" : nil,
+                              note: connected ? nil : "Connect Lamp to Chrome to use an app beside a website.",
+                              upgrades: available ? [.browserExtension] : [])
+        }
         let models = project.map(AppModels.load) ?? AppModels()
         switch (capability, context) {
         // Only pictures are asked for an icon; the others are answered as for the app on this Mac.
@@ -101,6 +113,7 @@ extension AppAI {
         case (.decisions, .mac), (.decisions, .icon): return resolveDecisions(choice: models.decision, text: models.text)
         case (.pictures, .mac): return resolvePictures(choice: models.image, text: models.text)
         case (.pictures, .icon): return resolveIconArt()
+        case (.browser, _): preconditionFailure("Browser resolution is handled before AI routes")
         case (_, .phoneAway): return resolveAway(capability, models: models)
         }
     }
@@ -239,6 +252,7 @@ extension AppAI {
                               note: "Apps on your phone can use AI only near this Mac.", upgrades: [.key("openrouter")])
         }
         switch capability {
+        case .browser: return resolve(.browser, in: .phoneAway)
         case .text:
             return Resolution(capability: .text, tier: .best, answer: "\(awayModel(for: models.away).label) via OpenRouter",
                               provider: "openrouter", note: nil, upgrades: [])
@@ -323,7 +337,7 @@ struct SetupOffer: Codable, Equatable, Hashable {
 /// per conversation and again only when it changes, so most requests carry nothing.
 enum AIStatus {
     @MainActor static func line(for project: LampProject, offered: Set<SetupOffer>) -> String {
-        var lines = Capability.allCases.map { capability in
+        var lines = Capability.allCases.filter { $0 != .browser || (BrowserPrototype.enabled && project.platform.hasMac) }.map { capability in
             let resolution = AppAI.resolve(capability, for: project)
             var line = "- \(capability.title): \(AppAI.summary(resolution))"
             if resolution.tier != .best, offered.contains(SetupOffer(capability: capability)) { line += "; Lamp has offered the person a way to set it up" }
