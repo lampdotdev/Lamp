@@ -3474,7 +3474,7 @@ final class Store: ObservableObject {
                 refreshOpenApps()
                 return crash
             }
-            await openWatchApp(project, phone: udid)
+            await openWatchApp(project, phone: udid, live: stillOwns)
             if inFront {
                 // The Simulator was opened before the install; by now it may be behind Lamp again, and "ready"
                 // should mean the app is in front of the person, not somewhere to be found.
@@ -3495,10 +3495,14 @@ final class Store: ObservableObject {
     /// The app's Apple Watch app, when its build carries one, put on the watch simulator paired with the
     /// iPhone's and opened there, so the two talk as they would on the person's wrist. What goes wrong here is
     /// a line in the chat, never a crash for the agent to fix: the iPhone app is open and the watch is extra.
-    private func openWatchApp(_ project: LampProject, phone: String) async {
+    /// `live` says the launch is still the turn's, as the iPhone's launch checks it: Stop or Delete during a
+    /// wait leaves nothing more installed, and a watch app started meanwhile is closed again.
+    private func openWatchApp(_ project: LampProject, phone: String, live: () -> Bool) async {
         let watchApp = Template.watchAppURL(in: project.builtURL, of: project)
         guard FileManager.default.fileExists(atPath: watchApp.path) else { return }
-        guard let watch = await Simulator.pairedWatch(of: phone) else {
+        let found = await Simulator.pairedWatch(of: phone)
+        guard live() else { return }
+        guard let watch = found else {
             // Said once a session for each app, not at every launch.
             if watchHintShown.insert(project.id).inserted {
                 log(project, .status, "To see the watch app, add watchOS in Xcode → Settings → Components; Lamp then opens it on an Apple Watch simulator.")
@@ -3509,10 +3513,13 @@ final class Store: ObservableObject {
         do {
             try await Simulator.boot(watch, show: false)
             await Simulator.terminate(id, on: watch)
+            guard live() else { return }
             try await Simulator.install(watchApp, on: watch)
+            guard live() else { return }
             _ = try await Simulator.launch(id, on: watch, log: Runtime.folder(project).appendingPathComponent("watch-log.txt"))
+            if !live() { await Simulator.terminate(id, on: watch) }
         } catch {
-            log(project, .status, "The watch app didn't open: \(error.localizedDescription)")
+            if live() { log(project, .status, "The watch app didn't open: \(error.localizedDescription)") }
         }
     }
 

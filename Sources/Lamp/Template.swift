@@ -986,6 +986,10 @@ enum Template {
     /// has shared something under that name and the watch app has run since.
     enum LampWatch {
         static func read<T: Decodable>(_ type: T.Type, from name: String = "data") -> T? {
+            #if !LAMP_COMPLICATION
+            // The connection is what keeps these files current, so a watch app that only reads starts it too.
+            _ = LampWatchLink.shared
+            #endif
             guard let data = try? Data(contentsOf: file(name)) else { return nil }
             return try? JSONDecoder().decode(T.self, from: data)
         }
@@ -1001,9 +1005,9 @@ enum Template {
             return own
         }
 
-        /// One file per name, its name kept to letters and digits.
+        /// One file per name, named by the name's bytes, so two names never share a file.
         static func file(_ name: String) -> URL {
-            folder.appendingPathComponent("lamp-watch-" + String(name.map { $0.isLetter || $0.isNumber ? $0 : "-" }) + ".json")
+            folder.appendingPathComponent("lamp-watch-" + name.utf8.map { String(format: "%02x", $0) }.joined() + ".json")
         }
 
         #if !LAMP_COMPLICATION
