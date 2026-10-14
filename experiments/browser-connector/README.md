@@ -128,7 +128,10 @@ what arrives after it. `LAMP_BROWSER_TASK_LIMIT` (seconds) can shorten the limit
 to see the pause without the wait; it cannot lengthen it.
 A REC badge stays in Chrome's toolbar, and approved pages have a floating
 recording bar (a closed shadow root, so a page's styles can't hide it) with the
-time and one-click Stop and Discard. Unpinning or removing site permission
+time and one-click Stop and Discard. The bar is shown in the browser's top layer.
+A modal dialog blurs and switches off everything outside itself, so while one is
+open the bar is moved inside that dialog, the one place the browser leaves usable,
+and moved back when it closes. Unpinning or removing site permission
 discards the active recording. Only foreground top-level pages
 on the selected origins send events; this is not desktop or video capture.
 
@@ -136,10 +139,22 @@ The captured record is deliberately small:
 
 - Page origin and path, with query strings and fragments removed, page title,
   event kind, and relative time when Lamp receives the batch.
-- Trusted clicks on links/buttons and field changes, with sanitized control
-  labels. No entered field values or keyboard stream.
+- Trusted clicks on what a page is worked with (links, buttons, tabs, switches,
+  boxes, menu items and the roles sites give plain elements for them), with the
+  control's name and, for a switch or box, whether it ended on or off. The click
+  is read from its whole path, so one inside a component's shadow root is seen as
+  the control it landed on, not as the component. A menu's chosen option is noted
+  by name. A field is noted once when typed in, by name only; Return pressed in a
+  field is noted, and no other key. No entered field values or keyboard stream.
+- Back, Forward and Reload, from the browser's navigation records, for a new page
+  and for a site that swaps its own content.
+- Scrolling the person did, where it comes to rest and only when it went half a
+  screen or more, with the text then in view. Scrolling inside a component's own
+  shadow root is not seen: the browser doesn't pass it on.
 - Up to 1,500 characters of rendered page text per event, from main/article or
-  the body. Input/select/textarea values, editable areas, hidden elements,
+  the body, read through components and their slots; an open dialog's text comes
+  first. A site that shows back what was typed (a recent-searches list, "results
+  for …") puts those words in this text: the field is never read, the page is. Input/select/textarea values, editable areas, hidden elements,
   `data-private` areas, scripts, styles, frames and the recording bar are skipped.
   Excerpts can still include sensitive business text shown by an approved site.
 - No cookies, local storage, screenshots, audio, downloaded-file contents,
@@ -168,7 +183,10 @@ inferred idea explicitly avoids browser connectors or continued observation;
 the person supplies/imports data to the resulting standalone app.
 
 For the fictional demonstration, `/task` offers insurance policy details and a
-renewal shortlist. `/unapproved` is a second-origin exclusion canary. These are
+renewal shortlist. `/overlay` is a made-up catalogue built the way many real
+sites are (a search component with a shadow root, opened as a modal dialog over a
+blurred page, with a switch, a menu of boxes and a link to a long list), for
+trying capture and the bar without loading anyone's site. `/unapproved` is a second-origin exclusion canary. These are
 made-up task fixtures, not recorded responses from an outside service. Analysis
 and the normal build can use a real OpenRouter key in an isolated guest only
 with explicit permission. Never commit or print a key, trace, AI reply or build
