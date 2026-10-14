@@ -181,7 +181,7 @@ Xcode, the person's own Claude Code and Codex or tools from the PATH; a new chec
 Nobody picks what a new app runs on. The first request's naming call (`AppName.suggest`) also lists the devices it
 runs on (`mac`, `iphone` for iPhone and iPad; `Platform(devices:)`) and whether the person said so; `Store.chooseKind` takes that before anything is
 written: a kind the person didn't say only when this Mac can build it now (`PhoneTools.checked`: Xcode, and a team for
-both), else a Mac app, and one they said either way (the build says what's missing). A line in the chat says so for
+both), else a Mac app with a line in the chat offering the setup (`IPhoneSetupLine`: once it's done, the app is asked to be made for the iPhone, through the agent), and one they said either way (the build says what's missing). A line in the chat says so for
 anything but a Mac app. The starter ideas mix Mac and iPhone ones (`Ideas.mixed`). Later, "make it work on my
 iPhone too" is the agent's `make_app_for` (`Store.convert`), given every device the app runs on from then on (a
 new kind of device is one more name in `Platform(devices:)` and the tool's schema; "watch" brings the iPhone with it,

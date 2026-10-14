@@ -410,6 +410,30 @@ struct DrawIconLine: View {
     }
 }
 
+/// A first request that read as an iPhone app, made for the Mac because this Mac can't build one yet. The
+/// button opens the iPhone setup; once it's done, the app is asked to be made for the iPhone as well (or
+/// instead), as the person would ask, so the change goes through the agent like any other.
+struct IPhoneSetupLine: View {
+    let project: LampProject
+    let wanted: Platform
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "iphone").foregroundStyle(.secondary)
+            Text("\(project.name) is a Mac app for now. Your iPhone needs a little setup first.").foregroundStyle(.secondary)
+            Button("Set Up iPhone Apps…") {
+                let both = wanted == .universal
+                PhoneSetup.shared.perform(resolve: { PhoneSetup.Context(family: .iphone, requiresTeam: both) }) {
+                    guard let current = Store.shared.current(project), current.platform == .mac else { return }
+                    Store.shared.send(both ? "Make it work on my iPhone too." : "Make it an iPhone app instead.", to: current)
+                }
+            }
+            .controlSize(.small)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 /// What Settings says under a capability's picker when it isn't answered the best way it could be: why,
 /// and the same upgrades the chat's card offers.
 struct CapabilityNote: View {
