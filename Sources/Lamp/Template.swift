@@ -1310,38 +1310,46 @@ enum Template {
         /// with Lamp's own certificate there's no shared folder, so the action is sent over the connection reads
         /// use, signed like them; one the app wasn't there to take waits here and goes with the next read.
         private static func perform(_ action: Action) async {
-            if let queue = actionQueue, let line = try? JSONEncoder().encode(action) {
-                append(line + Data([0x0A]), to: queue)
+            // Each action is a file of its own, written whole under its final name, so the app never reads half
+            // of one, and taking one never touches another being written.
+            if let folder = actionFolder, let data = try? JSONEncoder().encode(action) {
+                try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try? data.write(to: folder.appendingPathComponent(action.id + ".json"), options: .atomic)
                 CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
                                                      CFNotificationName((group! + ".lamp-actions") as CFString), nil, nil, true)
                 return
             }
-            var pending = pendingActions
-            pending.append(action)
-            pendingActions = pending
+            changePending { $0.append(action) }
             await withCheckedContinuation { continuation in sendPending(then: { continuation.resume() }) }
         }
 
         /// The app group both are signed for, which Lamp writes into their Info.plists only when it signs them so.
         private static var group: String? { Bundle.main.object(forInfoDictionaryKey: "LampAppGroup") as? String }
 
-        private static var actionQueue: URL? {
+        private static var actionFolder: URL? {
             guard let group, let folder = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return nil }
-            return folder.appendingPathComponent("lamp-widget-actions.jsonl")
-        }
-
-        private static func append(_ data: Data, to file: URL) {
-            if !FileManager.default.fileExists(atPath: file.path) { FileManager.default.createFile(atPath: file.path, contents: nil) }
-            guard let handle = try? FileHandle(forWritingTo: file) else { return }
-            defer { try? handle.close() }
-            _ = try? handle.seekToEnd()
-            try? handle.write(contentsOf: data)
+            return folder.appendingPathComponent("lamp-widget-actions")
         }
 
         private static let pendingKey = "LampWidget.pendingActions"
+        private static let pendingLock = NSLock()
         private static var pendingActions: [Action] {
-            get { (UserDefaults.standard.data(forKey: pendingKey)).flatMap { try? JSONDecoder().decode([Action].self, from: $0) } ?? [] }
-            set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: pendingKey) }
+            pendingLock.lock()
+            defer { pendingLock.unlock() }
+            return storedPending
+        }
+        private static var storedPending: [Action] {
+            (UserDefaults.standard.data(forKey: pendingKey)).flatMap { try? JSONDecoder().decode([Action].self, from: $0) } ?? []
+        }
+
+        /// Every change to what's waiting goes through here, one at a time: two buttons pressed together, or an
+        /// answer arriving as another is pressed, each see the other's change.
+        private static func changePending(_ change: (inout [Action]) -> Void) {
+            pendingLock.lock()
+            defer { pendingLock.unlock() }
+            var pending = storedPending
+            change(&pending)
+            UserDefaults.standard.set(try? JSONEncoder().encode(pending), forKey: pendingKey)
         }
 
         /// Sends what's waiting, oldest first, and forgets each one the app says it took. The app may have taken
@@ -1350,7 +1358,7 @@ enum Template {
             guard let action = pendingActions.first, let json = try? JSONEncoder().encode(action) else { return done() }
             send(json.base64EncodedString(), id: action.id, offset: 0) { taken in
                 guard taken else { return done() }
-                pendingActions = pendingActions.filter { $0.id != action.id }
+                changePending { $0.removeAll { $0.id == action.id } }
                 sendPending(then: done)
             }
         }
@@ -1532,14 +1540,15 @@ enum Template {
     /// one of two ways, chosen when `Store.deploy` signs the app, and the same to the agent:
     /// - Signed for the person's Apple team, the app and its widget share an app group, `<team>.<bundle id>`
     ///   (`macAppGroup`), which macOS honours from their signatures with no provisioning profile. The widget
-    ///   appends the action to a queue file in the group's folder and posts a Darwin notification; the app takes
-    ///   the queue at launch and whenever it's nudged. `deploy` writes the group into both Info.plists
+    ///   writes each action as a file of its own in the group's folder and posts a Darwin notification; the app
+    ///   does them at launch and whenever it's nudged, and deletes each once its handler has run. `deploy` writes the group into both Info.plists
     ///   (`LampAppGroup`), which is how each side knows it's there.
     /// - Signed with Lamp's own certificate, which has no team ID, there is no group: macOS refuses one to such a
     ///   signature. The widget sends the action over the same connection, signed with the same secret over the
     ///   action's id, and the app answers once it's done. One the app wasn't running to take waits in the
     ///   widget's own storage and goes with the next read.
-    /// Either way the app does each action once (by its id) and redraws the widget after it.
+    /// Either way the app does each action once (by its id), counts it done only after its handler has run (an
+    /// action cut short by a quit is done next time), and redraws the widget after it.
     ///
     /// An iPhone widget reads differently: on iOS the app and its extension are both signed by Apple's rules for
     /// the simulator or by the person's team on a phone, so they share an app group (`appGroup(for:onDevice:)`),
@@ -7154,7 +7163,7 @@ enum Template {
         }
 
         nonisolated(unsafe) private static var handler: (@MainActor (String, Payload) -> Void)?
-        nonisolated(unsafe) private static var waiting: [Action] = []
+        nonisolated(unsafe) private static var inFlight: Set<String> = []
         nonisolated(unsafe) private static var done: [String] = []   // ids of actions already done, newest last
         nonisolated(unsafe) private static var doneLoaded = false
         private static var doneFile: URL { LampStore.folder.appendingPathComponent("widget-actions-done.json") }
@@ -7168,30 +7177,28 @@ enum Template {
                 listen()
                 watchQueue()
                 takeQueued()
-                let held = waiting
-                waiting = []
-                held.forEach { apply($0, then: {}) }
             }
         }
 
-        /// Does one action, once: each has an id, and one the widget sends again (its answer lost on the way)
-        /// is passed over. On `queue`; `then` runs there after the handler has, and after what it shared.
-        private static func apply(_ action: Action, then: @escaping () -> Void) {
+        /// Does one action, once: each has an id, and one the widget sends again (its answer lost on the way) is
+        /// passed over. It counts as done only once the handler has run, so an action cut short by the app
+        /// quitting is still the widget's to send, or still in the shared folder, and is done next time. On
+        /// `queue`; `then` runs there, with whether the action is done (now or before), after what it shared.
+        private static func apply(_ action: Action, then: @escaping (Bool) -> Void) {
             loadDone()
-            guard !done.contains(action.id) else { return then() }
-            guard let handler else {
-                waiting.append(action)
-                return then()
-            }
-            done.append(action.id)
-            if done.count > 500 { done.removeFirst(done.count - 500) }
-            if let data = try? JSONEncoder().encode(done) { try? data.write(to: doneFile, options: .atomic) }
+            guard !done.contains(action.id) else { return then(true) }
+            guard let handler, !inFlight.contains(action.id) else { return then(false) }
+            inFlight.insert(action.id)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { handler(action.name, Payload(json: action.payload)) }
                 // After whatever the handler shared, which went on `queue` before this.
                 queue.async {
+                    inFlight.remove(action.id)
+                    done.append(action.id)
+                    if done.count > 500 { done.removeFirst(done.count - 500) }
+                    if let data = try? JSONEncoder().encode(done) { try? data.write(to: doneFile, options: .atomic) }
                     WidgetCenter.shared.reloadAllTimelines()
-                    then()
+                    then(true)
                 }
             }
         }
@@ -7205,21 +7212,18 @@ enum Template {
         /// The app group the app and its widget share when Lamp signed them for the person's team, or nil.
         private static var group: String? { Bundle.main.object(forInfoDictionaryKey: "LampAppGroup") as? String }
 
-        /// Takes everything the widget queued in the shared folder: the file is moved aside first, so what the
-        /// widget adds meanwhile starts a new one and nothing is read twice or lost.
+        /// Does what the widget left in the shared folder, oldest first: one file per action, written whole by the
+        /// widget, and taken away only once its action is done.
         private static func takeQueued() {
-            guard let group, let folder = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return }
-            let file = folder.appendingPathComponent("lamp-widget-actions.jsonl")
-            let taken = folder.appendingPathComponent("lamp-widget-actions-\(UUID().uuidString).taking")
-            let leftovers = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
-                .filter { $0.pathExtension == "taking" }
-            if (try? FileManager.default.moveItem(at: file, to: taken)) == nil, leftovers.isEmpty { return }
-            for part in leftovers + [taken] {
-                guard let text = try? String(contentsOf: part, encoding: .utf8) else { continue }
-                for line in text.split(separator: "\n") {
-                    if let action = try? JSONDecoder().decode(Action.self, from: Data(line.utf8)) { apply(action, then: {}) }
-                }
-                try? FileManager.default.removeItem(at: part)
+            guard let group, let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return }
+            let folder = root.appendingPathComponent("lamp-widget-actions")
+            let files = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.creationDateKey])) ?? [])
+                .filter { $0.pathExtension == "json" }
+                .sorted { ((try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast)
+                          < ((try? $1.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast) }
+            for file in files {
+                guard let data = try? Data(contentsOf: file), let action = try? JSONDecoder().decode(Action.self, from: data) else { continue }
+                apply(action) { taken in if taken { try? FileManager.default.removeItem(at: file) } }
             }
         }
 
@@ -7316,7 +7320,8 @@ enum Template {
                         guard act.count == 4, act[2] == signature("act", act[1], act[3]),
                               let data = Data(base64Encoded: act[3]), let action = try? JSONDecoder().decode(Action.self, from: data),
                               action.id == act[1], handler != nil else { return connection.cancel() }   // kept by the widget till then
-                        return apply(action) {
+                        return apply(action) { taken in
+                            guard taken else { return connection.cancel() }   // the widget keeps it and sends it again
                             connection.send(content: Data(("ok " + signature("done", action.id)).utf8), contentContext: .finalMessage,
                                             isComplete: true, completion: .contentProcessed { _ in connection.cancel() })
                         }

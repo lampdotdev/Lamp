@@ -464,11 +464,13 @@ it, shares what changed and the widget is redrawn. How it travels is decided whe
 Signed for the person's team, the app and its widget get an app group named `<team>.<bundle id>`
 (`Template.macAppGroup`; macOS honours that form from the signature alone, while `group.…` would need a
 provisioning profile), in both signatures and both Info.plists (`LampAppGroup`, `Store.setAppGroup`): the widget
-appends the action to a queue file in the group's folder and posts a Darwin notification, and the app takes the
-queue at launch and when nudged. Signed with Lamp's certificate, the widget sends the action over the reading
+writes each action as its own file in the group's folder (whole, under its final name) and posts a Darwin
+notification, and the app does them at launch and when nudged, deleting each once its handler has run. Signed with Lamp's certificate, the widget sends the action over the reading
 connection, signed with the same secret over the action's id, and the app answers once its handler has run; an
 action the app wasn't there to take waits in the widget's own storage and goes with its next read. The app does
-each action once, by id, so one sent again after a lost answer isn't done twice. The widget's own App Intents
+each action once, by id, so one sent again after a lost answer isn't done twice, and counts it done only after
+its handler has run, so one cut short by a quit is done next time. The widget changes its list of waiting
+actions under one lock. The widget's own App Intents
 metadata is kept without a team (only the app's is taken out): its buttons run inside the widget.
 
 Lamp never replaces an app on disk while it's running (`HeldInstalls`): macOS then stops taking the running
