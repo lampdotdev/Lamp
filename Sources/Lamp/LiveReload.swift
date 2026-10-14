@@ -108,28 +108,41 @@ enum LiveReload {
     /// parentheses: a case's payload, a property's type) joined into one, so the layout check reads each
     /// declaration whole whatever its formatting. Strings are kept as they are, comment marks in them included.
     static func declarations(in source: String) -> [String] {
-        var out = "", depth = 0, inString = false, chars = Array(source), i = 0
+        let chars = Array(source)
+        var out = "", depth = 0, i = 0
+        func at(_ k: Int) -> Character { k < chars.count ? chars[k] : "\0" }
         while i < chars.count {
-            let c = chars[i], next = i + 1 < chars.count ? chars[i + 1] : "\0"
-            if inString {
-                out.append(c)
-                if c == "\\", i + 1 < chars.count { out.append(next); i += 2; continue }
-                if c == "\"" { inString = false }
-            } else if c == "\"" {
-                inString = true
-                out.append(c)
-            } else if c == "/", next == "/" {
+            let c = chars[i]
+            // A string, plain, raw (#"…"#, with any number of #) or multi-line ("""…"""), copied whole: what's in it
+            // is never a comment or a bracket.
+            var hashes = 0
+            while at(i + hashes) == "#" { hashes += 1 }
+            if at(i + hashes) == "\"" {
+                let triple = at(i + hashes + 1) == "\"" && at(i + hashes + 2) == "\""
+                let quote = triple ? 3 : 1
+                let closing = Array(String(repeating: "\"", count: quote) + String(repeating: "#", count: hashes))
+                var k = i + hashes + quote
+                while k < chars.count {
+                    if hashes == 0, chars[k] == "\\" { k += 2; continue }   // an escaped character in a plain string
+                    if Array(chars[k..<min(chars.count, k + closing.count)]) == closing { k += closing.count; break }
+                    k += 1
+                }
+                out += String(chars[i..<min(k, chars.count)])
+                i = k
+                continue
+            }
+            if c == "/", at(i + 1) == "/" {
                 while i < chars.count, chars[i] != "\n" { i += 1 }
                 continue
-            } else if c == "/", next == "*" {
+            }
+            if c == "/", at(i + 1) == "*" {
                 i += 2
-                while i + 1 < chars.count, !(chars[i] == "*" && chars[i + 1] == "/") { i += 1 }
+                while i < chars.count, !(chars[i] == "*" && at(i + 1) == "/") { i += 1 }
                 i += 2
                 continue
-            } else {
-                if c == "(" { depth += 1 } else if c == ")" { depth = max(0, depth - 1) }
-                out.append(c == "\n" && depth > 0 ? " " : c)
             }
+            if c == "(" { depth += 1 } else if c == ")" { depth = max(0, depth - 1) }
+            out.append(c == "\n" && depth > 0 ? " " : c)
             i += 1
         }
         return out.split(separator: "\n", omittingEmptySubsequences: true).map { String($0).replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression) }
