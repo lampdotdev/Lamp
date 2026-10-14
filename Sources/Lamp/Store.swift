@@ -30,10 +30,12 @@ enum DeviceFamily: String, Codable {
 /// The names are what the intro's sentence says ("Describe the iPhone & iPad app you wish you had").
 extension Platform {
     /// What an app made for these devices is: the names `make_app_for` and the naming call use ("mac",
-    /// "iphone", for iPhone and iPad). Nil for an empty list or a device Lamp doesn't make apps for yet.
+    /// "iphone" for iPhone and iPad, "watch"). A watch app is part of an iPhone app (`Template.hasWatch`), so
+    /// "watch" brings the iPhone with it. Nil for an empty list or a device Lamp doesn't make apps for.
     init?(devices: Set<String>) {
-        guard !devices.isEmpty, devices.isSubset(of: ["mac", "iphone"]) else { return nil }
-        self = devices.count == 2 ? .universal : devices.contains("mac") ? .mac : .iphone
+        guard !devices.isEmpty, devices.isSubset(of: ["mac", "iphone", "watch"]) else { return nil }
+        let phone = devices.contains("iphone") || devices.contains("watch")
+        self = devices.contains("mac") ? (phone ? .universal : .mac) : .iphone
     }
 }
 
@@ -913,7 +915,7 @@ final class Store: ObservableObject {
     /// (Xcode for an iPhone app; a team too for an app for both), else it's a Mac app, which needs neither. One
     /// they said is taken either way, and the build says what's missing. A line in the chat says what it'll be
     /// unless it's a Mac app, and the person changes it by asking (`convert`, the agent's `make_app_for`).
-    func chooseKind(_ project: LampProject, _ kind: Platform, said: Bool) async -> LampProject {
+    func chooseKind(_ project: LampProject, _ kind: Platform, said: Bool, watch: Bool = false) async -> LampProject {
         guard !project.scaffolded, kind != project.platform else { return project }
         if kind.hasIOS, !said {
             let both = kind == .universal
@@ -922,7 +924,10 @@ final class Store: ObservableObject {
         }
         setKind(project, kind)
         guard let chosen = current(project) else { return project }
-        if kind != .mac { log(chosen, .status, kind == .iphone ? "Making this for iPhone and iPad." : "Making this for the Mac, iPhone and iPad.") }
+        if kind != .mac {
+            let devices = kind == .iphone ? "iPhone and iPad" : "the Mac, iPhone and iPad"
+            log(chosen, .status, watch ? "Making this for \(devices), and Apple Watch." : "Making this for \(devices).")
+        }
         return chosen
     }
 
@@ -1686,7 +1691,9 @@ final class Store: ObservableObject {
             let suggestion = await AppName.suggest(for: brief)
             progress[project.id]?.sketch = suggestion?.sketch ?? []
             progress[project.id]?.naming = false
-            if let suggestion, let kind = suggestion.kind { project = await chooseKind(project, kind, said: suggestion.kindSaid) }
+            if let suggestion, let kind = suggestion.kind {
+                project = await chooseKind(project, kind, said: suggestion.kindSaid, watch: suggestion.watch)
+            }
             if project.untitled, let name = suggestion?.name { project = await performRename(project, to: name) }
         }
         if Icons.load(project) == nil {
@@ -2910,9 +2917,20 @@ final class Store: ObservableObject {
     private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         let devices = Set(arguments["devices"] as? [String] ?? [])
         guard let kind = Platform(devices: devices) else {
-            return (400, ["error": "`devices` must list one or more of mac and iphone."])
+            return (400, ["error": "`devices` must list one or more of mac, iphone and watch."])
         }
-        return await convert(project, to: kind)
+        let (status, answer) = await convert(project, to: kind)
+        guard status == 200, let text = answer["text"] as? String, !text.hasPrefix("Not yet"), !text.hasPrefix("Nothing changed"),
+              let now = current(project) else { return (status, answer) }
+        // The watch app is code in Watch/, the agent's to write or take away: Lamp says which, with the rule.
+        let watch = devices.contains("watch")
+        if watch, !Template.hasWatch(now) {
+            return (200, ["text": text + "\n\nThen add its Apple Watch app in Watch/:\n" + Agent.Rules.iPhoneWatch])
+        }
+        if !watch, Template.hasWatch(now) {
+            return (200, ["text": text + "\n\nThen take its Apple Watch app away: delete the files in Watch/ with delete_file."])
+        }
+        return (200, answer)
     }
 
     /// Makes an app for other devices: a Mac app for the iPhone too, say. The kind is the app's (meta.json), and

@@ -184,7 +184,8 @@ written: a kind the person didn't say only when this Mac can build it now (`Phon
 both), else a Mac app, and one they said either way (the build says what's missing). A line in the chat says so for
 anything but a Mac app. The starter ideas mix Mac and iPhone ones (`Ideas.mixed`). Later, "make it work on my
 iPhone too" is the agent's `make_app_for` (`Store.convert`), given every device the app runs on from then on (a
-new kind of device is one more name in `Platform(devices:)` and the tool's schema): it checks this Mac can build the new kind (opening the
+new kind of device is one more name in `Platform(devices:)` and the tool's schema; "watch" brings the iPhone with it,
+and the answer tells the agent to add or remove `Watch/` with the watch rule): it checks this Mac can build the new kind (opening the
 setup steps if not), quits every copy, changes the kind in meta.json, rewrites Lamp's own files, copies the Mac
 settings (UserDefaults) to a new signed id, and answers with the rules for the new kind, which stay in the
 conversation; the agent then adapts the code. A Mac app's data doesn't move: LampSupport keeps it under the app's

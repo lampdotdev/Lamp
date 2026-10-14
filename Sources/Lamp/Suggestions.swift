@@ -118,7 +118,8 @@ enum AppName {
     its user would ("\(exampleParts[0])", "\(exampleParts[1])"). No file, type or framework \
     names.
 
-    Last, list the devices it runs on: "mac" for this Mac, "iphone" for iPhone and iPad. ["iphone"] when they \
+    Last, list the devices it runs on: "mac" for this Mac, "iphone" for iPhone and iPad, "watch" for Apple Watch \
+    (with "iphone", when they mention a watch or their wrist). ["iphone"] when they \
     mention a phone, an iPhone or iPad, or what's done away from a desk (out walking or running, the camera on \
     the go, tilting or shaking it); ["mac", "iphone"] when they want it on their Mac and their phone, or kept the \
     same on each; ["mac"] otherwise. Set "devices_by_user" to true only when they said where it runs.
@@ -134,6 +135,8 @@ enum AppName {
         /// What it runs on, from the request (`Store.chooseKind`), and whether the person said so.
         var kind: Platform?
         var kindSaid = false
+        /// The person wants an Apple Watch app too (the agent writes it; `chooseKind` says so in the chat).
+        var watch = false
     }
 
     static func suggest(for brief: String) async -> Suggestion? {
@@ -144,9 +147,10 @@ enum AppName {
         else { return nil }
         let sketch = (object["parts"] as? [Any] ?? []).compactMap { ($0 as? String)?.trimmed }
             .filter { !$0.isEmpty && $0.count <= 60 && !AppAI.parrots($0, examples: exampleParts, asked: brief) }.prefix(5)
-        let kind = Platform(devices: Set(object["devices"] as? [String] ?? []))
+        let devices = Set(object["devices"] as? [String] ?? [])
         return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [],
-                          kind: kind, kindSaid: object["devices_by_user"] as? Bool ?? false)
+                          kind: Platform(devices: devices), kindSaid: object["devices_by_user"] as? Bool ?? false,
+                          watch: devices.contains("watch"))
     }
 
     static func name(_ object: [String: Any], asked brief: String) -> String? {
