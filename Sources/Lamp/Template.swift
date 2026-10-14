@@ -3950,9 +3950,10 @@ enum Template {
             guard let (engine, zone) = home(of: collection) else { return }
             let recordID = CKRecord.ID(recordName: Self.recordName(collection, id), zoneID: zone)
             engine.state.add(pendingRecordZoneChanges: [deleted ? .deleteRecord(recordID) : .saveRecord(recordID)])
-            // Deleted while still moving from the app's first zone: its copy there goes too.
-            if deleted, joined[collection] == nil, moving.remove(recordID.recordName) != nil {
-                LampStore.save(moving, to: "icloud.moving")
+            // An item of a shareable collection may still have a copy in the app's first zone, not yet fetched
+            // or moved: that goes too, so it can't come back (`migrate`). iCloud passes over one it hasn't got.
+            if deleted, joined[collection] == nil, shareable.contains(collection) {
+                if moving.remove(recordID.recordName) != nil { LampStore.save(moving, to: "icloud.moving") }
                 engine.state.add(pendingRecordZoneChanges: [.deleteRecord(CKRecord.ID(recordName: recordID.recordName, zoneID: zoneID))])
             }
             // Sent now, not at the engine's leisure: the other device should see it within moments.
@@ -4062,7 +4063,14 @@ enum Template {
             guard let engine else { return }
             let store = Self.prefix + collection
             let destination = CKRecord.ID(recordName: record.recordID.recordName, zoneID: ownZone(collection))
-            if engine.state.pendingRecordZoneChanges.contains(.deleteRecord(destination)) {
+            // Deleted here before this copy arrived: its deletion from the first zone is on its way.
+            // Matched by names: a record from iCloud may carry its owner's own name where this device wrote the default.
+            let name = record.recordID.recordName
+            let deletedHere = engine.state.pendingRecordZoneChanges.contains { change in
+                guard case .deleteRecord(let id) = change, id.recordName == name else { return false }
+                return id.zoneID.zoneName == zoneID.zoneName || id.zoneID.zoneName == destination.zoneID.zoneName
+            }
+            if deletedHere {
                 engine.state.add(pendingRecordZoneChanges: [.deleteRecord(record.recordID)])
                 return
             }
