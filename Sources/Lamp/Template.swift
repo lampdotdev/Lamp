@@ -3518,7 +3518,7 @@ enum Template {
             /// Says what the mode is for, at the top of the window under its title bar: the pointer can only
             /// change for the app in front, so this is what tells the person they're pointing.
             private func drawHint() {
-                let text = NSAttributedString(string: "Click the part you mean  ·  Esc to cancel", attributes: [
+                let text = NSAttributedString(string: "Click what you want to change  ·  Esc to cancel", attributes: [
                     .font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.white])
                 let size = text.size()
                 let titlebar = (target.map { $0.frame.height - $0.contentLayoutRect.height } ?? 28)

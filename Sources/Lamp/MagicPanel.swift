@@ -285,14 +285,14 @@ private struct MagicChat: View {
                 } label: {
                     Image(systemName: "scope")
                 }
-                .help("Point at part of the app to ask about it")
+                .help("Point at what you want to change")
                 .accessibilityLabel("Point at Something")
                 Spacer()
                 Button {
                     store.showChat(project.id)
                     MagicPanel.shared.close()
                 } label: {
-                    Image(systemName: "arrow.up.forward.square")
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
                 }
                 .help("Open this chat in Lamp")
                 .accessibilityLabel("Open in Lamp")
