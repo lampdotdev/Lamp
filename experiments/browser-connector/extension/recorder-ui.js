@@ -3,7 +3,7 @@ let here='',lastSites=null,problem='';
 // A site as a person reads it in the address bar, without the scheme.
 const plain=origin=>origin.replace(/^https?:\/\//,'');
 async function call(body){const r=await chrome.runtime.sendMessage(body);if(r?.error)throw new Error(r.error);return r;}
-function show(id){for(const s of ['closed','idle','recording','waiting'])$(s).hidden=s!==id;}
+function show(id){for(const s of ['closed','idle','recording','paused','waiting'])$(s).hidden=s!==id;}
 function fail(e){problem=e.message;$('problem').textContent=problem;$('problem').hidden=false;}
 function clear(){problem='';$('problem').hidden=true;}
 function list(sites){
@@ -29,7 +29,9 @@ async function refresh(){
  try{s=await call({op:'task-status'});}catch{show('closed');return;}
  if(s.active){
   const {taskRecording}=await chrome.storage.session.get('taskRecording');
-  $('clock').textContent=`${Math.floor(s.elapsed/60)}:${String(s.elapsed%60).padStart(2,'0')}`;
+  const clock=`${Math.floor(s.elapsed/60)}:${String(s.elapsed%60).padStart(2,'0')}`;
+  if(s.paused){$('pausedClock').textContent=`at ${clock}`;show('paused');return;}
+  $('clock').textContent=clock;
   $('watching').textContent=(taskRecording?.origins||[]).map(plain).join(' and ')||'this site';
   show('recording');return;
  }
@@ -54,6 +56,8 @@ $('approveSite').onclick=async()=>{
 $('start').onclick=async()=>{clear();try{await call({op:'task-start',origins:chosen()});window.close();}catch(e){fail(e);}};
 $('stop').onclick=async()=>{clear();try{await call({op:'task-stop'});window.close();}catch(e){fail(e);}};
 $('discard').onclick=async()=>{clear();try{await call({op:'task-discard'});await refresh();}catch(e){fail(e);}};
+// Paused, the same two choices: nothing was sent at the limit, so these clicks are the only way on.
+$('show').onclick=$('stop').onclick;$('drop').onclick=$('discard').onclick;
 (async()=>{
  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
  try{if(tab?.url&&/^https?:/.test(tab.url)&&!tab.incognito)here=new URL(tab.url).origin;}catch{}
