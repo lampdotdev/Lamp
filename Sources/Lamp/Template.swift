@@ -345,6 +345,7 @@ enum Template {
         var body: some SwiftUI.Scene {
             WindowGroup {
                 ContentView()
+                    .lampWand()
             }
         }
     }
@@ -397,6 +398,7 @@ enum Template {
         var body: some SwiftUI.Scene {
             WindowGroup("{{NAME}}") {
                 ContentView()
+                    .lampWand()
             }
             #if os(macOS)
             .commands { LampCommands() }
@@ -1766,7 +1768,6 @@ enum Template {
             ("App.entitlements", capabilities.entitlementsPlist(for: project, platform: .ios, appGroup: widget || share ? group : nil)),
             ("\(project.exe).xcodeproj/xcshareddata/xcschemes/\(project.exe).xcscheme", deviceScheme),
             ("Info.plist", deviceInfoPlist),
-            ("LampStart.c", deviceStartC),
             ("Assets.xcassets/Contents.json", #"{ "info": { "author": "xcode", "version": 1 } }"#),
             ("Assets.xcassets/AppIcon.appiconset/Contents.json", hasIcon
                 ? #"{ "images": [ { "filename": "AppIcon.png", "idiom": "universal", "platform": "ios", "size": "1024x1024" } ], "info": { "author": "xcode", "version": 1 } }"#
@@ -1837,14 +1838,12 @@ enum Template {
     		A00000000000000000000007 /* Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; name = Sources; path = ../../Sources; sourceTree = "<group>"; };
     		A00000000000000000000008 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000013 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
-    		A00000000000000000000014 /* LampStart.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = LampStart.c; sourceTree = "<group>"; };
-    		A00000000000000000000015 /* LampStart.c in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000014 /* LampStart.c */; };
-    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A00000000000000000000014 /* LampStart.c */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
+    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
     		A0000000000000000000000A /* Products */ = {isa = PBXGroup; children = (A00000000000000000000006 /* {{EXE}}.app */); name = Products; sourceTree = "<group>"; };
     		A0000000000000000000000B /* {{EXE}} */ = {isa = PBXNativeTarget; buildConfigurationList = A0000000000000000000000C; buildPhases = (A0000000000000000000000D /* Sources */, A00000000000000000000008 /* Frameworks */, A0000000000000000000000E /* Resources */); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (A00000000000000000000007 /* Sources */); name = "{{EXE}}"; packageProductDependencies = (); productName = "{{EXE}}"; productReference = A00000000000000000000006 /* {{EXE}}.app */; productType = "com.apple.product-type.application"; };
     		A0000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {A0000000000000000000000B = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A00000000000000000000010; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000009; minimizedProjectReferenceProxies = 1; preferredProjectObjectVersion = 77; productRefGroup = A0000000000000000000000A /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A0000000000000000000000B /* {{EXE}} */); };
     		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Assets in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
-    		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000015 /* LampStart.c in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+    		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
     		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
     		A00000000000000000000010 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
@@ -1873,21 +1872,6 @@ enum Template {
           </BuildableProductRunnable>
        </LaunchAction>
     </Scheme>
-
-    """
-
-    /// Starts the wand in an app on the person's phone (`LampWand` in LampSupport.swift) before the app's own
-    /// code runs. A SwiftUI app gives a library no place to start from: it ignores `NSPrincipalClass`, and the
-    /// app's own code is the agent's, which shouldn't have to remember a call. A C constructor in a file Lamp owns
-    /// runs as the app loads, wherever its code came from. Only the phone has a wand, so the Mac half of an app
-    /// for both, which is built from this project too, leaves it out.
-    static let deviceStartC = """
-    // Generated by Lamp before every build for a phone. Don't edit: changes are overwritten.
-    #include <TargetConditionals.h>
-    #if TARGET_OS_IOS && !TARGET_OS_SIMULATOR
-    extern void lamp_wand_start(void);
-    __attribute__((constructor)) static void lamp_start(void) { lamp_wand_start(); }
-    #endif
 
     """
 
@@ -1938,14 +1922,12 @@ enum Template {
     		A00000000000000000000007 /* Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; name = Sources; path = ../../Sources; sourceTree = "<group>"; };
     		A00000000000000000000008 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000013 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
-    		A00000000000000000000014 /* LampStart.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = LampStart.c; sourceTree = "<group>"; };
-    		A00000000000000000000015 /* LampStart.c in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000014 /* LampStart.c */; };
-    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A00000000000000000000014 /* LampStart.c */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
+    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
     		A0000000000000000000000A /* Products */ = {isa = PBXGroup; children = (A00000000000000000000006 /* {{EXE}}.app */); name = Products; sourceTree = "<group>"; };
     		A0000000000000000000000B /* {{EXE}} */ = {isa = PBXNativeTarget; buildConfigurationList = A0000000000000000000000C; buildPhases = (A0000000000000000000000D /* Sources */, A00000000000000000000008 /* Frameworks */, A0000000000000000000000E /* Resources */); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (A00000000000000000000007 /* Sources */); name = "{{EXE}}"; packageProductDependencies = (); productName = "{{EXE}}"; productReference = A00000000000000000000006 /* {{EXE}}.app */; productType = "com.apple.product-type.application"; };
     		A0000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {A0000000000000000000000B = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A00000000000000000000010; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000009; minimizedProjectReferenceProxies = 1; preferredProjectObjectVersion = 77; productRefGroup = A0000000000000000000000A /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A0000000000000000000000B /* {{EXE}} */); };
     		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Assets in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
-    		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000015 /* LampStart.c in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+    		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = 14.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = auto; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
     		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {"ASSETCATALOG_COMPILER_APPICON_NAME[sdk=iphone*]" = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "App-macOS.entitlements"; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; "INFOPLIST_FILE[sdk=macosx*]" = "Info-macOS.plist"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); "LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = ("$(inherited)", "@executable_path/../Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
     		A00000000000000000000010 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
@@ -3309,11 +3291,21 @@ enum Template {
     let lampGateway = "http://127.0.0.1:{{PORT}}"
     #endif
 
+    extension View {
+        /// Lamp's wand, on the root view of the app's window: on the person's iPhone it puts the wand in the app,
+        /// which opens this app's chat in Lamp. It does nothing on a Mac or in the simulator. The app's own
+        /// `@main` is the one place every launch goes through, so this is where the wand starts, as the Mac's
+        /// starts from `LampCommands`.
+        func lampWand() -> some View {
+            #if os(iOS) && !targetEnvironment(simulator)
+            onAppear { LampWand.start() }
+            #else
+            self
+            #endif
+        }
+    }
+
     #if os(iOS) && !targetEnvironment(simulator)
-    /// Run by Lamp's own start file in the phone's Xcode project (`LampStart.c`) before the app's code: the wand
-    /// needs nothing from the app, as the Mac's needs nothing but `LampCommands`.
-    @_cdecl("lamp_wand_start")
-    public func lampWandStart() { LampWand.start() }
 
     /// The wand in this app on the person's phone: a button over the app that opens a sheet with the app's chat in
     /// Lamp and a box to ask for a change, which Lamp makes on the Mac and installs here. It shows only while
@@ -3363,9 +3355,17 @@ enum Template {
         private var dismissal: Dismissal?
         private var polling: Task<Void, Never>?
 
-        nonisolated static func start() {
+        private static var started = false
+
+        /// Once, from `lampWand()`: the window on screen gets the wand now, and every window that comes forward later.
+        static func start() {
+            guard !started else { return }
+            started = true
             NotificationCenter.default.addObserver(forName: UIScene.didActivateNotification, object: nil, queue: .main) { note in
                 MainActor.assumeIsolated { shared.activated(note.object as? UIWindowScene) }
+            }
+            for case let scene as UIWindowScene in UIApplication.shared.connectedScenes where scene.activationState == .foregroundActive {
+                shared.activated(scene)
             }
         }
 

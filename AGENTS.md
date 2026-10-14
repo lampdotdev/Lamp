@@ -472,9 +472,11 @@ chat, marked "From iPhone" (`LogLine.fromPhone`), so it runs as a normal turn wi
 versions and Undo, and never reaches the agent's routes. A turn ends, as ever for an app on a phone, in
 `installOnDevice`, which closes the app and opens the new copy. `LampWand` in LampSupport.swift (device builds only)
 puts a round wand in the app's window and a sheet with the app's recent chat and a message box; it shows only while
-Lamp answers on the same Wi‑Fi that the wand is on. It's started by `LampStart.c`, a file Lamp writes into the
-phone's Xcode project (`Template.deviceStartC`): a SwiftUI app gives a library no place to start from
-(`NSPrincipalClass` is ignored), and the app's code is the agent's. The route is `/ai/wand`, with an `op` of "send" or
+Lamp answers on the same Wi‑Fi that the wand is on. It starts from `.lampWand()` on the root view of the app's
+WindowGroup, in the iPhone and both-kinds scaffolds (`Template.iPhoneAppSwift`, `universalAppSwift`), as the Mac's
+starts from `LampCommands`: a SwiftUI app gives a library no other place to start from (`NSPrincipalClass` is
+ignored), and the rule (`Agent.Rules.iPhoneGenerated`) tells the agent to keep it. An app made before it, or one whose
+agent dropped it, has no wand on the phone until the call is put back; it does nothing on a Mac or in the simulator. The route is `/ai/wand`, with an `op` of "send" or
 "status". Both ways are sealed with AES-GCM under a key made from the app's phone secret (`PhoneWand.key`, not the one
 `/ai/keys` uses), since the network hop is plain HTTP and the token is on the air: a request carries a time and is
 refused five minutes either side of it, a reply says it's one and carries the request's nonce, so neither side takes
