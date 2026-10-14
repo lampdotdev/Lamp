@@ -7461,6 +7461,662 @@ enum Template {
     }
     #endif
 
+    #if os(macOS)
+    // Mac only for now: the service sends the person back to a listener on this Mac's own address, which an
+    // iPhone app can't keep open while the browser is in front.
+
+    /// A service the person already uses, reached through that service's own MCP server: Notion, Linear,
+    /// Todoist, Jira and Confluence (`.atlassian`) and monday.com. The person clicks Connect, approves on the
+    /// service's own page in their browser, and the app is connected: it registers itself with the service
+    /// during that sign-in, so nobody sets anything up beforehand. The sign-in is kept in this Mac's Keychain
+    /// for this app only and is sent only to that service. It is never in the app's folder, so a shared copy
+    /// arrives disconnected and each person connects their own account.
+    ///
+    ///     @ObservedObject private var linear = LampService.linear
+    ///     LampServiceButton(service: .linear)        // Connect, waiting, connected with Disconnect
+    ///     if linear.isConnected {
+    ///         let reply = try await LampService.linear.call("list_issues", ["assignee": "me", "limit": 20])
+    ///         let issues = try reply.decode([Issue].self)     // or reply.json, or reply.text
+    ///     }
+    ///
+    /// Tools and their arguments are the service's own: `tools()` lists them with their schemas. Once the person
+    /// has connected, the list is also written to the app's runtime folder (`services/<id>-tools.json`) for
+    /// whoever builds the app. A call made while not connected throws `Failure` with `needsConnection` set.
+    @MainActor final class LampService: ObservableObject, Identifiable {
+        enum State: Equatable { case notConnected, connecting, connected, failed(String) }
+
+        static let notion = LampService(id: "notion", name: "Notion", url: "https://mcp.notion.com/mcp")
+        static let linear = LampService(id: "linear", name: "Linear", url: "https://mcp.linear.app/mcp")
+        static let todoist = LampService(id: "todoist", name: "Todoist", url: "https://ai.todoist.net/mcp")
+        // Atlassian lists every product's permissions as supported; asking for all of them asks the person about
+        // products they may not have. Jira and Confluence, and staying signed in.
+        static let atlassian = LampService(id: "atlassian", name: "Jira and Confluence", url: "https://mcp.atlassian.com/v2/mcp",
+                                           scope: "read:me read:account offline_access read:jira:agent-interface write:jira:agent-interface search:jira:agent-interface read:confluence:agent-interface write:confluence:agent-interface search:confluence:agent-interface")
+        static let monday = LampService(id: "monday", name: "monday.com", url: "https://mcp.monday.com/mcp")
+        static let all = [notion, linear, todoist, atlassian, monday]
+
+        struct Failure: LocalizedError {
+            let message: String
+            /// The person isn't connected (or the service ended the sign-in): show the Connect button.
+            var needsConnection = false
+            var errorDescription: String? { message }
+        }
+
+        struct Tool: Identifiable {
+            let name: String
+            let description: String
+            /// The tool's arguments as JSON Schema.
+            let inputSchema: [String: Any]
+            var id: String { name }
+        }
+
+        /// What a tool answered: its text, and its data when it sent some or its text is JSON.
+        struct Reply {
+            let text: String
+            let json: Any?
+            func decode<T: Decodable>(_ type: T.Type) throws -> T {
+                guard let json, JSONSerialization.isValidJSONObject(json) || json is String || json is NSNumber,
+                      let data = try? JSONSerialization.data(withJSONObject: json, options: [.fragmentsAllowed]) else {
+                    throw Failure(message: "The service didn't answer with data.")
+                }
+                return try JSONDecoder().decode(T.self, from: data)
+            }
+        }
+
+        let id: String
+        let name: String
+        let url: URL
+        private let fixedScope: String?
+        @Published private(set) var state: State = .notConnected
+        var isConnected: Bool { state == .connected }
+
+        fileprivate init(id: String, name: String, url: String, scope: String? = nil) {
+            self.id = id
+            self.name = name
+            self.url = URL(string: url)!
+            self.fixedScope = scope
+            if let saved = Saved.read(id), saved.accessToken != nil { state = .connected }
+        }
+
+        /// Opens the service's own page in the browser and waits for the person to approve there. The first
+        /// time, the app registers itself with the service just before. Throws when they refuse or close it.
+        func connect() async throws {
+            pending?.close(with: CancellationError())
+            generation += 1
+            let mine = generation
+            state = .connecting
+            do {
+                try await signIn(generation: mine)
+                guard mine == generation else { return }
+                state = .connected
+                NSApplication.shared.activate(ignoringOtherApps: true)
+                Task { try? await self.writeToolList() }
+            } catch {
+                guard mine == generation else { throw error }
+                let message = (error as? LocalizedError)?.errorDescription ?? "Couldn't connect to \(name)."
+                state = error is CancellationError ? .notConnected : .failed(message)
+                throw error
+            }
+        }
+
+        /// Stops waiting for a sign-in the person didn't finish.
+        func cancel() {
+            generation += 1
+            pending?.close(with: CancellationError())
+            pending = nil
+            if state == .connecting { state = Saved.read(id)?.accessToken == nil ? .notConnected : .connected }
+        }
+
+        /// Forgets the sign-in on this Mac and asks the service to end it. The app stays registered, so
+        /// connecting again is only the approval.
+        func disconnect() {
+            generation += 1
+            pending?.close(with: CancellationError())
+            pending = nil
+            session = nil
+            if var saved = Saved.read(id) {
+                if let endpoint = saved.revocationEndpoint, let token = saved.refreshToken ?? saved.accessToken {
+                    var form = ["token": token, "client_id": saved.clientID]
+                    if let secret = saved.clientSecret { form["client_secret"] = secret }
+                    Task.detached { _ = try? await LampService.postForm(endpoint, form) }
+                }
+                saved.accessToken = nil
+                saved.refreshToken = nil
+                saved.expiresAt = nil
+                saved.save(id)
+            }
+            state = .notConnected
+        }
+
+        /// The service's tools, with what each takes.
+        func tools() async throws -> [Tool] {
+            var tools: [Tool] = []
+            var cursor: String?
+            repeat {
+                let result = try await request("tools/list", cursor.map { ["cursor": $0] } ?? [:])
+                for item in result["tools"] as? [[String: Any]] ?? [] {
+                    guard let name = item["name"] as? String else { continue }
+                    tools.append(Tool(name: name, description: item["description"] as? String ?? "",
+                                      inputSchema: item["inputSchema"] as? [String: Any] ?? [:]))
+                }
+                cursor = result["nextCursor"] as? String
+            } while cursor != nil
+            return tools
+        }
+
+        /// Calls one of the service's tools as the person. Throws the service's own message when it refuses.
+        func call(_ tool: String, _ arguments: [String: Any] = [:]) async throws -> Reply {
+            let result = try await request("tools/call", ["name": tool, "arguments": arguments])
+            let text = (result["content"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }.joined(separator: "\n")
+            if result["isError"] as? Bool == true { throw Failure(message: text.isEmpty ? "\(name) refused \(tool)." : text) }
+            var json: Any? = result["structuredContent"]
+            if json == nil, let data = text.data(using: .utf8) { json = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) }
+            return Reply(text: text, json: json)
+        }
+
+        // MARK: Signing in
+
+        private var generation = 0
+        private var pending: Callback?
+        private var session: String?
+        private var refreshing: Task<Void, Error>?
+        /// How the sign-in page is shown: the browser. Replaced only by a harness that has no person to click.
+        fileprivate static var openPage: (URL) -> Void = { NSWorkspace.shared.open($0) }
+
+        /// The service's sign-in addresses, found the way MCP describes: the server names where its
+        /// authorization server's description is; older servers keep that at their own address.
+        private struct Discovered {
+            var authorizationEndpoint: URL
+            var tokenEndpoint: URL
+            var registrationEndpoint: URL?
+            var revocationEndpoint: URL?
+            var scope: String?
+        }
+
+        private func discover() async throws -> Discovered {
+            var probe = URLRequest(url: url)
+            probe.httpMethod = "POST"
+            probe.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            probe.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
+            probe.httpBody = try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": 0, "method": "initialize", "params": Self.initializeParams])
+            let challenge = (try? await URLSession.shared.data(for: probe)).flatMap { ($0.1 as? HTTPURLResponse)?.value(forHTTPHeaderField: "WWW-Authenticate") } ?? ""
+            func parameter(_ key: String) -> String? {
+                guard let range = challenge.range(of: key + "=\"") else { return nil }
+                let rest = challenge[range.upperBound...]
+                return rest.firstIndex(of: "\"").map { String(rest[..<$0]) }
+            }
+            let origin = url.scheme! + "://" + url.host! + (url.port.map { ":\($0)" } ?? "")
+            let path = url.path == "/" ? "" : url.path
+            var resource: [String: Any]?
+            for candidate in [parameter("resource_metadata"), origin + "/.well-known/oauth-protected-resource" + path, origin + "/.well-known/oauth-protected-resource"].compactMap({ $0 }) {
+                if let found = try? await Self.getJSON(candidate) { resource = found; break }
+            }
+            let server = (resource?["authorization_servers"] as? [String])?.first ?? origin
+            guard let serverURL = URL(string: server), let host = serverURL.host else { throw Failure(message: "\(name) can't be reached right now.") }
+            let serverOrigin = (serverURL.scheme ?? "https") + "://" + host + (serverURL.port.map { ":\($0)" } ?? "")
+            let serverPath = serverURL.path == "/" ? "" : serverURL.path
+            var metadata: [String: Any]?
+            for candidate in [serverOrigin + "/.well-known/oauth-authorization-server" + serverPath,
+                              serverOrigin + "/.well-known/openid-configuration" + serverPath,
+                              serverOrigin + serverPath + "/.well-known/oauth-authorization-server",
+                              serverOrigin + serverPath + "/.well-known/openid-configuration"] {
+                if let found = try? await Self.getJSON(candidate), found["authorization_endpoint"] != nil { metadata = found; break }
+            }
+            guard let metadata, let authorize = (metadata["authorization_endpoint"] as? String).flatMap(URL.init(string:)),
+                  let token = (metadata["token_endpoint"] as? String).flatMap(URL.init(string:)) else {
+                throw Failure(message: "\(name) can't be reached right now.")
+            }
+            let scope = fixedScope ?? parameter("scope") ?? (resource?["scopes_supported"] as? [String])?.joined(separator: " ")
+            return Discovered(authorizationEndpoint: authorize, tokenEndpoint: token,
+                              registrationEndpoint: (metadata["registration_endpoint"] as? String).flatMap(URL.init(string:)),
+                              revocationEndpoint: (metadata["revocation_endpoint"] as? String).flatMap(URL.init(string:)),
+                              scope: scope?.isEmpty == true ? nil : scope)
+        }
+
+        private func signIn(generation mine: Int) async throws {
+            let found = try await discover()
+            var saved = Saved.read(id)
+            // The registration names the exact address the service sends the person back to, port included:
+            // the same port when it's free, else a new one and a new registration.
+            var callback: Callback?
+            if let saved, saved.authorizationEndpoint == found.authorizationEndpoint.absoluteString,
+               let port = URL(string: saved.redirectURI)?.port { callback = await Callback.open(port: UInt16(port)) }
+            if callback == nil {
+                guard let made = await Callback.open(port: 0) else { throw Failure(message: "Couldn't wait for \(name) on this Mac.") }
+                callback = made
+                guard let endpoint = found.registrationEndpoint else {
+                    made.close(with: CancellationError())
+                    throw Failure(message: "\(name) doesn't let apps connect by themselves.")
+                }
+                saved = try await register(at: endpoint, redirect: "http://127.0.0.1:\(made.port)/callback", found: found)
+                saved?.save(id)
+            }
+            guard let callback, var saved else { throw Failure(message: "Couldn't connect to \(name).") }
+            guard mine == generation else { callback.close(with: CancellationError()); throw CancellationError() }
+            pending = callback
+            defer { callback.close(with: CancellationError()); if pending === callback { pending = nil } }
+
+            let verifier = Self.randomText()
+            let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64URL
+            let expected = Self.randomText()
+            var page = URLComponents(url: found.authorizationEndpoint, resolvingAgainstBaseURL: false)!
+            // What the sign-in itself needs replaces anything of the same name the service's address carried.
+            let ours: [(String, String?)] = [("response_type", "code"), ("client_id", saved.clientID), ("redirect_uri", saved.redirectURI),
+                                              ("code_challenge", challenge), ("code_challenge_method", "S256"), ("state", expected),
+                                              ("scope", found.scope), ("resource", url.absoluteString)]
+            page.queryItems = (page.queryItems ?? []).filter { item in !ours.contains { $0.0 == item.name } }
+                + ours.compactMap { pair in pair.1.map { URLQueryItem(name: pair.0, value: $0) } }
+            // A plus in a value would read as a space at the other end.
+            page.percentEncodedQuery = page.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+            callback.expect(state: expected, service: name)
+            Self.openPage(page.url!)
+            let answer = try await callback.answer(within: 600)
+            if let error = answer["error"] {
+                if error == "access_denied" { throw CancellationError() }
+                throw Failure(message: answer["error_description"] ?? "\(name) didn't connect: \(error).")
+            }
+            guard let code = answer["code"] else { throw Failure(message: "\(name) didn't connect.") }
+            var form = ["grant_type": "authorization_code", "code": code, "redirect_uri": saved.redirectURI,
+                        "client_id": saved.clientID, "code_verifier": verifier, "resource": url.absoluteString]
+            if let secret = saved.clientSecret { form["client_secret"] = secret }
+            let tokens = try await Self.postForm(found.tokenEndpoint.absoluteString, form)
+            guard mine == generation else { throw CancellationError() }
+            try saved.take(tokens)
+            saved.revocationEndpoint = found.revocationEndpoint?.absoluteString
+            saved.save(id)
+            session = nil
+        }
+
+        private func register(at endpoint: URL, redirect: String, found: Discovered) async throws -> Saved {
+            let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Lamp app"
+            var request = URLRequest(url: endpoint)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "client_name": appName, "redirect_uris": [redirect], "grant_types": ["authorization_code", "refresh_token"],
+                "response_types": ["code"], "token_endpoint_auth_method": "none"])
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            guard (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? 0), let client = body["client_id"] as? String else {
+                fputs("LampService: \(name) refused the app's registration: \(String(decoding: data.prefix(500), as: UTF8.self))\n", stderr)
+                throw Failure(message: (body["error_description"] as? String) ?? "\(name) didn't accept this app.")
+            }
+            return Saved(clientID: client, clientSecret: body["client_secret"] as? String, redirectURI: redirect,
+                         authorizationEndpoint: found.authorizationEndpoint.absoluteString, tokenEndpoint: found.tokenEndpoint.absoluteString)
+        }
+
+        /// A new access token from the one that renews it. The sign-in is forgotten only when the service says
+        /// it's over; a network failure keeps it for next time. A Disconnect meanwhile wins.
+        private func renew() async throws {
+            if let refreshing { return try await refreshing.value }
+            let mine = generation
+            let task = Task { @MainActor in
+                guard var saved = Saved.read(self.id), let refresh = saved.refreshToken else {
+                    throw Failure(message: "Connect \(self.name) again.", needsConnection: true)
+                }
+                var form = ["grant_type": "refresh_token", "refresh_token": refresh, "client_id": saved.clientID, "resource": self.url.absoluteString]
+                if let secret = saved.clientSecret { form["client_secret"] = secret }
+                do {
+                    let tokens = try await Self.postForm(saved.tokenEndpoint, form)
+                    guard mine == self.generation else { throw CancellationError() }
+                    try saved.take(tokens)
+                    saved.save(self.id)
+                } catch let failure as Failure where failure.needsConnection {
+                    guard mine == self.generation else { throw failure }
+                    saved.accessToken = nil
+                    saved.refreshToken = nil
+                    saved.save(self.id)
+                    self.state = .notConnected
+                    throw Failure(message: "Connect \(self.name) again.", needsConnection: true)
+                }
+            }
+            refreshing = task
+            defer { refreshing = nil }
+            try await task.value
+        }
+
+        // MARK: Talking to the service
+
+        private static let initializeParams: [String: Any] = [
+            "protocolVersion": "2025-06-18", "capabilities": [String: Any](),
+            "clientInfo": ["name": Bundle.main.bundleIdentifier ?? "lamp-app", "version": "1"]]
+        private var nextID = 1
+
+        private func request(_ method: String, _ params: [String: Any]) async throws -> [String: Any] {
+            if session == nil { try await startSession() }
+            do {
+                return try await send(method, params) ?? [:]
+            } catch let failure as Failure where failure.message == Self.sessionEnded {
+                session = nil
+                try await startSession()
+                return try await send(method, params) ?? [:]
+            }
+        }
+
+        private func startSession() async throws {
+            _ = try await send("initialize", Self.initializeParams)
+            _ = try await send("notifications/initialized", nil)
+        }
+
+        private static let sessionEnded = "session ended"
+
+        /// One JSON-RPC message. The answer may come as JSON or as a stream of events; a notification has none.
+        private func send(_ method: String, _ params: [String: Any]?, renewed: Bool = false) async throws -> [String: Any]? {
+            guard var saved = Saved.read(id), saved.accessToken != nil else {
+                state = .notConnected
+                throw Failure(message: "Connect \(name) first.", needsConnection: true)
+            }
+            if let expires = saved.expiresAt, expires < Date().addingTimeInterval(60), saved.refreshToken != nil, !renewed {
+                try await renew()
+                saved = Saved.read(id) ?? saved
+            }
+            let notification = params == nil
+            var message: [String: Any] = ["jsonrpc": "2.0", "method": method]
+            if let params { message["params"] = params }
+            let messageID = nextID
+            if !notification { message["id"] = messageID; nextID += 1 }
+            var request = URLRequest(url: url, timeoutInterval: 120)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
+            request.setValue("Bearer " + (saved.accessToken ?? ""), forHTTPHeaderField: "Authorization")
+            if method != "initialize" { request.setValue("2025-06-18", forHTTPHeaderField: "MCP-Protocol-Version") }
+            if let session { request.setValue(session, forHTTPHeaderField: "Mcp-Session-Id") }
+            request.httpBody = try JSONSerialization.data(withJSONObject: message)
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            let http = response as? HTTPURLResponse
+            let status = http?.statusCode ?? 0
+            if status == 401 {
+                guard !renewed, saved.refreshToken != nil else {
+                    disconnectLocally()
+                    throw Failure(message: "Connect \(name) again.", needsConnection: true)
+                }
+                try await renew()
+                return try await send(method, params, renewed: true)
+            }
+            if status == 404, session != nil { throw Failure(message: Self.sessionEnded) }
+            if method == "initialize", let id = http?.value(forHTTPHeaderField: "Mcp-Session-Id") { session = id }
+            if notification { return nil }
+            var answer: [String: Any]?
+            if http?.value(forHTTPHeaderField: "Content-Type")?.contains("text/event-stream") == true {
+                // Each event's data is one message; the answer is the one with this request's id.
+                for try await line in bytes.lines where line.hasPrefix("data:") {
+                    let data = Data(line.dropFirst(5).trimmingCharacters(in: .whitespaces).utf8)
+                    if let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any], message["id"] as? Int == messageID {
+                        answer = message
+                        break
+                    }
+                }
+            } else {
+                var data = Data()
+                for try await byte in bytes { data.append(byte) }
+                answer = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                if answer == nil, !(200..<300).contains(status) {
+                    throw Failure(message: "\(name) answered \(status): \(String(decoding: data.prefix(300), as: UTF8.self))")
+                }
+            }
+            if let error = answer?["error"] as? [String: Any] {
+                throw Failure(message: error["message"] as? String ?? "\(name) refused that.")
+            }
+            guard let result = answer?["result"] as? [String: Any] else { throw Failure(message: "\(name) didn't answer.") }
+            return result
+        }
+
+        /// The service ended the sign-in and it can't be renewed: forget it here so the button offers Connect.
+        private func disconnectLocally() {
+            if var saved = Saved.read(id) {
+                saved.accessToken = nil
+                saved.refreshToken = nil
+                saved.save(id)
+            }
+            session = nil
+            state = .notConnected
+        }
+
+        /// The tools with their arguments, for whoever builds the app: no account data, only what the service offers.
+        private func writeToolList() async throws {
+            let folder = LampRuntime.folder.appendingPathComponent("services")
+            guard FileManager.default.fileExists(atPath: LampRuntime.folder.path) else { return }
+            let list = try await tools().map { ["name": $0.name, "description": $0.description, "inputSchema": $0.inputSchema] as [String: Any] }
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let data = try JSONSerialization.data(withJSONObject: list, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: folder.appendingPathComponent("\(id)-tools.json"), options: .atomic)
+        }
+
+        fileprivate static func getJSON(_ address: String) async throws -> [String: Any] {
+            guard let url = URL(string: address) else { throw URLError(.badURL) }
+            var request = URLRequest(url: url, timeoutInterval: 20)
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw URLError(.badServerResponse) }
+            return json
+        }
+
+        /// A form posted to the service's token address. A refusal of the grant itself means the sign-in is over.
+        fileprivate static func postForm(_ address: String, _ form: [String: String]) async throws -> [String: Any] {
+            guard let url = URL(string: address) else { throw URLError(.badURL) }
+            var request = URLRequest(url: url, timeoutInterval: 30)
+            request.httpMethod = "POST"
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            var allowed = CharacterSet.alphanumerics
+            allowed.insert(charactersIn: "-._~")
+            request.httpBody = Data(form.map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")" }.joined(separator: "&").utf8)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200..<300).contains(status) else {
+                let error = body["error"] as? String
+                throw Failure(message: (body["error_description"] as? String) ?? "The service refused the sign-in.",
+                              needsConnection: error == "invalid_grant" || error == "invalid_client" || error == "unauthorized_client")
+            }
+            return body
+        }
+
+        fileprivate static func randomText() -> String {
+            var bytes = [UInt8](repeating: 0, count: 32)
+            _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+            return Data(bytes).base64URL
+        }
+
+        /// What's kept for one service: the app's registration with it and, while connected, the sign-in.
+        /// In the Keychain, this device only: never in the app's folder or a backup that leaves the Mac.
+        fileprivate struct Saved: Codable {
+            var clientID: String
+            var clientSecret: String?
+            var redirectURI: String
+            var authorizationEndpoint: String
+            var tokenEndpoint: String
+            var revocationEndpoint: String?
+            var accessToken: String?
+            var refreshToken: String?
+            var expiresAt: Date?
+
+            mutating func take(_ tokens: [String: Any]) throws {
+                guard let access = tokens["access_token"] as? String else { throw Failure(message: "The service didn't finish the sign-in.") }
+                accessToken = access
+                if let refresh = tokens["refresh_token"] as? String { refreshToken = refresh }
+                let seconds = (tokens["expires_in"] as? Double) ?? (tokens["expires_in"] as? String).flatMap(Double.init)
+                expiresAt = seconds.map { Date().addingTimeInterval($0) }
+            }
+
+            private static func query(_ id: String) -> [String: Any] {
+                [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Bundle.main.bundleIdentifier ?? "lamp",
+                 kSecAttrAccount as String: "lamp-service-" + id]
+            }
+
+            static func read(_ id: String) -> Saved? {
+                var query = query(id)
+                query[kSecReturnData as String] = true
+                var item: CFTypeRef?
+                guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
+                return try? JSONDecoder().decode(Saved.self, from: data)
+            }
+
+            func save(_ id: String) {
+                guard let data = try? JSONEncoder().encode(self) else { return }
+                let query = Saved.query(id)
+                if SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound {
+                    var add = query
+                    add[kSecValueData as String] = data
+                    add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+                    let status = SecItemAdd(add as CFDictionary, nil)
+                    if status != errSecSuccess { fputs("LampService: couldn't keep the sign-in (\(status))\n", stderr) }
+                }
+            }
+        }
+
+        /// Where the service sends the person back: this Mac's own address, open only while a sign-in waits.
+        /// Anything that isn't the answer to this sign-in (the browser asking for an icon, an old tab) is
+        /// answered and ignored, and the wait goes on.
+        fileprivate final class Callback: @unchecked Sendable {
+            private let listener: NWListener
+            private let queue = DispatchQueue(label: "lamp.service.callback")
+            private var expected = ""
+            private var service = ""
+            private var waiting: CheckedContinuation<[String: String], Error>?
+            private var outcome: Result<[String: String], Error>?
+            var port: UInt16 { listener.port?.rawValue ?? 0 }
+
+            private init(_ listener: NWListener) { self.listener = listener }
+
+            static func open(port: UInt16) async -> Callback? {
+                let parameters = NWParameters.tcp
+                parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port) ?? .any)
+                parameters.allowLocalEndpointReuse = true
+                guard let listener = try? NWListener(using: parameters) else { return nil }
+                let callback = Callback(listener)
+                let ready: Bool = await withCheckedContinuation { continuation in
+                    callback.starting = continuation
+                    listener.stateUpdateHandler = { [weak callback] state in
+                        switch state {
+                        case .ready: callback?.started(true)
+                        case .failed, .waiting, .cancelled: callback?.started(false)
+                        default: break
+                        }
+                    }
+                    listener.newConnectionHandler = { [weak callback] in callback?.handle($0) }
+                    listener.start(queue: callback.queue)
+                }
+                if !ready { listener.cancel(); return nil }
+                return callback
+            }
+
+            private var starting: CheckedContinuation<Bool, Never>?
+
+            /// Called on the queue as the listener comes up or can't.
+            private func started(_ ready: Bool) {
+                starting?.resume(returning: ready)
+                starting = nil
+            }
+
+            func expect(state: String, service: String) {
+                queue.sync { expected = state; self.service = service }
+            }
+
+            func answer(within seconds: Double) async throws -> [String: String] {
+                queue.asyncAfter(deadline: .now() + seconds) { [weak self] in
+                    self?.finish(.failure(Failure(message: "The sign-in took too long. Try again.")))
+                }
+                return try await withCheckedThrowingContinuation { continuation in
+                    queue.async {
+                        if let outcome = self.outcome { return continuation.resume(with: outcome) }
+                        self.waiting = continuation
+                    }
+                }
+            }
+
+            func close(with error: Error) {
+                queue.async { self.finish(.failure(error)) }
+            }
+
+            private func finish(_ result: Result<[String: String], Error>) {
+                guard outcome == nil else { return }
+                outcome = result
+                listener.cancel()
+                waiting?.resume(with: result)
+                waiting = nil
+            }
+
+            private func handle(_ connection: NWConnection) {
+                connection.start(queue: queue)
+                var received = Data()
+                queue.asyncAfter(deadline: .now() + 10) { connection.cancel() }
+                func read() {
+                    connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, complete, error in
+                        guard let self else { return connection.cancel() }
+                        if let data { received.append(data) }
+                        guard let end = received.range(of: Data("\r\n".utf8)) else {
+                            if complete || error != nil || received.count > 8192 { return connection.cancel() }
+                            return read()
+                        }
+                        let line = String(decoding: received[..<end.lowerBound], as: UTF8.self).split(separator: " ")
+                        let target = line.count > 1 ? URLComponents(string: String(line[1])) : nil
+                        guard line.first == "GET", let target, target.path == "/callback" else {
+                            return self.reply(connection, status: "404 Not Found", text: "")
+                        }
+                        var answer: [String: String] = [:]
+                        for item in target.queryItems ?? [] { answer[item.name] = item.value ?? "" }
+                        guard self.outcome == nil, !self.expected.isEmpty, answer["state"] == self.expected else {
+                            return self.reply(connection, status: "200 OK", text: "This sign-in is out of date. Go back to the app and connect again.")
+                        }
+                        let app = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "the app"
+                        self.reply(connection, status: "200 OK", text: answer["code"] != nil
+                                   ? "\(app) is connected to \(self.service). You can close this tab."
+                                   : "\(app) isn't connected to \(self.service). You can close this tab.")
+                        self.finish(.success(answer))
+                    }
+                }
+                read()
+            }
+
+            private func reply(_ connection: NWConnection, status: String, text: String) {
+                let escaped = text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
+                let html = "<!doctype html><meta charset=utf-8><title>\(escaped)</title><body style=\"font: 15px -apple-system; margin: 4em auto; max-width: 30em; text-align: center\"><p>\(escaped)</p>"
+                let body = Data(html.utf8)
+                let head = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+                connection.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in connection.cancel() })
+            }
+        }
+    }
+
+    /// Connect, waiting for the person to approve, and connected with Disconnect: the one control a view
+    /// needs for a service.
+    struct LampServiceButton: View {
+        @ObservedObject var service: LampService
+
+        var body: some View {
+            HStack(spacing: 8) {
+                switch service.state {
+                case .notConnected:
+                    Button("Connect \(service.name)…") { connect() }
+                case .connecting:
+                    ProgressView().controlSize(.small)
+                    Text("Approve in your browser…").foregroundStyle(.secondary)
+                    Button("Cancel") { service.cancel() }
+                case .connected:
+                    Label("Connected to \(service.name)", systemImage: "checkmark.circle.fill").foregroundStyle(.secondary)
+                    Button("Disconnect") { service.disconnect() }
+                case .failed(let message):
+                    Text(message).foregroundStyle(.secondary).lineLimit(2)
+                    Button("Try Again") { connect() }
+                }
+            }
+        }
+
+        private func connect() { Task { try? await service.connect() } }
+    }
+
+    private extension Data {
+        var base64URL: String {
+            base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        }
+    }
+
+    #endif
+
     /// AI for this app, using the same AI account as Lamp. No API keys needed.
     ///
     ///     let summary = try await LampAI.ask("Summarize these notes:\n\(notes)")

@@ -731,6 +731,23 @@ Spotlight, and `.lampSpotlightOpen { id in … }` on a view hears which one was 
 modifier, since an app has no other place that's told. The rules are `Agent.Rules.share` (as `macShare`,
 `iPhoneShare` and `universalShare`) and the Spotlight part of `Rules.sharedBlocks`.
 
+### Services the person already uses
+
+A Mac app reaches the person's Notion, Linear, Todoist, Jira and Confluence or monday.com through that service's own
+MCP server (`LampService` in LampSupport.swift, one `static let` per service, and `LampServiceButton`). Nobody
+registers anything beforehand: Connect finds the service's sign-in addresses the way MCP
+describes them (the server's 401 names its resource description, which names the authorization server), registers
+the app with the service under its own name (dynamic client registration, no secret), and opens the service's page
+in the browser with PKCE. The service sends the person back to this Mac's own address (`127.0.0.1`, a listener open
+only while that sign-in waits, which ignores anything that isn't the answer to it), and the app trades the code for
+its sign-in. The registration and the sign-in are one Keychain item of the app's, this device only: never in the
+app's folder, so a shared copy arrives disconnected and is flagged in the review (`Sharing.checklist`). A service is
+added only when its server lets an app register itself this way; one that needs a developer app or a pasted token
+doesn't belong here. Calls are the service's own MCP tools (`call`, `tools`); after a sign-in the app writes the tool
+list, with no account data, to `.lamp/runtime/services/` for the builder. The builder's rule is `Agent.Rules.services`,
+after the Mac's own accounts and before `LampComputer`. Not on iPhone yet: a phone can't keep the listener open while
+the browser is in front.
+
 ## Naming: Lamp and Lamp
 
 The app is called **Lamp**: that's the name in everything the user reads (the interface, Help, the agent's
