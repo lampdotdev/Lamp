@@ -120,7 +120,7 @@ enum LiveReload {
         let notType = try! NSRegularExpression(pattern: #"\b(?:func|var|let|init|subscript)\b|="#)
         // Only what's declared directly in a type's body counts: a local `let` in a function, or a closure's,
         // isn't part of any layout. Each brace is a type's when its line opens a struct, class, enum or actor.
-        var stack: [Bool] = [], out: [String] = []
+        var stack: [Bool] = [], out: [String] = [], pending = false
         for line in declarations(in: source) {
             let range = NSRange(line.startIndex..., in: line)
             if stack.last == true, !line.contains("static "), !line.contains("class var"),
@@ -135,7 +135,10 @@ enum LiveReload {
                 }
                 out.append(shape)
             }
-            let isType = typeOpening.firstMatch(in: line, range: range) != nil && notType.firstMatch(in: line, range: range) == nil
+            // A type's opening brace may come on a line of its own: the declaration waits for it.
+            let declaresType = typeOpening.firstMatch(in: line, range: range) != nil && notType.firstMatch(in: line, range: range) == nil
+            let isType = declaresType || (pending && line.trimmingCharacters(in: .whitespaces).hasPrefix("{"))
+            if !line.trimmingCharacters(in: .whitespaces).isEmpty { pending = declaresType && !line.contains("{") }
             for character in line {
                 if character == "{" { stack.append(isType && !stack.contains(false)) }
                 else if character == "}", !stack.isEmpty { stack.removeLast() }
@@ -144,16 +147,15 @@ enum LiveReload {
         return out
     }
 
-    /// What kind of value a starting value is, for a property with no type written: a number, text, true or
-    /// false, a list, or what it's made with (`Foo(…)`, `.init`), else the whole of it, so another value of the
-    /// same kind keeps the layout and another kind doesn't.
+    /// What kind of value a starting value is, for a property with no type written: a plain number, text, or
+    /// true or false, whose type the literal settles, so another value of the same kind keeps the layout. Anything
+    /// else (a list, a call, an expression) is kept whole: its type can't be read from the text, so any change to
+    /// it counts.
     static func kind(of value: String) -> String {
         if value.range(of: #"^-?\d[\d_]*$"#, options: .regularExpression) != nil { return "<integer>" }
         if value.range(of: #"^-?\d[\d_]*\.\d[\d_]*$"#, options: .regularExpression) != nil { return "<decimal>" }
-        if value.hasPrefix("\"") { return "<text>" }
+        if value == "\"\"" { return "<text>" }
         if value == "true" || value == "false" { return "<bool>" }
-        if value.hasPrefix("[") { return "<list>" }
-        if let call = value.range(of: #"^[A-Za-z_][\w.]*(?=\s*[({])"#, options: .regularExpression) { return String(value[call]) + "(…)" }
         return value
     }
 
