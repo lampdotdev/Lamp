@@ -7208,8 +7208,8 @@ enum Template {
             }
         }
         private static let presenter = Presenter()
-        /// Sets of buttons are added one after another: the system replaces the whole list each time, so two at
-        /// once would lose one.
+        /// Sets of buttons are added one after another (the system replaces the whole list each time, so two at
+        /// once would lose one), and notifications are added and cancelled in the order asked.
         private static let categories = DispatchQueue(label: "LampNotifications.categories")
         /// For each id, which send or cancel came last: a send whose permission prompt was still up when a later
         /// send or a cancel came for the same id doesn't add its notification afterwards.
@@ -7255,12 +7255,18 @@ enum Template {
                 #if os(iOS)
                 if timeSensitive { content.interruptionLevel = .timeSensitive }
                 #endif
+                // Adding and a cancel's removal take turns on one queue, each finished before the next, so a cancel
+                // that comes after a send is never followed by that send's add.
                 let add = {
-                    guard isLatest(id, turn) else { return }
-                    let trigger = date.map {
-                        UNCalendarNotificationTrigger(dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: $0), repeats: false)
+                    categories.async {
+                        guard isLatest(id, turn) else { return }
+                        let trigger = date.map {
+                            UNCalendarNotificationTrigger(dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: $0), repeats: false)
+                        }
+                        let added = DispatchSemaphore(value: 0)
+                        center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger)) { _ in added.signal() }
+                        added.wait()
                     }
-                    center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger))
                 }
                 guard !actions.isEmpty else { return add() }
                 // A set of buttons is a category the system must know before the notification is shown: one per
@@ -7284,8 +7290,10 @@ enum Template {
         /// Takes back a notification sent with `at` that hasn't been shown yet, or clears one that has.
         static func cancel(_ id: String) {
             _ = next(id)
-            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id])
-            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
+            categories.async {
+                UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id])
+                UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
+            }
         }
     }
 
