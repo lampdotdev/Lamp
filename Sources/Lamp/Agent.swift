@@ -300,7 +300,11 @@ enum Agent {
         you say so plainly). Sync needs the device signed in to iCloud; the simulator usually isn't, so what you \
         see there is the data kept on that device, and `LampSync.shared.status` says why. Offer the status in \
         the app's settings. Use it for the data people would expect everywhere; settings for one device stay \
-        in LampStore.
+        in LampStore. Apple's terms forbid keeping sensitive health information about a person in iCloud: what \
+        is medical (diagnoses, conditions, symptoms, medications, lab results, clinical records, reproductive or \
+        mental-health entries) stays on the device, in LampStore, never in LampSync. Everyday activity and \
+        fitness numbers (steps, distance, active calories, workouts, water) aren't that, and may sync. When \
+        it's unclear which a kind is, keep it on the device.
         """
 
         static let universalTry = """
@@ -391,7 +395,9 @@ enum Agent {
         person stops and for how long, which needs `"backgroundModes": ["location"]`). Weather: `LampWeather` \
         (`now(latitude:longitude:)`, `hours`, `days`, `here()`), after `{"weather": true}` in capabilities.json, \
         for apps with an iPhone half only; the team also turns WeatherKit on for the app at developer.apple.com \
-        once, and the call's message says so until then. Music: `LampMusic` (`authorize()`, `recentlyPlayed()`, \
+        once, and the call's message says so until then. Apple's terms ask for `LampWeatherAttribution()` (its \
+        Weather mark, linking to its sources) wherever its weather is shown, allow forecasts to be kept only \
+        briefly (never in LampStore or LampSync), and rule out apps meant for emergencies or safety. Music: `LampMusic` (`authorize()`, `recentlyPlayed()`, \
         `library()`, `search(_:)`, `play(_:)`, `pause()`, and on the iPhone `nowPlaying`), Apple Music only, with \
         MusicKit turned on for the app at developer.apple.com the same way.
         """
@@ -407,7 +413,9 @@ enum Agent {
         that work in every app, opening at login, the clipboard watcher, Mail, other apps, the menu bar, the \
         permission screens): never call them. \(Rules.sharedBlocks) Home: `LampHome` (iPhone only, after \
         `{"homekit": true}` in capabilities.json): `accessories()` (lights, locks, thermostats, sensors, switches, \
-        each with its room and state), `set(_:on:)`, `set(_:brightness:)`, `set(_:locked:)`, `read(_:)`. Make the most \
+        each with its room and state), `set(_:on:)`, `set(_:brightness:)`, `set(_:locked:)`, `read(_:)`; Apple's \
+        terms allow it only in an app whose job is controlling the home, and what it reads never leaves the \
+        phone: not to LampAI, a server, LampSync or the Mac. Make the most \
         of being on a phone: the camera, photos, location, haptics, and being with the person wherever they are.
         """
 
@@ -886,7 +894,8 @@ enum Agent {
         water, protein and the rest, each with `unitName`. The simulator has no Health data of its own: save a \
         sample there to have something to read, and only there. Never write test data on a person's own phone, \
         where it would join their real record; what the app logs for them is only what they told it. A Mac has none at all (`LampHealth.isAvailable` is false): an app for \
-        both reads on the iPhone and keeps what the Mac shows in LampSync. NFC tags: CoreNFC. \
+        both reads on the iPhone and keeps what the Mac shows in LampSync, if it's activity and fitness that may \
+        go to iCloud (see the iCloud rule); medical data stays on the iPhone. NFC tags: CoreNFC. \
         Notifications at a time or place: UNUserNotificationCenter with a trigger. Siri and Shortcuts: App \
         Intents. AR: ARKit with RealityKit. Music: MusicKit or MediaPlayer. The app already declares why it \
         wants each of these (microphone, speech, camera, photos, location, motion, Bluetooth, Face ID, health, \

@@ -4695,6 +4695,48 @@ enum Template {
         }
     }
 
+    /// Apple's weather attribution, which Apple's terms ask for wherever its weather is shown: the Apple Weather
+    /// mark for the light or dark look, linking to the page of where the data comes from.
+    ///
+    ///     VStack { WeatherView(now: now); LampWeatherAttribution() }
+    struct LampWeatherAttribution: View {
+        @Environment(\.colorScheme) private var scheme
+        @State private var attribution: WeatherAttribution?
+        var height: CGFloat = 12
+
+        /// Apple's page of weather sources, linked to until the mark has loaded, so the attribution is never missing.
+        private static let sourcesPage = URL(string: "https://weatherkit.apple.com/legal-attribution.html")!
+
+        var body: some View {
+            Group {
+                if let attribution {
+                    Link(destination: attribution.legalPageURL) {
+                        AsyncImage(url: scheme == .dark ? attribution.combinedMarkDarkURL : attribution.combinedMarkLightURL) { image in
+                            image.resizable().scaledToFit()
+                        } placeholder: {
+                            Text(attribution.serviceName).font(.caption2)
+                        }
+                        .frame(height: height)
+                    }
+                    .accessibilityLabel(attribution.serviceName)
+                } else {
+                    Link("Weather data sources", destination: Self.sourcesPage).font(.caption2)
+                }
+            }
+            .task {
+                // Asked again, less often each time, until it answers: offline at first is no reason to go without.
+                var pause: UInt64 = 2
+                while attribution == nil, !Task.isCancelled {
+                    attribution = try? await WeatherService.shared.attribution
+                    if attribution == nil {
+                        try? await Task.sleep(nanoseconds: pause * 1_000_000_000)
+                        pause = min(pause * 2, 60)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Music
 
     /// Apple Music: what the person has played lately, their library, the catalog, and playing a song. Needs

@@ -315,6 +315,11 @@ it off the Mac half's signature, which couldn't carry it): a Mac has no Health d
 there, and an app for both reads on the iPhone and keeps what the Mac shows in LampSync. The simulator has
 HealthKit with no data in it, so the agent is told to save a sample before reading (`Agent.Rules.iPhoneHardware`).
 `HealthTests` compiles the block out of the template and checks every kind's unit.
+Apple's Developer Program License Agreement (3.3.3(D)) forbids using iCloud or CloudKit for sensitive,
+individually-identifiable health information. The "sensitive" matters: the iCloud rule (`Agent.Rules.icloud`)
+keeps what is medical (diagnoses, conditions, symptoms, medications, lab results, clinical records, reproductive or
+mental-health entries) on the device, and lets everyday activity and fitness numbers such as step counts sync,
+which they aren't. When it's unclear, on the device.
 
 ## Photos, location, weather, music and the home
 
@@ -331,6 +336,11 @@ only. Apple also wants WeatherKit and MusicKit turned on for the app under App S
 which automatic signing doesn't do: the blocks' failures say so. The reasons the system shows are in
 `iosUsageDescriptions` and, for the Mac, in `Store.deploy` and `universalMacInfoPlist`. The agent is told in
 `Agent.Rules.sharedBlocks` (both kinds) and the Home part of `iPhoneBlocks`.
+Two of them carry Apple's own terms, which the rules repeat. HomeKit is only for an app whose job is the home,
+and what it reads may not leave the phone (3.3.3(I)): not to an AI model, a server, iCloud or the Mac. WeatherKit
+(Attachment 8) wants Apple's attribution wherever its weather is shown, which `LampWeatherAttribution` draws
+(the Apple Weather mark from `WeatherService.attribution`, linking to its sources page), allows forecasts to be
+kept only briefly, and rules out apps for emergencies.
 
 ## Generated apps
 
