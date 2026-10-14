@@ -891,7 +891,11 @@ enum Agent {
         "today")` in a complication's timeline, nil until the phone has shared and the watch app has run. A tap \
         on the watch: `LampWatch.send("addGlass", 1)`, done in the app by `LampWatch.onAction { name, payload in \
         … }` set at launch (`payload.decode(Int.self)`), which shares what changed. Watch/LampWatchSupport.swift \
-        and its copy in Complications/ are Lamp's: never edit them. Lamp opens the watch app on an Apple Watch \
+        and its copy in Complications/ are Lamp's: never edit them. A workout on the watch, saved to Health with \
+        heart rate, calories and distance: `@StateObject private var workout = LampWorkout()` from that file, \
+        `try await workout.start(.running)`, `pause()`, `resume()`, `await workout.end()`, with `{"healthkit": \
+        true}` in capabilities.json; the simulator's watch measures nothing, so check it starts and ends. The watch \
+        app's icon is the app's. Lamp opens the watch app on an Apple Watch \
         simulator beside the iPhone; `look_at_app` and `use_app` see only the iPhone, so don't try them on the \
         watch. Say in a sentence that it's on the watch, and that a complication is added by editing a watch face.
         """

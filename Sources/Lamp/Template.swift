@@ -150,6 +150,7 @@ enum Template {
 
     private static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
         let contents = template
+            .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
             .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
             .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name))
             .replacingOccurrences(of: "{{NAME}}", with: project.name)
@@ -797,6 +798,7 @@ enum Template {
           <key>UIDeviceFamily</key><array><integer>4</integer></array>
           <key>WKApplication</key><true/>
           <key>WKCompanionAppBundleIdentifier</key><string>{{BUNDLE}}</string>
+        {{WATCH_PLIST}}
           <key>DTPlatformName</key><string>watchsimulator</string>
           <key>CFBundleSupportedPlatforms</key><array><string>WatchSimulator</string></array>
           <key>LampAppGroup</key><string>group.{{BUNDLE}}</string>
@@ -850,7 +852,36 @@ enum Template {
     /// The watch app's entitlements for the simulator, which build.sh links into its binaries: the folder it
     /// shares with its complications, named as the iPhone app's would be (it's on another device).
     static func simulatorWatchEntitlementsPlist(for project: LampProject) -> String {
-        Capabilities().entitlementsPlist(container: nil, platform: .ios, appGroup: appGroup(for: project, onDevice: false))
+        watchCapabilities(project).entitlementsPlist(container: nil, platform: .ios, appGroup: appGroup(for: project, onDevice: false))
+    }
+
+    /// What the watch app is signed for beyond its shared folder: Health, when the app declares it, for
+    /// workouts recorded on the watch (`LampWorkout`).
+    static func watchCapabilities(_ project: LampProject) -> Capabilities {
+        var watch = Capabilities()
+        watch.healthkit = Capabilities.load(project).healthkit
+        return watch
+    }
+
+    /// The watch app's Info.plist lines that depend on what the app declares: a workout keeps running with the
+    /// screen off only when the app says it does workouts.
+    static func watchPlistLines(for project: LampProject) -> String {
+        Capabilities.load(project).healthkit == true ? "  <key>WKBackgroundModes</key><array><string>workout-processing</string></array>" : ""
+    }
+
+    /// An asset catalog holding the app's icon for watchOS, which takes its icon only from a compiled catalog:
+    /// compiled into the simulator's watch app by `actool` (Store.finishSimulatorBundle), and the watch
+    /// target's own catalog in the Xcode project.
+    static func writeWatchIconCatalog(at catalog: URL, icon: URL?) throws {
+        let fm = FileManager.default
+        let iconset = catalog.appendingPathComponent("AppIcon.appiconset")
+        try fm.createDirectory(at: iconset, withIntermediateDirectories: true)
+        try #"{ "info": { "author": "xcode", "version": 1 } }"#.write(to: catalog.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
+        try? fm.removeItem(at: iconset.appendingPathComponent("AppIcon.png"))
+        if let icon, fm.fileExists(atPath: icon.path) { try fm.copyItem(at: icon, to: iconset.appendingPathComponent("AppIcon.png")) }
+        let image = (icon.map { fm.fileExists(atPath: $0.path) } ?? false) ? #""filename": "AppIcon.png", "# : ""
+        try #"{ "images": [ { \#(image)"idiom": "universal", "platform": "watchos", "size": "1024x1024" } ], "info": { "author": "xcode", "version": 1 } }"#
+            .write(to: iconset.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
     }
 
     /// The watch app's Info.plist in the Xcode project, for a phone or an app for both's iPhone half.
@@ -869,6 +900,7 @@ enum Template {
       <key>WKApplication</key><true/>
       <key>WKCompanionAppBundleIdentifier</key><string>{{BUNDLE}}</string>
       <key>LampAppGroup</key><string>{{APP_GROUP}}</string>
+    {{WATCH_PLIST}}
     {{USAGE}}
     </dict></plist>
 
@@ -915,9 +947,12 @@ enum Template {
         \t\tD0000000000000000000000E /* Complications */ = {isa = PBXFileSystemSynchronizedBuildFileExceptionSet; membershipExceptions = (\(exceptions)); target = D00000000000000000000005 /* {{EXE}}Watch */; };
         \t\tD00000000000000000000003 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
         \t\tD00000000000000000000004 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-        \t\tD00000000000000000000005 /* {{EXE}}Watch */ = {isa = PBXNativeTarget; buildConfigurationList = D00000000000000000000006; buildPhases = (D00000000000000000000003 /* Sources */, D00000000000000000000004 /* Frameworks */{{WATCH_EMBED}}); buildRules = (); dependencies = ({{WATCH_DEPENDENCY}}); fileSystemSynchronizedGroups = (D00000000000000000000002 /* Watch */); name = "{{EXE}}Watch"; packageProductDependencies = (); productName = "{{EXE}}Watch"; productReference = D00000000000000000000001 /* {{EXE}}Watch.app */; productType = "com.apple.product-type.application"; };
+        \t\tD0000000000000000000001C /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (D0000000000000000000001E /* WatchAssets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
+        \t\tD0000000000000000000001D /* WatchAssets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = WatchAssets.xcassets; sourceTree = "<group>"; };
+        \t\tD0000000000000000000001E /* WatchAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D0000000000000000000001D /* WatchAssets.xcassets */; };
+        \t\tD00000000000000000000005 /* {{EXE}}Watch */ = {isa = PBXNativeTarget; buildConfigurationList = D00000000000000000000006; buildPhases = (D00000000000000000000003 /* Sources */, D00000000000000000000004 /* Frameworks */, D0000000000000000000001C /* Resources */{{WATCH_EMBED}}); buildRules = (); dependencies = ({{WATCH_DEPENDENCY}}); fileSystemSynchronizedGroups = (D00000000000000000000002 /* Watch */); name = "{{EXE}}Watch"; packageProductDependencies = (); productName = "{{EXE}}Watch"; productReference = D00000000000000000000001 /* {{EXE}}Watch.app */; productType = "com.apple.product-type.application"; };
         \t\tD00000000000000000000006 /* Build configuration list for the watch app */ = {isa = XCConfigurationList; buildConfigurations = (D00000000000000000000007 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-        \t\tD00000000000000000000007 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = Watch.entitlements; INFOPLIST_FILE = "Watch-Info.plist"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}.watchkitapp"; \(settings) }; name = Release; };
+        \t\tD00000000000000000000007 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = Watch.entitlements; INFOPLIST_FILE = "Watch-Info.plist"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}.watchkitapp"; ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; \(settings) }; name = Release; };
         \t\tD00000000000000000000008 /* {{EXE}}Watch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = D00000000000000000000001 /* {{EXE}}Watch.app */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
         \t\tD00000000000000000000009 /* Embed Watch Content */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = "$(CONTENTS_FOLDER_PATH)/Watch"; dstSubfolderSpec = 16; files = (D00000000000000000000008 /* {{EXE}}Watch.app in Embed Watch Content */); name = "Embed Watch Content"; runOnlyForDeploymentPostprocessing = 0; };
         \t\tD0000000000000000000000A /* PBXTargetDependency */ = {isa = PBXTargetDependency; platformFilter = ios; target = D00000000000000000000005 /* {{EXE}}Watch */; targetProxy = D0000000000000000000000B /* PBXContainerItemProxy */; };
@@ -954,7 +989,7 @@ enum Template {
         text = lines.joined(separator: "\n")
         let targets = "D00000000000000000000005 /* {{EXE}}Watch */" + (complications ? ", D00000000000000000000015 /* {{EXE}}WatchComplications */" : "")
         let products = "D00000000000000000000001 /* {{EXE}}Watch.app */" + (complications ? ", D00000000000000000000011 /* {{EXE}}WatchComplications.appex */" : "")
-        let groups = "D00000000000000000000002 /* Watch */, " + (complications ? "D00000000000000000000012 /* Complications */, " : "")
+        let groups = "D00000000000000000000002 /* Watch */, D0000000000000000000001D /* WatchAssets.xcassets */, " + (complications ? "D00000000000000000000012 /* Complications */, " : "")
         text = swap(text, "targets = (A0000000000000000000000B /* {{EXE}} */", "targets = (A0000000000000000000000B /* {{EXE}} */, " + targets)
         text = swap(text, "children = (A00000000000000000000006 /* {{EXE}}.app */", "children = (A00000000000000000000006 /* {{EXE}}.app */, " + products)
         text = swap(text, "children = (A00000000000000000000007 /* Sources */, ", "children = (A00000000000000000000007 /* Sources */, " + groups)
@@ -974,6 +1009,7 @@ enum Template {
     #if !LAMP_COMPLICATION
     import WatchConnectivity
     import WidgetKit
+    import HealthKit
     #endif
 
     /// What the iPhone app shared with `LampWatch.share(value, as: "summary")`, and, in the watch app, asking
@@ -1101,6 +1137,100 @@ enum Template {
     }
     #endif
 
+
+    #if !LAMP_COMPLICATION
+    /// A workout recorded on the watch and saved to Health, with what the watch measures as it goes. Needs
+    /// `{"healthkit": true}` in capabilities.json; asks for Health access the first time.
+    ///
+    ///     @StateObject private var workout = LampWorkout()
+    ///     try await workout.start(.running)         // or .walking, .cycling, .functionalStrengthTraining…
+    ///     workout.pause(); workout.resume()
+    ///     await workout.end()                        // saved to Health
+    ///     workout.elapsed, workout.heartRate, workout.calories, workout.meters, workout.isRunning
+    @MainActor
+    final class LampWorkout: NSObject, ObservableObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuilderDelegate {
+        struct Failure: LocalizedError {
+            let message: String
+            var errorDescription: String? { message }
+        }
+
+        @Published private(set) var state: HKWorkoutSessionState = .notStarted
+        @Published private(set) var heartRate: Double = 0     // beats a minute, the latest
+        @Published private(set) var calories: Double = 0      // active kilocalories so far
+        @Published private(set) var meters: Double = 0        // walked or run so far
+        @Published private(set) var started: Date?
+        var isRunning: Bool { state == .running }
+        /// Time spent working out, pauses left out. Read it in a TimelineView to show it ticking.
+        var elapsed: TimeInterval { builder?.elapsedTime ?? 0 }
+
+        private let store = HKHealthStore()
+        private var session: HKWorkoutSession?
+        private var builder: HKLiveWorkoutBuilder?
+
+        func start(_ activity: HKWorkoutActivityType = .running, outdoors: Bool = true) async throws {
+            guard HKHealthStore.isHealthDataAvailable() else { throw Failure(message: "Health isn't available on this watch.") }
+            guard session == nil else { return }
+            let measured: [HKQuantityTypeIdentifier] = [.heartRate, .activeEnergyBurned, .distanceWalkingRunning, .distanceCycling]
+            try await store.requestAuthorization(toShare: [HKObjectType.workoutType()],
+                                                 read: Set(measured.map { HKQuantityType($0) } + [HKObjectType.workoutType()]))
+            let configuration = HKWorkoutConfiguration()
+            configuration.activityType = activity
+            configuration.locationType = outdoors ? .outdoor : .indoor
+            let session = try HKWorkoutSession(healthStore: store, configuration: configuration)
+            let builder = session.associatedWorkoutBuilder()
+            builder.dataSource = HKLiveWorkoutDataSource(healthStore: store, workoutConfiguration: configuration)
+            session.delegate = self
+            builder.delegate = self
+            self.session = session
+            self.builder = builder
+            (heartRate, calories, meters) = (0, 0, 0)
+            let now = Date()
+            started = now
+            session.startActivity(with: now)
+            try await builder.beginCollection(at: now)
+        }
+
+        func pause() { session?.pause() }
+        func resume() { session?.resume() }
+
+        /// Ends the workout and saves it to Health; the saved workout, or nil when none was under way.
+        @discardableResult
+        func end() async -> HKWorkout? {
+            guard let session, let builder else { return nil }
+            session.end()
+            try? await builder.endCollection(at: Date())
+            let workout = try? await builder.finishWorkout()
+            self.session = nil
+            self.builder = nil
+            return workout
+        }
+
+        nonisolated func workoutSession(_ workoutSession: HKWorkoutSession, didChangeTo toState: HKWorkoutSessionState,
+                                        from fromState: HKWorkoutSessionState, date: Date) {
+            Task { @MainActor in self.state = toState }
+        }
+
+        nonisolated func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {
+            print("LampWorkout: \(error.localizedDescription)")
+        }
+
+        nonisolated func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {}
+
+        nonisolated func workoutBuilder(_ workoutBuilder: HKLiveWorkoutBuilder, didCollectDataOf collectedTypes: Set<HKSampleType>) {
+            let rate = workoutBuilder.statistics(for: HKQuantityType(.heartRate))?.mostRecentQuantity()?
+                .doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
+            let energy = workoutBuilder.statistics(for: HKQuantityType(.activeEnergyBurned))?.sumQuantity()?.doubleValue(for: .kilocalorie())
+            let distance = [HKQuantityTypeIdentifier.distanceWalkingRunning, .distanceCycling].compactMap {
+                workoutBuilder.statistics(for: HKQuantityType($0))?.sumQuantity()?.doubleValue(for: .meter())
+            }.max()
+            Task { @MainActor in
+                if let rate { self.heartRate = rate }
+                if let energy { self.calories = energy }
+                if let distance { self.meters = distance }
+            }
+        }
+    }
+    #endif
     """#
 
     /// Why the app wants each protected thing, in Info.plist: iOS kills an app on the spot that touches one
@@ -1468,7 +1598,8 @@ enum Template {
         // The watch app's and its complications': the folder they share on the watch, and nothing else.
         if watch {
             files.append(("Watch-Info.plist", deviceWatchInfoPlist))
-            files.append(("Watch.entitlements", Capabilities().entitlementsPlist(container: nil, platform: .ios, appGroup: group)))
+            files.append(("Watch.entitlements", watchCapabilities(project).entitlementsPlist(container: nil, platform: .ios, appGroup: group)))
+            try writeWatchIconCatalog(at: dir.appendingPathComponent("WatchAssets.xcassets"), icon: hasIcon ? Icons.squareURL(project) : nil)
         }
         if complications {
             files.append(("Complications-Info.plist", deviceComplicationsInfoPlist))
@@ -1479,7 +1610,8 @@ enum Template {
             let contents = template
                 .replacingOccurrences(of: "{{WIDGET_PLIST}}", with: widgetPlist)
                 .replacingOccurrences(of: "{{APP_GROUP}}", with: group)
-                .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
+                .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
+            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
                 .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name))
                 .replacingOccurrences(of: "{{BACKGROUND}}", with: capabilities.backgroundPlistLine)
                 .replacingOccurrences(of: "{{ICLOUD}}", with: capabilities.icloudPlistLine(for: project))

@@ -3,27 +3,30 @@ import AppKit
 import UniformTypeIdentifiers
 
 extension UTType {
-    /// A shared Lamp app: a zip with the app's Swift sources, its widget's if it has one, APP.md, icon.json and icon artwork.
+    /// A shared Lamp app: a zip with the app's Swift sources, its widget's and watch app's if it has them, APP.md, icon.json and icon artwork.
     /// Declared in Lamp's Info.plist (see build.sh) so double-clicking one opens Lamp.
     static let lampApp = UTType(exportedAs: "dev.lamp.lampapp", conformingTo: .data)
 }
 
 /// Exporting and importing `.lampapp` files.
 ///
-/// A shared app carries only what's needed to rebuild it: Swift sources (the app's and its widget's), APP.md, icon.json, capabilities.json, the
+/// A shared app carries only what's needed to rebuild it: Swift sources (the app's, its widget's and its watch app's), APP.md, icon.json, capabilities.json, the
 /// icon artwork, and the attached files the code uses. Never the sender's chat, tokens, agent sessions or git history. On import, Lamp
 /// writes its own Package.swift, build.sh and LampSupport.swift, so nothing in the file runs at
 /// build time; the code only runs when the app is opened, after the recipient agrees.
 enum Sharing {
     /// The newest kind of file this Lamp opens. 2: the app's own files travel in Assets/ (1 bundled the chat's
     /// attachments the code named). 3: the file also carries a widget's code, in Widget/. 4: it also carries
-    /// what the app declares in capabilities.json.
-    static let formatVersion = 4
+    /// what the app declares in capabilities.json. 6: it may be an iPhone app or an app for both (`platform`),
+    /// with an Apple Watch app's code in Watch/.
+    static let formatVersion = 6
 
     /// What a file says it is: the oldest number a Lamp must know to open it whole. Only a file with a widget
     /// is a 3 and only one that declares capabilities a 4, so an app with neither still opens in an older
     /// Lamp, and a Lamp that would build the app without its widget or its capabilities says to update instead.
-    static func format(withWidget: Bool, capabilities: Bool = false) -> Int { capabilities ? 4 : withWidget ? 3 : 2 }
+    static func format(withWidget: Bool, capabilities: Bool = false, platform: Platform = .mac, watch: Bool = false) -> Int {
+        platform != .mac || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
+    }
 
     @MainActor private static var picker: NSSharingServicePicker?
     @MainActor private static var shareRequest = UUID()
@@ -78,6 +81,10 @@ enum Sharing {
         /// What the app is, in its sender's words (`AppDescription`). Files from an app that
         /// has none, or from before apps had one, carry none.
         var description: String?
+        /// What it's made for (`Platform`) and which device an iPhone app opens on first. Files from before
+        /// iPhone apps could be shared have neither and are Mac apps.
+        var platform: Platform?
+        var family: DeviceFamily?
     }
 
     /// Which app a shared file is, so a Mac that already has it can take the new one as an update rather
@@ -137,8 +144,6 @@ enum Sharing {
 
     /// Writes `<Name>.lampapp` to a temporary folder and returns its URL.
     static func export(_ project: LampProject) throws -> URL {
-        // Another Lamp would open the file as a Mac app; iPhone apps keep to this Mac until import knows them.
-        guard project.platform == .mac else { throw ImportError("Sharing iPhone apps isn't available yet.") }
         let fm = FileManager.default
         let work = fm.temporaryDirectory.appendingPathComponent("forge-share-\(UUID().uuidString)")
         let stage = work.appendingPathComponent("app")
@@ -155,7 +160,10 @@ enum Sharing {
         // LampSupport.swift: the Mac that opens the file writes its own.
         let widgetCode = Template.hasWidget(project) ? swiftSources(in: project.dir.appendingPathComponent(Template.widgetFolder))
             .filter { $0.lastPathComponent != Template.widgetSupportFile } : []
-        for file in widgetCode {
+        // The watch app's code goes the same way, without Lamp's own files there.
+        let watchCode = Template.hasWatch(project) ? swiftSources(in: project.dir.appendingPathComponent(Template.watchFolder))
+            .filter { !Template.watchSupportPaths.contains(relativePath(of: $0, in: project.dir)) } : []
+        for file in widgetCode + watchCode {
             let target = stage.appendingPathComponent(relativePath(of: file, in: project.dir))
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
@@ -190,8 +198,11 @@ enum Sharing {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(Manifest(format: format(withWidget: !widgetCode.isEmpty, capabilities: !capabilities.isEmpty), name: project.name, exportedAt: Date(),
-                                    app: identity(of: project), description: AppDescription.description(of: project)))
+        try encoder.encode(Manifest(format: format(withWidget: !widgetCode.isEmpty, capabilities: !capabilities.isEmpty,
+                                                    platform: project.platform, watch: !watchCode.isEmpty),
+                                    name: project.name, exportedAt: Date(),
+                                    app: identity(of: project), description: AppDescription.description(of: project),
+                                    platform: project.platform, family: project.platform.hasIOS ? project.family : nil))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
         // Everything staged, counted and measured the way the importer's listing does (files and folders,
@@ -239,15 +250,19 @@ enum Sharing {
         var description: String? = nil   // Manifest.description, the sender's words; shown as text, never trusted
         /// What the sender's capabilities.json declares, through the checks the agent's own goes through.
         var capabilities = Template.Capabilities()
+        var platform = Platform.mac
+        var family = DeviceFamily.iphone
         let folder: URL          // unpacked, temporary
-        /// All the code in the file, and the only code there is: the app's (Sources/) and its widget's
-        /// (Widget/), .swift files only. The review reads this list and the install writes from this list,
+        /// All the code in the file, and the only code there is: the app's (Sources/), its widget's
+        /// (Widget/) and its watch app's (Watch/), .swift files only. The review reads this list and the install writes from this list,
         /// so nothing reaches an app's folder as code without having been put before the review.
         let sources: [URL]
         /// Where a code file sits in the app: "Sources/App.swift", "Widget/Widget.swift".
         func path(of file: URL) -> String { Sharing.relativePath(of: file, in: folder) }
         /// Whether the file brings a widget.
         var hasWidget: Bool { sources.contains { path(of: $0).hasPrefix(Template.widgetFolder + "/") } }
+        /// Whether the file brings an Apple Watch app.
+        var hasWatch: Bool { sources.contains { path(of: $0).hasPrefix(Template.watchFolder + "/") } }
         let attachments: [URL]   // the app's own files (Assets/, or Attachments/ from an older Lamp); bundled as data, never run by Lamp
         /// Where each of them goes inside the app's Assets/ folder.
         func assetPath(of file: URL) -> String {
@@ -295,6 +310,8 @@ enum Sharing {
         // Lamp's own file there is never taken from a file; this Mac writes its own.
         let sources = appCode + swiftSources(in: folder.appendingPathComponent(Template.widgetFolder))
             .filter { $0.lastPathComponent != Template.widgetSupportFile }
+            + swiftSources(in: folder.appendingPathComponent(Template.watchFolder))
+            .filter { !Template.watchSupportPaths.contains(relativePath(of: $0, in: folder)) }
         // Code that isn't valid text can't be read by Lamp's checks or the AI, and Lamp never writes any.
         guard sources.allSatisfy({ (try? String(contentsOf: $0, encoding: .utf8)) != nil }) else {
             throw ImportError("This Lamp app file has code that isn't plain text, so Lamp can't check it.")
@@ -306,6 +323,7 @@ enum Sharing {
         return Package(name: name(from: manifest.name), identity: identity(from: manifest.app),
                        description: manifest.description.flatMap(AppDescription.valid),
                        capabilities: Template.Capabilities.load(folder.appendingPathComponent(Template.Capabilities.file)).checked,
+                       platform: manifest.platform ?? .mac, family: manifest.family ?? .iphone,
                        folder: folder, sources: sources,
                        attachments: attachments, fileCount: all)
     }
@@ -334,11 +352,13 @@ enum Sharing {
             try fm.removeItem(at: item)
         }
         try? fm.removeItem(at: project.dir.appendingPathComponent(Template.widgetFolder))
-        // Code comes from the one list the review read (`Package.sources`), and lands only in the two code folders.
-        let codeFolders = ["Sources/", Template.widgetFolder + "/"]
+        try? fm.removeItem(at: project.dir.appendingPathComponent(Template.watchFolder))
+        // Code comes from the one list the review read (`Package.sources`), and lands only in the code folders.
+        let codeFolders = ["Sources/", Template.widgetFolder + "/", Template.watchFolder + "/"]
         for file in package.sources where file.lastPathComponent != "LampSupport.swift" && file.lastPathComponent != Template.widgetSupportFile {
             let relative = package.path(of: file)
-            guard !relative.contains(".."), codeFolders.contains(where: { relative.hasPrefix($0) }) else { continue }
+            guard !relative.contains(".."), codeFolders.contains(where: { relative.hasPrefix($0) }),
+                  !Template.watchSupportPaths.contains(relative) else { continue }
             let target = project.dir.appendingPathComponent(relative)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
@@ -680,6 +700,12 @@ extension Sharing {
         whatever the app hands it with LampWidget.share. It is the sender's code like the rest and is judged \
         the same: say what the widget shows, and treat what the app shares with it and then sends elsewhere \
         as data leaving the Mac.
+
+        An app may be an iPhone app, or one for both the Mac and the iPhone, with what only one has under \
+        `#if os(…)`. Lamp runs its iPhone half in the iPhone simulator on this Mac, or on the reader's own \
+        phone if they choose it, where it reaches what the phone has (location, Health, photos, contacts) with \
+        the phone's permission. Judge both halves. Code under Watch/ is an Apple Watch app that goes with it, \
+        installed on the reader's watch with the iPhone app, and judged the same way.
 
         Reply as one JSON object with exactly these four keys and nothing else: \
         {"summary": "<1-2 plain sentences: what the app does for the user>", \

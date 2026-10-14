@@ -1347,8 +1347,7 @@ final class Store: ObservableObject {
     }
 
     /// Puts the app's .lampapp file on the clipboard, ready to paste into Slack, Messages, Mail or Finder.
-    /// Sharing is for Mac apps: an iPhone app's file would be opened as a Mac app by another Lamp.
-    func canShare(_ project: LampProject) -> Bool { project.platform == .mac && project.scaffolded }
+    func canShare(_ project: LampProject) -> Bool { project.scaffolded }
 
     func copyAppFile(_ project: LampProject) {
         guard canShare(project) else { return }
@@ -1396,7 +1395,8 @@ final class Store: ObservableObject {
     /// by opening an earlier file from it.
     func existingCopy(of package: Sharing.Package) -> LampProject? {
         guard let identity = package.identity else { return nil }
-        return projects.first { $0.platform == .mac && $0.scaffolded && Sharing.identity(of: $0, create: false) == identity }
+        // Only an app of the same kind: a file that's an iPhone app doesn't replace the Mac app it began as.
+        return projects.first { $0.platform == package.platform && $0.scaffolded && Sharing.identity(of: $0, create: false) == identity }
     }
 
     /// Opens a shared `.lampapp`. Its review (fixed checklist + AI check) opens only when setup is really done
@@ -1585,11 +1585,13 @@ final class Store: ObservableObject {
         defer { try? FileManager.default.removeItem(at: package.folder) }
         let project: LampProject
         do {
-            project = try Template.scaffold(name: uniqueName(package.name), in: root)
+            project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
             try Sharing.install(package, into: project)
             // The copy is the same app as the sender's: the next file shared from theirs can update it. A
-            // second copy made beside one that's already here (Keep Both) is an app of its own.
-            if let identity = package.identity, existingCopy(of: package) == nil {
+            // second copy made beside one that's already here (Keep Both), or beside one of another kind, is an
+            // app of its own.
+            if let identity = package.identity,
+               !projects.contains(where: { $0.id != project.id && Sharing.identity(of: $0, create: false) == identity }) {
                 Sharing.setIdentity(identity, of: project)
             }
         } catch {
@@ -3837,6 +3839,19 @@ final class Store: ObservableObject {
         try? fm.removeItem(at: app.appendingPathComponent(Sharing.Assets.folder))
         if fm.fileExists(atPath: assets.path) {
             try? fm.copyItem(at: assets, to: app.appendingPathComponent(Sharing.Assets.folder))
+        }
+        // The watch app's icon: watchOS takes one only from a compiled asset catalog, so Xcode's own compiler makes
+        // it from the same square as the iPhone's, and Info.plist names it.
+        if fm.fileExists(atPath: app.appendingPathComponent("Watch").path), fm.fileExists(atPath: Icons.squareURL(project).path) {
+            let work = project.dir.appendingPathComponent(".lamp/watch-icon")
+            try? Template.writeWatchIconCatalog(at: work.appendingPathComponent("Icon.xcassets"), icon: Icons.squareURL(project))
+            _ = await Shell.run("""
+                for watch in "$LAMP_APP"/Watch/*.app(N); do
+                  xcrun actool "$LAMP_WORK/Icon.xcassets" --compile "$watch" --platform watchsimulator --minimum-deployment-target 10.0 \\
+                    --app-icon AppIcon --output-partial-info-plist "$LAMP_WORK/partial.plist" >/dev/null 2>&1 && \\
+                  plutil -replace CFBundleIcons -json '{"CFBundlePrimaryIcon":{"CFBundleIconName":"AppIcon"}}' "$watch/Info.plist"
+                done
+                """, cwd: project.dir, env: ["LAMP_APP": app.path, "LAMP_WORK": work.path]) { _ in }
         }
         // A widget extension inside is signed first, as Xcode does: the app's signature then seals it. The watch
         // app the same way, its complications before it.
