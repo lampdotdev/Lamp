@@ -10,7 +10,8 @@ struct BuildStamp: Equatable {
     /// can share a version number (every local build is 0.1); this is what says whether the code Lamp
     /// puts in each app has changed.
     /// It covers the reasons a Mac app gives for its permissions too: an app built before one was added is
-    /// killed when it asks, until it's built again.
+    /// killed when it asks, until it's built again. And the build's App Intents step: an app built before it
+    /// has none of its intents where the system looks for them.
     var support: String?
 
     private static let lampKey = "LampVersion"
@@ -19,7 +20,7 @@ struct BuildStamp: Equatable {
     /// What this Lamp stamps on the apps it builds.
     static let current = BuildStamp(
         lamp: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1",
-        support: SHA256.hash(data: Data((Template.lampSupportSwift + Template.macUsagePlistLines(name: "")).utf8)).prefix(6).map { String(format: "%02x", $0) }.joined())
+        support: SHA256.hash(data: Data((Template.lampSupportSwift + Template.macUsagePlistLines(name: "") + Template.appIntentsSetup(ios: false) + Template.appIntentsSetup(ios: true)).utf8)).prefix(6).map { String(format: "%02x", $0) }.joined())
 
     /// The stamp on a built app, or nil when there's no app there. An app without a stamp reads as empty.
     static func read(_ app: URL) -> BuildStamp? {
