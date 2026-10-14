@@ -10,13 +10,13 @@ import SwiftUI
 enum WidgetCard {
     /// Whether the app's widget is on the desktop or in Notification Center, as the app last found it.
     static func isPlaced(_ project: LampProject) -> Bool {
-        let file = Runtime.folder(project).appendingPathComponent("widget-placed")
+        let file = Runtime.macFolder(project).appendingPathComponent("widget-placed")
         return (try? String(contentsOf: file, encoding: .utf8))?.trimmed == "1"
     }
 
     /// Forgotten before a build's install: the widget may be another one now, and the app says afresh.
     static func forget(_ project: LampProject) {
-        try? FileManager.default.removeItem(at: Runtime.folder(project).appendingPathComponent("widget-placed"))
+        try? FileManager.default.removeItem(at: Runtime.macFolder(project).appendingPathComponent("widget-placed"))
     }
 
     /// One card per chat, however many builds the app has: it's added when the app first has a widget.

@@ -423,7 +423,7 @@ struct AppMenu: View {
         Button("Rebuild & Open") { store.runPrepared(project) }
             .disabled(busy)
         Button("Quit") { Task { await store.quitApp(project) } }
-            .disabled(!store.openApps.contains(project.id))
+            .disabled(!store.isOpen(project))
         if project.platform.hasIOS {
             // Which simulator the app opens in (it's built for both), or which of the person's own phones.
             Menu("Try On") { TryOnChoices(project: project) }
@@ -971,8 +971,9 @@ struct ProjectView: View {
             ToolbarItem(placement: .navigation) { titleIcon }
         }
         ToolbarItem {
-            // One button: Play while the app is closed, Stop while it's open.
-            if store.openApps.contains(project.id) {
+            // One button: Play while the app is closed, Stop while it's open, where Try On points (an app for
+            // both can be open on this Mac and in a simulator at once).
+            if store.isOpen(project) {
                 Button { Task { await store.quitApp(project) } } label: {
                     Label("Quit App", systemImage: "stop.fill")
                 }
