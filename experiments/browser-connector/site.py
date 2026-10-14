@@ -2,12 +2,16 @@
 """Fictional, loopback-only cookie session for the live browser experiment."""
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from secrets import token_urlsafe
+from pathlib import Path
 sessions = set()
 navigation = False
 revision = 1
 class Site(BaseHTTPRequestHandler):
     def do_GET(self):
         global navigation, revision
+        if self.path == '/recipe':
+            self.send_response(200); self.send_header('Content-Type', 'text/html; charset=utf-8'); self.end_headers()
+            self.wfile.write(Path(__file__).with_name('recipe.html').read_bytes()); return
         if self.path == '/advance':
             revision += 1
             self.send_response(200); self.end_headers(); self.wfile.write(str(revision).encode()); return

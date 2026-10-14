@@ -65,3 +65,5 @@ $('show').onclick=$('stop').onclick;$('drop').onclick=$('discard').onclick;
  try{if(tab?.url&&/^https?:/.test(tab.url)&&!tab.incognito)here=new URL(tab.url).origin;}catch{}
  await refresh();setInterval(()=>refresh().catch(()=>{}),1000);
 })();
+
+$('companions').onclick=()=>{chrome.windows.getCurrent(w=>{chrome.sidePanel.open({windowId:w.id}).then(()=>window.close()).catch(fail);});};

@@ -235,3 +235,9 @@ input, is not used.
 `/overlay/sign-in` and the **Reserve this lamp** button on `/overlay/item` are made-up pages for trying the
 handover and the approval without anyone's account.
 
+
+## App companions
+
+The same extension can host a running app’s own companion in Chrome’s sidebar.
+See [the companion design and app API](COMPANIONS.md) for the Recipes example,
+access boundaries, lifetime and development workarounds.
