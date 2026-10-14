@@ -397,7 +397,7 @@ enum Agent {
         for apps with an iPhone half only; the team also turns WeatherKit on for the app at developer.apple.com \
         once, and the call's message says so until then. Apple's terms ask for `LampWeatherAttribution()` (its \
         Weather mark, linking to its sources) wherever its weather is shown, allow forecasts to be kept only \
-        briefly (never in LampStore or LampSync), and rule out apps meant for emergencies or safety. Music: `LampMusic` (`authorize()`, `recentlyPlayed()`, \
+        briefly (never saved with the app's data), and rule out apps meant for emergencies or safety. Music: `LampMusic` (`authorize()`, `recentlyPlayed()`, \
         `library()`, `search(_:)`, `play(_:)`, `pause()`, and on the iPhone `nowPlaying`), Apple Music only, with \
         MusicKit turned on for the app at developer.apple.com the same way.
         """
@@ -465,8 +465,7 @@ enum Agent {
         it shows nothing. A widget is a picture macOS redraws from the timeline, not a running view: no timers, \
         animation, scrolling or text fields. `Text(date, style: .timer)` and `.relative` count by themselves, \
         entries dated ahead change it on schedule, and macOS refreshes it when it chooses, minutes apart at best. \
-        It may load from the web with URLSession. \(Template.WidgetSharing.rule) A button in it \
-        (`Button(intent:)`) runs its App Intent in the widget, which can't change the app's data. \
+        It may load from the web with URLSession. \(Template.WidgetSharing.rule) \
         When a widget is all the user asked for ("make me a countdown widget"), they get only the widget, with \
         no app window: make Sources/App.swift just `@main struct MainApp: App { var body: some Scene { \
         LampWidgetOnly() } }`, with no commands, delete Sources/ContentView.swift with delete_file, and put \

@@ -3748,17 +3748,33 @@ final class Store: ObservableObject {
             // A Mac app is signed for the person's Apple team when there is one: macOS runs an app's App Intents
             // (Siri, Shortcuts, Spotlight) only for an app signed with a team. Otherwise Lamp's own certificate.
             if project.platform == .mac, let team = await Devices.signingIdentity(for: Devices.team) {
+                // Signed for a team, the app and its widget can share a folder, where the widget's buttons queue
+                // what they ask of the app (`LampWidget.perform`); both are told its name in their Info.plist.
+                var env = signingEnv.merging(["LAMP_IDENTITY": team]) { $1 }
+                if hasWidget {
+                    let group = Template.macAppGroup(team: Devices.team, for: project)
+                    Self.setAppGroup(group, in: [project.builtURL, widget])
+                    let appEntitlements = project.dir.appendingPathComponent(".lamp/app-entitlements.plist")
+                    try Template.Capabilities().entitlementsPlist(container: nil, platform: .mac, appGroup: group)
+                        .write(to: appEntitlements, atomically: true, encoding: .utf8)
+                    try Template.widgetEntitlementsPlist(appGroup: group).write(to: entitlements, atomically: true, encoding: .utf8)
+                    env["LAMP_APP_ENTITLEMENTS"] = appEntitlements.path
+                }
                 var output: [String] = []
-                signed = await Shell.run(AppSigning.command(adHoc: false, widget: hasWidget, ownKeychain: false), cwd: project.dir,
-                                         env: signingEnv.merging(["LAMP_IDENTITY": team]) { $1 }) { output.append($0) } == 0
+                signed = await Shell.run(AppSigning.command(adHoc: false, widget: hasWidget, ownKeychain: false, appEntitlements: hasWidget),
+                                         cwd: project.dir, env: env) { output.append($0) } == 0
                     && AppSigning.isCertificateSigned(project.builtURL) && (!hasWidget || AppSigning.isCertificateSigned(widget))
                 if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
                 Self.rememberTeamSigning(failed: !signed, for: project)
             }
-            // Not signed for a team, the app's intents would be listed by macOS and never run: they're taken out.
             if !signed, project.platform == .mac {
-                for bundle in [project.builtURL, widget] {
-                    try? fm.removeItem(at: bundle.appendingPathComponent("Contents/Resources/Metadata.appintents"))
+                // Not signed for a team, the app's intents would be listed by macOS and never run: they're taken
+                // out. The widget's stay: its buttons run them inside the widget, which needs no team. Nor is
+                // there a shared folder: the widget sends its actions to the app over their connection instead.
+                try? fm.removeItem(at: project.builtURL.appendingPathComponent("Contents/Resources/Metadata.appintents"))
+                if hasWidget {
+                    Self.setAppGroup(nil, in: [project.builtURL, widget])
+                    try Template.widgetEntitlementsPlist.write(to: entitlements, atomically: true, encoding: .utf8)
                 }
             }
         }
@@ -4855,6 +4871,19 @@ final class Store: ObservableObject {
               (try? String(contentsOf: teamSigningFailure(project), encoding: .utf8)) != Devices.team else { return false }
         guard await Subprocess.run("/usr/bin/xcrun", ["-f", "appintentsmetadataprocessor"], timeout: 20).status == 0 else { return false }
         return await Devices.signingIdentity(for: Devices.team) != nil
+    }
+
+    /// Writes, or takes out, the name of the folder a Mac app shares with its widget, in each bundle's Info.plist,
+    /// before they're signed. Both sides read it there to choose how the widget's buttons reach the app.
+    nonisolated static func setAppGroup(_ group: String?, in bundles: [URL]) {
+        for bundle in bundles {
+            let url = bundle.appendingPathComponent("Contents/Info.plist")
+            guard let data = try? Data(contentsOf: url),
+                  var plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { continue }
+            guard (plist["LampAppGroup"] as? String) != group else { continue }
+            plist["LampAppGroup"] = group
+            if let out = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) { try? out.write(to: url) }
+        }
     }
 
     /// Where `deploy` notes the team it couldn't sign an app for; a build the person or the agent asks for

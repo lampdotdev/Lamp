@@ -448,8 +448,8 @@ is run out of sight for that after a build and when Lamp comes back to the front
 agent is told to say two sentences at most and never how to add the widget: that is the card's.
 
 The widget gets the app's data by asking the app (`Template.WidgetSharing` says why, and is the one place
-to change it): macOS refuses an app group to a certificate with no team ID, which is how Lamp signs, and Lamp
-doesn't use exceptions to the sandbox. `LampWidget.share(value, as:)` in LampSupport.swift keeps what the app
+to change it): macOS refuses an app group to a certificate with no team ID, which is how Lamp signs when no team
+is chosen, and Lamp doesn't use exceptions to the sandbox. `LampWidget.share(value, as:)` in LampSupport.swift keeps what the app
 shares, answers on this Mac's own address at a port worked out from the app's id (`Template.widgetPort`) to
 whoever sends the app's widget secret (`Template.widgetToken`), and reloads the widget. `LampWidget.read` in
 `Widget/LampWidgetSupport.swift`, a fourth file Lamp owns and rewrites (`Template.writeWidgetSupport`, only
@@ -457,6 +457,21 @@ for an app with a widget), asks, and keeps the last answer in the widget's own s
 closed. So a widget is as fresh as the last time its app ran. The secret never crosses the connection: the
 widget signs its question with it and the app signs its answer over the question's nonce, so only the app's
 widget is answered and the widget passes over anything else that took the port.
+
+The widget's buttons change the app's data through the app, with one call on each side whatever the signature:
+an App Intent in `Widget/` calls `LampWidget.perform(name, payload)`, and the app's `LampWidget.onAction` does
+it, shares what changed and the widget is redrawn. How it travels is decided when `Store.deploy` signs the app.
+Signed for the person's team, the app and its widget get an app group named `<team>.<bundle id>`
+(`Template.macAppGroup`; macOS honours that form from the signature alone, while `group.…` would need a
+provisioning profile), in both signatures and both Info.plists (`LampAppGroup`, `Store.setAppGroup`): the widget
+writes each action as its own file in the group's folder (whole, under its final name) and posts a Darwin
+notification, and the app does them at launch and when nudged, deleting each once its handler has run. Signed with Lamp's certificate, the widget sends the action over the reading
+connection, signed with the same secret over the action's id, and the app answers once its handler has run; an
+action the app wasn't there to take waits in the widget's own storage and goes with its next read. The app does
+each action once, by id, so one sent again after a lost answer isn't done twice, and counts it done only after
+its handler has run, so one cut short by a quit is done next time. The widget changes its list of waiting
+actions under one lock. The widget's own App Intents
+metadata is kept without a team (only the app's is taken out): its buttons run inside the widget.
 
 Lamp never replaces an app on disk while it's running (`HeldInstalls`): macOS then stops taking the running
 app for its widget's owner and refuses its redraws until it's reopened. A build quits the app first; a new
