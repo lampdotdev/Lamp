@@ -416,21 +416,38 @@ struct DrawIconLine: View {
 struct IPhoneSetupLine: View {
     let project: LampProject
     let wanted: Platform
+    @ObservedObject private var asked = Asked.shared
+
+    /// Apps whose setup is under way, or whose request has gone to the agent: one click per app, so a second
+    /// can't queue the same conversion again.
+    @MainActor final class Asked: ObservableObject {
+        static let shared = Asked()
+        @Published var ids: Set<String> = []
+    }
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "iphone").foregroundStyle(.secondary)
             Text("\(project.name) is a Mac app for now. Your iPhone needs a little setup first.").foregroundStyle(.secondary)
-            Button("Set Up iPhone Apps…") {
-                let both = wanted == .universal
-                PhoneSetup.shared.perform(resolve: { PhoneSetup.Context(family: .iphone, requiresTeam: both) }) {
-                    guard let current = Store.shared.current(project), current.platform == .mac else { return }
-                    Store.shared.send(both ? "Make it work on my iPhone too." : "Make it an iPhone app instead.", to: current)
-                }
-            }
-            .controlSize(.small)
+            Button("Set Up iPhone Apps…", action: setUp)
+                .controlSize(.small)
+                .disabled(asked.ids.contains(project.id))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func setUp() {
+        let id = project.id, both = wanted == .universal
+        asked.ids.insert(id)
+        // Resolved again each time: an app that's gone, or no longer only a Mac app, has nothing to set up for,
+        // and the setup lets go of the request rather than hold up the ones behind it.
+        PhoneSetup.shared.perform(resolve: {
+            guard let current = Store.shared.current(project), current.platform == .mac else { return nil }
+            return PhoneSetup.Context(family: .iphone, requiresTeam: both)
+        }, cancelled: { asked.ids.remove(id) }) {
+            guard let current = Store.shared.current(project), current.platform == .mac else { return }
+            Store.shared.send(both ? "Make it work on my iPhone too." : "Make it an iPhone app instead.", to: current)
+        }
     }
 }
 
