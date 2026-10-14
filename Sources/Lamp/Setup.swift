@@ -36,6 +36,9 @@ struct SetupCheck {
     var ready: Bool { hasBuildTools && hasBuilder && hasAgent }
 
     static func run(keeping previous: SetupCheck) async -> SetupCheck {
+        // Whether Claude Code or Codex is there depends on the look for the person's own copy, which takes a few
+        // seconds at launch: judged before it's done, a Mac with one showed the setup screen until it finished.
+        if Builder.engine != .pi, !EngineInstall.hasLooked { await EngineInstall.lookForPersonsCopies() }
         var check = SetupCheck(checked: true, hasBuildTools: buildToolsInstalled(), builderProblem: Builder.problem(),
                                hasAgent: Agent.executable != nil)
         check.installerOpen = installerIsOpen()
