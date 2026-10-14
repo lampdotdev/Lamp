@@ -51,16 +51,14 @@ import Foundation
 
     /// Calls waiting for their app, the app's waits for a call, and calls waiting for their answer.
     private var queued: [String: [Call]] = [:]
-    /// Calls handed to one of the app's waits that the copy of the app it came from (each launch is its own,
-    /// and an app for both may be open on the Mac and on iOS at once) hasn't yet said it got. The gateway
-    /// can't tell when a wait's connection is gone (the app quit, or a phone lost its way), so a copy's next
-    /// wait says what its last one brought, and anything else handed to that copy goes again. A copy that
-    /// stops waiting altogether is gone, and what it never acknowledged goes to whichever copy asks next.
-    private struct Delivery { let call: Call; let copy: String }
-    private var handedOut: [String: [Delivery]] = [:]
-    /// When each copy last began a wait. A running copy begins one at least every half minute.
-    private var lastWait: [String: [String: Date]] = [:]
-    private var listeners: [String: [UUID: (copy: String, continuation: CheckedContinuation<[Call], Never>)]] = [:]
+    /// Calls handed to one of the app's waits that no copy of the app has claimed yet. The gateway can't tell
+    /// when a wait's connection is gone (the app quit, or a phone lost its way), so a call unclaimed a few
+    /// seconds after it was handed out goes to the next wait, whichever copy it's from (each launch is one, and
+    /// an app for both may be open on the Mac and on iOS at once). A copy runs a call only once Lamp has
+    /// granted it the claim, and Lamp grants each call once, so a call handed out twice is still done once.
+    private var handedOut: [String: [(call: Call, at: Date)]] = [:]
+    private var claimed: Set<String> = []
+    private var listeners: [String: [UUID: CheckedContinuation<[Call], Never>]] = [:]
     private var answers: [String: (app: String, continuation: CheckedContinuation<Answer?, Never>)] = [:]
     /// When each app last ended a wait: between two waits it is still listening.
     private var heard: [String: Date] = [:]
@@ -133,37 +131,34 @@ import Foundation
                 save()
             }
         }
-        let copy = body["copy"] as? String ?? ""
         let now = Date()
         heard[app] = now
         defer { heard[app] = Date() }
-        lastWait[app, default: [:]][copy] = now
-        lastWait[app] = lastWait[app]?.filter { now.timeIntervalSince($0.value) < 300 }
-        let received = Set(body["received"] as? [String] ?? [])
-        var lost: [Call] = []
-        handedOut[app] = (handedOut[app] ?? []).filter { delivery in
-            guard answers[delivery.call.id] != nil else { return false }   // answered, or given up on
-            if delivery.copy == copy {
-                if !received.contains(delivery.call.id) { lost.append(delivery.call) }
-                return false
-            }
-            guard now.timeIntervalSince(lastWait[app]?[delivery.copy] ?? .distantPast) > 35 else { return true }
-            lost.append(delivery.call)
-            return false
-        }
-        if !lost.isEmpty { queued[app, default: []].insert(contentsOf: lost, at: 0) }
+        // A copy claims what it gets at once, so a call still unclaimed after a few seconds went to a wait
+        // that's gone.
+        let lost = (handedOut[app] ?? []).filter { !claimed.contains($0.call.id) && answers[$0.call.id] != nil && now.timeIntervalSince($0.at) > 3 }
+        handedOut[app]?.removeAll { delivery in lost.contains { $0.call.id == delivery.call.id } || answers[delivery.call.id] == nil }
+        if !lost.isEmpty { queued[app, default: []].insert(contentsOf: lost.map(\.call), at: 0) }
         if let waiting = queued.removeValue(forKey: app), !waiting.isEmpty {
-            handedOut[app, default: []] += waiting.map { Delivery(call: $0, copy: copy) }
+            handedOut[app, default: []] += waiting.map { ($0, now) }
             return waiting
         }
         let wait = UUID()
         return await withCheckedContinuation { continuation in
-            listeners[app, default: [:]][wait] = (copy, continuation)
+            listeners[app, default: [:]][wait] = continuation
             Task {
                 try? await Task.sleep(for: .seconds(25))
-                self.listeners[app]?.removeValue(forKey: wait)?.continuation.resume(returning: [])
+                self.listeners[app]?.removeValue(forKey: wait)?.resume(returning: [])
             }
         }
+    }
+
+    /// A copy of the app asking to run a call it was handed: granted to the first that asks, while the call
+    /// still waits for its answer.
+    func claim(_ body: [String: Any], from project: LampProject) -> Bool {
+        guard let id = body["id"] as? String, answers[id]?.app == Self.app(project), claimed.insert(id).inserted else { return false }
+        queued[Self.app(project)]?.removeAll { $0.id == id }
+        return true
     }
 
     /// The app's answer to a call it was handed.
@@ -183,7 +178,7 @@ import Foundation
     /// Lets go of an app's waits, when it's known to be closed: they're from a copy that's gone.
     func dropListeners(of project: LampProject) {
         let app = Self.app(project)
-        for listener in (listeners.removeValue(forKey: app) ?? [:]).values { listener.continuation.resume(returning: []) }
+        for listener in (listeners.removeValue(forKey: app) ?? [:]).values { listener.resume(returning: []) }
         heard[app] = nil
     }
 
@@ -195,8 +190,8 @@ import Foundation
             answers[call.id] = (app, continuation)
             if let listener = listeners[app]?.first {
                 listeners[app]?[listener.key] = nil
-                handedOut[app, default: []].append(Delivery(call: call, copy: listener.value.copy))
-                listener.value.continuation.resume(returning: [call])
+                handedOut[app, default: []].append((call, Date()))
+                listener.value.resume(returning: [call])
             } else {
                 queued[app, default: []].append(call)
             }
@@ -204,6 +199,7 @@ import Foundation
                 try? await Task.sleep(for: .seconds(seconds))
                 self.queued[app]?.removeAll { $0.id == call.id }
                 self.handedOut[app]?.removeAll { $0.call.id == call.id }
+                self.claimed.remove(call.id)
                 self.answers.removeValue(forKey: call.id)?.continuation.resume(returning: nil)
             }
         }

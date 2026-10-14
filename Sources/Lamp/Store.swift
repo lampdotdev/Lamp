@@ -4485,7 +4485,7 @@ final class Store: ObservableObject {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
                      "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/kind", "/agent/art", "/agent/talk", "/mcp", "/pi/key",
-                     "/ai/tools/next", "/ai/tools/answer"]
+                     "/ai/tools/next", "/ai/tools/claim", "/ai/tools/answer"]
         // Another agent using an app's own tools, at the address the person gave it (AppTools).
         if route.hasPrefix("/apps/") { return await outsideAgentRequest(request, route: route) }
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
@@ -4542,8 +4542,9 @@ final class Store: ObservableObject {
         if route == "/ai/keys" { return keysForPhone(project) }
         if route == "/ai/status" { return await aiStatus(for: project) }
         // The app waiting for, and answering, other agents' calls to its tools: no AI setup needed.
-        if route == "/ai/tools/next" || route == "/ai/tools/answer" {
+        if route.hasPrefix("/ai/tools/") {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+            if route == "/ai/tools/claim" { return (200, ["granted": AppTools.shared.claim(body, from: project)]) }
             if route == "/ai/tools/answer" {
                 AppTools.shared.answer(body, from: project)
                 return (200, [:])
