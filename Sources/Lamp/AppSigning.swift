@@ -33,10 +33,12 @@ enum AppSigning {
     /// itself must stay unsandboxed), then the app around it, whose signature seals the widget's.
     /// With `ownKeychain` false the identity is looked for where codesign looks by itself (the login keychain,
     /// where Xcode keeps the person's Apple Development certificates).
-    static func command(adHoc: Bool, widget: Bool, ownKeychain: Bool = true) -> String {
+    /// With `appEntitlements` the app is signed with those in `LAMP_APP_ENTITLEMENTS` (the app group it shares
+    /// with its widget, when signed for a team).
+    static func command(adHoc: Bool, widget: Bool, ownKeychain: Bool = true, appEntitlements: Bool = false) -> String {
         let keychain = ownKeychain ? " --keychain \"$LAMP_KEYCHAIN\"" : ""
         let sign = adHoc ? "codesign --force -s -" : "codesign --force\(keychain) -s \"$LAMP_IDENTITY\""
-        let app = "\(sign) \"$LAMP_APP\" 2>&1"
+        let app = "\(sign)\(appEntitlements ? " --entitlements \"$LAMP_APP_ENTITLEMENTS\"" : "") \"$LAMP_APP\" 2>&1"
         guard widget else { return app }
         return "\(sign) --entitlements \"$LAMP_WIDGET_ENTITLEMENTS\" \"$LAMP_WIDGET\" 2>&1 && " + app
     }

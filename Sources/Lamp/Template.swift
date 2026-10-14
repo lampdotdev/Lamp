@@ -801,8 +801,9 @@ enum Template {
 
         func entitlementsPlist(container: String?, platform: Destination = .ios, teamSigned: Bool = false, appGroup: String? = nil) -> String {
             var lines: [String] = []
-            // The folder an iPhone app shares with its widget extension (`LampWidget`).
-            if let appGroup, platform == .ios {
+            // The folder an app shares with its widget extension (`LampWidget`): an iPhone app's, and a Mac app's
+            // when it's signed for a team (`Template.macAppGroup`).
+            if let appGroup {
                 lines.append("  <key>com.apple.security.application-groups</key><array><string>\(appGroup.xmlEscaped)</string></array>")
             }
             if let container {
@@ -1254,6 +1255,11 @@ enum Template {
     /// The widget's bundle id. macOS only takes an extension whose id begins with its app's.
     static func widgetBundleID(for project: LampProject) -> String { project.bundleID + ".widget" }
 
+    /// The folder a Mac app and its widget share when Lamp signs them for the person's team: the team's id and
+    /// the app's. macOS honours a group named so from the signature alone; one named "group.…" would need a
+    /// provisioning profile, which Lamp's builds don't have.
+    static func macAppGroup(team: String, for project: LampProject) -> String { team + "." + project.bundleID }
+
     /// The widget inside a built or installed copy of the app.
     static func widgetURL(in app: URL, of project: LampProject) -> URL {
         app.appendingPathComponent("Contents/PlugIns/\(project.exe)Widget.appex")
@@ -1269,24 +1275,131 @@ enum Template {
     import Network
     import CryptoKit
 
-    /// What the app shared for its widget, with `LampWidget.share(value, as: "summary")`.
+    /// What the app shared for its widget, with `LampWidget.share(value, as: "summary")`, and the widget's
+    /// buttons acting on the app's data.
     ///
     ///     LampWidget.read(Summary.self, from: "summary") { summary in … }
     ///     let summary = await LampWidget.read(Summary.self, from: "summary")
+    ///     await LampWidget.perform("addWater", 250)      // in an App Intent's perform(); the app's onAction does it
     ///
-    /// Gives what the app shared last: asked of the app when it's open, and otherwise the last answer, which
-    /// the widget keeps. Nil until the app has shared something under that name.
+    /// `read` gives what the app shared last: asked of the app when it's open, and otherwise the last answer,
+    /// which the widget keeps. Nil until the app has shared something under that name.
     enum LampWidget {
         private static let firstPort: UInt16 = {{WIDGET_PORT}}
         private static let token = "{{WIDGET_TOKEN}}"
 
-        static func read<T: Decodable>(_ type: T.Type, from name: String = "data", then completion: @escaping (T?) -> Void) {
-            ask(name, offset: 0) { answer in
-                let key = "LampWidget." + name
-                if let answer, !answer.isEmpty { UserDefaults.standard.set(answer, forKey: key) }
-                let latest = UserDefaults.standard.string(forKey: key)
-                completion(latest.flatMap { try? JSONDecoder().decode(T.self, from: Data($0.utf8)) })
+        /// One thing a widget's button asks the app to do, as both sides write it down.
+        private struct Action: Codable {
+            var id: String
+            var name: String
+            var payload: String?
+        }
+
+        /// Asks the app to do `name` with `payload` (any Codable value, or none), which the app's
+        /// `LampWidget.onAction` handles: right away when the app is running, else when it next starts. Call it
+        /// from an App Intent's `perform()`, behind a `Button(intent:)` or `Toggle(isOn:intent:)` in the widget.
+        static func perform(_ name: String) async { await perform(Action(id: UUID().uuidString, name: name, payload: nil)) }
+
+        static func perform<T: Encodable>(_ name: String, _ payload: T) async {
+            let text = (try? JSONEncoder().encode(payload)).flatMap { String(data: $0, encoding: .utf8) }
+            await perform(Action(id: UUID().uuidString, name: name, payload: text))
+        }
+
+        /// Two ways to the app, the same to whoever calls. Signed for an Apple team, the app and its widget share
+        /// a folder (an app group): the action goes on a queue there, and the app is nudged to read it. Signed
+        /// with Lamp's own certificate there's no shared folder, so the action is sent over the connection reads
+        /// use, signed like them; one the app wasn't there to take waits here and goes with the next read.
+        private static func perform(_ action: Action) async {
+            if let queue = actionQueue, let line = try? JSONEncoder().encode(action) {
+                append(line + Data([0x0A]), to: queue)
+                CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                                     CFNotificationName((group! + ".lamp-actions") as CFString), nil, nil, true)
+                return
             }
+            var pending = pendingActions
+            pending.append(action)
+            pendingActions = pending
+            await withCheckedContinuation { continuation in sendPending(then: { continuation.resume() }) }
+        }
+
+        /// The app group both are signed for, which Lamp writes into their Info.plists only when it signs them so.
+        private static var group: String? { Bundle.main.object(forInfoDictionaryKey: "LampAppGroup") as? String }
+
+        private static var actionQueue: URL? {
+            guard let group, let folder = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return nil }
+            return folder.appendingPathComponent("lamp-widget-actions.jsonl")
+        }
+
+        private static func append(_ data: Data, to file: URL) {
+            if !FileManager.default.fileExists(atPath: file.path) { FileManager.default.createFile(atPath: file.path, contents: nil) }
+            guard let handle = try? FileHandle(forWritingTo: file) else { return }
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        }
+
+        private static let pendingKey = "LampWidget.pendingActions"
+        private static var pendingActions: [Action] {
+            get { (UserDefaults.standard.data(forKey: pendingKey)).flatMap { try? JSONDecoder().decode([Action].self, from: $0) } ?? [] }
+            set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: pendingKey) }
+        }
+
+        /// Sends what's waiting, oldest first, and forgets each one the app says it took. The app may have taken
+        /// one already without its answer arriving: it knows each by its id and doesn't do one twice.
+        private static func sendPending(then done: @escaping () -> Void) {
+            guard let action = pendingActions.first, let json = try? JSONEncoder().encode(action) else { return done() }
+            send(json.base64EncodedString(), id: action.id, offset: 0) { taken in
+                guard taken else { return done() }
+                pendingActions = pendingActions.filter { $0.id != action.id }
+                sendPending(then: done)
+            }
+        }
+
+        private static func send(_ body: String, id: String, offset: UInt16, _ done: @escaping (Bool) -> Void) {
+            guard offset < 8, let port = NWEndpoint.Port(rawValue: firstPort + offset) else { return done(false) }
+            let queue = DispatchQueue(label: "LampWidget.act")
+            let connection = NWConnection(host: .ipv4(.loopback), port: port, using: .tcp)
+            var finished = false
+            var received = Data()
+            func finish(_ taken: Bool?) {
+                guard !finished else { return }
+                finished = true
+                connection.cancel()
+                if let taken { done(taken) } else { send(body, id: id, offset: offset + 1, done) }
+            }
+            func receive() {
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, complete, error in
+                    if let data { received.append(data) }
+                    guard complete || error != nil else { return receive() }
+                    let text = String(data: received, encoding: .utf8) ?? ""
+                    finish(text.hasPrefix("ok " + signature("done", id)) ? true : nil)
+                }
+            }
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    connection.send(content: Data("act \(id) \(signature("act", id, body)) \(body)\n".utf8), completion: .contentProcessed { _ in })
+                    receive()
+                case .failed, .waiting, .cancelled: finish(nil)
+                default: break
+                }
+            }
+            connection.start(queue: queue)
+            // The app answers once its handler has run, which can take a moment longer than a read.
+            queue.asyncAfter(deadline: .now() + 5) { finish(nil) }
+        }
+
+        static func read<T: Decodable>(_ type: T.Type, from name: String = "data", then completion: @escaping (T?) -> Void) {
+            // Whatever a button asked of the app while it was closed goes first, so the answer includes it.
+            guard pendingActions.isEmpty else { return sendPending { ask(name, offset: 0) { answer in keep(answer, name, completion) } } }
+            ask(name, offset: 0) { answer in keep(answer, name, completion) }
+        }
+
+        private static func keep<T: Decodable>(_ answer: String?, _ name: String, _ completion: (T?) -> Void) {
+            let key = "LampWidget." + name
+            if let answer, !answer.isEmpty { UserDefaults.standard.set(answer, forKey: key) }
+            let latest = UserDefaults.standard.string(forKey: key)
+            completion(latest.flatMap { try? JSONDecoder().decode(T.self, from: Data($0.utf8)) })
         }
 
         static func read<T: Decodable>(_ type: T.Type, from name: String = "data") async -> T? {
@@ -1406,21 +1519,35 @@ enum Template {
 
     """#
 
-    /// How a widget gets at what its app has saved, kept in one place so another way can replace it. A
-    /// widget runs sandboxed and sees none of the app's files. An app group, the usual way, is refused by
-    /// macOS for a certificate with no team ID, which is what Lamp signs with. So the widget asks the app: the
-    /// app listens on this Mac's own address (`LampWidget` in LampSupport.swift) and the widget connects to
-    /// it (`lampWidgetSupportSwift`), each proving to the other that it has the secret they were built with,
-    /// which a sandboxed program may do once its signature allows outgoing
-    /// connections; that entitlement is one every widget has anyway, to load from the web. Nothing here is
-    /// an exception to the sandbox. What it costs: the widget is only as fresh as the last time the app ran.
+    /// How a Mac widget gets at what its app has saved, and how its buttons change it, kept in one place so
+    /// another way can replace it. A widget runs sandboxed and sees none of the app's files.
     ///
-    /// An iPhone widget doesn't need any of that: on iOS the app and its extension are both signed by Apple's
-    /// rules for the simulator or by the person's team on a phone, so they share an app group
-    /// (`appGroup(for:onDevice:)`), and the app writes what it shares into the group's folder for the widget to
-    /// read (`LampWidget` under `#if os(iOS)`, `lampWidgetSupportIOSSwift`).
+    /// Reading: the widget asks the app. The app listens on this Mac's own address (`LampWidget` in
+    /// LampSupport.swift) and the widget connects to it (`lampWidgetSupportSwift`), each proving to the other that
+    /// it has the secret they were built with, which a sandboxed program may do once its signature allows
+    /// outgoing connections; every widget has that entitlement anyway, to load from the web. What it costs: the
+    /// widget is only as fresh as the last time the app ran.
+    ///
+    /// Acting (a button's App Intent calls `LampWidget.perform`, the app's `LampWidget.onAction` does it) goes
+    /// one of two ways, chosen when `Store.deploy` signs the app, and the same to the agent:
+    /// - Signed for the person's Apple team, the app and its widget share an app group, `<team>.<bundle id>`
+    ///   (`macAppGroup`), which macOS honours from their signatures with no provisioning profile. The widget
+    ///   appends the action to a queue file in the group's folder and posts a Darwin notification; the app takes
+    ///   the queue at launch and whenever it's nudged. `deploy` writes the group into both Info.plists
+    ///   (`LampAppGroup`), which is how each side knows it's there.
+    /// - Signed with Lamp's own certificate, which has no team ID, there is no group: macOS refuses one to such a
+    ///   signature. The widget sends the action over the same connection, signed with the same secret over the
+    ///   action's id, and the app answers once it's done. One the app wasn't running to take waits in the
+    ///   widget's own storage and goes with the next read.
+    /// Either way the app does each action once (by its id) and redraws the widget after it.
+    ///
+    /// An iPhone widget reads differently: on iOS the app and its extension are both signed by Apple's rules for
+    /// the simulator or by the person's team on a phone, so they share an app group (`appGroup(for:onDevice:)`),
+    /// and the app writes what it shares into the group's folder for the widget to read (`LampWidget` under
+    /// `#if os(iOS)`, `lampWidgetSupportIOSSwift`).
     enum WidgetSharing {
-        /// Entitlement lines this way adds to the widget's signature, as plist XML. None: see above.
+        /// Entitlement lines this way adds to every widget's signature, as plist XML. None: the app group is
+        /// added only for a team's signature (`widgetEntitlementsPlist(appGroup:)`).
         static let entitlements: [String] = []
 
         /// What the agent is told about the app's data in a widget.
@@ -1431,16 +1558,25 @@ enum Template {
         "summary") { summary in … }` in getSnapshot and getTimeline, or `await` it. That comes from \
         Widget/LampWidgetSupport.swift, which Lamp writes: never edit it. It gives what the app shared last, \
         also while the app is closed, and nil until the app has run once: then show a short line asking to \
-        open the app. Share a small value made for the widget, not everything, and declare its type on both sides.
+        open the app. Share a small value made for the widget, not everything, and declare its type on both sides. \
+        A button or toggle in the widget changes the app's data through the app: in Widget/, an App Intent \
+        whose `perform()` calls `await LampWidget.perform("addWater", 250)` (a name, and any Codable value or \
+        none) and returns `.result()`, shown with `Button(intent: AddWater()) { … }`; in the app, at launch, \
+        `LampWidget.onAction { name, payload in … }` does it (`payload.decode(Int.self)`) and shares what \
+        changed, and the widget redraws. It works with the app closed too: the app does it when it next starts.
         """
     }
 
     /// What the widget is signed with. macOS shows no widget that isn't sandboxed, and the sandbox lets it
-    /// load from the web only when its signature says so. The app's own signature carries no entitlements,
-    /// so the two are signed separately (`AppSigning.command`).
-    static var widgetEntitlementsPlist: String {
+    /// load from the web only when its signature says so. The app's own signature carries no entitlements but
+    /// the shared folder, so the two are signed separately (`AppSigning.command`).
+    static var widgetEntitlementsPlist: String { widgetEntitlementsPlist(appGroup: nil) }
+
+    /// With the app group a Mac app and its widget share when they're signed for a team (`macAppGroup`).
+    static func widgetEntitlementsPlist(appGroup: String?) -> String {
         let lines = ["  <key>com.apple.security.app-sandbox</key><true/>",
                      "  <key>com.apple.security.network.client</key><true/>"] + WidgetSharing.entitlements
+            + (appGroup.map { ["  <key>com.apple.security.application-groups</key><array><string>\($0.xmlEscaped)</string></array>"] } ?? [])
         return """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -6993,10 +7129,110 @@ enum Template {
     ///
     /// Share at launch and whenever the data changes. The widget reads it with
     /// `LampWidget.read(Summary.self, from: "summary")` and keeps the last answer for when the app is closed.
+    ///
+    /// The widget's buttons act on the app's data through the app: the widget calls `LampWidget.perform("addWater",
+    /// 250)` from an App Intent, and the app does it in its handler, then shares what changed.
+    ///
+    ///     LampWidget.onAction { name, payload in
+    ///         if name == "addWater" { model.add(payload.decode(Int.self) ?? 250) }
+    ///     }
     enum LampWidget {
         private static let firstPort: UInt16 = {{WIDGET_PORT}}
         private static let token = "{{WIDGET_TOKEN}}"
         private static let queue = DispatchQueue(label: "LampWidget")
+
+        /// What a widget's button sent with its action.
+        struct Payload {
+            let json: String?
+            func decode<T: Decodable>(_ type: T.Type) -> T? { json.flatMap { try? JSONDecoder().decode(T.self, from: Data($0.utf8)) } }
+        }
+
+        private struct Action: Codable {
+            var id: String
+            var name: String
+            var payload: String?
+        }
+
+        nonisolated(unsafe) private static var handler: (@MainActor (String, Payload) -> Void)?
+        nonisolated(unsafe) private static var waiting: [Action] = []
+        nonisolated(unsafe) private static var done: [String] = []   // ids of actions already done, newest last
+        nonisolated(unsafe) private static var doneLoaded = false
+        private static var doneFile: URL { LampStore.folder.appendingPathComponent("widget-actions-done.json") }
+
+        /// The app's handler for what its widget's buttons ask, called on the main thread with the action's name
+        /// and what came with it. Set it once at launch: actions that came while the app was closed are handled
+        /// then, and the widget is redrawn after each.
+        static func onAction(_ handle: @escaping @MainActor (String, Payload) -> Void) {
+            queue.async {
+                handler = handle
+                listen()
+                watchQueue()
+                takeQueued()
+                let held = waiting
+                waiting = []
+                held.forEach { apply($0, then: {}) }
+            }
+        }
+
+        /// Does one action, once: each has an id, and one the widget sends again (its answer lost on the way)
+        /// is passed over. On `queue`; `then` runs there after the handler has, and after what it shared.
+        private static func apply(_ action: Action, then: @escaping () -> Void) {
+            loadDone()
+            guard !done.contains(action.id) else { return then() }
+            guard let handler else {
+                waiting.append(action)
+                return then()
+            }
+            done.append(action.id)
+            if done.count > 500 { done.removeFirst(done.count - 500) }
+            if let data = try? JSONEncoder().encode(done) { try? data.write(to: doneFile, options: .atomic) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { handler(action.name, Payload(json: action.payload)) }
+                // After whatever the handler shared, which went on `queue` before this.
+                queue.async {
+                    WidgetCenter.shared.reloadAllTimelines()
+                    then()
+                }
+            }
+        }
+
+        private static func loadDone() {
+            guard !doneLoaded else { return }
+            doneLoaded = true
+            if let data = try? Data(contentsOf: doneFile), let saved = try? JSONDecoder().decode([String].self, from: data) { done = saved }
+        }
+
+        /// The app group the app and its widget share when Lamp signed them for the person's team, or nil.
+        private static var group: String? { Bundle.main.object(forInfoDictionaryKey: "LampAppGroup") as? String }
+
+        /// Takes everything the widget queued in the shared folder: the file is moved aside first, so what the
+        /// widget adds meanwhile starts a new one and nothing is read twice or lost.
+        private static func takeQueued() {
+            guard let group, let folder = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return }
+            let file = folder.appendingPathComponent("lamp-widget-actions.jsonl")
+            let taken = folder.appendingPathComponent("lamp-widget-actions-\(UUID().uuidString).taking")
+            let leftovers = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
+                .filter { $0.pathExtension == "taking" }
+            if (try? FileManager.default.moveItem(at: file, to: taken)) == nil, leftovers.isEmpty { return }
+            for part in leftovers + [taken] {
+                guard let text = try? String(contentsOf: part, encoding: .utf8) else { continue }
+                for line in text.split(separator: "\n") {
+                    if let action = try? JSONDecoder().decode(Action.self, from: Data(line.utf8)) { apply(action, then: {}) }
+                }
+                try? FileManager.default.removeItem(at: part)
+            }
+        }
+
+        nonisolated(unsafe) private static var watching = false
+
+        /// The widget nudges the app after queueing an action, so a running app does it right away.
+        private static func watchQueue() {
+            guard !watching, let group else { return }
+            watching = true
+            CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), nil, { _, _, _, _, _ in
+                LampWidget.queue.async { LampWidget.takeQueued() }
+            }, (group + ".lamp-actions") as CFString, nil, .deliverImmediately)
+        }
         nonisolated(unsafe) private static var shared: [String: String] = [:]   // name to JSON
         nonisolated(unsafe) private static var loaded = false
         nonisolated(unsafe) private static var listener: NWListener?
@@ -7073,6 +7309,18 @@ enum Template {
                         return read()
                     }
                     let line = String(data: received[..<end], encoding: .utf8) ?? ""
+                    // "act <id> <signature> <action as base64 JSON>": a button's action, from a widget with no
+                    // shared folder. Answered "ok" and signed over its id once done (or done before).
+                    if line.hasPrefix("act ") {
+                        let act = line.split(separator: " ", maxSplits: 3).map(String.init)
+                        guard act.count == 4, act[2] == signature("act", act[1], act[3]),
+                              let data = Data(base64Encoded: act[3]), let action = try? JSONDecoder().decode(Action.self, from: data),
+                              action.id == act[1], handler != nil else { return connection.cancel() }   // kept by the widget till then
+                        return apply(action) {
+                            connection.send(content: Data(("ok " + signature("done", action.id)).utf8), contentContext: .finalMessage,
+                                            isComplete: true, completion: .contentProcessed { _ in connection.cancel() })
+                        }
+                    }
                     let parts = line.split(separator: " ", maxSplits: 2).map(String.init)
                     var reply = Data()
                     if parts.count == 3, parts[1] == signature("ask", parts[0], parts[2]) {
