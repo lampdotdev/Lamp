@@ -105,7 +105,10 @@ async function fitting(tab, apps) {
       selectors.forEach((s, i) => { if (found.result[i]) present.add(s); });
     } catch {}
   }
-  return near.filter(app => app.fits.some(fit => siteFits(fit, url) && (!fit.selector || present.has(fit.selector)))).map(app => app.id);
+  // The app that named this site comes before one that only matched something common to many pages.
+  const score = app => Math.max(...app.fits.filter(fit => siteFits(fit, url) && (!fit.selector || present.has(fit.selector)))
+    .map(fit => (fit.site ? 4 : 0) + (fit.path ? 2 : 0) + (fit.selector ? 1 : 0)), -1);
+  return near.map(app => [app, score(app)]).filter(([, s]) => s >= 0).sort((a, b) => b[1] - a[1]).map(([app]) => app.id);
 }
 chrome.action.onClicked.addListener(tab => {
   if (tab.incognito) return;

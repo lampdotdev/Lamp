@@ -100,7 +100,7 @@ enum BrowserPreview {
             while !companions.isHandled(id, in: project), Date().timeIntervalSince(asked) < 150 { try? await Task.sleep(for: .milliseconds(250)) }
             if !companions.isHandled(id, in: project) { happened.append("\(number): clicked \"\(button.label)\"; the app hasn't finished handling it after two and a half minutes."); break }
             try? await Task.sleep(for: .milliseconds(1200))
-            happened.append("\(number): clicked \"\(button.label)\"\(request["page"] != nil ? ", with the page's text" : ""); the app handled it in \(Int(Date().timeIntervalSince(asked).rounded())) s.")
+            happened.append("\(number): clicked \"\(button.label)\"\(button.readsSelection == true ? ", with the selected passage" : request["page"] != nil ? ", with the page's text" : ""); the app handled it in \(Int(Date().timeIntervalSince(asked).rounded())) s.")
         }
         var text = "What happened:\n" + happened.joined(separator: "\n")
         if Runtime.sourcesChanged(project) {
