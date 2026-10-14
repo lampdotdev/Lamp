@@ -430,6 +430,27 @@ accessibility tree (`LampDriver.elements`), and on a click leaves a cropped pict
 says what it is; Lamp attaches that picture to the message, named after the thing ("Save button.png",
 `MagicPanel.name`), and takes a picture only from that folder.
 
+With its own experiment on (Settings → Experimental, "Update open apps without restarting them", `LiveReload.switchKey`; it applies whether the change was asked for beside the app or in Lamp's window), a change goes into the open app without a restart when it can (`LiveReload`). The
+Mac app, or the Mac half of an app for both while Try On points at this Mac, with no widget or share extension, is
+built live: build.sh with `LAMP_LIVE=1` copies Sources into `.lamp/live` with each `var body: some View` wrapped
+(`Template.liveCopySteps`: the body becomes `AnyView` and reads `LampLive.generation`, so its type never changes and
+every view draws again on a reload with its state kept), and builds that copy unoptimized, testable, with
+`LAMP_LIVE` and `-Xlinker -interposable` (SwiftPM for a Mac app; Xcode for an app for both, from a copy of the
+device project, with its debug library off so the code is in the one binary). After a build, `Store.install` tries
+`reloadInPlace` first: when the app is open, was built live, and the change only touched or added files (none removed), didn't touch the App, and leaves every type
+holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties and cases,
+from `-dump-ast`, compared for the open app's sources and the new ones; no reading of the text) (`LiveReload.reloadable`, comparing with the sources the
+open app runs, kept in `.lamp/live/running`), the whole module is compiled from the live copy and the changed files'
+objects linked into a library, which the app loads when asked with a request signed with its token, only from its
+own `.lamp/live` (`LampLive` in LampSupport, under `#if LAMP_LIVE`). It points the app's own calls at the new
+functions by rewriting the symbol pointers they go through; types, metadata and stored globals are left alone. The
+build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
+keep the agent off the app). Anything else is installed the usual way, by reopening the app, with why in the chat's
+details (`LiveReload.Verdict`), so the rules can be tuned by what happens. A live build reads the app's own files
+from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too; the package, the
+app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which asks for
+new state in new views rather than new stored properties in existing types, when that's as clear.
+
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
 "cancelled" when the person keeps the app open and doesn't come while the question is still up. Until then Lamp
@@ -718,7 +739,7 @@ card), check:
 
 Each tab has one job: **Building**, how Lamp builds apps; **Apps**, what apps use while they run; **AI
 Providers**, what's on this Mac, then cloud providers, with keys, sign-ins and downloads (other tabs' menus
-end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (now: changing apps while using them).
+end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (now: changing apps while using them, and updating open apps without restarting them).
 Lay out with the shared pieces in `Setup.swift`, and extend one rather than lay out by hand:
 `SettingsCheckboxes` (on/off is a checkbox, box first, never a switch), `.underCheckbox()`,
 `.checkboxNote(…)`, `NotReadyBadge`, `NotReadyRow`, `CapabilityNote` (the gray why-and-fix under Not Ready),

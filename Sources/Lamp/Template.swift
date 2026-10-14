@@ -469,13 +469,28 @@ enum Template {
           echo "The Mac build of an app for both needs your Apple team: choose it in Lamp's Settings → Building." >&2
           exit 1
         fi
-        xcodebuild -project ".lamp/device/{{EXE}}.xcodeproj" -scheme "{{EXE}}" -configuration Release -destination "platform=macOS" \\
-          -derivedDataPath ".lamp/device/DerivedData" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \\
-          DEVELOPMENT_TEAM="$LAMP_TEAM" build 2>&1
+        PROJECT=.lamp/device
+        LIVE_SETTINGS=()
+        # A live build (LiveReload): Xcode builds a copy of the project whose sources are the live copy (its
+        # ../../Sources lands on .lamp/live/Sources), unoptimized and linked so a change can go into the open app.
+        if [[ "${LAMP_LIVE:-}" == 1 ]]; then
+        \(liveCopySteps)
+          mkdir -p "$LIVE/xcode"
+          rsync -a --delete --exclude DerivedData .lamp/device/ "$LIVE/xcode/device/"
+          ln -sfn ../../Assets "$LIVE/Assets"
+          PROJECT="$LIVE/xcode/device"
+          # One binary: unoptimized, Xcode would put the app's code in a separate debug library (for previews),
+          # and the open app's calls to it wouldn't go through the binary that's changed.
+          LIVE_SETTINGS=(SWIFT_OPTIMIZATION_LEVEL=-Onone SWIFT_COMPILATION_MODE=singlefile ENABLE_TESTABILITY=YES ENABLE_DEBUG_DYLIB=NO
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG LAMP_LIVE" "OTHER_LDFLAGS=-Xlinker -interposable")
+        fi
+        xcodebuild -project "$PROJECT/{{EXE}}.xcodeproj" -scheme "{{EXE}}" -configuration Release -destination "platform=macOS" \\
+          -derivedDataPath "$PROJECT/DerivedData" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \\
+          DEVELOPMENT_TEAM="$LAMP_TEAM" "${LIVE_SETTINGS[@]}" build 2>&1
         APP="build/{{EXE}}.app"
         rm -rf "$APP"
         mkdir -p build
-        cp -R ".lamp/device/DerivedData/Build/Products/Release/{{EXE}}.app" "$APP"
+        cp -R "$PROJECT/DerivedData/Build/Products/Release/{{EXE}}.app" "$APP"
         echo "Built $APP"
 
         """
@@ -2911,6 +2926,10 @@ enum Template {
     import WidgetKit
     import CoreServices
     import ServiceManagement
+    #if LAMP_LIVE
+    import MachO
+    import Observation
+    #endif
     /// A picture: NSImage on the Mac, UIImage on iPhone and iPad.
     typealias LampImage = NSImage
     #else
@@ -3325,6 +3344,9 @@ enum Template {
             LampWindows.start
             LampWidget.start
             LampMagic.start
+            #if LAMP_LIVE
+            LampLive.start
+            #endif
         }
 
         var body: some Commands {
@@ -3336,6 +3358,157 @@ enum Template {
             }
         }
     }
+
+    #if LAMP_LIVE
+    /// Changes made while the app is open, put into it without a restart (live builds only: debug, linked
+    /// -interposable, from Lamp's copy of the sources with each view's body wrapped). Lamp compiles the files a
+    /// change touched into a library in `.lamp/live`; asked with the app's token, this loads it and points the
+    /// app's calls to its own functions at the new ones. Data, types and objects stay as they are, so what's on
+    /// screen keeps its state, and every view draws again through `generation`, which each wrapped body reads.
+    @MainActor @Observable final class LampLive {
+        static let shared = LampLive()
+        var generation = 0
+        static var generation: Int { shared.generation }
+
+        static let start: Void = {
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("{{NOTE}}reload"), object: Bundle.main.bundleIdentifier, queue: .main
+            ) { note in
+                let path = note.userInfo?["path"] as? String, signature = note.userInfo?["signature"] as? String
+                MainActor.assumeIsolated { shared.load(path, signature: signature) }
+            }
+        }()
+
+        private var loaded: Set<String> = []
+        /// Every replacement so far, by name, and the images whose calls go through pointers: the app and each
+        /// library loaded before. A later change has to reach calls made from an earlier change's code too, and
+        /// a library's calls to functions it doesn't hold were bound to the app's first copies.
+        private var latest: [String: UnsafeRawPointer] = [:]
+        private var images: [String] = []
+
+        private func load(_ path: String?, signature: String?) {
+            let folder = "{{APPS}}/{{SLUG}}/.lamp/live/"
+            guard let path, let signature, path.hasPrefix(folder), !path.contains(".."), path.hasSuffix(".dylib"),
+                  !loaded.contains(path) else { return }
+            let key = SymmetricKey(data: Data("{{TOKEN}}".utf8))
+            let expected = HMAC<SHA256>.authenticationCode(for: Data("reload\n\(path)".utf8), using: key)
+                .map { String(format: "%02x", $0) }.joined()
+            guard signature == expected else { return }
+            loaded.insert(path)
+            var result = "failed"
+            defer {
+                try? result.write(to: LampRuntime.folder.appendingPathComponent("reloaded.txt"), atomically: true, encoding: .utf8)
+            }
+            guard dlopen(path, RTLD_NOW) != nil else {
+                print("Lamp couldn't load the change: \(String(cString: dlerror()))")
+                return
+            }
+            guard let image = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == path }),
+                  let header = _dyld_get_image_header(image) else { return }
+            for (name, address) in Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image)) where Self.isCode(name) {
+                latest[name] = address
+            }
+            images.append(path)
+            var rebound = Self.rebind(image: 0, to: latest)
+            for earlier in images {
+                guard let index = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == earlier }) else { continue }
+                rebound += Self.rebind(image: index, to: latest)
+            }
+            generation += 1
+            result = "ok \(rebound)"
+        }
+
+        /// Functions, getters and setters, by their Swift names: never a type's metadata, descriptors, witness
+        /// tables or the accessors of stored globals, whose new copies would be a second set of the app's types
+        /// and state.
+        private static func isCode(_ name: String) -> Bool {
+            guard name.hasPrefix("_$s") else { return false }
+            for kept in ["Mn", "Mf", "MV", "Ma", "Mm", "MF", "Mc", "Ml", "MXX", "Ms", "Wp", "WP", "Wl", "WL", "lau", "vau", "Wz", "Qo", "QO", "So", "WV", "Wvd", "MQ"]
+            where name.hasSuffix(kept) { return false }
+            return name.hasSuffix("F") || name.hasSuffix("g") || name.hasSuffix("s") || name.hasSuffix("M") || name.hasSuffix("fC") || name.hasSuffix("fc")
+        }
+
+        private static func commands(_ header: UnsafePointer<mach_header>) -> [UnsafeRawPointer] {
+            let header64 = UnsafeRawPointer(header).assumingMemoryBound(to: mach_header_64.self)
+            var command = UnsafeRawPointer(header64).advanced(by: MemoryLayout<mach_header_64>.size)
+            var all: [UnsafeRawPointer] = []
+            for _ in 0..<header64.pointee.ncmds {
+                all.append(command)
+                command = command.advanced(by: Int(command.assumingMemoryBound(to: load_command.self).pointee.cmdsize))
+            }
+            return all
+        }
+
+        private static func segmentName(_ segment: UnsafePointer<segment_command_64>) -> String {
+            withUnsafeBytes(of: segment.pointee.segname) { String(cString: Array($0.bindMemory(to: CChar.self)) + [0]) }
+        }
+
+        /// The symbol and string tables of an image, where they sit in memory.
+        private static func tables(_ header: UnsafePointer<mach_header>, slide: Int)
+            -> (symbols: UnsafePointer<nlist_64>, strings: UnsafePointer<CChar>, count: Int, base: UnsafeRawPointer, dysymtab: UnsafePointer<dysymtab_command>?)? {
+            var symtab: UnsafePointer<symtab_command>?, dysymtab: UnsafePointer<dysymtab_command>?, linkedit: UnsafePointer<segment_command_64>?
+            for command in commands(header) {
+                switch command.assumingMemoryBound(to: load_command.self).pointee.cmd {
+                case UInt32(LC_SYMTAB): symtab = command.assumingMemoryBound(to: symtab_command.self)
+                case UInt32(LC_DYSYMTAB): dysymtab = command.assumingMemoryBound(to: dysymtab_command.self)
+                case UInt32(LC_SEGMENT_64):
+                    let segment = command.assumingMemoryBound(to: segment_command_64.self)
+                    if segmentName(segment) == "__LINKEDIT" { linkedit = segment }
+                default: break
+                }
+            }
+            guard let symtab, let linkedit,
+                  let base = UnsafeRawPointer(bitPattern: slide + Int(linkedit.pointee.vmaddr) - Int(linkedit.pointee.fileoff)) else { return nil }
+            return (base.advanced(by: Int(symtab.pointee.symoff)).assumingMemoryBound(to: nlist_64.self),
+                    base.advanced(by: Int(symtab.pointee.stroff)).assumingMemoryBound(to: CChar.self),
+                    Int(symtab.pointee.nsyms), base, dysymtab)
+        }
+
+        private static func definedSymbols(_ header: UnsafePointer<mach_header>, slide: Int) -> [(String, UnsafeRawPointer)] {
+            guard let tables = tables(header, slide: slide) else { return [] }
+            var out: [(String, UnsafeRawPointer)] = []
+            for index in 0..<tables.count {
+                let symbol = tables.symbols[index]
+                guard symbol.n_type & UInt8(N_EXT) != 0, symbol.n_type & UInt8(N_TYPE) == UInt8(N_SECT), symbol.n_value != 0,
+                      let address = UnsafeRawPointer(bitPattern: Int(symbol.n_value) + slide) else { continue }
+                out.append((String(cString: tables.strings.advanced(by: Int(symbol.n_un.n_strx))), address))
+            }
+            return out
+        }
+
+        /// Points the image's symbol pointers, which its calls to its own functions go through, at the new code.
+        private static func rebind(image: UInt32, to replacements: [String: UnsafeRawPointer]) -> Int {
+            guard let header = _dyld_get_image_header(image) else { return 0 }
+            let slide = _dyld_get_image_vmaddr_slide(image)
+            guard let tables = tables(header, slide: slide), let dysymtab = tables.dysymtab else { return 0 }
+            let indirect = tables.base.advanced(by: Int(dysymtab.pointee.indirectsymoff)).assumingMemoryBound(to: UInt32.self)
+            let page = Int(vm_page_size)
+            var count = 0
+            for command in commands(header) where command.assumingMemoryBound(to: load_command.self).pointee.cmd == UInt32(LC_SEGMENT_64) {
+                let segment = command.assumingMemoryBound(to: segment_command_64.self)
+                var section = command.advanced(by: MemoryLayout<segment_command_64>.size).assumingMemoryBound(to: section_64.self)
+                for _ in 0..<segment.pointee.nsects {
+                    defer { section = section.advanced(by: 1) }
+                    let type = section.pointee.flags & UInt32(SECTION_TYPE)
+                    guard type == UInt32(S_LAZY_SYMBOL_POINTERS) || type == UInt32(S_NON_LAZY_SYMBOL_POINTERS),
+                          let slots = UnsafeMutablePointer<UnsafeRawPointer?>(bitPattern: slide + Int(section.pointee.addr)) else { continue }
+                    let first = Int(section.pointee.reserved1)
+                    for i in 0..<(Int(section.pointee.size) / MemoryLayout<UnsafeRawPointer>.size) {
+                        let index = indirect[first + i]
+                        guard index & 0xC000_0000 == 0 else { continue }   // a local or absolute symbol
+                        let name = String(cString: tables.strings.advanced(by: Int(tables.symbols[Int(index)].n_un.n_strx)))
+                        guard let new = replacements[name] else { continue }
+                        let start = UInt(bitPattern: slots.advanced(by: i)) & ~UInt(page - 1)
+                        mprotect(UnsafeMutableRawPointer(bitPattern: start), page, PROT_READ | PROT_WRITE)
+                        slots[i] = new
+                        count += 1
+                    }
+                }
+            }
+            return count
+        }
+    }
+    #endif
 
     /// The 🪄 in each window's title bar: it opens this app's chat in Lamp beside the window, to change the app
     /// while using it. Lamp draws that chat, not the app, so the app's own code can't speak to the agent that
@@ -3568,7 +3741,7 @@ enum Template {
             }
             let symbol = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Change This App")!
                 .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))!
-            let button = NSButton(image: symbol, target: Opener.shared, action: #selector(Opener.open))
+            let button = NSButton(image: symbol, target: Opener.shared, action: #selector(Opener.open(_:)))
             button.toolTip = "Change this app with Lamp"
             if #available(macOS 26, *) {
                 button.bezelStyle = .glass
@@ -3614,11 +3787,21 @@ enum Template {
 
         @MainActor private final class Opener: NSObject {
             static let shared = Opener()
-            @objc func open() {
+            @objc func open(_ sender: NSButton) {
                 var link = URLComponents(string: "{{SCHEME}}://magic?app={{SLUG}}")!
-                // Where the window is goes with the link, so the chat opens beside it rather than waiting to be told.
-                if let window = NSApp.keyWindow ?? NSApp.mainWindow, isAppWindow(window) {
+                // Where the window is goes with the link, so the chat opens beside it rather than waiting to be told:
+                // the wand's own window, which isn't key or main when the app isn't in front.
+                if let window = sender.window ?? NSApp.keyWindow ?? NSApp.mainWindow, isAppWindow(window) {
                     link.queryItems?.append(URLQueryItem(name: "frame", value: NSStringFromRect(window.frame)))
+                }
+                // The Lamp that's running is told directly: a link goes to whichever copy macOS picks, which on a
+                // Mac with more than one (a developer's) may be another one, started for it.
+                if !NSRunningApplication.runningApplications(withBundleIdentifier: "{{HOST}}").isEmpty {
+                    var info: [String: String] = ["app": "{{SLUG}}"]
+                    if let frame = link.queryItems?.first(where: { $0.name == "frame" })?.value { info["frame"] = frame }
+                    DistributedNotificationCenter.default().postNotificationName(
+                        Notification.Name("{{NOTE}}magicOpen"), object: nil, userInfo: info, deliverImmediately: true)
+                    return
                 }
                 // Without bringing Lamp in front: the chat opens beside this window, which stays where it is.
                 let configuration = NSWorkspace.OpenConfiguration()
@@ -6604,7 +6787,12 @@ enum Template {
     ///     let logo = LampAssets.image("logo.png")
     ///     let csv = LampAssets.text("prices.csv")
     enum LampAssets {
+        #if LAMP_LIVE
+        // A live build reads them from the app's folder, so a file added while the app is open is there at once.
+        static var folder: URL? { URL(fileURLWithPath: "{{APPS}}/{{SLUG}}/Assets") }
+        #else
         static var folder: URL? { Bundle.main.resourceURL?.appendingPathComponent("Assets") }
+        #endif
 
         static func url(_ name: String) -> URL? {
             guard let url = folder?.appendingPathComponent(name),
@@ -10357,12 +10545,35 @@ enum Template {
 
 """#
 
+    /// The live copy of the sources (LiveReload): each file copied into .lamp/live with its views' bodies wrapped,
+    /// so a body's type stays the same from one change to the next (`LampLive`), and only when it differs, so the
+    /// build stays incremental; files gone from Sources go from the copy too. Indented for the scripts' `if`.
+    static let liveCopySteps = """
+      LIVE=.lamp/live
+      mkdir -p "$LIVE/Sources"
+      for f in Sources/**/*.swift(N); do
+        out="$LIVE/$f"
+        mkdir -p "${out:h}"
+        perl -0pe 's/var body: some View \\{/var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\\n    \\@ViewBuilder var __lampBody: some View {/g' "$f" > "$out.new"
+        if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
+      done
+      for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done
+    """
+
     static let buildSh = """
     #!/bin/zsh
     # Builds build/{{EXE}}.app. Run after every change.
     set -euo pipefail
     cd "$(dirname "$0")"
     FLAGS=(-c release -Xswiftc -g)
+    # A live build (Lamp's changing apps while they're open): debug, linked so a change can be put into the running
+    # app (LampLive), from a copy of the sources in .lamp/live with each view's body wrapped so its type stays the
+    # same from one change to the next. A file is copied only when it differs, so builds stay incremental.
+    if [[ "${LAMP_LIVE:-}" == 1 ]]; then
+    \(liveCopySteps)
+      cmp -s Package.swift "$LIVE/Package.swift" || cp Package.swift "$LIVE/Package.swift"
+      FLAGS=(-c debug --package-path "$LIVE" --scratch-path "$LIVE/.build" -Xswiftc -DLAMP_LIVE -Xswiftc -enable-testing -Xlinker -interposable)
+    fi
     \(appIntentsSetup(ios: false))
     swift build "${FLAGS[@]}" 2>&1
     BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"

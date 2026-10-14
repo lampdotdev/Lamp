@@ -3517,7 +3517,9 @@ final class Store: ObservableObject {
             return problem
         }
         let command = universal ? "./build.sh \(project.onIOS ? "ios" : "mac")" : "./build.sh"
-        let status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: universal ? ["LAMP_TEAM": Devices.team] : [:],
+        var env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : [:]
+        if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1" }   // a change can go into the open app (LiveReload)
+        let status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: env,
                                      started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
         turns[project.id]?.build = nil
         guard exists(project) else { return "The app was deleted." }
@@ -3536,6 +3538,68 @@ final class Store: ObservableObject {
     /// the app didn't open beside one that has, or the reverse.
     private func noteOpened(_ opened: Bool, for project: LampProject) {
         if progress[project.id]?.finished != nil { progress[project.id]?.unopened = !opened }
+    }
+
+    /// Puts the change just built into the open Mac app, when it was built live and the change can go in that
+    /// way (`LiveReload.reloadable`). True when it went in: the app is updated where it is, and the build is held,
+    /// to be installed when the app closes. False sends the change the usual way, by reopening the app.
+    private func reloadInPlace(_ project: LampProject, inFront: Bool) async -> Bool {
+        guard LiveReload.eligible(project), let app = macCopies(of: project).first,
+              Self.binary(of: project, contains: "reloaded.txt") else { return false }
+        let changed: [String]
+        switch await LiveReload.verdict(project) {
+        case .reload(let files): changed = files
+        case .unchanged: return false
+        case .reopen(let why):
+            log(project, .detail, "Reopening \(project.name) for this change: \(why).")
+            return false
+        }
+        note("Updating \(project.name) in place…", for: project)
+        let (library, problem) = await LiveReload.compile(project, changed: changed)
+        guard let library else {
+            print("Live reload of \(project.name) didn't compile:\n\(problem ?? "")")
+            return false
+        }
+        guard await LiveReload.send(library, to: project, token: Template.token(for: project)) else { return false }
+        LiveReload.markRunning(project, keepLayout: true)
+        LiveReload.keepLayout(project)
+        watchAfterReload(project, app: app)
+        LiveReload.awaitInstall(project)
+        _ = heldInstalls.mayInstall(project.id, running: true)
+        noteOpened(true, for: project)
+        if inFront {
+            app.activate()
+            log(project, .status, "\(project.name) is updated")
+        }
+        refreshOpenApps()
+        return true
+    }
+
+    /// The safety net under a live change: if the app crashes within a few seconds of one going in, what it was
+    /// told to run didn't suit it after all. It's opened again from the full build, which goes in as it closes
+    /// (the install waiting for that), and the chat's details say so. Only a crash, which leaves macOS's report:
+    /// an app quit on purpose (its Quit, Lamp's Stop) stays closed.
+    private func watchAfterReload(_ project: LampProject, app: NSRunningApplication) {
+        let since = Date()
+        Task { [weak self] in
+            for _ in 0..<16 {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard app.isTerminated else { continue }
+                // macOS writes the report a moment after the process is gone.
+                var crashed = false
+                for _ in 0..<10 where !crashed {
+                    crashed = Runtime.crashed(project, since: since)
+                    if !crashed { try? await Task.sleep(for: .milliseconds(300)) }
+                }
+                guard crashed, let self, let current = self.current(project) else { return }
+                self.log(current, .detail, "\(current.name) stopped right after a change went in without reopening it. Opening it again with the full build.")
+                LiveReload.forget(current)
+                // The full build goes in as the app closes (`installHeldIcons`); then it's opened.
+                for _ in 0..<60 where LiveReload.awaitsInstall(current) { try? await Task.sleep(for: .milliseconds(500)) }
+                await self.open(current)
+                return
+            }
+        }
     }
 
     /// Installs and opens the app. Returns what's known about the failure if it died straight away.
@@ -3563,6 +3627,9 @@ final class Store: ObservableObject {
             if problem == nil, Template.hasHomeScreenWidget(project), WidgetCard.isNeeded(after: logs[project.id] ?? []) { log(project, .widget, "") }
             return problem
         }
+        // A change that can go into the open app goes in there, keeping what's on screen; the build waits to be
+        // installed until the app closes (LiveReload).
+        if await reloadInPlace(project, inFront: inFront) { return nil }
         // Asked once in a turn: a second build in it leaves the app the person kept open alone.
         let asked = owner?.keptOpen == true && isRunning(project)
         guard !asked, await quit(project, for: owner, only: .mac) else {
@@ -4118,6 +4185,9 @@ final class Store: ObservableObject {
         } else {
             try fm.moveItem(at: staging, to: project.installedURL)
         }
+        // What the app now runs when it opens is this build's sources (LiveReload compares a change with them).
+        LiveReload.installed(project)
+        if LiveReload.eligible(project) { LiveReload.markRunning(project) } else { LiveReload.forget(project) }
         // Nudge Finder, the Dock and Launchpad to pick up the new icon.
         try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: project.installedURL.path)
         _ = await Shell.run(
@@ -4418,7 +4488,9 @@ final class Store: ObservableObject {
         refreshOpenApps()
         // Builds that were waiting for their app to close when Lamp was last quit: still waiting, and one
         // whose app has closed since goes in now.
-        for project in projects where Runtime.holdsBuild(project) { _ = heldInstalls.mayInstall(project.id, running: true) }
+        for project in projects where Runtime.holdsBuild(project) || LiveReload.awaitsInstall(project) {
+            _ = heldInstalls.mayInstall(project.id, running: true)
+        }
         installHeldIcons(for: heldInstalls.waiting)
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
