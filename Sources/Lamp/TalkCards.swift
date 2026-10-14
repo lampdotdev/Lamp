@@ -7,8 +7,8 @@ import SwiftUI
 struct AskProgress: Equatable {
     var step = 0
     var answers: [Int: String] = [:]
-    var typed = ""
-    /// With every question on one card, what's typed for each instead of picking one of its chips.
+    /// What's typed for each question instead of picking one of its answers. Each question keeps its own, so
+    /// going Back doesn't show what was typed for the next one.
     var own: [Int: String] = [:]
 
     /// Takes what's typed as a question's answer; emptied, the question is unanswered again.
@@ -25,8 +25,9 @@ struct AskProgress: Equatable {
 
     /// Takes an answer for the question showing. True when that was the last one.
     mutating func take(_ answer: String, of count: Int) -> Bool {
+        // A picked answer replaces what was typed for the question; a typed one stays, to read on Back.
+        if own[step]?.trimmed != answer { own[step] = nil }
         answers[step] = answer
-        typed = ""
         guard step < count - 1 else { return true }
         step += 1
         return false
@@ -156,6 +157,7 @@ struct AskSteps: View {
 
     private var count: Int { ask.questions.count }
     private var step: Int { min(progress.step, count - 1) }
+    private var typed: String { (progress.own[step] ?? "").trimmed }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -185,12 +187,12 @@ struct AskSteps: View {
                 }
             }
             .allowsHitTesting(armed)
-            TextField("Something else…", text: $progress.typed)
+            TextField("Something else…", text: Binding(get: { progress.own[step] ?? "" }, set: { progress.own[step] = $0 }))
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 12).padding(.vertical, 9)
                 .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
-                .onSubmit { if !progress.typed.trimmed.isEmpty { pick(progress.typed.trimmed) } }
+                .onSubmit { if !typed.isEmpty { pick(typed) } }
             HStack(spacing: 16) {
                 Group {
                     Button(Talk.youDecide) { pick(Talk.youDecide) }
@@ -203,7 +205,6 @@ struct AskSteps: View {
                 Spacer()
                 // What's typed is sent from here as well as with Return. Its place is kept while there's
                 // nothing typed, so the card is the same height before and after the first letter.
-                let typed = progress.typed.trimmed
                 Button(step < count - 1 ? "Next" : "Send") { pick(typed) }
                     .buttonStyle(.borderedProminent)
                     .opacity(typed.isEmpty ? 0 : 1)
