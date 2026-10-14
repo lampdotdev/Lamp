@@ -33,7 +33,10 @@ A capability given to one engine must be given to all of them that can take it, 
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
   engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `ask`, `show_result`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
-- **How the agent talks** (`Talk`, `TalkCards.swift`): in a sentence or two and in cards, not paragraphs. Its
+- **How the agent talks** (`Talk`, `TalkCards.swift`): in short sentences and in cards, not paragraphs, so building
+  feels like a short wizard: a new app starts with two or three questions as a card unless the request already
+  answers them (`Agent.Rules.ask`). Each piece of a card has a word limit (`Talk.Words`, the same numbers as the
+  tools' descriptions), and a call over it is turned away for the agent to say shorter, whichever engine it is. Its
   pieces are tools: `ask` puts questions in the chat as a card answered by clicking, laid out as the agent
   chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own), and `show_result` is
   the card for what a request came to: for a new app or a big change the agent's guesses as buttons, for an

@@ -95,20 +95,19 @@ struct AskCard: View {
     }
 }
 
-/// A card that's no longer waiting, folded where it was to a line like the ones for what Lamp did: the
-/// answers that were clicked, or, when the person typed their own answer instead, what was asked (their
+/// A card that's no longer waiting, folded where it was to a line like the ones for what Lamp did: each
+/// question with the answer clicked for it, or, when the person typed their own answer instead, what was asked (their
 /// message under it is the answer). Only the card that waits is drawn as a card.
 private struct Answered: View {
     let ask: Talk.Ask
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let answers = ask.answers {
+            if let folded = ask.folded {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Image(systemName: "checkmark.circle").foregroundStyle(.secondary).frame(width: 16)
-                    Text(answers.joined(separator: " · ")).fixedSize(horizontal: false, vertical: true)
+                    Text(folded).fixedSize(horizontal: false, vertical: true)
                 }
-                .help(ask.questions.map(\.question).joined(separator: "\n"))
             } else {
                 ForEach(Array(ask.questions.enumerated()), id: \.offset) { _, question in
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
