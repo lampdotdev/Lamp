@@ -190,8 +190,13 @@ enum LiveReload {
     /// inferred types all fool. Nil when the compiler can't say (the code doesn't type-check).
     static func layout(of folder: URL, files: [String]?, module: String) async -> [String]? {
         if files?.isEmpty == true { return [] }
+        // All of the app's own files, by name: the compiler prints (and checks the bodies of) only the files it's
+        // given as primaries, or just the first with none. Lamp's building blocks are read for context only: the
+        // app's code can't change what they hold or make them stop compiling, and they're most of the time.
+        let primaries = files ?? swiftFiles(in: folder).keys.filter { ($0 as NSString).lastPathComponent != "LampSupport.swift" }.sorted()
+        guard !primaries.isEmpty else { return [] }
         var output: [String] = []
-        let status = await Shell.run(frontend("-dump-ast", in: folder, primaries: files ?? [], module: module) + " 2>/dev/null",
+        let status = await Shell.run(frontend("-dump-ast", in: folder, primaries: primaries, module: module) + " 2>/dev/null",
                                      cwd: folder) { output.append($0) }
         guard status == 0 else { return nil }
         return members(inDump: output.joined(separator: "\n"))
