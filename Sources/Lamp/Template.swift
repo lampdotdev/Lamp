@@ -3741,7 +3741,7 @@ enum Template {
             }
             let symbol = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Change This App")!
                 .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))!
-            let button = NSButton(image: symbol, target: Opener.shared, action: #selector(Opener.open))
+            let button = NSButton(image: symbol, target: Opener.shared, action: #selector(Opener.open(_:)))
             button.toolTip = "Change this app with Lamp"
             if #available(macOS 26, *) {
                 button.bezelStyle = .glass
@@ -3787,10 +3787,11 @@ enum Template {
 
         @MainActor private final class Opener: NSObject {
             static let shared = Opener()
-            @objc func open() {
+            @objc func open(_ sender: NSButton) {
                 var link = URLComponents(string: "{{SCHEME}}://magic?app={{SLUG}}")!
-                // Where the window is goes with the link, so the chat opens beside it rather than waiting to be told.
-                if let window = NSApp.keyWindow ?? NSApp.mainWindow, isAppWindow(window) {
+                // Where the window is goes with the link, so the chat opens beside it rather than waiting to be told:
+                // the wand's own window, which isn't key or main when the app isn't in front.
+                if let window = sender.window ?? NSApp.keyWindow ?? NSApp.mainWindow, isAppWindow(window) {
                     link.queryItems?.append(URLQueryItem(name: "frame", value: NSStringFromRect(window.frame)))
                 }
                 // The Lamp that's running is told directly: a link goes to whichever copy macOS picks, which on a

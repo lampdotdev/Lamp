@@ -292,7 +292,8 @@ final class MagicPanel: NSObject, NSWindowDelegate {
     private func place() {
         guard let panel, let frame = appFrame else { return }
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) }?.visibleFrame ?? NSScreen.main?.visibleFrame ?? frame
-        let width = max(panel.frame.width, panel.minSize.width)
+        // Its own width, or wider if the person made it so.
+        let width = max(panel.frame.width, Self.width)
         var x = frame.maxX + Self.gap
         if x + width > screen.maxX { x = frame.minX - Self.gap - width }
         if x < screen.minX { x = min(frame.maxX, screen.maxX) - width - Self.gap }
