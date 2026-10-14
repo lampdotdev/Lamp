@@ -3563,8 +3563,7 @@ final class Store: ObservableObject {
             return false
         }
         guard await LiveReload.send(library, to: project, token: Template.token(for: project)) else { return false }
-        LiveReload.markRunning(project, keepLayout: true)
-        LiveReload.keepLayout(project)
+        LiveReload.markRunning(project)
         watchAfterReload(project, app: app)
         LiveReload.awaitInstall(project)
         _ = heldInstalls.mayInstall(project.id, running: true)

@@ -28,14 +28,11 @@ enum LiveReload {
 
     /// After an install: the open app is the build, so what it runs is what the build used, with the other
     /// things the build puts in the app as they were.
-    static func markRunning(_ project: LampProject, keepLayout: Bool = false) {
+    static func markRunning(_ project: LampProject) {
         let fm = FileManager.default
         try? fm.removeItem(at: running(project))
         try? fm.copyItem(at: sources(project), to: running(project))
         try? inputs(project).write(to: runningInputs(project), atomically: true, encoding: .utf8)
-        // After a change that went in live, the types hold what they did (that's why it could), so what's kept
-        // stays true; after an install it's worked out again.
-        if !keepLayout { try? fm.removeItem(at: runningLayout(project)) }
     }
 
     private static func runningInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-inputs.txt") }
@@ -98,17 +95,17 @@ enum LiveReload {
             changed.append(path)
         }
         guard !changed.isEmpty else { return .unchanged }
-        // What the types hold, by the compiler: the open app's, worked out once per install and kept, and the new
-        // code's, kept for when the change has gone in.
-        async let after = layout(of: sources(project), module: project.exe)
-        let saved = (try? String(contentsOf: runningLayout(project), encoding: .utf8)).map { $0.components(separatedBy: "\n").filter { !$0.isEmpty } }
-        let fresh = saved == nil ? await layout(of: running(project), module: project.exe) : nil
-        guard let before = saved ?? fresh else { return .reopen("the compiler couldn't say what the open app's types hold") }
-        if saved == nil { try? before.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8) }
+        // What the types in the changed files hold, by the compiler, before and after (types in the files that
+        // didn't change can't have changed). Each file's own types only, with the rest read for context: fast.
+        let existed = changed.filter { open[$0] != nil }
+        async let after = layout(of: sources(project), files: changed, module: project.exe)
+        guard let before = await layout(of: running(project), files: existed, module: project.exe) else {
+            return .reopen("the compiler couldn't say what the open app's types hold")
+        }
         guard let now = await after else { return .reopen("the compiler couldn't say what the new code's types hold") }
         // Type by type, each "Owner<tab>member": a type the open app has must hold just what it did, in order;
-        // a new type (a new view with its own state) is the library's to lay out, and is kept with the rest for
-        // the next change once this one has gone in. A type taken away may still have objects in the open app.
+        // a new type (a new view with its own state) is the library's to lay out. A type taken away from these
+        // files may still have objects in the open app.
         func byType(_ entries: [String]) -> [String: [String]] {
             Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
         }
@@ -121,21 +118,27 @@ enum LiveReload {
                 return .reopen("\(type) changed what it holds (\(what))")
             }
         }
-        newLayout[project.id] = now
         return .reload(changed)
     }
 
-    /// The new code's layout, from the last verdict to allow a reload: what the open app holds once it's gone in.
-    @MainActor static var newLayout: [String: [String]] = [:]
+    /// A path for a shell command line, quoted.
+    private static func quoted(_ path: String) -> String { "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
-    /// After a change went in: the open app's types now include the new ones.
-    @MainActor static func keepLayout(_ project: LampProject) {
-        guard let layout = newLayout.removeValue(forKey: project.id) else { return }
-        try? layout.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8)
+    /// The compiler's command line for the live copy: the files named as primaries (what's compiled, or printed)
+    /// and every other one there for context, the way the live build compiles a file (unoptimized, testable,
+    /// macOS 14, named after the app, with SwiftUI's macros).
+    private static func frontend(_ action: String, in folder: URL, primaries: [String], module: String) -> String {
+        let all = swiftFiles(in: folder)
+        let others = all.filter { !primaries.contains($0.key) }.values.map(\.path).sorted()
+        let firsts = primaries.compactMap { all[$0]?.path }.map { "-primary-file " + quoted($0) }.joined(separator: " ")
+        return """
+            SDK="$(xcrun --sdk macosx --show-sdk-path)"
+            PLUGINS="$(dirname "$(dirname "$(xcrun -f swiftc)")")/lib/swift/host/plugins"
+            xcrun swiftc -frontend \(action) \(firsts) \(others.map(quoted).joined(separator: " ")) -module-name \(quoted(module)) \\
+              -parse-as-library -Onone -enable-testing -D DEBUG -D LAMP_LIVE -target arm64-apple-macosx14.0 -sdk "$SDK" \\
+              -plugin-path "$PLUGINS" -plugin-path "$SDK/../../usr/lib/swift/host/plugins"
+            """
     }
-
-    /// What the open app's types hold (`layout`), kept beside the sources it runs; gone when those change.
-    private static func runningLayout(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-layout.txt") }
 
     private static func swiftFiles(in folder: URL) -> [String: URL] {
         let base = folder.standardizedFileURL.path + "/"
@@ -145,22 +148,15 @@ enum LiveReload {
     }
 
     /// What the open app's objects are laid out by, as the compiler sees it: for each struct, class, enum and
-    /// actor, its stored properties with their types (inferred ones included) and its cases with what they
-    /// carry, in order, from the type-checked syntax tree (`-dump-ast`). Comparing the open app's with the new
+    /// actor in `files`, its stored properties with their types (inferred ones included) and its cases with what
+    /// they carry, in order, from the type-checked syntax tree (`-dump-ast`). Comparing the open app's with the new
     /// code's says whether a library can go in: no reading of the text, which formatting, comments, strings and
     /// inferred types all fool. Nil when the compiler can't say (the code doesn't type-check).
-    static func layout(of folder: URL, module: String) async -> [String]? {
-        let files = swiftFiles(in: folder).values.map(\.path).sorted()
-        guard !files.isEmpty else { return nil }
-        let quoted = files.map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }.joined(separator: " ")
+    static func layout(of folder: URL, files: [String], module: String) async -> [String]? {
+        guard !files.isEmpty else { return [] }
         var output: [String] = []
-        let status = await Shell.run("""
-            set -- \(quoted)
-            SDK="$(xcrun --sdk macosx --show-sdk-path)"
-            PLUGINS="$(dirname "$(dirname "$(xcrun -f swiftc)")")/lib/swift/host/plugins"
-            xcrun swiftc -frontend -dump-ast "$@" -module-name "$LAMP_EXE" -parse-as-library -D DEBUG -D LAMP_LIVE \\
-              -target arm64-apple-macosx14.0 -sdk "$SDK" -plugin-path "$PLUGINS" -plugin-path "$SDK/../../usr/lib/swift/host/plugins" 2>/dev/null
-            """, cwd: folder, env: ["LAMP_EXE": module]) { output.append($0) }
+        let status = await Shell.run(frontend("-dump-ast", in: folder, primaries: files, module: module) + " 2>/dev/null",
+                                     cwd: folder) { output.append($0) }
         guard status == 0 else { return nil }
         return members(inDump: output.joined(separator: "\n"))
     }
@@ -219,25 +215,16 @@ enum LiveReload {
         try? FileManager.default.removeItem(at: work)
         try? FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         let library = live.appendingPathComponent("hot-\(UUID().uuidString.prefix(8)).dylib")
-        let all = swiftFiles(in: sources(project)).values.map(\.path).sorted()
-        // The objects come out named after their files, in the work folder.
-        let objects = changed.map { work.appendingPathComponent(((($0 as NSString).lastPathComponent) as NSString).deletingPathExtension + ".o").path }
-        let script = """
-            set -e
-            SDK="$(xcrun --sdk macosx --show-sdk-path)"
-            PLUGINS="$(dirname "$(dirname "$(xcrun -f swiftc)")")/lib/swift/host/plugins"
-            cd "$LAMP_WORK"
-            xcrun swiftc -c "$@" -module-name "$LAMP_EXE" -parse-as-library -Onone -enable-testing \
-              -D DEBUG -D LAMP_LIVE -target arm64-apple-macosx14.0 -sdk "$SDK" -plugin-path "$PLUGINS" -plugin-path "$SDK/../../usr/lib/swift/host/plugins" 2>&1
-            xcrun swiftc -emit-library ${(Q)${(z)LAMP_OBJECTS}} -o "$LAMP_LIBRARY" -target arm64-apple-macosx14.0 -sdk "$SDK" \
-              -Xlinker -undefined -Xlinker dynamic_lookup -Xlinker -interposable 2>&1
-            codesign --force -s - "$LAMP_LIBRARY" 2>&1
+        // One object for each changed file, in the order they're named; only they are compiled.
+        let objects = changed.indices.map { work.appendingPathComponent("\($0).o").path }
+        let script = "set -e\n" + frontend("-c", in: sources(project), primaries: changed, module: project.exe)
+            + " " + objects.map { "-o " + quoted($0) }.joined(separator: " ") + " 2>&1\n" + """
+            xcrun swiftc -emit-library \(objects.map(quoted).joined(separator: " ")) -o \(quoted(library.path)) \\
+              -target arm64-apple-macosx14.0 -sdk "$SDK" -Xlinker -undefined -Xlinker dynamic_lookup -Xlinker -interposable 2>&1
+            codesign --force -s - \(quoted(library.path)) 2>&1
             """
         var output: [String] = []
-        let quoted = all.map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }.joined(separator: " ")
-        let status = await Shell.run("set -- \(quoted)\n" + script, cwd: project.dir,
-                                     env: ["LAMP_WORK": work.path, "LAMP_EXE": project.exe, "LAMP_LIBRARY": library.path,
-                                           "LAMP_OBJECTS": objects.map { "'\($0)'" }.joined(separator: " ")]) { output.append($0) }
+        let status = await Shell.run(script, cwd: project.dir) { output.append($0) }
         guard status == 0 else { return (nil, output.suffix(30).joined(separator: "\n")) }
         return (library, nil)
     }
