@@ -1,15 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Lamp",
-  "version": "0.0.4",
-  "description": "Show Lamp a task in Chrome, and let the apps Lamp makes read pages you choose.",
+  "version": "0.0.5",
+  "description": "Show Lamp a task, or use your apps beside a website.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzUkLhjZOuhAXx0NQVvyk7efkGGOH62nU/nAceZW/fRLi2ByLEvFz8YTA9TS1cq6hbRD464SejxqPlrwEI/K3AWTT4rOV4rnaep2V0vh64lH1muUbZF4OKmmyc3aDbT0Kg1X0YiSSurDFVY21bcgbEdVI1OpceS2ZSomQ3FfK2l2BXuhAPMWO6ms54tF6w/9Pc1Cu3q76Nf1SGYMwv91vafzc0B5VBMSFlF9YURmqvT/It7YFhNcwiLOw0z7idjlkW+KpLeOGFmiH181O5Z0G3lRtUNXb0aBgmh+cTA6OlYAmN68hksE4MvJmfwrBkSipprquLGi8CjPEVePp+6xxAQIDAQAB",
   "permissions": [
     "scripting",
     "nativeMessaging",
     "storage",
     "alarms",
-    "activeTab"
+    "activeTab",
+    "sidePanel"
   ],
   "action": {
     "default_title": "Lamp",
@@ -34,5 +35,8 @@
     "32": "icons/lamp-32.png",
     "48": "icons/lamp-48.png",
     "128": "icons/lamp-128.png"
+  },
+  "side_panel": {
+    "default_path": "sidebar.html"
   }
 }

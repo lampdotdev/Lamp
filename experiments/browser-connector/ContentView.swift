@@ -7,12 +7,25 @@ struct PageCapture: Codable {
     let capturedAt: String
     let app: String
 }
+@MainActor
+final class ShelfCompanion: ObservableObject {
+    static let shared = ShelfCompanion()
+    @Published var clicks = 0
+    init() {
+        Task {
+            await LampBrowser.serve(surface: {
+                .init(title: "@@NAME@@", detail: "Clicks: \(self.clicks)", actions: [.init(id: "count", label: "Count click")])
+            }, handle: { event in if event.action == "count" { self.clicks += 1 } })
+        }
+    }
+}
 struct ContentView: View {
     @State private var capture: PageCapture? = LampStore.load(PageCapture.self, from: "browser-page")
     @State private var message = "Ask once, then read without opening the extension."
     @State private var waiting = false
     @State private var automatic = false
     @State private var reads = 0
+    @StateObject private var companion = ShelfCompanion.shared
     @State private var site = "http://127.0.0.1:8765"
     @State private var grants: [[String: Any]] = []
     var body: some View {
@@ -22,6 +35,7 @@ struct ContentView: View {
                 Text("@@NAME@@").font(.largeTitle.bold())
                 Spacer()
                 Text("Reads: \(reads)").monospacedDigit()
+                Text("Companion clicks: \(companion.clicks)").monospacedDigit()
             }
             Picker("Site", selection: $site) {
                 Text("Harbor Supply").tag("http://127.0.0.1:8765")

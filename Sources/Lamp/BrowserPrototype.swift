@@ -5,7 +5,7 @@ import CryptoKit
 /// Like existing app tokens, this is not isolation from hostile processes under the same macOS user.
 @MainActor
 final class BrowserPrototype {
-    static var enabled: Bool { Edition.isDev && ProcessInfo.processInfo.environment["LAMP_BROWSER_PROTOTYPE"] == "1" }
+    nonisolated static var enabled: Bool { Edition.isDev && ProcessInfo.processInfo.environment["LAMP_BROWSER_PROTOTYPE"] == "1" }
     static let shared = BrowserPrototype()
     static let folder = Edition.supportFolder.appendingPathComponent("BrowserPrototype")
     private var secret = ""
@@ -62,11 +62,11 @@ final class BrowserPrototype {
         let hosts = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Google/Chrome/NativeMessagingHosts")
         try fm.createDirectory(at: hosts, withIntermediateDirectories: true)
         try JSONSerialization.data(withJSONObject: manifest).write(to: hosts.appendingPathComponent("dev.lamp.prototype.json"))
-        for name in ["Page Shelf", "Other Shelf"] {
+        for name in ["Page Shelf", "Other Shelf", "Recipes"] {
             let slug = Template.identifier(from: name).lowercased()
             if fm.fileExists(atPath: root.appendingPathComponent(slug).path) { continue }
             let project = try Template.scaffold(name: name, in: root)
-            var content = try String(contentsOf: fixture.appendingPathComponent("ContentView.swift"))
+            var content = try String(contentsOf: fixture.appendingPathComponent(name == "Recipes" ? "Recipes.swift" : "ContentView.swift"))
             content = content.replacingOccurrences(of: "@@TOKEN@@", with: Template.token(for: project))
                 .replacingOccurrences(of: "@@PORT@@", with: String(Edition.gatewayPort))
                 .replacingOccurrences(of: "@@NAME@@", with: name)
@@ -116,10 +116,11 @@ final class BrowserPrototype {
                 return (401, ["error": "Unrecognized bridge."])
             }
             nonces[nonce] = now.addingTimeInterval(180)
-            return signed(native(body), nonce: nonce)
+            return signed(native(body, projects: projects), nonce: nonce)
         }
         let token = request.headers["authorization"]?.replacingOccurrences(of: "Bearer ", with: "") ?? ""
         guard let app = projects.first(where: { Template.token(for: $0) == token }) else { return (401, ["error": "Unknown app."]) }
+        if request.path == "/prototype/browser/surface" { return BrowserSurfacePrototype.shared.exchange(body, app: app) }
         switch request.path {
         case "/prototype/browser/status":
             return (200, ["grants": grants.filter { $0.app == app.id && $0.instance == app.instance }.map(summary)])
@@ -144,11 +145,12 @@ final class BrowserPrototype {
         }
     }
 
-    private func native(_ body: [String: Any]) -> [String: Any] {
+    private func native(_ body: [String: Any], projects: [LampProject]) -> [String: Any] {
         let fail: (String) -> [String: Any] = { ["error": $0] }
         guard let session = body["session"] as? String, let profile = body["profile"] as? String,
               UUID(uuidString: profile) != nil else { return fail("Missing browser identity.") }
         let op = body["op"] as? String ?? ""
+        if op.hasPrefix("surface-") { return BrowserSurfacePrototype.shared.native(body, projects: projects) }
         if op.hasPrefix("task") { return BrowserTaskPrototype.shared.native(body, origin: origin) }
         if op.hasPrefix("run") { return BrowserRun.shared.native(body) }
         if op == "list" || op == "poll" {

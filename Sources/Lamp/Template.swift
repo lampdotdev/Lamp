@@ -7151,6 +7151,68 @@ enum Template {
 
     #endif
 
+    #if os(macOS)
+    /// Experimental app-owned companion in the Lamp browser sidebar. Requires Lamp Dev's browser experiment.
+    @MainActor
+    enum LampBrowser {
+        struct Section: Codable { var title: String; var text: String }
+        struct Field: Codable { var id: String; var label: String; var value: String = "" }
+        struct Action: Codable { var id: String; var label: String; var readsPage: Bool = false }
+        struct Surface: Codable {
+            var title: String
+            var detail: String = ""
+            var sections: [Section] = []
+            var fields: [Field] = []
+            var actions: [Action] = []
+            var busy: Bool = false
+        }
+        struct Page: Codable { var url: String; var title: String; var text: String }
+        struct Event: Codable {
+            var id: String
+            var action: String
+            var fields: [String: String]
+            var page: Page?
+        }
+        /// Run once from the app's lifetime task. State is republished while an action awaits AI or storage.
+        /// An event is acknowledged after the handler returns; make writes idempotent by event ID or item identity.
+        static func serve(surface: @escaping () -> Surface, handle: @escaping (Event) async -> Void) async {
+            let boot = UUID().uuidString
+            var ack: String?
+            var handling: String?
+            var work: Task<Void, Never>?
+            defer { work?.cancel() }
+            while !Task.isCancelled {
+                do {
+                    var published = surface()
+                    published.busy = published.busy || handling != nil
+                    let raw = try JSONSerialization.jsonObject(with: JSONEncoder().encode(published))
+                    var body: [String: Any] = ["boot": boot, "surface": raw]
+                    if let ack { body["ack"] = ack }
+                    var request = URLRequest(url: URL(string: lampGateway + "/prototype/browser/surface")!)
+                    request.httpMethod = "POST"
+                    request.timeoutInterval = 5
+                    request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                    // A heartbeat must not launch Lamp or change which development experiment is running.
+                    let (data, response) = try await URLSession.shared.data(for: request)
+                    guard (response as? HTTPURLResponse)?.statusCode == 200,
+                          let reply = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                        try await Task.sleep(for: .seconds(1)); continue
+                    }
+                    if let rawEvent = reply["event"],
+                       let event = try? JSONDecoder().decode(Event.self, from: JSONSerialization.data(withJSONObject: rawEvent)),
+                       handling == nil, event.id != ack {
+                        handling = event.id
+                        work = Task { await handle(event); ack = event.id; handling = nil }
+                    }
+                } catch { /* A closed Lamp removes the companion; the next heartbeat reconnects it. */ }
+                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+            }
+        }
+    }
+    #endif
+
     /// AI for this app, using the same AI account as Lamp. No API keys needed.
     ///
     ///     let summary = try await LampAI.ask("Summarize these notes:\n\(notes)")

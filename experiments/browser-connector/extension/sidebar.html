@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Lamp companions</title>
+<style>
+:root{color-scheme:light;--ink:#252820;--muted:#626858;--line:#e0e3d8;--green:#3d5736}
+*{box-sizing:border-box}body{margin:0;background:#fcfcf7;color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,sans-serif}
+header{padding:16px 20px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line)}header img{width:26px;height:26px}header strong{font-size:16px}
+select{font:inherit;max-width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;background:white;color:var(--ink)}
+#chooser{padding:16px 20px 0;font-weight:600;font-size:16px}main{padding:20px 20px 165px}#controls{position:fixed;bottom:0;left:0;right:0;padding:12px 20px 18px;background:#fcfcf7;border-top:1px solid var(--line)}h1{font:600 28px/1.15 Georgia,serif;margin:0 0 12px}h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;margin:24px 0 8px;color:var(--green)}p{white-space:pre-line;margin:0 0 12px}#detail,#page,#consent{color:var(--muted)}#page{overflow-wrap:anywhere;font-size:12px;padding:12px 20px;border-bottom:1px solid var(--line)}#consent{font-size:12px;margin:16px 0}
+label{display:block;margin:14px 0}input{display:block;width:100%;font:inherit;padding:9px;border:1px solid #bbc3ae;border-radius:7px;margin-top:5px}
+button{font:600 14px/1.3 -apple-system,sans-serif;border:1px solid #bbc3ae;background:white;color:var(--green);border-radius:9px;padding:11px 16px;cursor:pointer}button:first-child{background:var(--green);color:white;border-color:var(--green)}button:disabled{opacity:.55;cursor:wait}button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid #b26728;outline-offset:3px}#actions{display:flex;flex-wrap:wrap;gap:9px}#error{margin:0 20px;color:#a63220}#empty{padding:20px;color:var(--muted)}
+</style></head><body>
+<div id="chooser"></div><div id="page"></div><p id="error" role="alert"></p>
+<p id="empty">Open an app with a browser companion on your Mac.</p>
+<main hidden><h1 id="title"></h1><p id="detail" role="status"></p><div id="fields"></div><div id="sections"></div><div id="controls"><p id="consent"></p><div id="actions"></div></div></main>
+<script src="sidebar.js"></script></body></html>

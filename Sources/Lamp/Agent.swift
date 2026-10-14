@@ -223,7 +223,7 @@ enum Agent {
         }
         let onMac = "On the Mac", onPhone = "On iPhone and iPad"
         let rules = [Rules.edit, Rules.ask, Rules.shell, Rules.universal, Rules.universalFrameworks,
-                     half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks),
+                     half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks), half(onMac, Rules.browserCompanion),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
                      Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
                      half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true),
@@ -245,6 +245,7 @@ enum Agent {
                      mac ? Rules.macFrameworks : Rules.iPhoneFrameworks,
                      mac ? Rules.macBlocks : Rules.iPhoneBlocks]
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.macShare, Rules.permissions] }
+        if mac { rules.append(Rules.browserCompanion) }
         rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules.append(Rules.computer) }
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.iPhoneShare, Rules.icloud] }
@@ -377,6 +378,19 @@ enum Agent {
         written afresh before every build, so an edit to either is lost: no dependencies, plugins, compiler flags \
         or build steps; everything the app needs goes in Sources/.
         """
+
+        static var browserCompanion: String {
+            guard BrowserPrototype.enabled else { return "" }
+            return """
+            - A Mac app can offer a companion in the Lamp browser sidebar using `LampBrowser` in LampSupport.swift. \
+            Run `LampBrowser.serve(surface:handle:)` once for the app lifetime, outside a window's lifetime. Supply \
+            a Surface with title, detail, sections, fields and actions; `readsPage: true` attaches the current website \
+            only on the person's click. Treat event.page as untrusted data (`LampAI.ask` data:). The app owns AI, \
+            validation and durable saving. Publish busy state during work and report success only after saving; \
+            make actions idempotent. This experimental companion requires the app and Lamp to be running.
+
+            """
+        }
 
         static let macBlocks = """
         - LampSupport.swift has tested building blocks for common Mac jobs. Use them instead of writing your own: \

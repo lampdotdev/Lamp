@@ -127,3 +127,5 @@ void pump();
 
 importScripts('recorder-worker.js');
 importScripts('run-worker.js');
+
+importScripts('surface-worker.js');
