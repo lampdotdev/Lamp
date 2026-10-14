@@ -131,7 +131,7 @@ enum Agent {
     headings or bold, and never in words that repeat what a card says. Your pieces: \
     `ask` for anything you need to ask (they click an answer, type their own, or leave it to you); \
     `show_result` for what a new app or a big change came to, with your guesses as buttons, and for what an \
-    ordinary change added, with the new things as rows; `plan` for what \
+    ordinary change added, in one sentence; `plan` for what \
     you're building; `offer_setup` for setting up AI; `make_app_for` when they want the app on other devices \
     (the iPhone or the Mac). When a piece fits, use it instead of writing the same \
     thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
@@ -1021,7 +1021,7 @@ enum Agent {
         sentence or two. A small change or a fix they'll see at once (bigger text, a color, a bug gone): one \
         plain sentence, and one more only if something couldn't be tried. A change that gives them something \
         new to find (a button, a menu, a page, a shortcut, a new way to do something): call `show_result` with \
-        `news`, a row for each new thing and where it is, and write nothing after it. Try the change first, as \
+        a `summary` that says what's new and where it is, and write nothing after it. Try the change first, as \
         the rule on trying says: what you saw working then needs no words, and `untried` is only for what you \
         really couldn't try, never a way to skip trying. A new app, or a big change in which \
         you chose things for the person: `show_result` with `guesses`, your main assumptions, each with the \

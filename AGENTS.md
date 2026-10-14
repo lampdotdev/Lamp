@@ -40,8 +40,8 @@ A capability given to one engine must be given to all of them that can take it, 
   pieces are tools: `ask` puts questions in the chat as a card answered by clicking, laid out as the agent
   chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own), and `show_result` is
   the card for what a request came to: for a new app or a big change the agent's guesses as buttons, for an
-  ordinary change that adds things to find the new things as rows (`Talk.News`) and what wasn't tried as a Try It
-  button. The card takes the place of the reply and of the line saying the app is ready (`LogLine.visible`); a
+  ordinary change that adds things to find its one sentence saying what's new and where (no rows: under the
+  picture they read as captions of it) and what wasn't tried as a Try It button. The card takes the place of the reply and of the line saying the app is ready (`LogLine.visible`); a
   small change or a fix keeps one sentence and that line. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
   tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the

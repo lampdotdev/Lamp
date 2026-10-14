@@ -352,10 +352,11 @@ struct ChipRow: View {
     }
 }
 
-/// What a request made: its picture and one sentence, then rows. A new app's are what the agent chose for the
-/// person, each with a button for the other way; an ordinary change's are the new things and where to find
-/// them, and what the agent didn't try as something to try. The rows with buttons are there while they'd
-/// still do what they say, until the person asks for something else; what's new stays, since it stays true.
+/// What a request made: its picture and one sentence. A new app's card then has a row for each thing the agent
+/// chose for the person, with a button for the other way; an ordinary change's sentence says what's new and
+/// where, with no rows under it, since rows of new things beside the picture read as captions of it. What the
+/// agent didn't try is a row to try it. The rows with buttons are there while they'd still do what they say,
+/// until the person asks for something else.
 struct ResultCard: View {
     let line: LogLine
     let dir: URL
@@ -379,9 +380,6 @@ struct ResultCard: View {
                     Spacer(minLength: 0)
                 }
                 .padding(14)
-                ForEach(Array((result.news ?? []).enumerated()), id: \.offset) { _, news in
-                    row(news.what, detail: news.place)
-                }
                 // What the agent chose is the chip that's on, and the other way is the chip beside it: one
                 // click turns it. A guess that was turned stays on the card as what the person chose.
                 ForEach(Array(result.guesses.enumerated()), id: \.offset) { index, guess in
