@@ -469,13 +469,28 @@ enum Template {
           echo "The Mac build of an app for both needs your Apple team: choose it in Lamp's Settings → Building." >&2
           exit 1
         fi
-        xcodebuild -project ".lamp/device/{{EXE}}.xcodeproj" -scheme "{{EXE}}" -configuration Release -destination "platform=macOS" \\
-          -derivedDataPath ".lamp/device/DerivedData" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \\
-          DEVELOPMENT_TEAM="$LAMP_TEAM" build 2>&1
+        PROJECT=.lamp/device
+        LIVE_SETTINGS=()
+        # A live build (LiveReload): Xcode builds a copy of the project whose sources are the live copy (its
+        # ../../Sources lands on .lamp/live/Sources), unoptimized and linked so a change can go into the open app.
+        if [[ "${LAMP_LIVE:-}" == 1 ]]; then
+        \(liveCopySteps)
+          mkdir -p "$LIVE/xcode"
+          rsync -a --delete --exclude DerivedData .lamp/device/ "$LIVE/xcode/device/"
+          ln -sfn ../../Assets "$LIVE/Assets"
+          PROJECT="$LIVE/xcode/device"
+          # One binary: unoptimized, Xcode would put the app's code in a separate debug library (for previews),
+          # and the open app's calls to it wouldn't go through the binary that's changed.
+          LIVE_SETTINGS=(SWIFT_OPTIMIZATION_LEVEL=-Onone SWIFT_COMPILATION_MODE=singlefile ENABLE_TESTABILITY=YES ENABLE_DEBUG_DYLIB=NO
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG LAMP_LIVE" "OTHER_LDFLAGS=-Xlinker -interposable")
+        fi
+        xcodebuild -project "$PROJECT/{{EXE}}.xcodeproj" -scheme "{{EXE}}" -configuration Release -destination "platform=macOS" \\
+          -derivedDataPath "$PROJECT/DerivedData" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \\
+          DEVELOPMENT_TEAM="$LAMP_TEAM" "${LIVE_SETTINGS[@]}" build 2>&1
         APP="build/{{EXE}}.app"
         rm -rf "$APP"
         mkdir -p build
-        cp -R ".lamp/device/DerivedData/Build/Products/Release/{{EXE}}.app" "$APP"
+        cp -R "$PROJECT/DerivedData/Build/Products/Release/{{EXE}}.app" "$APP"
         echo "Built $APP"
 
         """
@@ -10506,6 +10521,21 @@ enum Template {
 
 """#
 
+    /// The live copy of the sources (LiveReload): each file copied into .lamp/live with its views' bodies wrapped,
+    /// so a body's type stays the same from one change to the next (`LampLive`), and only when it differs, so the
+    /// build stays incremental; files gone from Sources go from the copy too. Indented for the scripts' `if`.
+    static let liveCopySteps = """
+      LIVE=.lamp/live
+      mkdir -p "$LIVE/Sources"
+      for f in Sources/**/*.swift(N); do
+        out="$LIVE/$f"
+        mkdir -p "${out:h}"
+        perl -0pe 's/var body: some View \\{/var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\\n    \\@ViewBuilder var __lampBody: some View {/g' "$f" > "$out.new"
+        if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
+      done
+      for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done
+    """
+
     static let buildSh = """
     #!/bin/zsh
     # Builds build/{{EXE}}.app. Run after every change.
@@ -10516,16 +10546,8 @@ enum Template {
     # app (LampLive), from a copy of the sources in .lamp/live with each view's body wrapped so its type stays the
     # same from one change to the next. A file is copied only when it differs, so builds stay incremental.
     if [[ "${LAMP_LIVE:-}" == 1 ]]; then
-      LIVE=.lamp/live
-      mkdir -p "$LIVE/Sources"
+    \(liveCopySteps)
       cmp -s Package.swift "$LIVE/Package.swift" || cp Package.swift "$LIVE/Package.swift"
-      for f in Sources/**/*.swift(N); do
-        out="$LIVE/$f"
-        mkdir -p "${out:h}"
-        perl -0pe 's/var body: some View \\{/var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\\n    \\@ViewBuilder var __lampBody: some View {/g' "$f" > "$out.new"
-        if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi
-      done
-      for f in "$LIVE"/Sources/**/*.swift(N); do [[ -f "${f#$LIVE/}" ]] || rm "$f"; done
       FLAGS=(-c debug --package-path "$LIVE" --scratch-path "$LIVE/.build" -Xswiftc -DLAMP_LIVE -Xswiftc -enable-testing -Xlinker -interposable)
     fi
     \(appIntentsSetup(ios: false))

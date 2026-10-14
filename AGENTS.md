@@ -430,6 +430,22 @@ accessibility tree (`LampDriver.elements`), and on a click leaves a cropped pict
 says what it is; Lamp attaches that picture to the message, named after the thing ("Save button.png",
 `MagicPanel.name`), and takes a picture only from that folder.
 
+While the experiment is on, a change goes into the open app without a restart when it can (`LiveReload`). The
+Mac app, or the Mac half of an app for both while Try On points at this Mac, with no widget or share extension, is
+built live: build.sh with `LAMP_LIVE=1` copies Sources into `.lamp/live` with each `var body: some View` wrapped
+(`Template.liveCopySteps`: the body becomes `AnyView` and reads `LampLive.generation`, so its type never changes and
+every view draws again on a reload with its state kept), and builds that copy unoptimized, testable, with
+`LAMP_LIVE` and `-Xlinker -interposable` (SwiftPM for a Mac app; Xcode for an app for both, from a copy of the
+device project, with its debug library off so the code is in the one binary). After a build, `Store.install` tries
+`reloadInPlace` first: when the app is open, was built live, and the change only touched existing files without
+changing their stored properties, enum cases or the App (`LiveReload.reloadable`, comparing with the sources the
+open app runs, kept in `.lamp/live/running`), the whole module is compiled from the live copy and the changed files'
+objects linked into a library, which the app loads when asked with a request signed with its token, only from its
+own `.lamp/live` (`LampLive` in LampSupport, under `#if LAMP_LIVE`). It points the app's own calls at the new
+functions by rewriting the symbol pointers they go through; types, metadata and stored globals are left alone. The
+build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
+keep the agent off the app). Anything else is installed the usual way, by reopening the app.
+
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
 "cancelled" when the person keeps the app open and doesn't come while the question is still up. Until then Lamp

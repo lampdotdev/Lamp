@@ -8,9 +8,11 @@ import CryptoKit
 /// What can't go in that way (a stored property or an enum case added or removed, a file added or removed, the
 /// App itself, Lamp's own file) is installed as before, by quitting and reopening the app.
 enum LiveReload {
-    /// Whether the app is built live: an experiment, for a Mac app on its own with nothing built beside it.
+    /// Whether the app is built live: an experiment, for a Mac app, or the Mac half of an app for both while
+    /// Try On points at this Mac, with nothing built beside it (a widget or share extension, which share no
+    /// code with the open app).
     @MainActor static func eligible(_ project: LampProject) -> Bool {
-        MagicPanel.isOn && project.platform == .mac && !Template.hasWidget(project) && !Template.hasShare(project)
+        MagicPanel.isOn && project.platform.hasMac && !project.onIOS && !Template.hasWidget(project) && !Template.hasShare(project)
     }
 
     static func folder(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/live") }
@@ -83,8 +85,9 @@ enum LiveReload {
         source.range(of: #"@main\b"#, options: .regularExpression) != nil || source.range(of: #":\s*(SwiftUI\.)?App\s*\{"#, options: .regularExpression) != nil
     }
 
-    /// Compiles the whole module from the live copy, the way the live build does, and links the changed files'
-    /// objects into a library for the open app. Nil, with the compiler's words, when it doesn't compile.
+    /// Compiles the whole module from the live copy, the way the live build does (SwiftPM's for a Mac app,
+    /// Xcode's for the Mac half of an app for both: both unoptimized, testable, for macOS 14, named after the app),
+    /// and links the changed files' objects into a library for the open app. Nil, with the compiler's words, when it doesn't compile.
     static func compile(_ project: LampProject, changed: [String]) async -> (url: URL?, problem: String?) {
         let live = folder(project)
         let work = live.appendingPathComponent("hot")
@@ -100,7 +103,7 @@ enum LiveReload {
             PLUGINS="$(dirname "$(dirname "$(xcrun -f swiftc)")")/lib/swift/host/plugins"
             cd "$LAMP_WORK"
             xcrun swiftc -c "$@" -module-name "$LAMP_EXE" -parse-as-library -Onone -enable-testing \
-              -D DEBUG -D SWIFT_PACKAGE -D LAMP_LIVE -target arm64-apple-macosx14.0 -sdk "$SDK" -plugin-path "$PLUGINS" 2>&1
+              -D DEBUG -D LAMP_LIVE -target arm64-apple-macosx14.0 -sdk "$SDK" -plugin-path "$PLUGINS" 2>&1
             xcrun swiftc -emit-library ${(Q)${(z)LAMP_OBJECTS}} -o "$LAMP_LIBRARY" -target arm64-apple-macosx14.0 -sdk "$SDK" \
               -Xlinker -undefined -Xlinker dynamic_lookup 2>&1
             codesign --force -s - "$LAMP_LIBRARY" 2>&1
