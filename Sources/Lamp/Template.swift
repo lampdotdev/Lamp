@@ -3793,6 +3793,15 @@ enum Template {
                 if let window = NSApp.keyWindow ?? NSApp.mainWindow, isAppWindow(window) {
                     link.queryItems?.append(URLQueryItem(name: "frame", value: NSStringFromRect(window.frame)))
                 }
+                // The Lamp that's running is told directly: a link goes to whichever copy macOS picks, which on a
+                // Mac with more than one (a developer's) may be another one, started for it.
+                if !NSRunningApplication.runningApplications(withBundleIdentifier: "{{HOST}}").isEmpty {
+                    var info: [String: String] = ["app": "{{SLUG}}"]
+                    if let frame = link.queryItems?.first(where: { $0.name == "frame" })?.value { info["frame"] = frame }
+                    DistributedNotificationCenter.default().postNotificationName(
+                        Notification.Name("{{NOTE}}magicOpen"), object: nil, userInfo: info, deliverImmediately: true)
+                    return
+                }
                 // Without bringing Lamp in front: the chat opens beside this window, which stays where it is.
                 let configuration = NSWorkspace.OpenConfiguration()
                 configuration.activates = false

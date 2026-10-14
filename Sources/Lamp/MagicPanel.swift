@@ -18,8 +18,20 @@ final class MagicPanel: NSObject, NSWindowDelegate {
     static var isOn: Bool { UserDefaults.standard.bool(forKey: switchKey) }
     static var flag: URL { Store.shared.root.appendingPathComponent(".magic") }
 
+    /// An app's wand, when Lamp is running, says so directly rather than by a link (`LampMagic`), so this Lamp
+    /// answers and not another copy macOS might pick for the link. Listened for from launch.
+    static let listen: Void = {
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name(Edition.notificationPrefix + "magicOpen"), object: nil, queue: .main) { note in
+            guard let app = note.userInfo?["app"] as? String else { return }
+            let frame = (note.userInfo?["frame"] as? String).map(NSRectFromString)
+            MainActor.assumeIsolated { shared.show(app, beside: frame) }
+        }
+    }()
+
     /// The flag apps read, made to agree with the switch: when it changes, and at launch.
     static func syncSwitch() {
+        _ = listen
         if isOn {
             FileManager.default.createFile(atPath: flag.path, contents: nil)
         } else {
