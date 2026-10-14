@@ -3524,6 +3524,7 @@ final class Store: ObservableObject {
         // takes several more. That build goes on afterwards, for the app to be installed from when it closes.
         if await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
         await liveBuilds[project.id]?.value
+        liveBuildFailed.remove(project.id)
         if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1" }   // a change can go into the open app (LiveReload)
         let status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: env,
                                      started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
@@ -3548,6 +3549,9 @@ final class Store: ObservableObject {
 
     /// The whole builds running after a change went into the open app, by app: a build waits for the one before.
     private var liveBuilds: [String: Task<Void, Never>] = [:]
+    /// Apps whose whole build after an early change failed: build/ holds the version before it, which isn't
+    /// installed in its place. Cleared by the next build.
+    private var liveBuildFailed: Set<String> = []
     /// Apps whose change went in before their build: the install that follows the build has nothing to do.
     private var reloadedBeforeBuild: Set<String> = []
 
@@ -3559,6 +3563,7 @@ final class Store: ObservableObject {
         reloadedBeforeBuild.remove(project.id)
         guard LiveReload.eligible(project), !macCopies(of: project).isEmpty, Self.binary(of: project, contains: "reloaded.txt") else { return false }
         await liveBuilds[project.id]?.value
+        liveBuildFailed.remove(project.id)
         var copy = env
         copy["LAMP_LIVE"] = "1"
         copy["LAMP_LIVE_COPY"] = "1"
@@ -3587,6 +3592,7 @@ final class Store: ObservableObject {
                 _ = self.heldInstalls.mayInstall(current.id, running: true)
                 if !self.isRunning(current) { self.installHeldIcons(for: [current.id]) }
             } else {
+                self.liveBuildFailed.insert(project.id)
                 // The whole code was checked before the change went in, so this is rare: said in the chat, and
                 // built again (with its errors for the agent) at the next request or look.
                 Runtime.forgetBuilt(current)
@@ -3708,8 +3714,14 @@ final class Store: ObservableObject {
         // A change that can go into the open app goes in there, keeping what's on screen; the build waits to be
         // installed until the app closes (LiveReload).
         if await reloadInPlace(project, inFront: inFront) { return nil }
-        // A whole build after an early change may still be writing build/: what's installed is what it makes.
+        // A whole build after an early change may still be writing build/: what's installed is what it makes,
+        // and nothing when it failed (build/ is the version before the change).
         await liveBuilds[project.id]?.value
+        if liveBuildFailed.contains(project.id) {
+            let problem = "\(project.name) couldn't be built as a whole after its last change, so it wasn't installed. It's built again with the next request."
+            log(project, .error, problem)
+            return problem
+        }
         // Asked once in a turn: a second build in it leaves the app the person kept open alone.
         let asked = owner?.keptOpen == true && isRunning(project)
         guard !asked, await quit(project, for: owner, only: .mac) else {
