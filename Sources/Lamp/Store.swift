@@ -1998,6 +1998,7 @@ final class Store: ObservableObject {
             guard await buildFixingErrors(project) else {
                 return TurnResult(end: owner.asked ? .replied : .failed, watched: isWatching(project.id))
             }
+            project = current(project) ?? project   // a fix may have changed what it's made for
         }
         // Opening the app brings it in front of Lamp, so whether the user was watching is decided first.
         let watched = isWatching(project.id)
@@ -2039,6 +2040,7 @@ final class Store: ObservableObject {
             guard await buildFixingErrors(project) else {
                 return TurnResult(end: owner.asked ? .replied : .failed, watched: watched)
             }
+            project = current(project) ?? project
             let commit = committed ? "-q --amend --no-edit" : "-qm 'Fix a crash on launch'"
             switch await Versions.commitAll(commit, in: project.dir) {
             case .saved: (committed, unsaved) = (true, false)
@@ -2882,12 +2884,16 @@ final class Store: ObservableObject {
 
     /// After a restore, the app in Lamp's list is what the restored version was made for, as `Versions.restoreFiles`
     /// wrote it to meta.json: an Undo of `make_app_for` puts the kind back with the code.
-    private func followRestoredKind(_ project: LampProject) {
-        guard let index = projects.firstIndex(where: { $0.id == project.id }),
-              let kind = Template.platform(fromPackageIn: project.dir), projects[index].platform != kind else { return }
-        projects[index].platform = kind
-        if !kind.hasIOS { projects[index].device = nil }
-        refreshOpenApps()
+    /// The app as it is after the restore, for whatever builds it next.
+    @discardableResult
+    private func followRestoredKind(_ project: LampProject) -> LampProject {
+        guard let index = projects.firstIndex(where: { $0.id == project.id }) else { return project }
+        if let kind = Template.platform(fromPackageIn: project.dir), projects[index].platform != kind {
+            projects[index].platform = kind
+            if !kind.hasIOS { projects[index].device = nil }
+            refreshOpenApps()
+        }
+        return projects[index]
     }
 
     /// `make_app_for`: the person asked for the app on other devices, and the agent asks Lamp to make it so.
@@ -3181,9 +3187,9 @@ final class Store: ObservableObject {
         // A turn that was stopped, or never got the app building, leaves its changes unsaved: Undo discards those first.
         if let current = versions.first, await Versions.hasUnsavedChanges(project) {
             _ = await Versions.restoreFiles(project, to: current)
-            followRestoredKind(project)
-            log(project, .status, "Discarded the unfinished change")
-            if await build(project) == nil { await installReportingCrash(project) }
+            let restored = followRestoredKind(project)
+            log(restored, .status, "Discarded the unfinished change")
+            if await build(restored) == nil { await installReportingCrash(restored) }
             return
         }
         guard let (undoing, target) = Versions.undoTarget(in: versions),
@@ -3192,10 +3198,10 @@ final class Store: ObservableObject {
             log(project, .status, "Nothing to undo")
             return
         }
-        followRestoredKind(project)
-        Versions.remember(project, restoredTo: target.label, from: target.date)
-        log(project, .status, "Undid “\(undoing.label)”")
-        await rebuild(project, restoredFrom: target)
+        let restored = followRestoredKind(project)
+        Versions.remember(restored, restoredTo: target.label, from: target.date)
+        log(restored, .status, "Undid “\(undoing.label)”")
+        await rebuild(restored, restoredFrom: target)
     }
 
     /// Brings back an earlier version's files as a new version, so the restore can be undone too.
@@ -3206,10 +3212,10 @@ final class Store: ObservableObject {
             log(project, .status, "The app is already like “\(version.label)”")
             return
         }
-        followRestoredKind(project)
-        Versions.remember(project, restoredTo: version.label, from: version.date)
-        log(project, .status, Versions.restoredMessage(to: version))
-        await rebuild(project, restoredFrom: version)
+        let restored = followRestoredKind(project)
+        Versions.remember(restored, restoredTo: version.label, from: version.date)
+        log(restored, .status, Versions.restoredMessage(to: version))
+        await rebuild(restored, restoredFrom: version)
     }
 
     /// Goes back to the version a request in the chat made, or to the one before it.
