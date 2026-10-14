@@ -6777,7 +6777,12 @@ enum Template {
     ///     let logo = LampAssets.image("logo.png")
     ///     let csv = LampAssets.text("prices.csv")
     enum LampAssets {
+        #if LAMP_LIVE
+        // A live build reads them from the app's folder, so a file added while the app is open is there at once.
+        static var folder: URL? { URL(fileURLWithPath: "{{APPS}}/{{SLUG}}/Assets") }
+        #else
         static var folder: URL? { Bundle.main.resourceURL?.appendingPathComponent("Assets") }
+        #endif
 
         static func url(_ name: String) -> URL? {
             guard let url = folder?.appendingPathComponent(name),

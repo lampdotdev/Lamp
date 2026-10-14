@@ -265,6 +265,7 @@ extension Agent {
         let prompt = prompt + Memory.brief(for: project, engine: Builder.engine, session: session)
             + AIStatus.brief(for: project, engine: Builder.engine, session: session, offered: offered)
             + Agent.undescribed(project)
+            + (LiveReload.eligible(project) ? Agent.liveNote : "")
         var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt(for: project), "LAMP_DIR": project.dir.path,
                                      "PATH": ToolLocator.userPath]
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }

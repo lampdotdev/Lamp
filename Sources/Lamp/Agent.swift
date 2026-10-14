@@ -151,6 +151,17 @@ enum Agent {
     SF Symbols in the app's palette instead: Lamp offers the user a way to set that up.
     """
 
+    /// With each request to an app that's updated in place (LiveReload): which changes keep it open. Here and
+    /// not in the system prompt, since it depends on Settings → Experimental and the app's kind.
+    static let liveNote = """
+
+
+    ---
+    This app is updated in place while it's open, keeping what's on screen, when a change only edits or adds code. \
+    Adding or changing a stored property, an enum case or the App reopens it, so put new state in a new view with \
+    its own @State (in a new file) rather than in an existing type, when that's as clear.
+    """
+
     /// Short for the same reason. What AI the app has comes at the end of a request (AIStatus.brief), since it
     /// changes between turns.
     private static let setupRules = """

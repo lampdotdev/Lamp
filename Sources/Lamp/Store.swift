@@ -3545,7 +3545,15 @@ final class Store: ObservableObject {
     /// to be installed when the app closes. False sends the change the usual way, by reopening the app.
     private func reloadInPlace(_ project: LampProject, inFront: Bool) async -> Bool {
         guard LiveReload.eligible(project), let app = macCopies(of: project).first,
-              Self.binary(of: project, contains: "reloaded.txt"), let changed = LiveReload.reloadable(project) else { return false }
+              Self.binary(of: project, contains: "reloaded.txt") else { return false }
+        let changed: [String]
+        switch LiveReload.verdict(project) {
+        case .reload(let files): changed = files
+        case .unchanged: return false
+        case .reopen(let why):
+            log(project, .detail, "Reopening \(project.name) for this change: \(why).")
+            return false
+        }
         note("Updating \(project.name) in place…", for: project)
         let (library, problem) = await LiveReload.compile(project, changed: changed)
         guard let library else {

@@ -37,22 +37,15 @@ enum LiveReload {
 
     private static func runningInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-inputs.txt") }
 
-    /// What else goes into the installed app besides the code, which a library can't bring: the app's own
-    /// files (Assets), what it declares (capabilities.json), the package and the icon. A change to any of them
-    /// is installed by reopening the app.
+    /// What else goes into the installed app besides the code, which a library can't bring: what it declares
+    /// (capabilities.json), the package and the icon. A change to any of them is installed by reopening the app.
+    /// Not its own files (Assets): a live build reads them from the app's folder (`LampAssets`), new ones included.
     static func inputs(_ project: LampProject) -> String {
-        var lines: [String] = []
         let fm = FileManager.default
-        for name in ["Package.swift", Template.Capabilities.file, "icon.json"] {
+        return ["Package.swift", Template.Capabilities.file, "icon.json"].map { name in
             let data = fm.contents(atPath: project.dir.appendingPathComponent(name).path) ?? Data()
-            lines.append(name + " " + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined())
-        }
-        let assets = project.dir.appendingPathComponent(Sharing.Assets.folder)
-        for file in Sharing.assetFiles(of: project).sorted(by: { $0.path < $1.path }) {
-            let data = fm.contents(atPath: file.path) ?? Data()
-            lines.append(Sharing.relativePath(of: file, in: assets) + " " + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined())
-        }
-        return lines.joined(separator: "\n")
+            return name + " " + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        }.joined(separator: "\n")
     }
 
     static func forget(_ project: LampProject) {
@@ -70,29 +63,43 @@ enum LiveReload {
     static func installed(_ project: LampProject) { try? FileManager.default.removeItem(at: pendingURL(project)) }
     static func awaitsInstall(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: pendingURL(project).path) }
 
-    /// The files a change touched, relative to Sources, when every one of them can be put into the open app;
-    /// nil when something has to go in by reopening it, or when nothing changed.
-    static func reloadable(_ project: LampProject) -> [String]? {
+    /// What to do with a change: put the files it touched (relative to Sources) into the open app, reopen the
+    /// app (with why, for the chat's details, so the rules can be tuned by what actually happens), or nothing.
+    enum Verdict: Equatable {
+        case reload([String])
+        case reopen(String)
+        case unchanged
+    }
+
+    static func verdict(_ project: LampProject) -> Verdict {
         let built = swiftFiles(in: sources(project)), open = swiftFiles(in: running(project))
+        guard !open.isEmpty else { return .reopen("Lamp doesn't know what the open copy was built from") }
         // A new file only brings new types and functions, which the library holds; one taken away may have held
         // something the open app still uses.
-        guard !open.isEmpty, Set(open.keys).isSubset(of: built.keys),
-              (try? String(contentsOf: runningInputs(project), encoding: .utf8)) == inputs(project) else { return nil }
+        if let gone = Set(open.keys).subtracting(built.keys).sorted().first { return .reopen("\(gone) was removed") }
+        if (try? String(contentsOf: runningInputs(project), encoding: .utf8)) != inputs(project) {
+            return .reopen("the package, the app's settings or its icon changed")
+        }
         var changed: [String] = []
         for (path, url) in built.sorted(by: { $0.key < $1.key }) {
-            guard let new = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+            guard let new = try? String(contentsOf: url, encoding: .utf8) else { return .reopen("\(path) couldn't be read") }
             guard let old = open[path].flatMap({ try? String(contentsOf: $0, encoding: .utf8) }) else {
                 // Added: its types are new to the app, so their layout is whatever it says, but not the App.
-                guard !declaresApp(new) else { return nil }
+                if declaresApp(new) { return .reopen("\(path) is the app's entry point") }
                 changed.append(path)
                 continue
             }
             guard new != old else { continue }
-            guard (path as NSString).lastPathComponent != "LampSupport.swift", shape(of: new) == shape(of: old),
-                  !declaresApp(new) else { return nil }
+            if (path as NSString).lastPathComponent == "LampSupport.swift" { return .reopen("Lamp's own building blocks changed") }
+            if declaresApp(new) { return .reopen("\(path) is the app's entry point") }
+            let before = shape(of: old), after = shape(of: new)
+            if before != after {
+                let what = Set(after).subtracting(before).first ?? Set(before).subtracting(after).first ?? "the order of the fields"
+                return .reopen("\(path) changes what its types hold (\(what))")
+            }
             changed.append(path)
         }
-        return changed.isEmpty ? nil : changed
+        return changed.isEmpty ? .unchanged : .reload(changed)
     }
 
     private static func swiftFiles(in folder: URL) -> [String: URL] {

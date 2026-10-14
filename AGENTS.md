@@ -444,7 +444,11 @@ objects linked into a library, which the app loads when asked with a request sig
 own `.lamp/live` (`LampLive` in LampSupport, under `#if LAMP_LIVE`). It points the app's own calls at the new
 functions by rewriting the symbol pointers they go through; types, metadata and stored globals are left alone. The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
-keep the agent off the app). Anything else is installed the usual way, by reopening the app.
+keep the agent off the app). Anything else is installed the usual way, by reopening the app, with why in the chat's
+details (`LiveReload.Verdict`), so the rules can be tuned by what happens. A live build reads the app's own files
+from its Assets folder rather than its bundle (`LampAssets`), so a new picture goes in live too; the package, the
+app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which asks for
+new state in new views rather than new stored properties in existing types, when that's as clear.
 
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
