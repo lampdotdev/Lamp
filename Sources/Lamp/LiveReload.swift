@@ -135,10 +135,12 @@ enum LiveReload {
                 }
                 out.append(shape)
             }
-            // A type's opening brace may come on a line of its own: the declaration waits for it.
+            // A type's declaration may go on over more lines (its conformances, a `where`) before its opening
+            // brace: it waits for the brace while the lines between only continue it.
             let declaresType = typeOpening.firstMatch(in: line, range: range) != nil && notType.firstMatch(in: line, range: range) == nil
-            let isType = declaresType || (pending && line.trimmingCharacters(in: .whitespaces).hasPrefix("{"))
-            if !line.trimmingCharacters(in: .whitespaces).isEmpty { pending = declaresType && !line.contains("{") }
+            let continues = pending && notType.firstMatch(in: line, range: range) == nil
+            let isType = declaresType || continues
+            if !line.trimmingCharacters(in: .whitespaces).isEmpty { pending = (declaresType || continues) && !line.contains("{") }
             for character in line {
                 if character == "{" { stack.append(isType && !stack.contains(false)) }
                 else if character == "}", !stack.isEmpty { stack.removeLast() }
