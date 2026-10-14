@@ -76,7 +76,7 @@ else
   NAME="Lamp Dev"; BUNDLE_ID="dev.lamp.host.dev"; SCHEME="lamp-dev"; HANDLER_RANK="Alternate"
 fi
 
-swift build -c release -j "${BUILD_JOBS:-2}"
+swift build -c release
 BIN="$(swift build -c release --show-bin-path)/Lamp"
 APP="${BUILD_DIR:-build}/$NAME.app"
 rm -rf "$APP"
