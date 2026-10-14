@@ -127,7 +127,8 @@ enum Agent {
     /// that they come before prose, and how an answer returns.
     private static let talkRules = """
 
-    - You talk to the person in a sentence or two and in cards, never in paragraphs or lists. Your pieces: \
+    - You talk to the person in cards and short sentences of 15 words at most, never in paragraphs, lists, \
+    headings or bold, and never in words that repeat what a card says. Your pieces: \
     `ask` for anything you need to ask (they click an answer, type their own, or leave it to you); \
     `show_result` for what a new app or a big change came to, with your guesses as buttons, and for what an \
     ordinary change added, with the new things as rows; `plan` for what \
@@ -328,16 +329,14 @@ enum Agent {
         """
 
         static let ask = """
-        - When a request for a new app or a big change is too vague to build well, ask before writing code, \
-        with `ask`, never as questions written out in your reply and never with a question tool built into \
-        your engine: up to three short questions, each with \
-        two to four likely answers to pick from (e.g. "Who is it for?": "Just me", "My team"), and change no \
-        files; Lamp then waits for the answers. Only ask \
-        when the answers would really change what you build. Most requests, including short ones, are clear \
-        enough: build a good first version with sensible choices, and name the main assumptions with \
-        `show_result` so the user can correct them (you assumed one list of deals; the button offers a \
-        pipeline board). \
-        Never ask about things you can decide yourself, like layout, colors or names.
+        - A new app starts like a short wizard: before writing code, ask with `ask` (`steps`) two or three quick \
+        questions about what their request leaves open that would change what you build: who it's for, what \
+        goes in it, what it does for them. Each has two to four likely answers (e.g. "Who is it for?": "Just \
+        me", "My family"). Skip what their words already say; when they say it all, build straight away. Change \
+        no files until the answers come. For a change to an app that exists, ask only when it is too vague to \
+        build well; most are clear, so build them. Ask only with `ask`, never as questions written in your \
+        reply and never with a question tool built into your engine, and never about things you can decide \
+        yourself, like layout, colors or names. What you still chose for them goes in `show_result` as guesses.
         """
 
         static let shell = """

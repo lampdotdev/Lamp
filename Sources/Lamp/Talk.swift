@@ -142,6 +142,22 @@ enum Talk {
     static let guessLimit = 3
     static let newsLimit = 4
 
+    /// The most words each piece of a card may have. A card is read at a glance and answered with a click: a
+    /// long sentence in it is a paragraph again, set in bold. Too long goes back to the agent to say shorter, so
+    /// every engine is held to the same; the tools' descriptions give the same numbers.
+    enum Words {
+        static let question = 10, option = 4, summary = 12, guess = 6, instead = 4, news = 5
+    }
+
+    static func words(in text: String) -> Int { text.split(whereSeparator: \.isWhitespace).count }
+
+    /// Nil when `text` fits in `limit` words; otherwise what to tell the agent.
+    private static func tooLong(_ text: String, _ limit: Int, as what: String) -> Trouble? {
+        let count = words(in: text)
+        return count <= limit ? nil
+            : .message("“\(text)” is \(count) words. Keep \(what) to \(limit) words or fewer, and call again.")
+    }
+
     enum Trouble: Error, Equatable {
         case message(String)
         var text: String { switch self { case .message(let text): text } }
@@ -159,6 +175,7 @@ enum Talk {
         for item in given {
             let question = (item["question"] as? String)?.trimmed ?? ""
             guard !question.isEmpty else { return .failure(.message("Every question needs its `question`.")) }
+            if let trouble = tooLong(question, Words.question, as: "a question") { return .failure(trouble) }
             let options: [Option] = (item["options"] as? [[String: Any]] ?? []).compactMap { option in
                 guard let title = (option["title"] as? String)?.trimmed, !title.isEmpty else { return nil }
                 return Option(title: title, detail: (option["detail"] as? String)?.trimmed.nilIfEmpty,
@@ -170,6 +187,9 @@ enum Talk {
             guard (2...optionLimit).contains(options.count) else {
                 return .failure(.message("“\(question)” needs 2 to \(optionLimit) options, each with a `title`. The person can always type something else."))
             }
+            for option in options {
+                if let trouble = tooLong(option.title, Words.option, as: "an answer's `title` (more goes in `detail`)") { return .failure(trouble) }
+            }
             questions.append(Question(question: question, options: options))
         }
         // One question has nothing to lay out together.
@@ -180,6 +200,7 @@ enum Talk {
     static func result(from arguments: [String: Any]) -> Swift.Result<Result, Trouble> {
         let summary = (arguments["summary"] as? String)?.trimmed ?? ""
         guard !summary.isEmpty else { return .failure(.message("Say in `summary` what the person now has, in one sentence.")) }
+        if let trouble = tooLong(summary, Words.summary, as: "`summary`") { return .failure(trouble) }
         let guesses: [Guess] = (arguments["guesses"] as? [[String: Any]] ?? []).compactMap { item in
             guard let guess = (item["guess"] as? String)?.trimmed.nilIfEmpty,
                   let instead = (item["instead"] as? String)?.trimmed.nilIfEmpty,
@@ -188,6 +209,11 @@ enum Talk {
         }
         guard guesses.count <= guessLimit else {
             return .failure(.message("At most \(guessLimit) guesses: the ones the person is most likely to want changed."))
+        }
+        for guess in guesses {
+            if let trouble = tooLong(guess.guess, Words.guess, as: "a `guess`") ?? tooLong(guess.instead, Words.instead, as: "`instead`") {
+                return .failure(trouble)
+            }
         }
         let idea = (arguments["idea"] as? [String: Any]).flatMap { item -> Idea? in
             guard let title = (item["title"] as? String)?.trimmed.nilIfEmpty,
@@ -201,6 +227,9 @@ enum Talk {
         }
         guard news.count <= newsLimit else {
             return .failure(.message("At most \(newsLimit) new things: the ones they wouldn't find by themselves."))
+        }
+        for item in news {
+            if let trouble = tooLong(item.what, Words.news, as: "a new thing's `what`") { return .failure(trouble) }
         }
         return .success(Result(summary: summary, guesses: guesses, idea: idea, news: news.isEmpty ? nil : news,
                                untried: (arguments["untried"] as? String)?.trimmed.nilIfEmpty))

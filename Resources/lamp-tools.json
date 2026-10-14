@@ -381,7 +381,7 @@
             "properties": {
               "question": {
                 "type": "string",
-                "description": "The question, under ten words, in everyday words and the person's language"
+                "description": "The question, 10 words at most, in everyday words and the person's language: “Who cooks?”"
               },
               "options": {
                 "type": "array",
@@ -427,7 +427,7 @@
       "properties": {
         "summary": {
           "type": "string",
-          "description": "What they now have, in one plain sentence, without the app's name or “is ready”: “A week of dinners and one shared grocery list.”"
+          "description": "What they now have, 12 words at most, without the app's name or “is ready”: “A week of dinners and one shared grocery list.”"
         },
         "guesses": {
           "type": "array",
@@ -443,11 +443,11 @@
             "properties": {
               "guess": {
                 "type": "string",
-                "description": "What you chose: “One grocery list for everyone”"
+                "description": "What you chose, 6 words at most: “One grocery list for everyone”"
               },
               "instead": {
                 "type": "string",
-                "description": "The button: the choice you didn't make, in two to four words. It replaces the guess, it never adds to it: “A list per person”, not “Add reminders too”."
+                "description": "The button: the choice you didn't make, in four words at most. It replaces the guess, it never adds to it: “A list per person”, not “Add reminders too”."
               },
               "request": {
                 "type": "string",
@@ -492,7 +492,7 @@
             "properties": {
               "what": {
                 "type": "string",
-                "description": "The new thing, two to five words: “Save a meal”"
+                "description": "The new thing, 5 words at most: “Save a meal”"
               },
               "where": {
                 "type": "string",
