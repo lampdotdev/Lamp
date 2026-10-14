@@ -3369,22 +3369,43 @@ enum Template {
             !(window is NSPanel) && window.styleMask.contains(.titled) && window.canBecomeMain && window.sheetParent == nil
         }
 
+        /// A round button like the toolbar's own, centered in the title bar whatever its height (a window with a
+        /// toolbar has a tall one, one without a short one). SwiftUI may add its toolbar after the window first
+        /// shows, so it's sized again each time the window comes to the front (`fit`).
         @MainActor private static func attach(to window: NSWindow) {
-            guard !window.titlebarAccessoryViewControllers.contains(where: { $0.view.identifier == identifier }) else { return }
-            let button = NSButton(image: NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Change This App")!,
-                                  target: Opener.shared, action: #selector(Opener.open))
-            button.bezelStyle = .accessoryBarAction
-            button.isBordered = false
+            if let holder = window.titlebarAccessoryViewControllers.first(where: { $0.view.identifier == identifier })?.view {
+                return fit(holder, in: window)
+            }
+            let symbol = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Change This App")!
+                .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))!
+            let button = NSButton(image: symbol, target: Opener.shared, action: #selector(Opener.open))
             button.toolTip = "Change this app with Lamp"
-            button.identifier = identifier
-            let holder = NSView(frame: NSRect(x: 0, y: 0, width: 36, height: 28))
+            if #available(macOS 26, *) {
+                button.bezelStyle = .glass
+                button.borderShape = .circle
+            } else {
+                button.bezelStyle = .accessoryBarAction
+                button.isBordered = false
+            }
+            let holder = NSView()
             holder.identifier = identifier
-            button.frame = NSRect(x: 4, y: 2, width: 28, height: 24)
             holder.addSubview(button)
             let accessory = NSTitlebarAccessoryViewController()
             accessory.view = holder
             accessory.layoutAttribute = .trailing
             window.addTitlebarAccessoryViewController(accessory)
+            fit(holder, in: window)
+            DispatchQueue.main.async { fit(holder, in: window) }
+        }
+
+        /// The button as tall as the toolbar's buttons when there's a toolbar, smaller in a plain title bar, in
+        /// the middle of the title bar's height.
+        @MainActor private static func fit(_ holder: NSView, in window: NSWindow) {
+            guard let button = holder.subviews.first else { return }
+            let titlebar = max(window.frame.height - window.contentLayoutRect.height, 28)
+            let side: CGFloat = titlebar > 40 ? 34 : 22
+            holder.frame.size = NSSize(width: side + 14, height: titlebar)
+            button.frame = NSRect(x: 4, y: ((titlebar - side) / 2).rounded(), width: side, height: side)
         }
 
         private static let identifier = NSUserInterfaceItemIdentifier("lampMagic")
