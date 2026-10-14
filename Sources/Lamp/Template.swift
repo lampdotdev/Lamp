@@ -1270,6 +1270,14 @@ enum Template {
     /// The background task an iPhone app that works in the background is woken for (`LampSchedule` on iOS).
     static let scheduleTask = "lamp.schedule"
 
+    /// What an app is made for, read off its Package.swift, which every version keeps: the platforms it lists.
+    /// A version restored from before `make_app_for` brings its kind back with its code (`Versions.restoreFiles`).
+    static func platform(fromPackageIn dir: URL) -> Platform? {
+        guard let text = try? String(contentsOf: dir.appendingPathComponent("Package.swift"), encoding: .utf8) else { return nil }
+        let mac = text.contains(".macOS("), ios = text.contains(".iOS(")
+        return mac && ios ? .universal : ios ? .iphone : mac ? .mac : nil
+    }
+
     /// The folder a Mac app and its widget share when Lamp signs them for the person's team: the team's id and
     /// the app's. macOS honours a group named so from the signature alone; one named "group.…" would need a
     /// provisioning profile, which Lamp's builds don't have.

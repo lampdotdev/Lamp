@@ -1672,12 +1672,13 @@ final class Store: ObservableObject {
     /// while the agent builds the first version. Returns the app as it is now.
     private func bootstrap(_ project: LampProject, brief: String) async -> LampProject {
         var project = project
-        if project.untitled {
+        // A draft named before its first request (in its intro) is still asked about, for what it runs on.
+        if project.untitled || !project.scaffolded {
             let suggestion = await AppName.suggest(for: brief)
             progress[project.id]?.sketch = suggestion?.sketch ?? []
             progress[project.id]?.naming = false
             if let suggestion, let kind = suggestion.kind { project = await chooseKind(project, kind, said: suggestion.kindSaid) }
-            if let name = suggestion?.name { project = await performRename(project, to: name) }
+            if project.untitled, let name = suggestion?.name { project = await performRename(project, to: name) }
         }
         if Icons.load(project) == nil {
             let designing = project
@@ -1946,7 +1947,10 @@ final class Store: ObservableObject {
     /// One turn of the loop: agent edits → build (agent fixes failures) → commit → relaunch.
     /// `asked` are the chat lines of the requests, which are linked to the version the turn makes.
     private func turn(_ messages: [QueuedMessage], attachments saved: [String], asked: [UUID],
-                      on project: LampProject) async -> TurnResult {
+                      on started: LampProject) async -> TurnResult {
+        // The agent may change what the app is made for (`make_app_for`) while it works: after each of its runs,
+        // the rest of the turn goes on with the app as Lamp now has it, so its build is for the new kind.
+        var project = started
         guard let owner = turns[project.id] else { return TurnResult(end: .failed, watched: true) }
         var prompt = messages.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
         // Attachments with no words: usually a screenshot or mockup meaning "like this", or a file to use.
@@ -1968,6 +1972,7 @@ final class Store: ObservableObject {
             + (sentAgain ? "" : Runtime.crashNote(for: project) + Runtime.screenshotNote(for: project))
         turns[project.id]?.request = prompt
         let ran = await runAgent(prompt + notes, files: files, on: project)
+        project = current(project) ?? project
         // The note about going back is the agent's only word of it, so it's kept until the agent has had it:
         // a turn that failed before reaching the agent leaves it for the next one.
         if let last = asked.last, Self.reachedAgent(last, in: logs[project.id] ?? []) { Versions.forgetNote(for: project) }
@@ -2028,6 +2033,7 @@ final class Store: ObservableObject {
             log(project, .status, "Fixing the crash…")
             guard await runAgent("The app builds, but it quit right after launching. Find the cause and fix it.\n\n\(crash!)",
                                  on: project) else { return TurnResult(end: .failed, watched: watched) }
+            project = current(project) ?? project
             // It asked instead of fixing: the turn waits for the answer here, as it does after any question.
             if owner.asked { return TurnResult(end: .replied, watched: watched) }
             guard await buildFixingErrors(project) else {
@@ -2095,7 +2101,8 @@ final class Store: ObservableObject {
 
     /// Builds the app, sending compiler errors back to the agent up to three times. False when it still doesn't
     /// build, or when the agent asked the person something instead (`Turn.asked`).
-    private func buildFixingErrors(_ project: LampProject) async -> Bool {
+    private func buildFixingErrors(_ started: LampProject) async -> Bool {
+        var project = current(started) ?? started
         var errors = await build(project)
         // The person's Apple account, not the code: build has said so, and the agent has nothing to fix.
         func isTheAccount() -> Bool { errors != nil && errors == macMembershipProblem(project) }
@@ -2105,6 +2112,7 @@ final class Store: ObservableObject {
             log(project, .status, "Fixing a problem…")
             guard await runAgent("The app failed to build. Fix these compiler errors:\n\n\(errors!)",
                                  on: project) else { return false }
+            project = current(project) ?? project
             // Asking ends the turn while fixing as well: no build, and no further try, under a card that
             // hasn't been answered. Whoever called says the turn is waiting, not that it failed.
             if turns[project.id]?.asked == true { return false }
@@ -2872,6 +2880,16 @@ final class Store: ObservableObject {
         send(result.guesses[index].request, answering: line.id, to: project)
     }
 
+    /// After a restore, the app in Lamp's list is what the restored version was made for, as `Versions.restoreFiles`
+    /// wrote it to meta.json: an Undo of `make_app_for` puts the kind back with the code.
+    private func followRestoredKind(_ project: LampProject) {
+        guard let index = projects.firstIndex(where: { $0.id == project.id }),
+              let kind = Template.platform(fromPackageIn: project.dir), projects[index].platform != kind else { return }
+        projects[index].platform = kind
+        if !kind.hasIOS { projects[index].device = nil }
+        refreshOpenApps()
+    }
+
     /// `make_app_for`: the person asked for the app on other devices, and the agent asks Lamp to make it so.
     private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         let kind: Platform? = switch arguments["kind"] as? String {
@@ -2906,7 +2924,12 @@ final class Store: ObservableObject {
                               "Tell the person in a sentence, and that you'll make the change when they ask again once it's done. Change nothing else for it."])
             }
         }
-        await quit(current)
+        // Every copy closes first, the turn's own answer included: one kept open (the person kept unsaved work)
+        // would go on as an app Lamp no longer knows by its id.
+        guard await quit(current, for: turns[project.id]) else {
+            return (200, ["text": "Nothing changed: the person kept \(current.name) open on this Mac, where it asked about unsaved work. " +
+                          "Tell them it has to close first, and that you'll make the change when they ask again."])
+        }
         var changed = current
         changed.platform = kind
         // Where it opens next: where it's newly made for, so the person sees the change.
@@ -2917,6 +2940,16 @@ final class Store: ObservableObject {
         if changed.scaffolded {
             do { try Template.writeOwnedFiles(for: changed) } catch {
                 return (500, ["error": "Lamp couldn't write the build files for it: \(error.localizedDescription)"])
+            }
+        }
+        // The Mac copy's data, from an app for both built before its data had a fixed place (`LampStore.folder`):
+        // moved there now, while Lamp still knows the id it was kept under.
+        if current.platform.hasMac {
+            let support = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+            let fixed = support.appendingPathComponent(Edition.appBundlePrefix + current.id)
+            let signed = support.appendingPathComponent(current.bundleID)
+            if signed != fixed, FileManager.default.fileExists(atPath: signed.path), !FileManager.default.fileExists(atPath: fixed.path) {
+                try? FileManager.default.moveItem(at: signed, to: fixed)
             }
         }
         if current.platform.hasMac, kind.hasMac, current.bundleID != changed.bundleID {
@@ -3148,6 +3181,7 @@ final class Store: ObservableObject {
         // A turn that was stopped, or never got the app building, leaves its changes unsaved: Undo discards those first.
         if let current = versions.first, await Versions.hasUnsavedChanges(project) {
             _ = await Versions.restoreFiles(project, to: current)
+            followRestoredKind(project)
             log(project, .status, "Discarded the unfinished change")
             if await build(project) == nil { await installReportingCrash(project) }
             return
@@ -3158,6 +3192,7 @@ final class Store: ObservableObject {
             log(project, .status, "Nothing to undo")
             return
         }
+        followRestoredKind(project)
         Versions.remember(project, restoredTo: target.label, from: target.date)
         log(project, .status, "Undid “\(undoing.label)”")
         await rebuild(project, restoredFrom: target)
@@ -3171,6 +3206,7 @@ final class Store: ObservableObject {
             log(project, .status, "The app is already like “\(version.label)”")
             return
         }
+        followRestoredKind(project)
         Versions.remember(project, restoredTo: version.label, from: version.date)
         log(project, .status, Versions.restoredMessage(to: version))
         await rebuild(project, restoredFrom: version)
@@ -3203,6 +3239,7 @@ final class Store: ObservableObject {
             log(project, .error, ErrorMessages.restoreFailed)
             return false
         }
+        followRestoredKind(project)
         if await Versions.save(project, message: Versions.restoredMessage(to: target)), let head = await Versions.head(project) {
             Versions.copyPicture(in: project, from: target.id, to: head)
             versionsRevision += 1
@@ -4803,6 +4840,7 @@ final class Store: ObservableObject {
             guard await Versions.restoreFiles(project, to: version) else {
                 return (500, ["error": "Lamp couldn't restore that version."])
             }
+            followRestoredKind(project)
             log(project, .status, Versions.restoredMessage(to: version))
             return (200, ["text": """
                 The app's files are now as they were in “\(version.label)”. Your changes earlier in this request \
