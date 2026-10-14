@@ -52,7 +52,10 @@ The extension never runs an app's HTML or JavaScript.
   `sidebar: true` draw the same surface in Lamp (`BrowserPreview`), list it as
   text, and press its buttons as one more tab. `page` names a real page, which
   Lamp opens out of sight and reads with the extension's own capture script, and
-  the look says whether the page fits `browser.json`.
+  the look says whether the page fits `browser.json`. That reader connects only
+  through `PublicOnlyProxy`, which looks up every host itself and refuses this
+  Mac, the local network and other non-internet addresses, for the page, its
+  redirects and everything it loads.
 
 ## Not in this milestone
 
