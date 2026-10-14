@@ -74,7 +74,7 @@ enum LiveReload {
         case unchanged
     }
 
-    static func verdict(_ project: LampProject) async -> Verdict {
+    @MainActor static func verdict(_ project: LampProject) async -> Verdict {
         let built = swiftFiles(in: sources(project)), open = swiftFiles(in: running(project))
         guard !open.isEmpty else { return .reopen("Lamp doesn't know what the open copy was built from") }
         // A new file only brings new types and functions, which the library holds; one taken away may have held
@@ -106,11 +106,32 @@ enum LiveReload {
         guard let before = saved ?? fresh else { return .reopen("the compiler couldn't say what the open app's types hold") }
         if saved == nil { try? before.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8) }
         guard let now = await after else { return .reopen("the compiler couldn't say what the new code's types hold") }
-        if before != now {
-            let what = now.first { !before.contains($0) } ?? before.first { !now.contains($0) }.map { "no longer " + $0 } ?? "the order of a type's fields"
-            return .reopen("a type's stored data changed (\(what))")
+        // Type by type, each "Owner<tab>member": a type the open app has must hold just what it did, in order;
+        // a new type (a new view with its own state) is the library's to lay out, and is kept with the rest for
+        // the next change once this one has gone in. A type taken away may still have objects in the open app.
+        func byType(_ entries: [String]) -> [String: [String]] {
+            Dictionary(grouping: entries, by: { String($0.prefix { $0 != "\t" }) })
         }
+        let old = byType(before), new = byType(now)
+        for (type, members) in old.sorted(by: { $0.key < $1.key }) {
+            guard let current = new[type] else { return .reopen("\(type) was taken away") }
+            if current != members {
+                let what = (current.first { !members.contains($0) } ?? members.first { !current.contains($0) }.map { "no longer " + $0 } ?? "the order of its fields")
+                    .replacingOccurrences(of: "\t", with: ".")
+                return .reopen("\(type) changed what it holds (\(what))")
+            }
+        }
+        newLayout[project.id] = now
         return .reload(changed)
+    }
+
+    /// The new code's layout, from the last verdict to allow a reload: what the open app holds once it's gone in.
+    @MainActor static var newLayout: [String: [String]] = [:]
+
+    /// After a change went in: the open app's types now include the new ones.
+    @MainActor static func keepLayout(_ project: LampProject) {
+        guard let layout = newLayout.removeValue(forKey: project.id) else { return }
+        try? layout.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8)
     }
 
     /// What the open app's types hold (`layout`), kept beside the sources it runs; gone when those change.
@@ -167,11 +188,11 @@ enum LiveReload {
             } else if let m = varDecl.firstMatch(in: line, range: range) {
                 let rest = String(line[Range(m.range(at: 4), in: line)!])
                 if let owner, rest.contains("readImpl=stored"), !rest.contains(" static") {
-                    let entry = owner + "." + String(line[Range(m.range(at: 2), in: line)!]) + ": " + String(line[Range(m.range(at: 3), in: line)!])
+                    let entry = owner + "\t" + String(line[Range(m.range(at: 2), in: line)!]) + ": " + String(line[Range(m.range(at: 3), in: line)!])
                     if seen.insert(entry).inserted { out.append(entry) }
                 }
             } else if let m = caseDecl.firstMatch(in: line, range: range), let owner {
-                let entry = owner + " case " + String(line[Range(m.range(at: 2), in: line)!]) + ": " + String(line[Range(m.range(at: 3), in: line)!])
+                let entry = owner + "\tcase " + String(line[Range(m.range(at: 2), in: line)!]) + ": " + String(line[Range(m.range(at: 3), in: line)!])
                 if seen.insert(entry).inserted { out.append(entry) }
             } else if scopeDecl.firstMatch(in: line, range: range) != nil {
                 scopes.append((indent, nil))

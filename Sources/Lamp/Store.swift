@@ -3562,6 +3562,7 @@ final class Store: ObservableObject {
         }
         guard await LiveReload.send(library, to: project, token: Template.token(for: project)) else { return false }
         LiveReload.markRunning(project, keepLayout: true)
+        LiveReload.keepLayout(project)
         watchAfterReload(project, app: app)
         LiveReload.awaitInstall(project)
         _ = heldInstalls.mayInstall(project.id, running: true)
@@ -3574,15 +3575,23 @@ final class Store: ObservableObject {
         return true
     }
 
-    /// The safety net under a live change: if the app stops within a few seconds of one going in, what it was
+    /// The safety net under a live change: if the app crashes within a few seconds of one going in, what it was
     /// told to run didn't suit it after all. It's opened again from the full build, which goes in as it closes
-    /// (the install waiting for that), and the chat's details say so.
+    /// (the install waiting for that), and the chat's details say so. Only a crash, which leaves macOS's report:
+    /// an app quit on purpose (its Quit, Lamp's Stop) stays closed.
     private func watchAfterReload(_ project: LampProject, app: NSRunningApplication) {
+        let since = Date()
         Task { [weak self] in
             for _ in 0..<16 {
                 try? await Task.sleep(for: .milliseconds(500))
                 guard app.isTerminated else { continue }
-                guard let self, let current = self.current(project) else { return }
+                // macOS writes the report a moment after the process is gone.
+                var crashed = false
+                for _ in 0..<10 where !crashed {
+                    crashed = Runtime.crashed(project, since: since)
+                    if !crashed { try? await Task.sleep(for: .milliseconds(300)) }
+                }
+                guard crashed, let self, let current = self.current(project) else { return }
                 self.log(current, .detail, "\(current.name) stopped right after a change went in without reopening it. Opening it again with the full build.")
                 LiveReload.forget(current)
                 // The full build goes in as the app closes (`installHeldIcons`); then it's opened.
