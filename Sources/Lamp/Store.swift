@@ -2426,23 +2426,32 @@ final class Store: ObservableObject {
     }
 
     /// What the app kept on this Mac goes with it, so an app made later under the same name starts empty rather
-    /// than opening this one's data: its data folder (`LampStore.folder`, under the plain id, and one under its
-    /// signed id from before that), to the Trash like the rest, with its settings (UserDefaults) written into it
-    /// first and then cleared.
+    /// than opening this one's data: its data folder (`LampStore.folder`, under the plain id), and anything under
+    /// an id it was signed as (the plain id and a team after it, also from before it was made for the Mac alone),
+    /// to the Trash like the rest. Its settings (UserDefaults) are written into the data folder first and cleared
+    /// only once that copy is written.
     private static func trashData(of project: LampProject) {
         let fm = FileManager.default
-        let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let library = fm.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        let support = library.appendingPathComponent("Application Support")
         let plain = Edition.appBundlePrefix + project.id
         let data = support.appendingPathComponent(plain)
-        for id in Set([plain, project.bundleID]) {
+        let isThisApp = { (name: String) in name == plain || name.hasPrefix(plain + ".") }
+        let preferences = (try? fm.contentsOfDirectory(atPath: library.appendingPathComponent("Preferences").path)) ?? []
+        let domains = Set(preferences.filter { $0.hasSuffix(".plist") }.map { String($0.dropLast(6)) }.filter(isThisApp)
+                          + [plain, project.bundleID])
+        for id in domains.sorted() {
             guard let settings = UserDefaults.standard.persistentDomain(forName: id), !settings.isEmpty else { continue }
-            try? fm.createDirectory(at: data, withIntermediateDirectories: true)
-            (settings as NSDictionary).write(to: data.appendingPathComponent("Settings \(id).plist"), atomically: true)
+            let copy = data.appendingPathComponent("Settings \(id).plist")
+            guard (try? fm.createDirectory(at: data, withIntermediateDirectories: true)) != nil,
+                  (settings as NSDictionary).write(to: copy, atomically: true) else {
+                print("Delete \(project.name): couldn't keep a copy of its settings (\(id)), so they stay")
+                continue
+            }
             UserDefaults.standard.removePersistentDomain(forName: id)
         }
-        for id in Set([plain, project.bundleID]) {
-            let folder = support.appendingPathComponent(id)
-            if fm.fileExists(atPath: folder.path) { try? fm.trashItem(at: folder, resultingItemURL: nil) }
+        for name in ((try? fm.contentsOfDirectory(atPath: support.path)) ?? []).filter(isThisApp) {
+            try? fm.trashItem(at: support.appendingPathComponent(name), resultingItemURL: nil)
         }
     }
 
