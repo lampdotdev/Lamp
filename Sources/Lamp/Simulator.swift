@@ -102,7 +102,7 @@ enum Simulator {
     static func boot(_ udid: String, show: Bool) async throws {
         _ = await Subprocess.run("/usr/bin/xcrun", ["simctl", "boot", udid], timeout: 60)   // "already booted" is fine
         let status = await Subprocess.run("/usr/bin/xcrun", ["simctl", "bootstatus", udid, "-b"], timeout: 120)
-        guard status.ok else { throw Failure(message: "The iPhone simulator didn't start.") }
+        guard status.ok else { throw Failure(message: "The simulator didn't start.") }
         if show { await self.show(udid) }
     }
 
@@ -120,6 +120,40 @@ enum Simulator {
             throw Failure(message: "The app didn't launch: \(result.errors.trimmed)")
         }
         return pid
+    }
+
+    /// The Apple Watch simulator paired with an iPhone simulator, for the app's watch app. When none is, and
+    /// Xcode has a watchOS that can pair with it, one is made and paired, as Xcode makes its own pairs; nil when
+    /// that can't be done (no watchOS added to Xcode, or none that pairs with this iPhone's iOS).
+    static func pairedWatch(of phone: String) async -> String? {
+        guard !Pretend.isMissing("watch") else { return nil }
+        let pairs = await Subprocess.run("/usr/bin/xcrun", ["simctl", "list", "pairs", "-j"], mergeErrors: false, timeout: 30).output
+        if let data = pairs.data(using: .utf8),
+           let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let list = json["pairs"] as? [String: [String: Any]] {
+            // The pair Xcode or the person made last is the active one; any pair of this phone will do.
+            let mine = list.values.filter { ($0["phone"] as? [String: Any])?["udid"] as? String == phone }
+            let ordered = mine.sorted { (($0["state"] as? String) ?? "").contains("active") && !(($1["state"] as? String) ?? "").contains("active") }
+            if let watch = (ordered.first?["watch"] as? [String: Any])?["udid"] as? String { return watch }
+        }
+        let runtimes = await Subprocess.run("/usr/bin/xcrun", ["simctl", "list", "runtimes", "-j"], mergeErrors: false, timeout: 30).output
+        guard let data = runtimes.data(using: .utf8),
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let list = json["runtimes"] as? [[String: Any]] else { return nil }
+        // The newest watchOS first: a watch that won't pair with this iPhone is deleted again, and the next tried.
+        let watchOS = list.filter { ($0["platform"] as? String) == "watchOS" && ($0["isAvailable"] as? Bool) == true }
+            .sorted { ($0["version"] as? String ?? "").compare($1["version"] as? String ?? "", options: .numeric) == .orderedDescending }
+        for runtime in watchOS {
+            guard let id = runtime["identifier"] as? String,
+                  let types = runtime["supportedDeviceTypes"] as? [[String: Any]],
+                  let type = types.last(where: { ($0["productFamily"] as? String) == "Apple Watch" })?["identifier"] as? String else { continue }
+            let made = await Subprocess.run("/usr/bin/xcrun", ["simctl", "create", "Apple Watch", type, id], mergeErrors: false, timeout: 60)
+            let watch = made.output.trimmed
+            guard made.ok, !watch.isEmpty else { continue }
+            if await Subprocess.run("/usr/bin/xcrun", ["simctl", "pair", watch, phone], timeout: 60).ok { return watch }
+            _ = await Subprocess.run("/usr/bin/xcrun", ["simctl", "delete", watch], timeout: 60)
+        }
+        return nil
     }
 
     static func terminate(_ bundleID: String, on udid: String) async {

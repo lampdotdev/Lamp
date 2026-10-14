@@ -2059,6 +2059,7 @@ final class Store: ObservableObject {
     private func agentChangedFiles(_ project: LampProject) async -> Bool {
         var output = ""
         let ignored = "':!Sources/LampSupport.swift' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!icon.json' ':!\(Attachments.folder)'"
+            + Template.watchSupportPaths.map { " ':!\($0)'" }.joined()
         _ = await Versions.git("git status --porcelain -- . \(ignored)", cwd: project.dir) {
             output += $0
         }
@@ -2768,7 +2769,7 @@ final class Store: ObservableObject {
         guard !relative.isEmpty else { return (400, ["error": "Only files inside the app's folder can be deleted."]) }
         // Compared without regard to case: the Mac's usual file system treats "package.swift" as the same file.
         let protected = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift",
-                         Template.widgetFolder + "/" + Template.widgetSupportFile]
+                         Template.widgetFolder + "/" + Template.widgetSupportFile] + Template.watchSupportPaths
         let lowered = relative.lowercased()
         if protected.contains(where: { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + "/") }) {
             return (400, ["error": "\(relative) belongs to Lamp and can't be deleted."])
@@ -3473,6 +3474,7 @@ final class Store: ObservableObject {
                 refreshOpenApps()
                 return crash
             }
+            await openWatchApp(project, phone: udid)
             if inFront {
                 // The Simulator was opened before the install; by now it may be behind Lamp again, and "ready"
                 // should mean the app is in front of the person, not somewhere to be found.
@@ -3489,6 +3491,32 @@ final class Store: ObservableObject {
         stamps[project.id] = BuildStamp.read(project.builtURL)
         return nil
     }
+
+    /// The app's Apple Watch app, when its build carries one, put on the watch simulator paired with the
+    /// iPhone's and opened there, so the two talk as they would on the person's wrist. What goes wrong here is
+    /// a line in the chat, never a crash for the agent to fix: the iPhone app is open and the watch is extra.
+    private func openWatchApp(_ project: LampProject, phone: String) async {
+        let watchApp = Template.watchAppURL(in: project.builtURL, of: project)
+        guard FileManager.default.fileExists(atPath: watchApp.path) else { return }
+        guard let watch = await Simulator.pairedWatch(of: phone) else {
+            // Said once a session for each app, not at every launch.
+            if watchHintShown.insert(project.id).inserted {
+                log(project, .status, "To see the watch app, add watchOS in Xcode → Settings → Components; Lamp then opens it on an Apple Watch simulator.")
+            }
+            return
+        }
+        let id = Template.watchBundleID(project.bundleID)
+        do {
+            try await Simulator.boot(watch, show: false)
+            await Simulator.terminate(id, on: watch)
+            try await Simulator.install(watchApp, on: watch)
+            _ = try await Simulator.launch(id, on: watch, log: Runtime.folder(project).appendingPathComponent("watch-log.txt"))
+        } catch {
+            log(project, .status, "The watch app didn't open: \(error.localizedDescription)")
+        }
+    }
+
+    private var watchHintShown: Set<String> = []
 
     /// Retry the phone operation alone: an account or device problem is never sent to the coding agent.
     func retryPhone(_ project: LampProject, udid: String) async {
@@ -3641,10 +3669,15 @@ final class Store: ObservableObject {
         if fm.fileExists(atPath: assets.path) {
             try? fm.copyItem(at: assets, to: app.appendingPathComponent(Sharing.Assets.folder))
         }
-        // A widget extension inside is signed first, as Xcode does: the app's signature then seals it.
+        // A widget extension inside is signed first, as Xcode does: the app's signature then seals it. The watch
+        // app the same way, its complications before it.
         _ = await Shell.run("""
             xattr -cr "$LAMP_APP"
             for widget in "$LAMP_APP"/PlugIns/*.appex(N); do codesign --force -s - "$widget"; done
+            for watch in "$LAMP_APP"/Watch/*.app(N); do
+              for extension in "$watch"/PlugIns/*.appex(N); do codesign --force -s - "$extension"; done
+              codesign --force -s - "$watch"
+            done
             codesign --force -s - "$LAMP_APP"
             """, cwd: project.dir, env: ["LAMP_APP": app.path]) { _ in }
     }
