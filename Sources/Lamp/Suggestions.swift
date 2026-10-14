@@ -118,14 +118,13 @@ enum AppName {
     its user would ("\(exampleParts[0])", "\(exampleParts[1])"). No file, type or framework \
     names.
 
-    Last, say what it runs on: "mac" for this Mac, "iphone" for iPhone and iPad, or "both" for the Mac and \
-    iPhone with one code. "iphone" when they mention a phone, an iPhone or iPad, or what's done away from a desk \
-    (out walking or running, the camera on the go, tilting or shaking it); "both" when they want it on their \
-    Mac and their phone, or kept the same on each; "mac" otherwise. Set "kind_by_user" to true only when they \
-    said where it runs.
+    Last, list the devices it runs on: "mac" for this Mac, "iphone" for iPhone and iPad. ["iphone"] when they \
+    mention a phone, an iPhone or iPad, or what's done away from a desk (out walking or running, the camera on \
+    the go, tilting or shaking it); ["mac", "iphone"] when they want it on their Mac and their phone, or kept the \
+    same on each; ["mac"] otherwise. Set "devices_by_user" to true only when they said where it runs.
 
     Respond with JSON: {"named_by_user": true or false, "name": "...", "parts": ["...", "..."], \
-    "kind": "mac" or "iphone" or "both", "kind_by_user": true or false}
+    "devices": ["..."], "devices_by_user": true or false}
     """
 
     struct Suggestion {
@@ -145,14 +144,9 @@ enum AppName {
         else { return nil }
         let sketch = (object["parts"] as? [Any] ?? []).compactMap { ($0 as? String)?.trimmed }
             .filter { !$0.isEmpty && $0.count <= 60 && !AppAI.parrots($0, examples: exampleParts, asked: brief) }.prefix(5)
-        let kind: Platform? = switch object["kind"] as? String {
-        case "mac": .mac
-        case "iphone": .iphone
-        case "both": .universal
-        default: nil
-        }
+        let kind = Platform(devices: Set(object["devices"] as? [String] ?? []))
         return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [],
-                          kind: kind, kindSaid: object["kind_by_user"] as? Bool ?? false)
+                          kind: kind, kindSaid: object["devices_by_user"] as? Bool ?? false)
     }
 
     static func name(_ object: [String: Any], asked brief: String) -> String? {

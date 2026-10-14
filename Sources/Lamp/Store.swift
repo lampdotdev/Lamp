@@ -28,6 +28,15 @@ enum DeviceFamily: String, Codable {
 /// What a new app is made as, chosen before its first message: in the welcome and in a new app's intro.
 /// iPhone and iPad are one kind of app, as Apple has it; which simulator it opens in is Try On's choice.
 /// The names are what the intro's sentence says ("Describe the iPhone & iPad app you wish you had").
+extension Platform {
+    /// What an app made for these devices is: the names `make_app_for` and the naming call use ("mac",
+    /// "iphone", for iPhone and iPad). Nil for an empty list or a device Lamp doesn't make apps for yet.
+    init?(devices: Set<String>) {
+        guard !devices.isEmpty, devices.isSubset(of: ["mac", "iphone"]) else { return nil }
+        self = devices.count == 2 ? .universal : devices.contains("mac") ? .mac : .iphone
+    }
+}
+
 enum AppKind: String, CaseIterable {
     case mac = "Mac", phone = "iPhone & iPad", universal = "Mac, iPhone & iPad"
 
@@ -2898,13 +2907,10 @@ final class Store: ObservableObject {
 
     /// `make_app_for`: the person asked for the app on other devices, and the agent asks Lamp to make it so.
     private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
-        let kind: Platform? = switch arguments["kind"] as? String {
-        case "mac": .mac
-        case "iphone": .iphone
-        case "both": .universal
-        default: nil
+        let devices = Set(arguments["devices"] as? [String] ?? [])
+        guard let kind = Platform(devices: devices) else {
+            return (400, ["error": "`devices` must list one or more of mac and iphone."])
         }
-        guard let kind else { return (400, ["error": "`kind` must be mac, iphone or both."]) }
         return await convert(project, to: kind)
     }
 

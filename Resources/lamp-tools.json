@@ -324,22 +324,26 @@
   {
     "name": "make_app_for",
     "label": "Change devices",
-    "description": "Changes what this app runs on, when the person asks for it somewhere it isn't (\"make it work on my iPhone too\"): \"mac\" for this Mac, \"iphone\" for iPhone and iPad, \"both\" for the Mac, iPhone and iPad with one code. Lamp checks this Mac can build it, rewrites the build files and keeps the app's data; the reply says how to adapt the code, which you then do in the same request. Not for a choice the person didn't ask for.",
+    "description": "Changes which devices this app is made for, when the person asks for it somewhere it isn't (\"make it work on my iPhone too\"). List every device it should run on from now on: \"mac\" for this Mac, \"iphone\" for iPhone and iPad. Lamp checks this Mac can build it, rewrites the build files and keeps the app's data; the reply says how to adapt the code, which you then do in the same request. Not for a change the person didn't ask for.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "kind"
+        "devices"
       ],
       "properties": {
-        "kind": {
-          "type": "string",
-          "enum": [
-            "mac",
-            "iphone",
-            "both"
-          ],
-          "description": "What the app runs on from now on"
+        "devices": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "mac",
+              "iphone"
+            ]
+          },
+          "description": "Every device the app runs on from now on"
         }
       }
     }

@@ -178,12 +178,13 @@ Xcode, the person's own Claude Code and Codex or tools from the PATH; a new chec
 
 ## iPhone apps
 
-Nobody picks what a new app runs on. The first request's naming call (`AppName.suggest`) also says whether it's
-for the Mac, iPhone & iPad, or both, and whether the person said so; `Store.chooseKind` takes that before anything is
+Nobody picks what a new app runs on. The first request's naming call (`AppName.suggest`) also lists the devices it
+runs on (`mac`, `iphone` for iPhone and iPad; `Platform(devices:)`) and whether the person said so; `Store.chooseKind` takes that before anything is
 written: a kind the person didn't say only when this Mac can build it now (`PhoneTools.checked`: Xcode, and a team for
 both), else a Mac app, and one they said either way (the build says what's missing). A line in the chat says so for
 anything but a Mac app. The starter ideas mix Mac and iPhone ones (`Ideas.mixed`). Later, "make it work on my
-iPhone too" is the agent's `make_app_for` (`Store.convert`): it checks this Mac can build the new kind (opening the
+iPhone too" is the agent's `make_app_for` (`Store.convert`), given every device the app runs on from then on (a
+new kind of device is one more name in `Platform(devices:)` and the tool's schema): it checks this Mac can build the new kind (opening the
 setup steps if not), quits every copy, changes the kind in meta.json, rewrites Lamp's own files, copies the Mac
 settings (UserDefaults) to a new signed id, and answers with the rules for the new kind, which stay in the
 conversation; the agent then adapts the code. A Mac app's data doesn't move: LampSupport keeps it under the app's
