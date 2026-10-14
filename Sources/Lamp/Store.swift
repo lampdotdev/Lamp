@@ -5019,28 +5019,40 @@ final class Store: ObservableObject {
         var reply: [String: Any] = ["nonce": message["nonce"] as? String ?? "", "on": PhoneWand.isAvailable(for: project)]
         guard PhoneWand.isAvailable(for: project) else { return (200, PhoneWand.seal(reply, secret: secret)) }
         let id = (message["id"] as? String).flatMap { UUID(uuidString: $0) != nil ? $0 : nil }
-        if message["op"] as? String == "send", let id, !wandTaken.contains(id) {
-            // Whatever happens to it, the id is taken now: a copy sent later never asks for what was turned away.
-            let text = (message["text"] as? String)?.trimmed ?? ""
-            if let refusal = PhoneWand.refusal(of: text, ready: setup.ready, sentToday: wandTaken.count(for: project.id)) {
-                _ = wandTaken.take(id, for: project.id, counted: false)
-                reply["refused"] = refusal
-            } else if let going = wandRequests.values.first(where: { $0.project == project.id && $0.ended == nil }) {
-                // One change from the phone at a time: the sheet follows the one going, and keeps what was typed.
-                _ = wandTaken.take(id, for: project.id, counted: false)
-                reply["busy"] = true
-                reply.merge(wandStatus(going.id, of: project), uniquingKeysWith: { $1 })
-                reply["lines"] = PhoneWand.lines(from: logs[project.id] ?? [])
-                return (200, PhoneWand.seal(reply, secret: secret))
-            } else {
-                _ = wandTaken.take(id, for: project.id)
+        if message["op"] as? String == "send", let id {
+            if !wandTaken.contains(id) {
+                // Whatever happens to it, the id is taken now: a copy sent later never asks for what was turned away.
+                let text = (message["text"] as? String)?.trimmed ?? ""
                 let now = Date()
                 wandRequests = wandRequests.filter { now.timeIntervalSince($0.value.arrived) < 86_400 }
-                wandRequests[id] = PhoneWand.Request(id: id, project: project.id, arrived: now)
-                send(text, phone: id, to: project)
+                if let refusal = PhoneWand.refusal(of: text, ready: setup.ready, sentToday: wandTaken.count(for: project.id)) {
+                    _ = wandTaken.take(id, for: project.id, counted: false)
+                    wandRequests[id] = PhoneWand.turnedAway(id, for: project.id, .refused(refusal), at: now)
+                } else if let going = wandRequests.values.first(where: { $0.project == project.id && $0.ended == nil }) {
+                    // One change from the phone at a time: the sheet follows the one going, and keeps what was typed.
+                    _ = wandTaken.take(id, for: project.id, counted: false)
+                    wandRequests[id] = PhoneWand.turnedAway(id, for: project.id, .busy(going.id), at: now)
+                } else {
+                    _ = wandTaken.take(id, for: project.id)
+                    wandRequests[id] = PhoneWand.Request(id: id, project: project.id, arrived: now)
+                    send(text, phone: id, to: project)
+                }
+            }
+            // A message turned away gets the same answer however often it's sent, so a retry after a lost answer
+            // still hears it, and the phone puts what was typed back in its box.
+            let mine = wandRequests[id].flatMap { $0.project == project.id ? $0 : nil }
+            if let answer = PhoneWand.answer(toTurnedAway: mine) {
+                if let going = answer["going"] as? String {
+                    reply["busy"] = true
+                    reply.merge(wandStatus(going, of: project), uniquingKeysWith: { $1 })
+                } else {
+                    reply.merge(answer, uniquingKeysWith: { $1 })
+                }
+                reply["lines"] = PhoneWand.lines(from: logs[project.id] ?? [])
+                return (200, PhoneWand.seal(reply, secret: secret))
             }
         }
-        if let id, reply["refused"] == nil { reply.merge(wandStatus(id, of: project), uniquingKeysWith: { $1 }) }
+        if let id { reply.merge(wandStatus(id, of: project), uniquingKeysWith: { $1 }) }
         reply["lines"] = PhoneWand.lines(from: logs[project.id] ?? [])
         return (200, PhoneWand.seal(reply, secret: secret))
     }
@@ -5115,8 +5127,9 @@ final class Store: ObservableObject {
         if let id = wandTurns.removeValue(forKey: old) { wandTurns[new] = id }
         if let awake = wandAwake.removeValue(forKey: old) { wandAwake[new] = awake }
         for (id, request) in wandRequests where request.project == old {
-            wandRequests[id] = PhoneWand.Request(id: id, project: new, arrived: request.arrived, ended: request.ended,
-                                                 asked: request.asked, changed: request.changed, note: request.note)
+            var moved = request
+            moved.project = new
+            wandRequests[id] = moved
         }
     }
 

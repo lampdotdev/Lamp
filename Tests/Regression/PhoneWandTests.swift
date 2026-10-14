@@ -144,6 +144,82 @@ final class PhoneWandTests: XCTestCase {
         XCTAssertFalse(taken.take("B", for: "app"), "a message turned away can't be sent again later")
     }
 
+    /// The phone sends a message again until Lamp answers it. When the first answer was "no" (refused, or another
+    /// change going) and got lost, the retry has to hear "no" again, or the phone drops what was typed.
+    func testARetriedMessageThatWasTurnedAwayHearsTheSameAnswer() {
+        let refused = PhoneWand.turnedAway("A", for: "app", .refused("That's too long."))
+        XCTAssertEqual(PhoneWand.answer(toTurnedAway: refused)?["refused"] as? String, "That's too long.")
+        let busy = PhoneWand.turnedAway("B", for: "app", .busy("C"))
+        XCTAssertEqual(PhoneWand.answer(toTurnedAway: busy)?["busy"] as? Bool, true)
+        XCTAssertEqual(PhoneWand.answer(toTurnedAway: busy)?["going"] as? String, "C")
+        XCTAssertNil(PhoneWand.answer(toTurnedAway: PhoneWand.Request(id: "D", project: "app", arrived: Date())))
+        XCTAssertNotNil(busy.ended, "a message turned away isn't the change going")
+    }
+
+    /// The sheet's own state, cut out of the template and run: a message stays the phone's until Lamp has it, a
+    /// "no" puts it back in the box, and a change going when the app closed is followed to its end after it opens.
+    func testThePhoneKeepsItsMessageUntilLampHasItAndFollowsAChangeAfterARelaunch() throws {
+        let support = Template.lampSupportSwift
+        let start = try XCTUnwrap(support.range(of: "struct LampWandFlow {"))
+        let end = try XCTUnwrap(support.range(of: "// end LampWandFlow", range: start.upperBound..<support.endIndex))
+        let program = """
+        import Foundation
+        \(support[start.lowerBound..<end.lowerBound])
+        func say(_ key: String, _ value: Any?) { print("\\(key)=\\(value.map { "\\($0)" } ?? "nil")") }
+
+        // Sent while Lamp can't be reached: the box waits, and a second message can't take the first's place.
+        var flow = LampWandFlow()
+        flow.draft = "Make it blue"
+        let first = flow.send(id: "A")!
+        flow.unreachable()
+        say("away", flow.phase == .away)
+        say("busyWhileUnsent", flow.busy)
+        flow.draft = "Make it red"
+        say("secondSend", flow.send(id: "B").map { $0.id })
+        say("stillUnsent", flow.unsent?.text)
+
+        // Lamp's answer, sent again for a retry, says the first was refused: what was typed comes back.
+        _ = flow.delivered(["on": true, "refused": "That's too long."], id: first.id, sheetOpen: true)
+        say("draftAfterRefusal", flow.draft)
+        say("phaseAfterRefusal", flow.phase.rawValue)
+
+        // Lamp was restarted and lost what became of it: the text comes back too.
+        var lost = LampWandFlow()
+        lost.draft = "Add a reset"
+        _ = lost.send(id: "C")
+        _ = lost.delivered(["on": true, "id": "C", "phase": "failed", "note": "Lamp on your Mac was restarted."], id: "C", sheetOpen: false)
+        say("draftAfterRestart", lost.draft)
+
+        // Opened again by an install, with the change still going: followed until Done, and the sheet rises once.
+        var reopened = LampWandFlow()
+        reopened.request = "D"
+        reopened.unreachable()
+        say("pollsWhenFirstAskFails", reopened.shouldPoll(sheetOpen: false))
+        _ = reopened.apply(["on": true, "id": "D", "phase": "installing"], sheetOpen: false)
+        say("pollsWhileInstalling", reopened.shouldPoll(sheetOpen: false))
+        say("risesAtDone", reopened.apply(["on": true, "id": "D", "phase": "done", "changed": true], sheetOpen: false))
+        say("risesTwice", reopened.apply(["on": true, "id": "D", "phase": "done", "changed": true], sheetOpen: false))
+        say("pollsAfterDone", reopened.shouldPoll(sheetOpen: false))
+        """
+        var said: [String: String] = [:]
+        for line in try run(program).split(separator: "\n") {
+            let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
+            if parts.count == 2 { said[parts[0]] = parts[1] }
+        }
+        XCTAssertEqual(said["away"], "true")
+        XCTAssertEqual(said["busyWhileUnsent"], "true", "the box waits while Lamp hasn't the first message")
+        XCTAssertEqual(said["secondSend"], "nil", "a second message mustn't replace one Lamp hasn't confirmed")
+        XCTAssertEqual(said["stillUnsent"], "Make it blue")
+        XCTAssertEqual(said["draftAfterRefusal"], "Make it blue")
+        XCTAssertEqual(said["phaseAfterRefusal"], "failed")
+        XCTAssertEqual(said["draftAfterRestart"], "Add a reset")
+        XCTAssertEqual(said["pollsWhenFirstAskFails"], "true", "an unfinished change is asked about again")
+        XCTAssertEqual(said["pollsWhileInstalling"], "true")
+        XCTAssertEqual(said["risesAtDone"], "true")
+        XCTAssertEqual(said["risesTwice"], "false")
+        XCTAssertEqual(said["pollsAfterDone"], "false")
+    }
+
     private func sealedBody(_ message: [String: Any], secret: String) throws -> Data {
         let box = try AES.GCM.seal(JSONSerialization.data(withJSONObject: message), using: PhoneWand.key(secret: secret))
         return try JSONSerialization.data(withJSONObject: ["sealed": try XCTUnwrap(box.combined).base64EncodedString()])

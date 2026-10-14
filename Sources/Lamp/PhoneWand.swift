@@ -18,7 +18,7 @@ enum PhoneWand {
     /// One message sent from the phone, from its arrival to how its turn ended.
     struct Request {
         let id: String
-        let project: String
+        var project: String
         let arrived: Date
         /// Set when its turn ends; until then the phase is read off the turn as it goes (`Store.wandPhase`).
         var ended: Phase?
@@ -28,6 +28,34 @@ enum PhoneWand {
         var changed = false
         /// Why it didn't work, in a few plain words.
         var note: String?
+        /// Turned away when it came, and why: kept so the phone's retry of a message whose answer was lost hears
+        /// the same thing, and puts what was typed back in its box.
+        var turnedAway: TurnedAway?
+    }
+
+    enum TurnedAway: Equatable {
+        /// Refused, with why in the person's words.
+        case refused(String)
+        /// Another change from the phone was going: the one with this id.
+        case busy(String)
+    }
+
+    /// A message the route turned away, kept as its answer.
+    static func turnedAway(_ id: String, for project: String, _ why: TurnedAway, at now: Date = Date()) -> Request {
+        var request = Request(id: id, project: project, arrived: now)
+        request.ended = .failed
+        request.turnedAway = why
+        if case .refused(let reason) = why { request.note = reason }
+        return request
+    }
+
+    /// What a message turned away is answered with, every time it's sent: nil for one that was taken.
+    static func answer(toTurnedAway request: Request?) -> [String: Any]? {
+        switch request?.turnedAway {
+        case .refused(let why): ["refused": why]
+        case .busy(let going): ["busy": true, "going": going]
+        case nil: nil
+        }
     }
 
     /// The most messages one app's wand may send in a day. A person changing an app from the phone sends a

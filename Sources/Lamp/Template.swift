@@ -3316,7 +3316,7 @@ enum Template {
     final class LampWand: ObservableObject {
         static let shared = LampWand()
 
-        enum Phase: String { case idle, working, waiting, installing, done, failed, away }
+        typealias Phase = LampWandFlow.Phase
 
         struct Line: Identifiable, Equatable {
             let id: Int
@@ -3325,35 +3325,37 @@ enum Template {
         }
 
         @Published private(set) var on = false
-        @Published private(set) var phase = Phase.idle
-        /// Waiting for an answer to the agent's questions, rather than for the Mac.
-        @Published private(set) var question = false
-        @Published private(set) var changed = false
-        @Published private(set) var doing: String?
-        @Published private(set) var note: String?
         @Published private(set) var lines: [Line] = []
-        @Published var draft = ""
+        /// Where the change is and what the box holds; the message followed is kept across the relaunch an
+        /// install brings.
+        @Published private var flow = LampWandFlow() {
+            didSet {
+                defaults.set(flow.request, forKey: "lamp.wand.request")
+                defaults.set(flow.shown, forKey: "lamp.wand.shown")
+            }
+        }
 
-        /// While a change is going the box waits: one at a time, as on the Mac.
-        var busy: Bool { phase == .working || phase == .installing || (phase == .waiting && !question) }
+        var phase: Phase { flow.phase }
+        var question: Bool { flow.question }
+        var changed: Bool { flow.changed }
+        var doing: String? { flow.doing }
+        var note: String? { flow.note }
+        var busy: Bool { flow.busy }
+        var draft: String {
+            get { flow.draft }
+            set { flow.draft = newValue }
+        }
 
         private let defaults = UserDefaults.standard
-        /// The message being followed, kept across the relaunch an install brings.
-        private var request: String? {
-            get { defaults.string(forKey: "lamp.wand.request") }
-            set { defaults.set(newValue, forKey: "lamp.wand.request") }
-        }
-        /// The message whose Done the sheet has already risen for.
-        private var shown: String? {
-            get { defaults.string(forKey: "lamp.wand.shown") }
-            set { defaults.set(newValue, forKey: "lamp.wand.shown") }
-        }
-        /// A message Lamp hasn't confirmed: sent again, with the same id, until it answers.
-        private var unsent: (id: String, text: String)?
         private var button: UIViewController?
         private weak var sheet: UIViewController?
         private var dismissal: Dismissal?
         private var polling: Task<Void, Never>?
+
+        private init() {
+            flow.request = defaults.string(forKey: "lamp.wand.request")
+            flow.shown = defaults.string(forKey: "lamp.wand.shown")
+        }
 
         private static var started = false
 
@@ -3369,11 +3371,16 @@ enum Template {
             }
         }
 
+        /// A change may have been going when the app last closed (an install closes it): its end is followed
+        /// from here, whether or not Lamp answers the first time.
         private func activated(_ scene: UIWindowScene?) {
             guard let scene, let window = scene.windows.first(where: \.isKeyWindow)
                     ?? scene.windows.first(where: { !$0.isHidden && $0.windowLevel == .normal }) else { return }
             attach(to: window)
-            Task { await refresh() }
+            Task {
+                await refresh()
+                poll()
+            }
         }
 
         /// The button sits in the app's own window, above its content and below anything the app presents.
@@ -3407,27 +3414,17 @@ enum Template {
             self.dismissal = dismissal
             top.present(controller, animated: true)
             sheet = controller
-            if phase == .done, let request { shown = request }
             poll()
         }
 
-        /// Closed after the change ended: the wand is plain again.
         private func closed() {
             sheet = nil
-            if phase == .done || phase == .failed { phase = .idle; note = nil }
+            flow.closed()
         }
 
         func send() {
-            let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty, !busy else { return }
-            let id = UUID().uuidString
-            request = id
-            unsent = (id, text)
-            draft = ""
-            lines.append(Line(id: (lines.last?.id ?? 0) + 1, me: true, text: text))
-            phase = .working
-            doing = nil
-            note = nil
+            guard let sent = flow.send(id: UUID().uuidString) else { return }
+            lines.append(Line(id: (lines.last?.id ?? 0) + 1, me: true, text: sent.text))
             Task { await deliver() }
             poll()
         }
@@ -3435,70 +3432,43 @@ enum Template {
         /// Sends what Lamp hasn't confirmed, with its own id: Lamp takes each id once, so a message that did
         /// arrive before its answer was lost is answered with how it's going, not asked for again.
         private func deliver() async {
-            guard let unsent else { return }
+            guard let unsent = flow.unsent else { return }
             if let reply = try? await call(["op": "send", "id": unsent.id, "text": unsent.text]) {
-                if self.unsent?.id == unsent.id { self.unsent = nil }
-                // Turned away, or another change is going: what was typed goes back in the box.
-                if let refused = reply["refused"] as? String {
-                    draft = unsent.text
-                    request = nil   // nothing to follow: its reason stays on screen
-                    phase = .failed
-                    note = refused
-                } else if reply["busy"] as? Bool == true {
-                    draft = unsent.text
-                }
-                apply(reply)
+                take(reply)
+                if flow.delivered(reply, id: unsent.id, sheetOpen: sheet != nil) { present() }
             } else {
-                phase = .away
+                flow.unreachable()
             }
         }
 
         private func refresh() async {
-            if unsent != nil { return await deliver() }
+            if flow.unsent != nil { return await deliver() }
             var message: [String: Any] = ["op": "status"]
-            if let request { message["id"] = request }
+            if let request = flow.request { message["id"] = request }
             if let reply = try? await call(message) {
-                apply(reply)
-            } else if phase != .idle {
-                phase = .away
+                take(reply)
+                if flow.apply(reply, sheetOpen: sheet != nil) { present() }
+            } else {
+                flow.unreachable()
             }
         }
 
-        private func apply(_ reply: [String: Any]) {
+        /// What every answer carries whatever it's about: whether the wand is on, and the app's recent chat.
+        private func take(_ reply: [String: Any]) {
             on = reply["on"] as? Bool ?? false
-            guard on else {
-                sheet?.dismiss(animated: true)
-                return
-            }
+            if !on { sheet?.dismiss(animated: true) }
             let texts = reply["lines"] as? [[String: Any]] ?? []
-            lines = texts.enumerated().map { Line(id: $0.offset, me: $0.element["me"] as? Bool ?? false, text: $0.element["text"] as? String ?? "") }
-            if reply["refused"] != nil { return }
-            // Another change from a phone was going: that's the one to follow.
-            if reply["busy"] as? Bool == true, let going = reply["id"] as? String { request = going }
-            guard let id = reply["id"] as? String, id == request, let named = reply["phase"] as? String,
-                  let now = Phase(rawValue: named) else {
-                // Lamp doesn't know the change followed: nothing to wait for.
-                if unsent == nil, phase != .failed { phase = .idle }
-                return
-            }
-            phase = now
-            doing = reply["doing"] as? String
-            note = reply["note"] as? String
-            question = reply["question"] as? Bool ?? false
-            changed = reply["changed"] as? Bool ?? false
-            // The app was put back by the install, or the change ended while the sheet was closed: it rises by
-            // itself, once, with what came of it.
-            if now == .done, shown != id {
-                if sheet == nil { present() } else { shown = id }
+            if !texts.isEmpty || on {
+                lines = texts.enumerated().map { Line(id: $0.offset, me: $0.element["me"] as? Bool ?? false, text: $0.element["text"] as? String ?? "") }
             }
         }
 
-        /// Follows the change every two seconds while one is going or the sheet is open.
+        /// Follows the change while one is going, the sheet is open, or Lamp couldn't be reached (less often then).
         private func poll() {
             guard polling == nil else { return }
             polling = Task { [weak self] in
-                while let self, self.busy || self.phase == .away || self.sheet != nil {
-                    try? await Task.sleep(for: .seconds(2))
+                while let self, self.flow.shouldPoll(sheetOpen: self.sheet != nil) {
+                    try? await Task.sleep(for: .seconds(self.flow.phase == .away ? 10 : 2))
                     await self.refresh()
                 }
                 self?.polling = nil
@@ -3557,6 +3527,107 @@ enum Template {
         }
     }
     // end LampWandSeal
+
+    /// What the wand's sheet shows and what it does next, apart from the screen and the network: what Lamp's
+    /// answers mean for the box, the status line and when to ask again.
+    struct LampWandFlow {
+        enum Phase: String { case idle, working, waiting, installing, done, failed, away }
+
+        var phase = Phase.idle
+        /// Waiting for an answer to the agent's questions, rather than for the Mac.
+        var question = false
+        var changed = false
+        var doing: String?
+        var note: String?
+        var draft = ""
+        /// The message followed.
+        var request: String?
+        /// The message whose end the person has seen: the sheet rose at Done, or it didn't work.
+        var shown: String?
+        /// A message Lamp hasn't confirmed, sent again with the same id until it answers. The box waits meanwhile,
+        /// so nothing takes its place before Lamp has it.
+        var unsent: (id: String, text: String)?
+
+        /// One change at a time, as on the Mac.
+        var busy: Bool { unsent != nil || phase == .working || phase == .installing || (phase == .waiting && !question) }
+        /// A change whose end the person hasn't seen yet.
+        var unfinished: Bool { request != nil && request != shown }
+
+        func shouldPoll(sheetOpen: Bool) -> Bool { busy || phase == .away || sheetOpen }
+
+        /// What's typed, as the next message; nil when there's nothing to send or a change is going.
+        mutating func send(id: String) -> (id: String, text: String)? {
+            let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, !busy else { return nil }
+            request = id
+            unsent = (id, text)
+            draft = ""
+            phase = .working
+            doing = nil
+            note = nil
+            return unsent
+        }
+
+        /// Lamp didn't answer: said when there's something to wait for, and asked again until it does.
+        mutating func unreachable() {
+            if phase != .idle || unfinished || unsent != nil { phase = .away }
+        }
+
+        /// Lamp's answer to sending `id`. Turned away (now, or the first time, when that answer was lost), what
+        /// was typed goes back in the box. True when the sheet should rise by itself.
+        mutating func delivered(_ reply: [String: Any], id: String, sheetOpen: Bool) -> Bool {
+            guard let sent = unsent, sent.id == id else { return apply(reply, sheetOpen: sheetOpen) }
+            unsent = nil
+            let lost = reply["id"] as? String == id && reply["phase"] as? String == Phase.failed.rawValue
+            if let refused = reply["refused"] as? String {
+                draft = sent.text
+                request = nil   // nothing to follow: its reason stays on screen
+                phase = .failed
+                note = refused
+                return false
+            }
+            if reply["busy"] as? Bool == true || lost { draft = sent.text }
+            return apply(reply, sheetOpen: sheetOpen)
+        }
+
+        /// Lamp's answer about the change followed. True when the sheet should rise by itself.
+        mutating func apply(_ reply: [String: Any], sheetOpen: Bool) -> Bool {
+            guard reply["on"] as? Bool == true, reply["refused"] == nil else { return false }
+            // Another change from a phone was going: that's the one to follow.
+            if reply["busy"] as? Bool == true, let going = reply["id"] as? String { request = going }
+            guard let id = reply["id"] as? String, id == request, let named = reply["phase"] as? String,
+                  let now = Phase(rawValue: named) else {
+                // Lamp doesn't know the change followed: nothing to wait for.
+                if unsent == nil, phase != .failed { phase = .idle }
+                return false
+            }
+            phase = now
+            doing = reply["doing"] as? String
+            note = reply["note"] as? String
+            question = reply["question"] as? Bool ?? false
+            changed = reply["changed"] as? Bool ?? false
+            switch now {
+            case .done where shown != id:
+                // The app was put back by the install, or the change ended while the sheet was closed: it rises
+                // by itself, once, with what came of it.
+                shown = id
+                return !sheetOpen
+            case .failed:
+                shown = id
+            case .waiting where question:
+                shown = id
+            default:
+                break
+            }
+            return false
+        }
+
+        /// The sheet was closed after the change ended: the wand is plain again.
+        mutating func closed() {
+            if phase == .done || phase == .failed { phase = .idle; note = nil }
+        }
+    }
+    // end LampWandFlow
 
     /// The wand: round, in the corner the thumb reaches. While a change is going it says so (a turning ring, an
     /// orange dot when it waits for the person, a check when it's done), so the sheet can be closed meanwhile.
