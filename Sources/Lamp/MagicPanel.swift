@@ -283,19 +283,23 @@ private struct MagicChat: View {
                 Button {
                     MagicPanel.shared.point()
                 } label: {
-                    Label("Point at Something", systemImage: "scope")
+                    Image(systemName: "scope")
                 }
-                .buttonStyle(.link)
-                .font(.callout)
-                .help("Click a part of the app to ask about it")
+                .help("Point at part of the app to ask about it")
+                .accessibilityLabel("Point at Something")
                 Spacer()
-                Button("Open in Lamp") {
+                Button {
                     store.showChat(project.id)
                     MagicPanel.shared.close()
+                } label: {
+                    Image(systemName: "arrow.up.forward.square")
                 }
-                .buttonStyle(.link)
-                .font(.callout)
+                .help("Open this chat in Lamp")
+                .accessibilityLabel("Open in Lamp")
             }
+            .buttonStyle(.borderless)
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(.secondary)
             .padding(.horizontal, 14).padding(.vertical, 6)
             Divider()
             ProjectView(project: store.current(project) ?? project)
