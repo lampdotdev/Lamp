@@ -297,9 +297,12 @@ private struct MagicChat: View {
                 .help("Open this chat in Lamp")
                 .accessibilityLabel("Open in Lamp")
             }
-            .buttonStyle(.borderless)
+            // Plain, in the text's own color like the rest of the chat's controls: a borderless button takes the
+            // accent color.
+            .buttonStyle(.plain)
             .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.primary)
+            .contentShape(Rectangle())
             .padding(.horizontal, 14).padding(.vertical, 6)
             Divider()
             ProjectView(project: store.current(project) ?? project)
