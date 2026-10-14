@@ -663,7 +663,8 @@ MCP tools. The app declares them with `LampTools.add(name, description, paramete
 LampSupport.swift (named string, number and boolean inputs; the handler runs on the main thread and returns text,
 or `LampTools.json`), told in `Agent.Rules.agentTools`, next to the intents rule and given to every kind of app.
 Once it has a tool, the app waits at the gateway for calls with its own token (`/ai/tools/next`, held half a
-minute, carrying the declarations each time; `/ai/tools/answer`), the same way on the Mac, in the simulator and
+minute, carrying the declarations and the calls the last wait brought, since the gateway can't see a wait's
+connection drop and a call handed to a lost one goes again; `/ai/tools/answer`), the same way on the Mac, in the simulator and
 on a phone, and never starts Lamp. `AppTools` keeps what each app last declared and hands calls over. Outside
 agents speak MCP to `/apps/<key>/mcp` (JSON-RPC answered on the spot, like Lamp's own `/mcp`): only from this
 Mac, by a loopback name and with no `Origin` (a web page sends one), and the key in the address is the whole
@@ -671,8 +672,8 @@ credential. It is off for every app: the app's right-click menu shows Let Other 
 declared a tool (`AppMenu`), turning it on makes the key and copies the address, Copy Address for AI Agents copies
 it again, and turning it off forgets the key, so an address given out stops working. Keys and declarations are
 in Lamp's own folder (`app-tools.json`, by `LampProject.instance`, so a rename keeps them), where the builder
-agent can't turn it on for the person. Every call puts a line in the app's chat naming the agent, the tool and
-what it was given. A Mac app that's closed is opened behind the person's windows for a call
+agent can't turn it on for the person. Every call puts a line in the app's chat with the tool and what it was given,
+naming the agent while only one has connected (calls carry no name). A Mac app that's closed is opened behind the person's windows for a call
 (`Store.readyForTools`); an app on iOS answers only while it's open, and the agent is told to ask for that.
 
 ## Naming: Lamp and Lamp

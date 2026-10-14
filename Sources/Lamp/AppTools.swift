@@ -51,12 +51,17 @@ import Foundation
 
     /// Calls waiting for their app, the app's waits for a call, and calls waiting for their answer.
     private var queued: [String: [Call]] = [:]
+    /// Calls handed to one of the app's waits that the app hasn't yet said it got. The gateway can't tell when
+    /// a wait's connection is gone (the app quit, or a phone lost its way), so the app's next wait says what
+    /// the last one brought, and anything else handed out goes again.
+    private var handedOut: [String: [Call]] = [:]
     private var listeners: [String: [UUID: CheckedContinuation<[Call], Never>]] = [:]
     private var answers: [String: (app: String, continuation: CheckedContinuation<Answer?, Never>)] = [:]
     /// When each app last ended a wait: between two waits it is still listening.
     private var heard: [String: Date] = [:]
-    /// The name the last agent gave for itself when it connected, for the chat's line.
-    private var clients: [String: String] = [:]
+    /// The names agents gave for themselves when they connected. Calls carry no name, so the chat's line names
+    /// the agent only while one has connected to the app.
+    private var clients: [String: Set<String>] = [:]
 
     private let file: URL
     private struct Saved: Codable { var keys: [String: String]; var declared: [String: [Tool]] }
@@ -125,7 +130,13 @@ import Foundation
         }
         heard[app] = Date()
         defer { heard[app] = Date() }
-        if let waiting = queued.removeValue(forKey: app), !waiting.isEmpty { return waiting }
+        let received = Set(body["received"] as? [String] ?? [])
+        let lost = (handedOut.removeValue(forKey: app) ?? []).filter { !received.contains($0.id) && answers[$0.id] != nil }
+        if !lost.isEmpty { queued[app, default: []].insert(contentsOf: lost, at: 0) }
+        if let waiting = queued.removeValue(forKey: app), !waiting.isEmpty {
+            handedOut[app, default: []] += waiting
+            return waiting
+        }
         let wait = UUID()
         return await withCheckedContinuation { continuation in
             listeners[app, default: [:]][wait] = continuation
@@ -165,6 +176,7 @@ import Foundation
             answers[call.id] = (app, continuation)
             if let listener = listeners[app]?.first {
                 listeners[app]?[listener.key] = nil
+                handedOut[app, default: []].append(call)
                 listener.value.resume(returning: [call])
             } else {
                 queued[app, default: []].append(call)
@@ -172,6 +184,7 @@ import Foundation
             Task {
                 try? await Task.sleep(for: .seconds(seconds))
                 self.queued[app]?.removeAll { $0.id == call.id }
+                self.handedOut[app]?.removeAll { $0.id == call.id }
                 self.answers.removeValue(forKey: call.id)?.continuation.resume(returning: nil)
             }
         }
@@ -213,7 +226,7 @@ import Foundation
         switch method {
         case "initialize":
             if let name = (params["clientInfo"] as? [String: Any])?["name"] as? String, !name.isEmpty {
-                clients[Self.app(project)] = String(name.prefix(40))
+                clients[Self.app(project), default: []].insert(String(name.prefix(40)))
             }
             let asked = params["protocolVersion"] as? String ?? ""
             let version = ["2024-11-05", "2025-03-26", "2025-06-18"].contains(asked) ? asked : "2025-03-26"
@@ -230,7 +243,8 @@ import Foundation
             guard tools(of: project).contains(where: { $0.name == name }) else {
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "\(project.name) has no tool named \(name)."]])
             }
-            log(Self.line(client: clients[Self.app(project)], tool: name, arguments: arguments))
+            let known = clients[Self.app(project)] ?? []
+            log(Self.line(client: known.count == 1 ? known.first : nil, tool: name, arguments: arguments))
             if let trouble = await ready() { return failed(trouble) }
             guard let answer = await call(name, arguments, on: project, within: 120) else {
                 return failed("\(project.name) didn't answer in time.")
@@ -248,7 +262,9 @@ import Foundation
     static func line(client: String?, tool: String, arguments: [String: Any]) -> String {
         let given = arguments.keys.sorted().compactMap { key -> String? in
             guard let value = arguments[key] else { return nil }
-            let text = (value as? String) ?? "\(value)"
+            // JSON's true and false arrive as numbers: shown as the words.
+            let flag = (value as? NSNumber).flatMap { CFGetTypeID($0) == CFBooleanGetTypeID() ? ($0.boolValue ? "true" : "false") : nil }
+            let text = (value as? String) ?? flag ?? "\(value)"
             return "\(key) “\(text.count > 40 ? String(text.prefix(40)) + "…" : text)”"
         }
         var line = "\(client ?? "An AI agent") used \(tool)"

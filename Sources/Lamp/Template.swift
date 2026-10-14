@@ -7323,8 +7323,13 @@ enum Template {
                 if let text = values[name] as? String { return Double(text) }
                 return (values[name] as? NSNumber)?.doubleValue
             }
+            /// Nil for words that are neither yes nor no, so a garbled answer is refused rather than taken as no.
             func bool(_ name: String) -> Bool? {
-                if let text = values[name] as? String { return ["true", "yes", "1"].contains(text.lowercased()) }
+                if let text = (values[name] as? String)?.lowercased().trimmingCharacters(in: .whitespaces) {
+                    if ["true", "yes", "1"].contains(text) { return true }
+                    if ["false", "no", "0"].contains(text) { return false }
+                    return nil
+                }
                 return (values[name] as? NSNumber)?.boolValue
             }
         }
@@ -7344,6 +7349,9 @@ enum Template {
 
         @MainActor private static var tools: [String: Tool] = [:]
         @MainActor private static var listening = false
+        /// The calls the last wait brought, told to Lamp with the next one: a call Lamp handed to a wait the
+        /// app never got (its connection was lost) is handed out again.
+        @MainActor private static var received: [String] = []
 
         /// Declares a tool. `name` is short snake_case ("add_item"), `description` one line on what it does.
         /// Adding one with a name already declared replaces it.
@@ -7390,8 +7398,10 @@ enum Template {
         }
 
         @MainActor private static func next() async -> [[String: Any]]? {
-            let reply = await post("/ai/tools/next", ["tools": declarations], timeout: 45)
-            return reply?["calls"] as? [[String: Any]]
+            let reply = await post("/ai/tools/next", ["tools": declarations, "received": received], timeout: 45)
+            guard let calls = reply?["calls"] as? [[String: Any]] else { return nil }
+            received = calls.compactMap { $0["id"] as? String }
+            return calls
         }
 
         @MainActor private static func perform(_ call: [String: Any]) async {
