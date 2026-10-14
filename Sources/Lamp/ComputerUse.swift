@@ -248,7 +248,8 @@ enum ComputerUse {
     /// to approve, and the names of what's on screen. Whichever model drives the task (OpenRouter, a local
     /// model, or a coding agent through Lamp's MCP endpoint) calls `call` for each step.
     /// What does the looking and clicking: Codex's computer use when the ChatGPT app has it, else CuaDriver.
-    enum Driver: String { case codex, cua }
+    /// In the browser prototype, a third: the extension in the person's own Chrome (BrowserRun.Driver).
+    enum Driver: String { case codex, cua, browser }
 
     final class Job {
         let taskText: String
@@ -256,7 +257,8 @@ enum ComputerUse {
         let allowActions: Bool
         let approve: (Action) async -> Bool
         let driver: Driver
-        private let client: MCPClient
+        private let client: MCPClient?
+        private let browser: BrowserRun.Driver?
         private let allowed: Set<String>
         /// The driver's tools the model may use, with `intent` added to those that act.
         let tools: [MCPClient.Tool]
@@ -276,7 +278,7 @@ enum ComputerUse {
         var engineProcess: Process?
 
         /// Why the task can't go on, or nil: stopped by the person, turned off in Settings, or gone on too long.
-        var halt: Failure? { isStopped ? ComputerUse.stoppedByPerson : enabled ? overrun : ComputerUse.stopped }
+        var halt: Failure? { isStopped ? ComputerUse.stoppedByPerson : enabled || driver == .browser ? overrun : ComputerUse.stopped }
 
         /// The steps asked for so far, reads and actions alike.
         private(set) var steps = 0
@@ -295,13 +297,19 @@ enum ComputerUse {
 
         /// The person's answer about a step, with the wait kept off the task's clock.
         private func ask(_ action: Action) async -> Bool {
+            await aside { await approve(action) }
+        }
+
+        /// Something that waits for the person (their answer, or a page that is theirs to deal with), kept off
+        /// the task's clock.
+        private func aside<T>(_ work: () async -> T) async -> T {
             if asking == 0 { askingSince = Date() }
             asking += 1
             defer {
                 asking -= 1
                 if asking == 0 { waited += Date().timeIntervalSince(askingSince) }
             }
-            return await approve(action)
+            return await work()
         }
 
         /// Ends the coding agent driving the task once it has passed a limit: refusing its steps isn't
@@ -320,11 +328,28 @@ enum ComputerUse {
             Task { @MainActor in ApprovalPanel.dismiss(owner: id) }
         }
 
+        /// A task done on one website through the extension, for an app built from a task the person showed.
+        @MainActor
+        init(_ taskText: String, appName: String, allowActions: Bool, browser: BrowserRun.Driver, approve: @escaping (Action) async -> Bool) {
+            self.taskText = taskText
+            self.appName = appName
+            self.allowActions = allowActions
+            self.approve = approve
+            self.browser = browser
+            driver = .browser
+            client = nil
+            tools = browser.tools
+            allowed = Set(browser.tools.map(\.name))
+            systemPrompt = browser.prompt(appName: appName, mayAct: allowActions)
+            browser.session.onStop = { [weak self] in self?.stop() }
+        }
+
         init(_ taskText: String, appName: String, allowActions: Bool, approve: @escaping (Action) async -> Bool) async throws {
             self.taskText = taskText
             self.appName = appName
             self.allowActions = allowActions
             self.approve = approve
+            browser = nil
             // Codex's computer use first, when it's there and starts; CuaDriver otherwise. Codex's asks before
             // each step, and the answer is the person's for anything that acts.
             var codex: MCPClient?
@@ -340,10 +365,10 @@ enum ComputerUse {
             }
             if let codex {
                 driver = .codex
-                client = codex
+                self.client = codex
                 let names: Set<String> = ["js", "js_reset"]
                 allowed = names
-                let listed = try await client.listTools()
+                let listed = try await codex.listTools()
                 tools = listed.filter { names.contains($0.name) }
                 systemPrompt = CodexComputerUse.systemPrompt(appName: appName, allowActions: allowActions, instructions: codexInstructions,
                                                              toolDescription: listed.first { $0.name == "js" }?.description ?? "")
@@ -353,7 +378,8 @@ enum ComputerUse {
             guard isInstalled else {
                 throw Failure(message: "Using other apps isn't set up yet. Turn on “Let apps use your other apps” in Lamp → Settings → Apps.")
             }
-            client = try MCPClient(executable: executable, arguments: ["mcp"])
+            let client = try MCPClient(executable: executable, arguments: ["mcp"])
+            self.client = client
             let instructions: String
             do {
                 instructions = try await client.initialize()
@@ -400,7 +426,7 @@ enum ComputerUse {
         private func show(window id: Int, pid: Int?, acting: Bool) async {
             if acting, fronted != id, let pid {
                 fronted = id
-                _ = try? await client.call("bring_to_front", arguments: ["pid": pid, "window_id": id])
+                _ = try? await client?.call("bring_to_front", arguments: ["pid": pid, "window_id": id])
             }
             showing = true
             let target = pid.flatMap { NSRunningApplication(processIdentifier: pid_t($0))?.localizedName }
@@ -426,7 +452,9 @@ enum ComputerUse {
         }
 
         func close() {
-            client.close()
+            client?.close()
+            // A question still open when a browser task ends can't be answered any more, so it goes with it.
+            if let browser { Task { @MainActor [id = ObjectIdentifier(self)] in BrowserRun.shared.end(browser.session); ApprovalPanel.dismiss(owner: id) } }
             engineProcess = nil
             if showing { Task { @MainActor [id = ObjectIdentifier(self)] in ComputerOverlay.shared.end(owner: id) } }
         }
@@ -447,13 +475,13 @@ enum ComputerUse {
         /// The tools in OpenAI's function-calling shape, for the chat-completions loop.
         var openAITools: [[String: Any]] {
             tools.map { ["type": "function", "function": ["name": $0.name, "description": $0.description, "parameters": $0.inputSchema]] }
-                + BrowserTabs.tools
+                + (driver == .browser ? [] : BrowserTabs.tools)
         }
 
         /// The tools as an MCP server lists them, for the coding agents.
         var mcpTools: [[String: Any]] {
             tools.map { ["name": $0.name, "description": $0.description, "inputSchema": $0.inputSchema] }
-                + BrowserTabs.tools.compactMap { tool in
+                + (driver == .browser ? [] : BrowserTabs.tools).compactMap { tool in
                     guard let function = tool["function"] as? [String: Any] else { return nil }
                     return ["name": function["name"] ?? "", "description": function["description"] ?? "", "inputSchema": function["parameters"] ?? [:]]
                 }
@@ -467,6 +495,15 @@ enum ComputerUse {
             steps += 1
             endIfOverrun()
             if let halt { throw halt }
+            if let browser {
+                // What goes ahead and what waits for the person is the driver's to say (BrowserRun.verdict);
+                // the question, the limits and Stop are this job's, as for the other drivers.
+                let text = try await browser.step(name, arguments, intent: intent, mayAct: allowActions,
+                                                  ask: { await self.ask($0) }, aside: { await self.aside($0) })
+                if let halt { throw halt }
+                return (text, [])
+            }
+            guard let client else { return ("That tool isn't available for this task.", []) }
             if BrowserTabs.handles(name) { return (await BrowserTabs.call(name, arguments), []) }
             guard allowed.contains(name) else { return ("That tool isn't available for this task.", []) }
             if driver == .codex {

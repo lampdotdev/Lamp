@@ -6,8 +6,8 @@ async function call(body){const r=await chrome.runtime.sendMessage(body);if(r?.e
 function show(id){for(const s of ['closed','idle','recording','paused','waiting'])$(s).hidden=s!==id;}
 function fail(e){problem=e.message;$('problem').textContent=problem;$('problem').hidden=false;}
 function clear(){problem='';$('problem').hidden=true;}
-function list(sites){
- const key=JSON.stringify(sites);if(key===lastSites)return;lastSites=key;
+function list(sites,users={}){
+ const key=JSON.stringify([sites,users]);if(key===lastSites)return;lastSites=key;
  $('sites').replaceChildren();
  for(const site of sites){
   const row=document.createElement('label'),box=document.createElement('input'),name=document.createElement('span'),remove=document.createElement('button');
@@ -16,6 +16,8 @@ function list(sites){
   name.textContent=plain(site);remove.className='link';remove.textContent='Remove';
   remove.onclick=async e=>{e.preventDefault();clear();try{await call({op:'task-revoke',origin:site});await refresh();}catch(e){fail(e);}};
   row.append(box,name,remove);$('sites').append(row);
+  // An app built from a task shown here may use the site for the person; removing the site ends that too.
+  for(const app of users[site]||[]){const used=document.createElement('p');used.className='used';used.textContent=`${app} can use this site for you.`;$('sites').append(used);}
  }
  choice();
 }
@@ -43,7 +45,7 @@ async function refresh(){
  $('ask').hidden=!here||approved;$('here').textContent=plain(here);
  $('elsewhere').hidden=!!here||s.sites.length>0;
  $('ready').hidden=!s.sites.length;$('lead').hidden=s.sites.length>0&&approved;
- list(s.sites);show('idle');
+ list(s.sites,s.users);show('idle');
 }
 $('approveSite').onclick=async()=>{
  clear();
