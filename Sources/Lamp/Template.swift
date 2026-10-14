@@ -7352,6 +7352,10 @@ enum Template {
         /// The calls the last wait brought, told to Lamp with the next one: a call Lamp handed to a wait the
         /// app never got (its connection was lost) is handed out again.
         @MainActor private static var received: [String] = []
+        /// This launch of the app, so Lamp tells its waits from another copy's (an app for both may be open on
+        /// the Mac and on iOS at once), and the calls it has begun, so one handed out again isn't done twice.
+        private static let copy = UUID().uuidString
+        @MainActor private static var begun: Set<String> = []
 
         /// Declares a tool. `name` is short snake_case ("add_item"), `description` one line on what it does.
         /// Adding one with a name already declared replaces it.
@@ -7398,14 +7402,14 @@ enum Template {
         }
 
         @MainActor private static func next() async -> [[String: Any]]? {
-            let reply = await post("/ai/tools/next", ["tools": declarations, "received": received], timeout: 45)
+            let reply = await post("/ai/tools/next", ["tools": declarations, "received": received, "copy": copy], timeout: 45)
             guard let calls = reply?["calls"] as? [[String: Any]] else { return nil }
             received = calls.compactMap { $0["id"] as? String }
             return calls
         }
 
         @MainActor private static func perform(_ call: [String: Any]) async {
-            guard let id = call["id"] as? String else { return }
+            guard let id = call["id"] as? String, begun.insert(id).inserted else { return }
             let name = call["name"] as? String ?? ""
             let input = Input(values: call["arguments"] as? [String: Any] ?? [:])
             var text: String, failed = true

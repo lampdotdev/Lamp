@@ -663,8 +663,9 @@ MCP tools. The app declares them with `LampTools.add(name, description, paramete
 LampSupport.swift (named string, number and boolean inputs; the handler runs on the main thread and returns text,
 or `LampTools.json`), told in `Agent.Rules.agentTools`, next to the intents rule and given to every kind of app.
 Once it has a tool, the app waits at the gateway for calls with its own token (`/ai/tools/next`, held half a
-minute, carrying the declarations and the calls the last wait brought, since the gateway can't see a wait's
-connection drop and a call handed to a lost one goes again; `/ai/tools/answer`), the same way on the Mac, in the simulator and
+minute, carrying the declarations, which launch of the app is asking, and the calls its last wait brought: the
+gateway can't see a wait's connection drop, so a call handed to a lost one goes again to that launch, or to any
+once that launch has stopped waiting, and the app does each call once; `/ai/tools/answer`), the same way on the Mac, in the simulator and
 on a phone, and never starts Lamp. `AppTools` keeps what each app last declared and hands calls over. Outside
 agents speak MCP to `/apps/<key>/mcp` (JSON-RPC answered on the spot, like Lamp's own `/mcp`): only from this
 Mac, by a loopback name and with no `Origin` (a web page sends one), and the key in the address is the whole
