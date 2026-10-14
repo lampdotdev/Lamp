@@ -295,7 +295,7 @@ in Settings → Building, so the app can use what Apple ties to a team, which La
 platforms (`LampProject.bundleID`), and `Store.deploy` seals what it adds (icon, assets, Info.plist) with the
 team's certificate and the entitlements Xcode gave it (`Devices.signingIdentity`), never Lamp's. The agent gets
 both kinds' rules, each marked for its half, after one rule on sharing the code (`Agent.universalPrompt`). An app
-for both can't be shared as a `.lampapp` yet; its widgets and Live Activities are the iPhone half's (below).
+for both is shared as a `.lampapp` like any other (the file says what it's made for, format 6, and carries `Watch/` when it has one); its widgets and Live Activities are the iPhone half's (below).
 
 ## iCloud
 
