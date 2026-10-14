@@ -97,11 +97,42 @@ enum LiveReload {
     static func shape(of source: String) -> [String] {
         let stored = try! NSRegularExpression(pattern: #"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:private|fileprivate|internal|public|open)(?:\(set\))?\s+)*(?:weak\s+|unowned\s+|lazy\s+)*(?:let|var)\s+\w+[^{]*$"#)
         let enumCase = try! NSRegularExpression(pattern: #"^\s*(?:indirect\s+)?case\s+(?!let\b|var\b)[A-Za-z_]\w*(?:\(.*\))?\s*(?:=\s*[^:]+)?\s*(?:,\s*[A-Za-z_]\w*(?:\(.*\))?\s*)*$"#)
-        return source.split(separator: "\n", omittingEmptySubsequences: true).map(String.init).filter { line in
+        return declarations(in: source).filter { line in
             let range = NSRange(line.startIndex..., in: line)
             guard !line.contains("static "), !line.contains("class var") else { return false }
             return stored.firstMatch(in: line, range: range) != nil || enumCase.firstMatch(in: line, range: range) != nil
         }.map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    /// The source's lines with comments taken out and a declaration that runs over several lines (inside
+    /// parentheses: a case's payload, a property's type) joined into one, so the layout check reads each
+    /// declaration whole whatever its formatting. Strings are kept as they are, comment marks in them included.
+    static func declarations(in source: String) -> [String] {
+        var out = "", depth = 0, inString = false, chars = Array(source), i = 0
+        while i < chars.count {
+            let c = chars[i], next = i + 1 < chars.count ? chars[i + 1] : "\0"
+            if inString {
+                out.append(c)
+                if c == "\\", i + 1 < chars.count { out.append(next); i += 2; continue }
+                if c == "\"" { inString = false }
+            } else if c == "\"" {
+                inString = true
+                out.append(c)
+            } else if c == "/", next == "/" {
+                while i < chars.count, chars[i] != "\n" { i += 1 }
+                continue
+            } else if c == "/", next == "*" {
+                i += 2
+                while i + 1 < chars.count, !(chars[i] == "*" && chars[i + 1] == "/") { i += 1 }
+                i += 2
+                continue
+            } else {
+                if c == "(" { depth += 1 } else if c == ")" { depth = max(0, depth - 1) }
+                out.append(c == "\n" && depth > 0 ? " " : c)
+            }
+            i += 1
+        }
+        return out.split(separator: "\n", omittingEmptySubsequences: true).map { String($0).replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression) }
     }
 
     /// The App runs once, at launch: a change to it can't show in an app that's already open.
