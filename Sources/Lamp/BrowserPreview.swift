@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import Network
 
 /// The builder's way to try an app's sidebar without Chrome: Lamp draws the same surface the extension would,
 /// from what the running app publishes, and acts as one more sidebar tab (`tab`), so `look_at_app` and `use_app`
@@ -259,8 +260,9 @@ private struct SidebarPicture: View {
 
 /// Opens a web page out of sight and reads it with the extension's own capture script, for the preview. The page
 /// is someone else's: the script runs in a world of its own, as Chrome runs the extension's, so the page's scripts
-/// can't change what it reports; only public https addresses are opened, redirects included; and loading and
-/// reading each have a time limit.
+/// can't change what it reports; it connects only through `PublicOnlyProxy`, so neither the page, its redirects nor
+/// anything it loads reaches this Mac or the local network, whatever a name says; and loading and reading each have
+/// a time limit.
 @MainActor
 final class PageReader: NSObject, WKNavigationDelegate {
     struct Page { var url: String; var title: String; var text: String; var truncated: Bool; var present: Set<String> }
@@ -278,10 +280,13 @@ final class PageReader: NSObject, WKNavigationDelegate {
         return await reader.load(url, script: script, selectors: selectors)
     }
 
-    /// https, and a host on the internet: not this Mac, the local network or a bare IP address.
+    /// https, and a name that could be on the internet: not this Mac, the local network or a bare IP address.
+    /// Only a first sorting: where a name leads is checked where the connection is made (`PublicOnlyProxy`).
     static func isPublic(_ url: URL) -> Bool {
-        guard url.scheme?.lowercased() == "https", url.user == nil, url.password == nil, let host = url.host?.lowercased(),
-              host.contains("."), !host.hasSuffix(".local"), !host.hasSuffix(".localhost"), !host.hasSuffix(".internal") else { return false }
+        guard url.scheme?.lowercased() == "https", url.user == nil, url.password == nil,
+              var host = url.host?.lowercased() else { return false }
+        while host.hasSuffix(".") { host.removeLast() }
+        guard host.contains("."), !host.hasSuffix(".local"), !host.hasSuffix(".localhost"), !host.hasSuffix(".internal") else { return false }
         let ip = host.range(of: #"^[0-9.]+$"#, options: .regularExpression) != nil || host.contains(":")
         return !ip && host != "localhost"
     }
@@ -292,6 +297,14 @@ final class PageReader: NSObject, WKNavigationDelegate {
         window.isReleasedWhenClosed = false
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()   // no cookies kept: the preview is never signed in
+        // Every connection goes through a proxy that refuses this Mac and the local network; without one, nothing is read.
+        guard let proxy = try? PublicOnlyProxy(), let port = await proxy.start() else {
+            return .failure(.init("Lamp couldn't read the page just now. Try again."))
+        }
+        defer { proxy.stop() }
+        var route = ProxyConfiguration(httpCONNECTProxy: .hostPort(host: "127.0.0.1", port: port))
+        route.allowFailover = false
+        configuration.websiteDataStore.proxyConfigurations = [route]
         let web = WKWebView(frame: window.contentLayoutRect, configuration: configuration)
         web.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
         window.contentView = web
@@ -300,6 +313,9 @@ final class PageReader: NSObject, WKNavigationDelegate {
         web.load(URLRequest(url: url, timeoutInterval: 20))
         let failure = await wait(25)
         if let refused { return .failure(.init(refused)) }
+        if failure != nil, let host = proxy.refused.first {
+            return .failure(.init("Lamp didn't open \(url.absoluteString): \(host.prefix(200)) leads to this Mac or the local network, not a public web page."))
+        }
         if let failure { return .failure(.init("Lamp couldn't open \(url.absoluteString): \(failure.localizedDescription)")) }
         try? await Task.sleep(for: .seconds(2))   // what the page draws after loading
         guard let landed = web.url, Self.isPublic(landed) else { return .failure(.init("\(url.absoluteString) went to an address that isn't a public https page.")) }
