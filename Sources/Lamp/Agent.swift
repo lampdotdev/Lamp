@@ -215,7 +215,7 @@ enum Agent {
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
                      Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
-                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.store, Rules.kinds(mac: true),
+                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
                      Rules.universalTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
@@ -233,10 +233,10 @@ enum Agent {
         var rules = [Rules.edit, Rules.ask, Rules.shell,
                      mac ? Rules.macFrameworks : Rules.iPhoneFrameworks,
                      mac ? Rules.macBlocks : Rules.iPhoneBlocks]
-        if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.permissions] }
+        if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.macShare, Rules.permissions] }
         rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules.append(Rules.computer) }
-        if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.icloud] }
+        if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.iPhoneShare, Rules.icloud] }
         rules += [Rules.store, Rules.kinds(mac: mac), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
                   Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
@@ -358,7 +358,7 @@ enum Agent {
         - Write code that compiles first time: only use Apple frameworks (SwiftUI, AppKit, Foundation, etc.), \
         no third-party packages, and APIs available on macOS 14. Package.swift and build.sh belong to Lamp and \
         are written afresh before every build, so an edit to either is lost: no dependencies, plugins, compiler \
-        flags or build steps; everything the app needs goes in Sources/ (and a widget's code in Widget/).
+        flags or build steps; everything the app needs goes in Sources/ (a widget's code in Widget/, a share extension's in Share/).
         """
 
         static let iPhoneFrameworks = """
@@ -401,8 +401,37 @@ enum Agent {
         Weather mark, linking to its sources) wherever its weather is shown, allow forecasts to be kept only \
         briefly (never saved with the app's data), and rule out apps meant for emergencies or safety. Music: `LampMusic` (`authorize()`, `recentlyPlayed()`, \
         `library()`, `search(_:)`, `play(_:)`, `pause()`, and on the iPhone `nowPlaying`), Apple Music only, with \
-        MusicKit turned on for the app at developer.apple.com the same way.
+        MusicKit turned on for the app at developer.apple.com the same way. Spotlight: for the app's own things \
+        people would look for by name (notes, recipes, people, trips), `LampSpotlight.index(id:title:details:keywords:)` \
+        when one is added or changed and `LampSpotlight.remove(id)` when it's deleted, and `.lampSpotlightOpen { id \
+        in … }` on the view that shows them, to show the one tapped in Spotlight.
         """
+
+        /// A share extension: the Share/ folder, built like a widget (`Template.hasShare`). `note` is what's
+        /// different for the kind of app.
+        static func share(_ note: String) -> String {
+            """
+            - When the app collects things people find in other apps (links, articles, recipes, photos, receipts, \
+            quotes), give it a share extension, so it's in their share sheets and takes things in without being \
+            opened. Write Share/ShareView.swift: `struct ShareView: View { let items: [LampShare.Item]; var body: \
+            some View { LampShareSheet(items: items) } }` shows what's shared with Cancel and Save; a view of your \
+            own (a note, a list to file it in) ends with `LampShare.send(items)` or `LampShare.cancel()`. No `@main` \
+            there: Lamp builds the folder as a small separate program with Share/LampShareSupport.swift, which \
+            Lamp writes (never edit it), and nothing from Sources/. In the app, at launch, `LampShare.onReceive { \
+            items in … }` gets each share once, also those made while it was closed: `item.kind` (.text, .link, \
+            .image, .file), `item.text`, `item.url`, `item.name`, `item.image`, `item.data`; save what you keep \
+            there, as the files go after. You can't open a share sheet: check that it builds, and tell the user in \
+            a sentence that the app is in their share sheet.\(note)
+
+            """
+        }
+
+        static let macShare = share("""
+             On a Mac it needs Lamp to sign the app for the user's Apple team (`look_at_app` says when it can't), and \
+            macOS keeps a new one off until the user turns it on once: Edit Extensions… at the foot of a Share menu.
+            """)
+        static let iPhoneShare = share("")
+        static let universalShare = share(" It is the iPhone half's: the Mac half has none.")
 
         static let iPhoneBlocks = """
         - LampSupport.swift has tested building blocks for common jobs, the same ones the Mac apps made with Lamp \

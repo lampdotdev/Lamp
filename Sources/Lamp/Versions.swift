@@ -431,10 +431,11 @@ enum VersionTitles {
                             env: ["LAMP_VERSION": version.id]) { if !$0.trimmed.isEmpty { files.append($0.trimmed) } }
         // Lamp refreshing the support code it puts in every app isn't a change the user made.
         if !files.isEmpty, files.allSatisfy({ $0 == "Sources/LampSupport.swift" || $0 == Template.widgetFolder + "/" + Template.widgetSupportFile
+                                              || $0 == Template.shareFolder + "/" + Template.shareSupportFile
                                               || Template.watchSupportPaths.contains($0) }) { return "Lamp update" }
         var diff = ""
         let watchSupport = Template.watchSupportPaths.map { " ':!\($0)'" }.joined()
-        _ = await Versions.git("git show --format= --unified=1 \"$LAMP_VERSION\" -- . ':!Sources/LampSupport.swift' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)'\(watchSupport) ':!\(Attachments.folder)'",
+        _ = await Versions.git("git show --format= --unified=1 \"$LAMP_VERSION\" -- . ':!Sources/LampSupport.swift' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!\(Template.shareFolder)/\(Template.shareSupportFile)'\(watchSupport) ':!\(Attachments.folder)'",
                             cwd: project.dir, env: ["LAMP_VERSION": version.id]) { line in
             if diff.count < 8000 { diff += line + "\n" }
         }
