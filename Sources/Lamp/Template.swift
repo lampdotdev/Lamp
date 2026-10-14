@@ -1185,10 +1185,14 @@ enum Template {
         private let store = HKHealthStore()
         private var session: HKWorkoutSession?
         private var builder: HKLiveWorkoutBuilder?
+        /// Taken before asking for Health access, so a second tap meanwhile doesn't start a second workout.
+        private var starting = false
 
         func start(_ activity: HKWorkoutActivityType = .running, outdoors: Bool = true) async throws {
             guard HKHealthStore.isHealthDataAvailable() else { throw Failure(message: "Health isn't available on this watch.") }
-            guard session == nil else { return }
+            guard session == nil, !starting else { return }
+            starting = true
+            defer { starting = false }
             let measured: [HKQuantityTypeIdentifier] = [.heartRate, .activeEnergyBurned, .distanceWalkingRunning, .distanceCycling]
             try await store.requestAuthorization(toShare: [HKObjectType.workoutType()],
                                                  read: Set(measured.map { HKQuantityType($0) } + [HKObjectType.workoutType()]))
@@ -1206,7 +1210,20 @@ enum Template {
             let now = Date()
             started = now
             session.startActivity(with: now)
-            try await builder.beginCollection(at: now)
+            do { try await builder.beginCollection(at: now) } catch {
+                drop(session)
+                throw error
+            }
+        }
+
+        /// Lets go of a session that failed, unsaved, so Start works again.
+        private func drop(_ failed: HKWorkoutSession) {
+            guard session === failed else { return }
+            failed.end()
+            builder?.discardWorkout()
+            session = nil
+            builder = nil
+            state = .ended
         }
 
         func pause() { session?.pause() }
@@ -1221,16 +1238,18 @@ enum Template {
             let workout = try? await builder.finishWorkout()
             self.session = nil
             self.builder = nil
+            state = .ended
             return workout
         }
 
         nonisolated func workoutSession(_ workoutSession: HKWorkoutSession, didChangeTo toState: HKWorkoutSessionState,
                                         from fromState: HKWorkoutSessionState, date: Date) {
-            Task { @MainActor in self.state = toState }
+            Task { @MainActor in if self.session === workoutSession { self.state = toState } }
         }
 
         nonisolated func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {
             print("LampWorkout: \(error.localizedDescription)")
+            Task { @MainActor in self.drop(workoutSession) }
         }
 
         nonisolated func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {}
