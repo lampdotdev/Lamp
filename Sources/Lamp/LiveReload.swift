@@ -116,11 +116,29 @@ enum LiveReload {
     static func shape(of source: String) -> [String] {
         let stored = try! NSRegularExpression(pattern: #"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:private|fileprivate|internal|public|open)(?:\(set\))?\s+)*(?:weak\s+|unowned\s+|lazy\s+)*(?:let|var)\s+\w+[^{]*$"#)
         let enumCase = try! NSRegularExpression(pattern: #"^\s*(?:indirect\s+)?case\s+(?!let\b|var\b)[A-Za-z_]\w*(?:\(.*\))?\s*(?:=\s*[^:]+)?\s*(?:,\s*[A-Za-z_]\w*(?:\(.*\))?\s*)*$"#)
-        return declarations(in: source).filter { line in
+        let typeOpening = try! NSRegularExpression(pattern: #"\b(?:struct|class|enum|actor)\b"#)
+        let notType = try! NSRegularExpression(pattern: #"\b(?:func|var|let|init|subscript)\b|="#)
+        // Only what's declared directly in a type's body counts: a local `let` in a function, or a closure's,
+        // isn't part of any layout. Each brace is a type's when its line opens a struct, class, enum or actor.
+        var stack: [Bool] = [], out: [String] = []
+        for line in declarations(in: source) {
             let range = NSRange(line.startIndex..., in: line)
-            guard !line.contains("static "), !line.contains("class var") else { return false }
-            return stored.firstMatch(in: line, range: range) != nil || enumCase.firstMatch(in: line, range: range) != nil
-        }.map { $0.trimmingCharacters(in: .whitespaces) }
+            if stack.last == true, !line.contains("static "), !line.contains("class var"),
+               stored.firstMatch(in: line, range: range) != nil || enumCase.firstMatch(in: line, range: range) != nil {
+                // What it is and its type, not its starting value, which a new instance takes from the new code.
+                var shape = line.trimmingCharacters(in: .whitespaces)
+                if shape.range(of: #"^(?:indirect\s+)?case\b"#, options: .regularExpression) == nil, let equals = shape.range(of: " = ") {
+                    shape = String(shape[..<equals.lowerBound])
+                }
+                out.append(shape)
+            }
+            let isType = typeOpening.firstMatch(in: line, range: range) != nil && notType.firstMatch(in: line, range: range) == nil
+            for character in line {
+                if character == "{" { stack.append(isType && !stack.contains(false)) }
+                else if character == "}", !stack.isEmpty { stack.removeLast() }
+            }
+        }
+        return out
     }
 
     /// The source's lines with comments taken out and a declaration that runs over several lines (inside
@@ -161,7 +179,12 @@ enum LiveReload {
                 continue
             }
             if c == "(" { depth += 1 } else if c == ")" { depth = max(0, depth - 1) }
-            out.append(c == "\n" && depth > 0 ? " " : c)
+            // One declaration a line: a body opened or closed, or a `;`, ends the line, so a type written on one
+            // line (`enum Shape { case star, circle }`) is read like any other.
+            if depth == 0, c == "{" { out += "{\n" }
+            else if depth == 0, c == "}" { out += "\n}\n" }
+            else if depth == 0, c == ";" { out += "\n" }
+            else { out.append(c == "\n" && depth > 0 ? " " : c) }
             i += 1
         }
         return out.split(separator: "\n", omittingEmptySubsequences: true).map { String($0).replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression) }
