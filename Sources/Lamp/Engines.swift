@@ -17,7 +17,8 @@ enum Engine: String, CaseIterable, Identifiable {
 
 /// When the agent needs the user's go-ahead to run a shell command (Settings → Building).
 enum CommandApproval: String, CaseIterable, Identifiable {
-    /// risky: commands the decision model's answers show to be plainly fine run; the card is for the rest.
+    /// risky: the card is for commands the decision model's answers show to be risky; the rest run when the
+    /// sandbox confines them, and only the plainly fine ones when it doesn't.
     /// There was an "unusual" beside it, which differed only in not letting the in-app model's "low" run a
     /// command; nothing does that now, so a saved "unusual" (or the older "auto") is risky.
     case risky, always, never

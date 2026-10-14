@@ -2468,7 +2468,11 @@ final class Store: ObservableObject {
             return true
         case .risky where !escalated:
             let judgment = await commandJudgment(command, for: project)
-            if judgment.verdict == .run {
+            // A command the sandbox confines can only change the app's own folder (Sandbox), so only one the
+            // checks find risky asks: one they're merely unsure of, or that doesn't seem to match the request
+            // (looking for the app's process while fixing it), runs. Asking about those was most of the cards,
+            // nearly all of them allowed.
+            if judgment.verdict == .run || (sandboxed && judgment.verdict == .unsure) {
                 log(project, .status, "Ran: \(command)")
                 return true
             }
