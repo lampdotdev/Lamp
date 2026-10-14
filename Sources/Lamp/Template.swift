@@ -1766,6 +1766,7 @@ enum Template {
             ("App.entitlements", capabilities.entitlementsPlist(for: project, platform: .ios, appGroup: widget || share ? group : nil)),
             ("\(project.exe).xcodeproj/xcshareddata/xcschemes/\(project.exe).xcscheme", deviceScheme),
             ("Info.plist", deviceInfoPlist),
+            ("LampStart.c", deviceStartC),
             ("Assets.xcassets/Contents.json", #"{ "info": { "author": "xcode", "version": 1 } }"#),
             ("Assets.xcassets/AppIcon.appiconset/Contents.json", hasIcon
                 ? #"{ "images": [ { "filename": "AppIcon.png", "idiom": "universal", "platform": "ios", "size": "1024x1024" } ], "info": { "author": "xcode", "version": 1 } }"#
@@ -1836,12 +1837,14 @@ enum Template {
     		A00000000000000000000007 /* Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; name = Sources; path = ../../Sources; sourceTree = "<group>"; };
     		A00000000000000000000008 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000013 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
-    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
+    		A00000000000000000000014 /* LampStart.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = LampStart.c; sourceTree = "<group>"; };
+    		A00000000000000000000015 /* LampStart.c in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000014 /* LampStart.c */; };
+    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A00000000000000000000014 /* LampStart.c */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
     		A0000000000000000000000A /* Products */ = {isa = PBXGroup; children = (A00000000000000000000006 /* {{EXE}}.app */); name = Products; sourceTree = "<group>"; };
     		A0000000000000000000000B /* {{EXE}} */ = {isa = PBXNativeTarget; buildConfigurationList = A0000000000000000000000C; buildPhases = (A0000000000000000000000D /* Sources */, A00000000000000000000008 /* Frameworks */, A0000000000000000000000E /* Resources */); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (A00000000000000000000007 /* Sources */); name = "{{EXE}}"; packageProductDependencies = (); productName = "{{EXE}}"; productReference = A00000000000000000000006 /* {{EXE}}.app */; productType = "com.apple.product-type.application"; };
     		A0000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {A0000000000000000000000B = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A00000000000000000000010; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000009; minimizedProjectReferenceProxies = 1; preferredProjectObjectVersion = 77; productRefGroup = A0000000000000000000000A /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A0000000000000000000000B /* {{EXE}} */); };
     		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Assets in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
-    		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+    		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000015 /* LampStart.c in Sources */); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
     		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
     		A00000000000000000000010 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
@@ -1870,6 +1873,21 @@ enum Template {
           </BuildableProductRunnable>
        </LaunchAction>
     </Scheme>
+
+    """
+
+    /// Starts the wand in an app on the person's phone (`LampWand` in LampSupport.swift) before the app's own
+    /// code runs. A SwiftUI app gives a library no place to start from: it ignores `NSPrincipalClass`, and the
+    /// app's own code is the agent's, which shouldn't have to remember a call. A C constructor in a file Lamp owns
+    /// runs as the app loads, wherever its code came from. Only the phone has a wand, so the Mac half of an app
+    /// for both, which is built from this project too, leaves it out.
+    static let deviceStartC = """
+    // Generated by Lamp before every build for a phone. Don't edit: changes are overwritten.
+    #include <TargetConditionals.h>
+    #if TARGET_OS_IOS && !TARGET_OS_SIMULATOR
+    extern void lamp_wand_start(void);
+    __attribute__((constructor)) static void lamp_start(void) { lamp_wand_start(); }
+    #endif
 
     """
 
@@ -1920,12 +1938,14 @@ enum Template {
     		A00000000000000000000007 /* Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; name = Sources; path = ../../Sources; sourceTree = "<group>"; };
     		A00000000000000000000008 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000013 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
-    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
+    		A00000000000000000000014 /* LampStart.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = LampStart.c; sourceTree = "<group>"; };
+    		A00000000000000000000015 /* LampStart.c in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000014 /* LampStart.c */; };
+    		A00000000000000000000009 = {isa = PBXGroup; children = (A00000000000000000000007 /* Sources */, A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */, A00000000000000000000005 /* Info.plist */, A00000000000000000000013 /* App.entitlements */, A00000000000000000000014 /* LampStart.c */, A0000000000000000000000A /* Products */); sourceTree = "<group>"; };
     		A0000000000000000000000A /* Products */ = {isa = PBXGroup; children = (A00000000000000000000006 /* {{EXE}}.app */); name = Products; sourceTree = "<group>"; };
     		A0000000000000000000000B /* {{EXE}} */ = {isa = PBXNativeTarget; buildConfigurationList = A0000000000000000000000C; buildPhases = (A0000000000000000000000D /* Sources */, A00000000000000000000008 /* Frameworks */, A0000000000000000000000E /* Resources */); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (A00000000000000000000007 /* Sources */); name = "{{EXE}}"; packageProductDependencies = (); productName = "{{EXE}}"; productReference = A00000000000000000000006 /* {{EXE}}.app */; productType = "com.apple.product-type.application"; };
     		A0000000000000000000000F /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600; TargetAttributes = {A0000000000000000000000B = {CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A00000000000000000000010; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = A00000000000000000000009; minimizedProjectReferenceProxies = 1; preferredProjectObjectVersion = 77; productRefGroup = A0000000000000000000000A /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A0000000000000000000000B /* {{EXE}} */); };
     		A0000000000000000000000E /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Assets in Resources */, A00000000000000000000003 /* Assets.xcassets in Resources */); runOnlyForDeploymentPostprocessing = 0; };
-    		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+    		A0000000000000000000000D /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000015 /* LampStart.c in Sources */); runOnlyForDeploymentPostprocessing = 0; };
     		A00000000000000000000011 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_NS_ASSERTIONS = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; ENABLE_USER_SCRIPT_SANDBOXING = YES; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = 14.0; MTL_ENABLE_DEBUG_INFO = NO; SDKROOT = auto; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; VALIDATE_PRODUCT = YES; }; name = Release; };
     		A00000000000000000000012 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {"ASSETCATALOG_COMPILER_APPICON_NAME[sdk=iphone*]" = AppIcon; CODE_SIGN_ENTITLEMENTS = App.entitlements; "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "App-macOS.entitlements"; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; ENABLE_PREVIEWS = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; "INFOPLIST_FILE[sdk=macosx*]" = "Info-macOS.plist"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); "LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = ("$(inherited)", "@executable_path/../Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
     		A00000000000000000000010 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000011 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
@@ -3287,6 +3307,444 @@ enum Template {
     let lampGateway = "http://{{MACHOST}}:{{PORT}}"
     #else
     let lampGateway = "http://127.0.0.1:{{PORT}}"
+    #endif
+
+    #if os(iOS) && !targetEnvironment(simulator)
+    /// Run by Lamp's own start file in the phone's Xcode project (`LampStart.c`) before the app's code: the wand
+    /// needs nothing from the app, as the Mac's needs nothing but `LampCommands`.
+    @_cdecl("lamp_wand_start")
+    public func lampWandStart() { LampWand.start() }
+
+    /// The wand in this app on the person's phone: a button over the app that opens a sheet with the app's chat in
+    /// Lamp and a box to ask for a change, which Lamp makes on the Mac and installs here. It shows only while
+    /// Lamp, on the same Wi‑Fi, says the wand is on (Settings → Experimental) and this app opens on this phone.
+    /// Every message to Lamp and back is sealed with the secret that came with the build, and each is sent with its
+    /// own id, so sending again after a lost answer never asks for the change twice.
+    @MainActor
+    final class LampWand: ObservableObject {
+        static let shared = LampWand()
+
+        enum Phase: String { case idle, working, waiting, installing, done, failed, away }
+
+        struct Line: Identifiable, Equatable {
+            let id: Int
+            let me: Bool
+            let text: String
+        }
+
+        @Published private(set) var on = false
+        @Published private(set) var phase = Phase.idle
+        /// Waiting for an answer to the agent's questions, rather than for the Mac.
+        @Published private(set) var question = false
+        @Published private(set) var changed = false
+        @Published private(set) var doing: String?
+        @Published private(set) var note: String?
+        @Published private(set) var lines: [Line] = []
+        @Published var draft = ""
+
+        /// While a change is going the box waits: one at a time, as on the Mac.
+        var busy: Bool { phase == .working || phase == .installing || (phase == .waiting && !question) }
+
+        private let defaults = UserDefaults.standard
+        /// The message being followed, kept across the relaunch an install brings.
+        private var request: String? {
+            get { defaults.string(forKey: "lamp.wand.request") }
+            set { defaults.set(newValue, forKey: "lamp.wand.request") }
+        }
+        /// The message whose Done the sheet has already risen for.
+        private var shown: String? {
+            get { defaults.string(forKey: "lamp.wand.shown") }
+            set { defaults.set(newValue, forKey: "lamp.wand.shown") }
+        }
+        /// A message Lamp hasn't confirmed: sent again, with the same id, until it answers.
+        private var unsent: (id: String, text: String)?
+        private var button: UIViewController?
+        private weak var sheet: UIViewController?
+        private var dismissal: Dismissal?
+        private var polling: Task<Void, Never>?
+
+        nonisolated static func start() {
+            NotificationCenter.default.addObserver(forName: UIScene.didActivateNotification, object: nil, queue: .main) { note in
+                MainActor.assumeIsolated { shared.activated(note.object as? UIWindowScene) }
+            }
+        }
+
+        private func activated(_ scene: UIWindowScene?) {
+            guard let scene, let window = scene.windows.first(where: \.isKeyWindow)
+                    ?? scene.windows.first(where: { !$0.isHidden && $0.windowLevel == .normal }) else { return }
+            attach(to: window)
+            Task { await refresh() }
+        }
+
+        /// The button sits in the app's own window, above its content and below anything the app presents.
+        private func attach(to window: UIWindow) {
+            if let view = button?.view, view.window === window { window.bringSubviewToFront(view); return }
+            button?.view.removeFromSuperview()
+            let controller = UIHostingController(rootView: LampWandButton(wand: self) { [weak self] in self?.present() })
+            controller.view.backgroundColor = .clear
+            controller.view.translatesAutoresizingMaskIntoConstraints = false
+            window.addSubview(controller.view)
+            NSLayoutConstraint.activate([
+                controller.view.widthAnchor.constraint(equalToConstant: 64),
+                controller.view.heightAnchor.constraint(equalToConstant: 64),
+                controller.view.trailingAnchor.constraint(equalTo: window.safeAreaLayoutGuide.trailingAnchor, constant: -14),
+                controller.view.bottomAnchor.constraint(equalTo: window.safeAreaLayoutGuide.bottomAnchor, constant: -2),
+            ])
+            button = controller
+        }
+
+        func present() {
+            guard sheet == nil, let window = button?.view.window, var top = window.rootViewController else { return }
+            while let next = top.presentedViewController, !next.isBeingDismissed { top = next }
+            let controller = UIHostingController(rootView: LampWandSheet(wand: self))
+            if let sheet = controller.sheetPresentationController {
+                sheet.detents = [.medium(), .large()]
+                sheet.largestUndimmedDetentIdentifier = .medium   // the app stays in use above it
+                sheet.prefersGrabberVisible = true
+            }
+            let dismissal = Dismissal { [weak self] in self?.closed() }
+            controller.presentationController?.delegate = dismissal
+            self.dismissal = dismissal
+            top.present(controller, animated: true)
+            sheet = controller
+            if phase == .done, let request { shown = request }
+            poll()
+        }
+
+        /// Closed after the change ended: the wand is plain again.
+        private func closed() {
+            sheet = nil
+            if phase == .done || phase == .failed { phase = .idle; note = nil }
+        }
+
+        func send() {
+            let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, !busy else { return }
+            let id = UUID().uuidString
+            request = id
+            unsent = (id, text)
+            draft = ""
+            lines.append(Line(id: (lines.last?.id ?? 0) + 1, me: true, text: text))
+            phase = .working
+            doing = nil
+            note = nil
+            Task { await deliver() }
+            poll()
+        }
+
+        /// Sends what Lamp hasn't confirmed, with its own id: Lamp takes each id once, so a message that did
+        /// arrive before its answer was lost is answered with how it's going, not asked for again.
+        private func deliver() async {
+            guard let unsent else { return }
+            if let reply = try? await call(["op": "send", "id": unsent.id, "text": unsent.text]) {
+                if self.unsent?.id == unsent.id { self.unsent = nil }
+                // Turned away, or another change is going: what was typed goes back in the box.
+                if let refused = reply["refused"] as? String {
+                    draft = unsent.text
+                    request = nil   // nothing to follow: its reason stays on screen
+                    phase = .failed
+                    note = refused
+                } else if reply["busy"] as? Bool == true {
+                    draft = unsent.text
+                }
+                apply(reply)
+            } else {
+                phase = .away
+            }
+        }
+
+        private func refresh() async {
+            if unsent != nil { return await deliver() }
+            var message: [String: Any] = ["op": "status"]
+            if let request { message["id"] = request }
+            if let reply = try? await call(message) {
+                apply(reply)
+            } else if phase != .idle {
+                phase = .away
+            }
+        }
+
+        private func apply(_ reply: [String: Any]) {
+            on = reply["on"] as? Bool ?? false
+            guard on else {
+                sheet?.dismiss(animated: true)
+                return
+            }
+            let texts = reply["lines"] as? [[String: Any]] ?? []
+            lines = texts.enumerated().map { Line(id: $0.offset, me: $0.element["me"] as? Bool ?? false, text: $0.element["text"] as? String ?? "") }
+            if reply["refused"] != nil { return }
+            // Another change from a phone was going: that's the one to follow.
+            if reply["busy"] as? Bool == true, let going = reply["id"] as? String { request = going }
+            guard let id = reply["id"] as? String, id == request, let named = reply["phase"] as? String,
+                  let now = Phase(rawValue: named) else {
+                // Lamp doesn't know the change followed: nothing to wait for.
+                if unsent == nil, phase != .failed { phase = .idle }
+                return
+            }
+            phase = now
+            doing = reply["doing"] as? String
+            note = reply["note"] as? String
+            question = reply["question"] as? Bool ?? false
+            changed = reply["changed"] as? Bool ?? false
+            // The app was put back by the install, or the change ended while the sheet was closed: it rises by
+            // itself, once, with what came of it.
+            if now == .done, shown != id {
+                if sheet == nil { present() } else { shown = id }
+            }
+        }
+
+        /// Follows the change every two seconds while one is going or the sheet is open.
+        private func poll() {
+            guard polling == nil else { return }
+            polling = Task { [weak self] in
+                while let self, self.busy || self.phase == .away || self.sheet != nil {
+                    try? await Task.sleep(for: .seconds(2))
+                    await self.refresh()
+                }
+                self?.polling = nil
+            }
+        }
+
+        /// One sealed question to Lamp and its sealed answer, which must carry the question's nonce.
+        private func call(_ message: [String: Any]) async throws -> [String: Any] {
+            let key = LampWandSeal.key("{{PHONE_SECRET}}")
+            var message = message
+            let nonce = UUID().uuidString
+            message["nonce"] = nonce
+            message["at"] = Date().timeIntervalSince1970
+            guard let body = LampWandSeal.seal(message, key: key) else { throw URLError(.cannotDecodeContentData) }
+            var request = URLRequest(url: URL(string: lampGateway + "/ai/wand")!)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 8
+            request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = body
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let reply = LampWandSeal.open(data, key: key, nonce: nonce) else { throw URLError(.badServerResponse) }
+            return reply
+        }
+
+        private final class Dismissal: NSObject, UIAdaptivePresentationControllerDelegate {
+            let done: () -> Void
+            init(_ done: @escaping () -> Void) { self.done = done }
+            func presentationControllerDidDismiss(_ presentationController: UIPresentationController) { done() }
+        }
+    }
+
+    /// How the wand's messages are sealed, the same way Lamp's `PhoneWand` opens and seals them.
+    enum LampWandSeal {
+        static func key(_ secret: String) -> SymmetricKey {
+            SymmetricKey(data: SHA256.hash(data: Data("lamp-wand\n\(secret)".utf8)))
+        }
+
+        static func seal(_ message: [String: Any], key: SymmetricKey) -> Data? {
+            guard let json = try? JSONSerialization.data(withJSONObject: message),
+                  let box = try? AES.GCM.seal(json, using: key).combined else { return nil }
+            return try? JSONSerialization.data(withJSONObject: ["sealed": box.base64EncodedString()])
+        }
+
+        /// The reply, when it's sealed with the key, says it's a reply (the app's own message sent back isn't)
+        /// and answers the question with this nonce.
+        static func open(_ data: Data, key: SymmetricKey, nonce: String) -> [String: Any]? {
+            guard let outer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let sealed = (outer["sealed"] as? String).flatMap({ Data(base64Encoded: $0) }),
+                  let box = try? AES.GCM.SealedBox(combined: sealed),
+                  let opened = try? AES.GCM.open(box, using: key),
+                  let reply = (try? JSONSerialization.jsonObject(with: opened)) as? [String: Any],
+                  reply["reply"] as? Bool == true, reply["nonce"] as? String == nonce else { return nil }
+            return reply
+        }
+    }
+    // end LampWandSeal
+
+    /// The wand: round, in the corner the thumb reaches. While a change is going it says so (a turning ring, an
+    /// orange dot when it waits for the person, a check when it's done), so the sheet can be closed meanwhile.
+    struct LampWandButton: View {
+        @ObservedObject var wand: LampWand
+        let open: () -> Void
+        @State private var turning = false
+
+        var body: some View {
+            if wand.on {
+                Group {
+                    if #available(iOS 26, *) {
+                        Button(action: open) { symbol }
+                            .buttonStyle(.glass)
+                            .buttonBorderShape(.circle)
+                    } else {
+                        Button(action: open) { symbol }
+                            .buttonStyle(.plain)
+                            .background(.regularMaterial, in: .circle)
+                            .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+                    }
+                }
+                .overlay(alignment: .topTrailing) { badge }
+                .overlay {
+                    if wand.phase == .working || wand.phase == .installing {
+                        Circle()
+                            .trim(from: 0, to: 0.28)
+                            .stroke(.tint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                            .frame(width: 60, height: 60)
+                            .rotationEffect(.degrees(turning ? 360 : 0))
+                            .animation(.linear(duration: 1.1).repeatForever(autoreverses: false), value: turning)
+                            .onAppear { turning = true }
+                            .onDisappear { turning = false }
+                            .allowsHitTesting(false)
+                    }
+                }
+                .accessibilityLabel("Change This App")
+                .frame(width: 64, height: 64)
+            }
+        }
+
+        private var symbol: some View {
+            Image(systemName: "wand.and.sparkles")
+                .font(.system(size: 20, weight: .medium))
+                .frame(width: 52, height: 52)
+                .contentShape(.circle)
+        }
+
+        @ViewBuilder private var badge: some View {
+            switch wand.phase {
+            case .waiting, .away:
+                Circle().fill(.orange).frame(width: 14, height: 14)
+                    .overlay(Circle().stroke(.background, lineWidth: 2))
+            case .done:
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.white, .green)
+            default:
+                EmptyView()
+            }
+        }
+    }
+
+    /// The sheet: the app's recent chat as Lamp has it, where the change is, and the box.
+    struct LampWandSheet: View {
+        @ObservedObject var wand: LampWand
+
+        var body: some View {
+            VStack(spacing: 0) {
+                HStack {
+                    Label("Change This App", systemImage: "wand.and.sparkles").font(.headline)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 22)
+                .padding(.bottom, 8)
+                ScrollViewReader { scroller in
+                    ScrollView {
+                        VStack(spacing: 10) {
+                            ForEach(wand.lines) { line in
+                                HStack {
+                                    if line.me { Spacer(minLength: 48) }
+                                    Text(line.text)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 9)
+                                        .foregroundStyle(line.me ? .white : .primary)
+                                        .background(line.me ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary.opacity(0.6)),
+                                                    in: .rect(cornerRadius: 18))
+                                    if !line.me { Spacer(minLength: 48) }
+                                }
+                            }
+                            if wand.phase != .idle { LampWandStatus(wand: wand).id("status") }
+                            Color.clear.frame(height: 1).id("end")
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                    }
+                    .defaultScrollAnchor(.bottom)
+                    .onChange(of: wand.lines) { withAnimation { scroller.scrollTo("end", anchor: .bottom) } }
+                    .onChange(of: wand.phase) { withAnimation { scroller.scrollTo("end", anchor: .bottom) } }
+                }
+                HStack(alignment: .bottom, spacing: 10) {
+                    TextField(wand.busy ? "Lamp is on it…" : "What should change?", text: $wand.draft, axis: .vertical)
+                        .lineLimit(1...4)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 11)
+                        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 22))
+                        .disabled(wand.busy)
+                        .onSubmit { wand.send() }
+                    Button { wand.send() } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.circle)
+                    .disabled(wand.busy || wand.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityLabel("Send")
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+                .padding(.top, 6)
+            }
+        }
+    }
+
+    /// Where the change is, as one line under the chat.
+    struct LampWandStatus: View {
+        @ObservedObject var wand: LampWand
+
+        var body: some View {
+            HStack(alignment: .top, spacing: 12) {
+                icon.frame(width: 24, height: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.subheadline.weight(.semibold))
+                    if let detail { Text(detail).font(.subheadline).foregroundStyle(.secondary) }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .background(tint.opacity(0.12), in: .rect(cornerRadius: 16))
+            .animation(.default, value: wand.phase)
+        }
+
+        private var title: String {
+            switch wand.phase {
+            case .idle: ""
+            case .working: "Working…"
+            case .waiting: wand.question ? "Waiting for your answer" : "Waiting for you on your Mac"
+            case .installing: "Installing…"
+            case .done: "Done"
+            case .failed: "Didn't work"
+            case .away: "Can't reach your Mac"
+            }
+        }
+
+        private var detail: String? {
+            switch wand.phase {
+            case .working: wand.doing
+            case .waiting: wand.question ? "Answer here or on your Mac." : "Lamp needs your OK for one step."
+            case .installing: "The app will close and open again."
+            case .done: wand.changed ? "Your change is in the app." : nil
+            case .failed: wand.note
+            case .away: "Lamp tries again when your iPhone is on the same Wi‑Fi as your Mac."
+            case .idle: nil
+            }
+        }
+
+        private var tint: Color {
+            switch wand.phase {
+            case .waiting, .away: .orange
+            case .done: .green
+            case .failed: .red
+            default: .accentColor
+            }
+        }
+
+        @ViewBuilder private var icon: some View {
+            switch wand.phase {
+            case .working, .installing: ProgressView()
+            case .waiting: Image(systemName: wand.question ? "questionmark.bubble" : "desktopcomputer").foregroundStyle(.orange)
+            case .away: Image(systemName: "wifi.exclamationmark").foregroundStyle(.orange)
+            case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.title3)
+            case .failed: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).font(.title3)
+            case .idle: EmptyView()
+            }
+        }
+    }
     #endif
 
     /// Where the person turns a permission on: System Settings on a Mac, Settings on a phone.

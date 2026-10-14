@@ -456,6 +456,40 @@ from its Assets folder rather than its bundle (`LampAssets`), so a new picture g
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which asks for
 new state in new views rather than new stored properties in existing types, when that's as clear.
 
+On the person's own iPhone the wand is inside the app, and **the app carries the chat**: the one exception to "Lamp
+draws the chat, never the app". It was chosen over a separate Lamp app on the phone (a second app to install and pair,
+and one of a free team's three app slots) because a phone has no room beside the app and Lamp can't draw over it. What
+it costs: the app's own code can send Lamp a request for a change, as the person can. What keeps that narrow
+(`PhoneWand`): the same Experimental switch as the Mac's wand; only an iPhone app, or the iPhone half of an app for
+both, whose Try On points at the person's phone (`PhoneWand.isAvailable`); only from another device on the network,
+never from this Mac, where the agent, the simulator's copy and the Mac half of an app for both can all read the
+secret (the network listener answers on every address, the Mac's own and `::1` among them, so `Gateway.isThisMac`
+tells those connections apart), and only from the subnet of the Mac's Wi‑Fi or wired interface
+(`Gateway.isOnLocalNetwork`), not a VPN's peers or a virtual machine's bridge, which could be handed the secret; one
+change from the phone at a time, and at most `PhoneWand.dailyLimit` a day for
+an app (counting only messages sent on), since the app's own code could otherwise keep the agent working; and every request is an ordinary message in the app's
+chat, marked "From iPhone" (`LogLine.fromPhone`), so it runs as a normal turn with the same agent, approvals, sandbox,
+versions and Undo, and never reaches the agent's routes. A turn ends, as ever for an app on a phone, in
+`installOnDevice`, which closes the app and opens the new copy. `LampWand` in LampSupport.swift (device builds only)
+puts a round wand in the app's window and a sheet with the app's recent chat and a message box; it shows only while
+Lamp answers on the same Wi‑Fi that the wand is on. It's started by `LampStart.c`, a file Lamp writes into the
+phone's Xcode project (`Template.deviceStartC`): a SwiftUI app gives a library no place to start from
+(`NSPrincipalClass` is ignored), and the app's code is the agent's. The route is `/ai/wand`, with an `op` of "send" or
+"status". Both ways are sealed with AES-GCM under a key made from the app's phone secret (`PhoneWand.key`, not the one
+`/ai/keys` uses), since the network hop is plain HTTP and the token is on the air: a request carries a time and is
+refused five minutes either side of it, a reply says it's one and carries the request's nonce, so neither side takes
+a message going the other way for its own. Each message has an id the phone
+keeps sending until Lamp answers; Lamp takes an id once (`PhoneWand.Taken`, kept a day in the support folder), so a
+retry or a copy taken off the air never asks for the change twice, and it takes it even when it turns the message
+away (too long, Lamp not set up, the day's limit, another change going), so a copy sent later can't run what the
+phone was told didn't. The phone puts such a message back in its box. The sheet asks for the status every two seconds
+while a change goes: Working (with the first sentence the agent says), Waiting for you on your Mac (an approval;
+a card's questions show in the chat and a typed answer answers them), Installing, Done or Didn't work. The app keeps
+the id it follows across the relaunch the install brings, and the sheet rises by itself at Done. Lamp holds off idle
+sleep for a turn that does a phone's message, and lets go when the turn ends, however it ends. The agent is told (`Agent.Rules.iPhoneGenerated`) to keep what the person was
+looking at in `@SceneStorage`, since every change reopens the app. Not in this version: approving on the phone,
+clickable cards, pointing at part of the app, and working away from the Mac's Wi‑Fi.
+
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
 "cancelled" when the person keeps the app open and doesn't come while the question is still up. Until then Lamp

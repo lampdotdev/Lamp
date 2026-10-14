@@ -14,6 +14,11 @@ final class Gateway: @unchecked Sendable {
         let body: Data
         /// Came in over the local network (an app on the person's phone) rather than from this Mac.
         var fromNetwork = false
+        /// Came in on the network listener, but from this Mac itself: it answers on every address, `::1` and
+        /// the Mac's own Wi‑Fi address among them, so a program here can reach it that way too.
+        var fromThisMac = false
+        /// Came in over the network from the Wi‑Fi or wired network this Mac is on (`Gateway.isOnLocalNetwork`).
+        var fromLocalNetwork = false
     }
 
     private var listener: NWListener?
@@ -54,14 +59,15 @@ final class Gateway: @unchecked Sendable {
             guard let listener = try? NWListener(using: params, on: NWEndpoint.Port(rawValue: Self.port)!) else { return }
             listener.newConnectionHandler = { [weak self] connection in
                 connection.start(queue: self?.queue ?? .main)
-                self?.receive(connection, buffer: Data(), fromNetwork: true)
+                self?.receive(connection, buffer: Data(), fromNetwork: true, fromThisMac: Self.isThisMac(connection.endpoint),
+                              fromLocalNetwork: Self.isOnLocalNetwork(connection.endpoint))
             }
             listener.start(queue: queue)
             networkListener = listener
         }
     }
 
-    private func receive(_ connection: NWConnection, buffer: Data, fromNetwork: Bool) {
+    private func receive(_ connection: NWConnection, buffer: Data, fromNetwork: Bool, fromThisMac: Bool = false, fromLocalNetwork: Bool = false) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 16) { [weak self] data, _, done, error in
             guard let self else { return }
             var buffer = buffer
@@ -69,6 +75,8 @@ final class Gateway: @unchecked Sendable {
             if var request = Self.parse(buffer) {
                 if request.method == "BAD" { self.respond(connection, status: 400, json: ["error": "Bad request"]); return }
                 request.fromNetwork = fromNetwork
+                request.fromThisMac = fromThisMac
+                request.fromLocalNetwork = fromLocalNetwork
                 Task {
                     let (status, json) = await self.handler(request)
                     self.respond(connection, status: status, json: json)
@@ -76,9 +84,82 @@ final class Gateway: @unchecked Sendable {
             } else if done || error != nil || buffer.count > 40_000_000 {
                 connection.cancel()
             } else {
-                self.receive(connection, buffer: buffer, fromNetwork: fromNetwork)
+                self.receive(connection, buffer: buffer, fromNetwork: fromNetwork, fromThisMac: fromThisMac, fromLocalNetwork: fromLocalNetwork)
             }
         }
+    }
+
+    /// Whether a connection's other end is this Mac: a loopback address or one of its own interfaces' addresses.
+    /// Anything that isn't plainly an address counts as this Mac, so it's never mistaken for a phone.
+    static func isThisMac(_ endpoint: NWEndpoint) -> Bool {
+        guard case .hostPort(let host, _) = endpoint else { return true }
+        let address: String
+        switch host {
+        case .ipv4(let ip):
+            if ip.rawValue.first == 127 { return true }   // all of 127/8, not only 127.0.0.1
+            address = "\(ip)"
+        case .ipv6(let ip):
+            if ip.isLoopback { return true }
+            if let mapped = ip.asIPv4 { return mapped.rawValue.first == 127 || ownAddresses().contains("\(mapped)") }
+            address = "\(ip)"
+        default:
+            return true
+        }
+        return ownAddresses().contains(address.split(separator: "%").first.map(String.init) ?? address)
+    }
+
+    /// Whether a connection comes from the Wi‑Fi or wired network this Mac is on: an address in the subnet of
+    /// one of its Ethernet-like interfaces (Wi‑Fi among them, "en…"). Not a VPN's peers ("utun…"), virtual
+    /// machines on this Mac ("bridge…"), or anywhere further away: the phone is on the same Wi‑Fi.
+    static func isOnLocalNetwork(_ endpoint: NWEndpoint) -> Bool {
+        guard case .hostPort(let host, _) = endpoint else { return false }
+        let peer: Data
+        switch host {
+        case .ipv4(let ip): peer = ip.rawValue
+        case .ipv6(let ip): peer = ip.asIPv4?.rawValue ?? ip.rawValue
+        default: return false
+        }
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return false }
+        defer { freeifaddrs(list) }
+        for entry in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            guard String(cString: entry.pointee.ifa_name).hasPrefix("en"),
+                  let address = entry.pointee.ifa_addr, let mask = entry.pointee.ifa_netmask,
+                  let own = bytes(of: address), let netmask = bytes(of: mask),
+                  own.count == peer.count, netmask.count == peer.count else { continue }
+            if zip(zip(own, netmask), peer).allSatisfy({ ($0.0 & $0.1) == ($1 & $0.1) }) { return true }
+        }
+        return false
+    }
+
+    /// An interface address's bytes: four for IPv4, sixteen for IPv6.
+    private static func bytes(of address: UnsafeMutablePointer<sockaddr>) -> Data? {
+        switch Int32(address.pointee.sa_family) {
+        case AF_INET:
+            return address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { withUnsafeBytes(of: $0.pointee.sin_addr) { Data($0) } }
+        case AF_INET6:
+            return address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { withUnsafeBytes(of: $0.pointee.sin6_addr) { Data($0) } }
+        default:
+            return nil
+        }
+    }
+
+    /// Every address this Mac's interfaces have now, without a zone ("fe80::1", not "fe80::1%en0").
+    private static func ownAddresses() -> Set<String> {
+        var found: Set<String> = []
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return found }
+        defer { freeifaddrs(list) }
+        for entry in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            guard let raw = entry.pointee.ifa_addr else { continue }
+            var name = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            let length = socklen_t(raw.pointee.sa_family == UInt8(AF_INET6) ? MemoryLayout<sockaddr_in6>.size : MemoryLayout<sockaddr_in>.size)
+            guard [UInt8(AF_INET), UInt8(AF_INET6)].contains(raw.pointee.sa_family),
+                  getnameinfo(raw, length, &name, socklen_t(name.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
+            let text = String(cString: name)
+            found.insert(text.split(separator: "%").first.map(String.init) ?? text)
+        }
+        return found
     }
 
     private func respond(_ connection: NWConnection, status: Int, json: [String: Any]) {
