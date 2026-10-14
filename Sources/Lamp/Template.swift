@@ -3358,7 +3358,11 @@ enum Template {
                 center.addObserver(forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main) { _ in
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         MainActor.assumeIsolated {
-                            guard isOn, let window = NSApp.windows.first(where: { isAppWindow($0) && $0.isVisible }) else { return }
+                            // Only when no window has said where it is yet, and then the frontmost one: with several
+                            // windows restored, another would move the chat beside the wrong one.
+                            guard isOn, !reported, let window = [NSApp.keyWindow, NSApp.mainWindow].compactMap({ $0 })
+                                    .first(where: { isAppWindow($0) && $0.isVisible })
+                                    ?? NSApp.orderedWindows.first(where: { isAppWindow($0) && $0.isVisible }) else { return }
                             putBack(window)
                             report(window)
                         }
@@ -3598,7 +3602,10 @@ enum Template {
 
         /// Where the window is, in screen coordinates, for Lamp to set its chat beside it; nothing when it's out
         /// of sight (in the Dock, or full screen, where there's no room beside it).
+        @MainActor private static var reported = false
+
         @MainActor private static func report(_ window: NSWindow) {
+            reported = true
             let shown = window.isVisible && !window.isMiniaturized && !window.styleMask.contains(.fullScreen)
             DistributedNotificationCenter.default().postNotificationName(
                 Notification.Name("{{NOTE}}windowFrame"), object: Bundle.main.bundleIdentifier,
