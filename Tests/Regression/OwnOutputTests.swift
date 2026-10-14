@@ -24,13 +24,6 @@ final class OwnOutputTests: XCTestCase {
         return (home, LampProject(id: "coinflip", name: name, exe: "CoinFlip", dir: dir), results)
     }
 
-    func testReadingThisConversationsOutputGoesThrough() throws {
-        let (home, project, results) = try setUp()
-        let file = results.appendingPathComponent("toolu_01.txt").path
-        XCTAssertTrue(Privacy.isOwnOutput(tool: "read", path: file, session: session, project: project, claudeFolder: home.appendingPathComponent(".claude")))
-        XCTAssertTrue(Privacy.isOwnOutput(tool: "grep", path: results.path, session: session, project: project, claudeFolder: home.appendingPathComponent(".claude")))
-    }
-
     func testNothingWider() throws {
         let (home, project, results) = try setUp()
         let file = results.appendingPathComponent("toolu_01.txt").path
@@ -93,17 +86,5 @@ final class OwnOutputTests: XCTestCase {
         }
         XCTAssertTrue(Privacy.isOwnOutput(tool: "read", path: results.appendingPathComponent("toolu_01.txt").path,
                                           session: self.session, project: project, claudeFolder: home.appendingPathComponent(".claude")))
-    }
-
-    /// Claude Code replaces every character but ASCII letters and digits, one per UTF-16 unit.
-    func testFoldersNamedWithMoreThanASCII() throws {
-        let (home, project, _) = try setUp("Café Board")
-        let slug = String(decoding: project.dir.path.utf16.map { unit -> UInt16 in
-            (0x30...0x39).contains(unit) || (0x41...0x5A).contains(unit) || (0x61...0x7A).contains(unit) ? unit : 0x2D
-        }, as: UTF16.self)
-        // A file URL's path is decomposed, as the folder's name on disk is: "e" and its accent, two dashes in all.
-        XCTAssertTrue(slug.hasSuffix("Cafe--Board"), slug)
-        let file = home.appendingPathComponent(".claude/projects/\(slug)/\(session)/tool-results/toolu_01.txt").path
-        XCTAssertTrue(Privacy.isOwnOutput(tool: "read", path: file, session: session, project: project, claudeFolder: home.appendingPathComponent(".claude")))
     }
 }

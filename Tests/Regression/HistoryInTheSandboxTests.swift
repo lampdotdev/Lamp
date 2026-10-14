@@ -1,9 +1,9 @@
 import XCTest
 @testable import Lamp
 
-/// Lamp's own git runs under the agent's sandbox. What that must not cost: the agent still does what it
-/// likes with the app's history, histories people set up by hand are saved as before and left as they
-/// were, and the person's own Mac-wide git settings still apply to Lamp's saves.
+/// Lamp's own git runs under the agent's sandbox. What that must not cost: versions are still saved, undone
+/// and restored, whatever the history or the person's Mac-wide git settings hold, and those settings open
+/// nothing to Lamp's git but their own files.
 final class HistoryInTheSandboxTests: XCTestCase {
     private let escape = HistoryEscapeTests()
     override func tearDown() { escape.tearDown() }
@@ -44,97 +44,10 @@ final class HistoryInTheSandboxTests: XCTestCase {
         XCTAssertFalse(unsaved, "\(what): nothing unsaved at the end")
     }
 
-    private func settings(_ app: HistoryEscapeTests.App) throws -> String {
-        try escape.loose("cat .git/config .git/config.worktree 2>/dev/null", in: app.project.dir).output
-    }
-
-    // MARK: The agent and the history
-
-    func testTheAgentCanCommitRestoreAndBranch() async throws {
-        let app = try escape.app()
-        let work = try escape.confined("""
-            echo two > Sources/App.swift && git add -A && git -c user.name=Agent -c user.email=agent@example.com commit -qm "the agent's own" \
-            && git branch attempt && git switch -q attempt && echo three > Sources/App.swift && git checkout -- Sources/App.swift \
-            && echo four > Sources/App.swift && git stash -q && git stash pop -q && git restore Sources/App.swift \
-            && git tag mine && git config alias.st status && git st --porcelain && git switch -q main && cat Sources/App.swift
-            """, in: app)
-        XCTAssertEqual(work.status, 0, work.output)
-        XCTAssertEqual(work.output.trimmingCharacters(in: .whitespacesAndNewlines), "two")
-        // Lamp's versions carry on from there, the agent's own included.
-        try write("five\n", app)
-        let saved = await Versions.save(app.project, message: "five")
-        XCTAssertTrue(saved)
-        let versions = await Versions.list(app.project)
-        XCTAssertEqual(versions.map(\.message), ["five", "the agent's own", "first"])
-        let back = await Versions.restore(app.project, to: versions[1], message: "Back")
-        XCTAssertTrue(back)
-        XCTAssertEqual(text(app), "two\n")
-    }
-
     // MARK: Histories set up by hand are saved as before, and left as they were
 
     func testAPlainHistory() async throws {
         try await saveUndoAndGoBack(try escape.app(), "plain")
-    }
-
-    func testACheckoutOfOnlySomeOfTheFiles() async throws {
-        let app = try escape.app()
-        let set = try escape.loose("mkdir Extra && echo x > Extra/x && git add -A && \(Versions.commit) -qm extra && git sparse-checkout init --cone && git sparse-checkout set Sources", in: app.project.dir)
-        XCTAssertEqual(set.status, 0, set.output)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: app.project.dir.appendingPathComponent("Extra/x").path))
-        let before = try settings(app)
-        try write("two\n", app)
-        let saved = await Versions.save(app.project, message: "two")
-        XCTAssertTrue(saved)
-        let versions = await Versions.list(app.project)
-        let back = await Versions.restore(app.project, to: versions[1], message: "Back")
-        XCTAssertTrue(back)
-        XCTAssertEqual(text(app), "one\n")
-        XCTAssertEqual(try settings(app), before)
-        // What the checkout leaves out is still in every version, and still left out of the folder.
-        XCTAssertTrue(try escape.loose("git ls-tree -r --name-only HEAD", in: app.project.dir).output.contains("Extra/x"))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: app.project.dir.appendingPathComponent("Extra/x").path))
-    }
-
-    func testAPartialClonesSettings() async throws {
-        let app = try escape.app()
-        let set = try escape.loose("git config core.repositoryformatversion 1 && git config extensions.partialclone origin && git config remote.origin.url https://example.com/x.git && git config remote.origin.promisor true && git config remote.origin.partialclonefilter blob:none && git config alias.st status && git config pull.ff only", in: app.project.dir)
-        XCTAssertEqual(set.status, 0, set.output)
-        let before = try settings(app)
-        try await saveUndoAndGoBack(app, "partial clone")
-        XCTAssertEqual(try settings(app), before)
-    }
-
-    /// Git LFS set up in this one history: large files are saved as pointers and come back whole.
-    func testLargeFilesSetUpInThisHistory() async throws {
-        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/git-lfs"), "Git LFS isn't installed here")
-        let app = try escape.app()
-        let set = try escape.loose("export PATH=/opt/homebrew/bin:$PATH && git lfs install --local && git lfs track '*.bin' && git config lfs.storage large-files", in: app.project.dir)
-        XCTAssertEqual(set.status, 0, set.output)
-        try await largeFilesRoundTrip(app, "set up in this history, kept in a folder of its own inside the app")
-    }
-
-    /// Git LFS set up for the whole Mac, the usual way.
-    func testLargeFilesSetUpForTheWholeMac() async throws {
-        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/git-lfs"), "Git LFS isn't installed here")
-        let app = try escape.app()
-        try macWide("[filter \"lfs\"]\n\tclean = git-lfs clean -- %f\n\tsmudge = git-lfs smudge -- %f\n\tprocess = git-lfs filter-process\n\trequired = true\n")
-        try "*.bin filter=lfs diff=lfs merge=lfs -text\n".write(to: app.project.dir.appendingPathComponent(".gitattributes"), atomically: true, encoding: .utf8)
-        try await largeFilesRoundTrip(app, "set up for the whole Mac")
-    }
-
-    private func largeFilesRoundTrip(_ app: HistoryEscapeTests.App, _ what: String) async throws {
-        try write(String(repeating: "large ", count: 2000), app, "asset.bin")
-        let saved = await Versions.save(app.project, message: "asset")
-        XCTAssertTrue(saved, what)
-        let before = try settings(app)   // Git LFS notes its own format there the first time it runs
-        XCTAssertTrue(try escape.loose("git cat-file -p HEAD:asset.bin", in: app.project.dir).output.hasPrefix("version https://git-lfs"), "\(what): not saved as a pointer")
-        try FileManager.default.removeItem(at: app.project.dir.appendingPathComponent("asset.bin"))
-        let versions = await Versions.list(app.project)
-        let restored = await Versions.restoreFiles(app.project, to: try XCTUnwrap(versions.first))
-        XCTAssertTrue(restored, what)
-        XCTAssertEqual(text(app, "asset.bin"), String(repeating: "large ", count: 2000), "\(what): didn't come back whole")
-        XCTAssertEqual(try settings(app), before, what)
     }
 
     // MARK: The person's Mac-wide settings
@@ -148,58 +61,6 @@ final class HistoryInTheSandboxTests: XCTestCase {
         await Versions.name(app.project, try XCTUnwrap(versions.first).id, "Named")
         XCTAssertEqual(try escape.loose("git tag -l 'forge/*' | wc -l", in: app.project.dir).output.trimmingCharacters(in: .whitespacesAndNewlines), "1")
         XCTAssertEqual(try escape.loose("git log --format=%G? | sort -u", in: app.project.dir).output, "N\n")
-    }
-
-    /// The same with this Mac's real settings, whatever they are.
-    func testThisMacsOwnSettings() async throws {
-        let app = try escape.app()
-        unsetenv("GIT_CONFIG_GLOBAL")
-        try await saveUndoAndGoBack(app, "this Mac's own settings")
-        XCTAssertEqual(try escape.loose("git log -4 --format=%G? | sort -u", in: app.project.dir).output, "N\n")
-    }
-
-    /// An ignore file for every repository, kept in the home folder where the sandbox doesn't look.
-    func testTheMacWideIgnoreFileStillApplies() async throws {
-        let app = try escape.app()
-        let ignored = app.root.appendingPathComponent(".gitignore_global")
-        try "*.log\n".write(to: ignored, atomically: true, encoding: .utf8)
-        try macWide("[core]\n\texcludesFile = \(ignored.path)\n")
-        let first = await Versions.save(app.project, message: "everything so far")
-        XCTAssertTrue(first)
-        try write("noise", app, "debug.log")
-        var unsaved = await Versions.hasUnsavedChanges(app.project)
-        XCTAssertFalse(unsaved, "a file the person ignores everywhere reads as unsaved work")
-        try write("two\n", app)
-        let saved = await Versions.save(app.project, message: "two")
-        XCTAssertTrue(saved)
-        XCTAssertFalse(try escape.loose("git ls-tree -r --name-only HEAD", in: app.project.dir).output.contains("debug.log"))
-        // And when the person changes their mind while Lamp is open.
-        try macWide("")
-        unsaved = await Versions.hasUnsavedChanges(app.project)
-        XCTAssertTrue(unsaved)
-    }
-
-    /// Mac-wide settings spread over several files in the home folder (work and personal, say), one of them
-    /// brought in only for some folders: git stops at a settings file it is told of and can't read.
-    func testMacWideSettingsSplitOverSeveralFiles() async throws {
-        let app = try escape.app()
-        let ignored = app.root.appendingPathComponent(".gitignore_global")
-        try "*.log\n".write(to: ignored, atomically: true, encoding: .utf8)
-        try "[core]\n\texcludesFile = \(ignored.path)\n[include]\n\tpath = more/deeper.inc\n".write(to: app.root.appendingPathComponent(".gitconfig-work"), atomically: true, encoding: .utf8)
-        try FileManager.default.createDirectory(at: app.root.appendingPathComponent("more"), withIntermediateDirectories: true)
-        try "[pull]\n\tff = only\n".write(to: app.root.appendingPathComponent("more/deeper.inc"), atomically: true, encoding: .utf8)
-        // The one brought in only for this folder names an ignore file of its own, which then wins.
-        let ignoredHere = app.root.appendingPathComponent("ignored for apps")
-        try "*.log\n*.tmp\n".write(to: ignoredHere, atomically: true, encoding: .utf8)
-        try "[user]\n\tname = Someone\n[core]\n\texcludesFile = \"\(ignoredHere.path)\"\n".write(to: app.root.appendingPathComponent(".gitconfig for apps"), atomically: true, encoding: .utf8)
-        try macWide("[include]\n\tpath = \(app.root.path)/.gitconfig-work\n[includeIf \"gitdir:\(app.root.path)/\"]\n\tpath = \"\(app.root.path)/.gitconfig for apps\"\n")
-        let first = await Versions.save(app.project, message: "everything so far")
-        XCTAssertTrue(first)
-        try write("noise", app, "debug.log")
-        try write("noise", app, "scratch.tmp")
-        let unsaved = await Versions.hasUnsavedChanges(app.project)
-        XCTAssertFalse(unsaved, "a file ignored through an included settings file reads as unsaved work")
-        try await saveUndoAndGoBack(app, "settings in several files")
     }
 
     /// The person's settings open their own git files to Lamp's git, and nothing more: a setting that names

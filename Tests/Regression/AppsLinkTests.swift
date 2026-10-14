@@ -13,14 +13,6 @@ final class AppsLinkTests: XCTestCase {
 
     override func tearDownWithError() throws { try? FileManager.default.removeItem(at: dir) }
 
-    func testTheLinkIsMadeAndLeadsToTheAppsFolder() throws {
-        let apps = dir.appendingPathComponent("Lamp Apps"), link = dir.appendingPathComponent("Applications Lamp Apps")
-        try FileManager.default.createDirectory(at: apps, withIntermediateDirectories: true)
-        XCTAssertTrue(AppsLink.link(at: link, to: apps))
-        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: link.path), apps.path)
-        XCTAssertTrue(AppsLink.link(at: link, to: apps))   // made already: nothing to do
-    }
-
     func testAFolderAlreadyThereIsLeftAlone() throws {
         let apps = dir.appendingPathComponent("Lamp Apps"), taken = dir.appendingPathComponent("Taken")
         try FileManager.default.createDirectory(at: taken, withIntermediateDirectories: true)

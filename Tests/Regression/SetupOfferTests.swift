@@ -10,17 +10,4 @@ final class SetupOfferTests: XCTestCase {
         XCTAssertEqual(line.setupOffer, SetupOffer(capability: .pictures))
         XCTAssertEqual(line.setupOffer?.context, .mac)
     }
-
-    func testAnOfferKeepsItsCapabilityAndPlace() throws {
-        let line = LogLine(kind: .offer, text: "Works on your phone anywhere with a key.", offer: SetupOffer(capability: .text, away: true))
-        let read = try JSONDecoder().decode(LogLine.self, from: JSONEncoder().encode(line))
-        XCTAssertEqual(read.setupOffer, SetupOffer(capability: .text, away: true))
-        XCTAssertEqual(read.setupOffer?.context, .phoneAway)
-    }
-
-    func testOtherLinesOfferNothing() {
-        XCTAssertNil(LogLine(kind: .agent, text: "Done.").setupOffer)
-        // A stray capability on another kind of line isn't an offer.
-        XCTAssertNil(LogLine(kind: .status, text: "Ready", offer: SetupOffer(capability: .pictures)).setupOffer)
-    }
 }

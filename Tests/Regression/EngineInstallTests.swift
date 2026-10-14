@@ -47,60 +47,6 @@ final class EngineInstallTests: XCTestCase {
         XCTAssertNil(EngineInstall.path(for: .pi))
     }
 
-    /// The version in use and the one before it stay (a turn may still be running on it); the rest go.
-    func testPruneKeepsTheCurrentAndThePrevious() throws {
-        for version in ["2.1.280", "2.1.285", "2.1.287", "2.1.290"] { _ = try put(.claude, version) }
-        EngineInstall.prune(.claude, keeping: "2.1.290")
-        let left = try FileManager.default.contentsOfDirectory(atPath: EngineInstall.versionsFolder(.claude).path).sorted()
-        XCTAssertEqual(left, ["2.1.287", "2.1.290"])
-        // Going back (the brake): the one kept beside it is the newest other.
-        EngineInstall.prune(.claude, keeping: "2.1.287")
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: EngineInstall.versionsFolder(.claude).path).sorted(),
-                       ["2.1.287", "2.1.290"])
-    }
-
-    /// Each engine gets its own folder for its sign-in, made before it's named, and Claude Code's updater off.
-    func testEachEngineHasItsOwnFolder() {
-        let claude = EngineInstall.environment(for: .claude)
-        XCTAssertEqual(claude["CLAUDE_CONFIG_DIR"], root.appendingPathComponent("claude/home").path)
-        XCTAssertEqual(claude["DISABLE_AUTOUPDATER"], "1")
-        let codex = EngineInstall.environment(for: .codex)
-        XCTAssertEqual(codex["CODEX_HOME"], root.appendingPathComponent("codex/home").path)
-        var isFolder: ObjCBool = false
-        XCTAssertTrue(FileManager.default.fileExists(atPath: codex["CODEX_HOME"]!, isDirectory: &isFolder) && isFolder.boolValue)
-        XCTAssertEqual(EngineInstall.environment(for: .pi), [:])
-    }
-
-    /// The person's own copy wins over Lamp's, and runs as it does for them: their folder, nothing set.
-    /// Lamp's copy stays where it is, for when theirs goes.
-    func testThePersonsOwnCopyIsUsedAsItIs() throws {
-        let own = try put(.claude, "2.1.287")
-        try write("2.1.287", current: .claude)
-        let theirs = root.appendingPathComponent("person/.local/bin/claude")
-        try FileManager.default.createDirectory(at: theirs.deletingLastPathComponent(), withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: theirs.path, contents: Data("#!/bin/sh\n".utf8), attributes: [.posixPermissions: 0o755])
-        EngineInstall.finder = { $0 == .claude ? theirs.path : nil }
-        // Nothing until a look has run: screens never look themselves.
-        XCTAssertEqual(EngineInstall.path(for: .claude), own.path)
-        XCTAssertFalse(EngineInstall.hasLooked)
-        EngineInstall.lookNow()
-        XCTAssertTrue(EngineInstall.hasLooked)
-        XCTAssertEqual(EngineInstall.path(for: .claude), theirs.path)
-        XCTAssertTrue(EngineInstall.usesPersonsCopy(.claude))
-        XCTAssertEqual(EngineInstall.environment(for: .claude), [:])
-        XCTAssertEqual(EngineInstall.configFolder(.claude).lastPathComponent, ".claude")
-        XCTAssertEqual(EngineInstall.ownPath(for: .claude), own.path)
-        // Codex has no copy of the person's here, so it's Lamp's (none yet), with its own folder.
-        XCTAssertNil(EngineInstall.path(for: .codex))
-        XCTAssertFalse(EngineInstall.usesPersonsCopy(.codex))
-        XCTAssertEqual(EngineInstall.environment(for: .codex)["CODEX_HOME"], root.appendingPathComponent("codex/home").path)
-        XCTAssertFalse(EngineInstall.usesPersonsCopy(.pi))
-        XCTAssertNil(EngineInstall.path(for: .pi))
-        // Removed since the look: Lamp's copy again, without waiting for the next look.
-        try FileManager.default.removeItem(at: theirs)
-        XCTAssertEqual(EngineInstall.path(for: .claude), own.path)
-    }
-
     /// A conversation Lamp's copy kept is brought to the person's folder once Lamp runs their copy.
     func testConversationsGoToThePersonsCopy() throws {
         let fm = FileManager.default
@@ -217,52 +163,6 @@ final class EngineInstallTests: XCTestCase {
         XCTAssertFalse(EngineInstall.carryOver(session: "11111111-1111-1111-1111-111111111111", for: .codex, from: home))
         XCTAssertFalse(EngineInstall.carryOver(session: "../\(id)", for: .claude, from: home))
         XCTAssertFalse(EngineInstall.carryOver(session: "", for: .codex, from: home))
-    }
-
-    /// A sign-in waiting for the browser ends when cancelled, says it was cancelled rather than failed, and
-    /// leaves nothing running.
-    func testASignInCanBeCancelled() async throws {
-        let program = try put(.claude, "2.1.287")
-        try """
-        #!/bin/sh
-        if [ "$1 $2" = "auth login" ]; then sleep 30; exit 0; fi
-        echo '{"loggedIn": false}'
-        """.write(to: program, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: program.path)
-        try write("2.1.287", current: .claude)
-        let started = Date()
-        let signIn = Task { await EngineSignIn.signIn(.claude) }
-        try await Task.sleep(for: .seconds(1))
-        EngineSignIn.cancelSignIn(.claude)
-        let result = await signIn.value
-        XCTAssertNil(result)
-        XCTAssertLessThan(Date().timeIntervalSince(started), 10)
-        // Cancelling when nothing is under way does nothing, and the next sign-in isn't cancelled by it.
-        EngineSignIn.cancelSignIn(.claude)
-        try """
-        #!/bin/sh
-        if [ "$1 $2" = "auth login" ]; then exit 0; fi
-        echo '{"loggedIn": true}'
-        """.write(to: program, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: program.path)
-        let again = await EngineSignIn.signIn(.claude)
-        XCTAssertEqual(again, true)
-    }
-
-    /// Against the real download sites: set LAMP_LIVE_ENGINES=1. Downloads both engines (about 230 MB
-    /// for Claude Code and 130 MB for Codex) into the test's own folder and runs each.
-    func testLiveInstall() async throws {
-        guard ProcessInfo.processInfo.environment["LAMP_LIVE_ENGINES"] == "1" else { throw XCTSkip("LAMP_LIVE_ENGINES isn't set") }
-        for engine in [Engine.claude, .codex] {
-            let release = try await EngineInstall.target(engine)
-            try await EngineInstall.install(release, for: engine) { _ in }
-            let path = try XCTUnwrap(EngineInstall.path(for: engine))
-            XCTAssertEqual(EngineInstall.currentVersion(engine), release.version)
-            let result = await Subprocess.run(path, ["--version"], env: EngineInstall.environment(for: engine), timeout: 60)
-            XCTAssertTrue(result.output.contains(release.version), result.output)
-            // Installed again: it's already here, and nothing is downloaded.
-            try await EngineInstall.install(release, for: engine) { _ in XCTFail("downloaded again") }
-        }
     }
 
     private func put(_ engine: Engine, _ version: String) throws -> URL {

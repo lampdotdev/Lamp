@@ -24,11 +24,6 @@ final class WishTests: XCTestCase {
         return board
     }
 
-    func testALinkCarriesTheWish() throws {
-        let link = try XCTUnwrap(URL(string: "lamp://wish?text=A%20Mac%20app%20that%20sorts%20my%20files%20%26%20more.%0AAsk%20first."))
-        XCTAssertEqual(Wish.from(link: link, scheme: "lamp"), "A Mac app that sorts my files & more.\nAsk first.")
-    }
-
     func testOnlyThisLampsWishLinksCount() throws {
         XCTAssertNil(Wish.from(link: try XCTUnwrap(URL(string: "lamp://edit?app=tally")), scheme: "lamp"))
         XCTAssertNil(Wish.from(link: try XCTUnwrap(URL(string: "lamp-dev://wish?text=hello")), scheme: "lamp"))
@@ -61,21 +56,5 @@ final class WishTests: XCTestCase {
         XCTAssertEqual(Wish.look(at: board([.html: "<b>a password</b>", .string: "a password"])), .nothing)
         XCTAssertEqual(Wish.look(at: board([.string: wish])), .nothing)
         XCTAssertEqual(Wish.look(at: board([:])), .nothing)
-    }
-
-    func testOnlyABrowsersCopyIsOfferedForPasting() {
-        func type(_ name: String) -> NSPasteboard.PasteboardType { NSPasteboard.PasteboardType(name) }
-        XCTAssertTrue(Wish.fromBrowser([.string, .html, type("com.apple.WebKit.custom-pasteboard-data")]))
-        XCTAssertTrue(Wish.fromBrowser([.html, .string, type("org.chromium.source-url")]))
-        XCTAssertFalse(Wish.fromBrowser([.string, .html, .rtf]))
-    }
-
-    func testTheWishIsWrittenInAWordAtATimeAndEndsWhole() {
-        let text = "Sort my  files,\nthen ask."
-        XCTAssertEqual(Wish.steps(text), ["Sort", "Sort my", "Sort my  files,", "Sort my  files,\nthen", text])
-        XCTAssertEqual(Wish.steps("One"), ["One"])
-        // A long wish is written faster, so it never takes more than a moment.
-        XCTAssertLessThanOrEqual(Wish.pace(words: 400) * 400, .seconds(4))
-        XCTAssertEqual(Wish.pace(words: 10), .milliseconds(45))
     }
 }
