@@ -2410,6 +2410,7 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return
         }
+        Self.trashData(of: project)
         let index = projects.firstIndex { $0.id == project.id }
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil
@@ -2421,6 +2422,27 @@ final class Store: ObservableObject {
         tokens = tokens.filter { $0.value != project.id }
         if selection == project.id {
             selection = index.flatMap { projects.indices.contains($0) ? projects[$0] : projects.last }?.id
+        }
+    }
+
+    /// What the app kept on this Mac goes with it, so an app made later under the same name starts empty rather
+    /// than opening this one's data: its data folder (`LampStore.folder`, under the plain id, and one under its
+    /// signed id from before that), to the Trash like the rest, with its settings (UserDefaults) written into it
+    /// first and then cleared.
+    private static func trashData(of project: LampProject) {
+        let fm = FileManager.default
+        let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let plain = Edition.appBundlePrefix + project.id
+        let data = support.appendingPathComponent(plain)
+        for id in Set([plain, project.bundleID]) {
+            guard let settings = UserDefaults.standard.persistentDomain(forName: id), !settings.isEmpty else { continue }
+            try? fm.createDirectory(at: data, withIntermediateDirectories: true)
+            (settings as NSDictionary).write(to: data.appendingPathComponent("Settings \(id).plist"), atomically: true)
+            UserDefaults.standard.removePersistentDomain(forName: id)
+        }
+        for id in Set([plain, project.bundleID]) {
+            let folder = support.appendingPathComponent(id)
+            if fm.fileExists(atPath: folder.path) { try? fm.trashItem(at: folder, resultingItemURL: nil) }
         }
     }
 

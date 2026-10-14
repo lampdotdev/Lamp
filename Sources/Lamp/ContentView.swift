@@ -92,7 +92,7 @@ struct ContentView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The app, its chat and its history are moved to the Trash.")
+            Text("The app, its chat, its history and what it saved are moved to the Trash.")
         }
         .dialogIcon(store.deleting.map { Image(nsImage: dialogIcon(for: $0)) })
         .onChange(of: store.renaming) { newName = store.renaming.map { $0.untitled ? "" : $0.name } ?? "" }
