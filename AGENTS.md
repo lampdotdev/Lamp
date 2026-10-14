@@ -493,6 +493,32 @@ holding home screen widgets and Live Activities (`ActivityConfiguration`) in one
   lock screen) before the picture. Only the person can add a widget to the home screen; the chat's `WidgetCard`
   says how in iOS words (`WidgetCard.phoneStatus`), and iOS doesn't say whether they did, so it always does.
 
+### App Intents
+
+An app's actions reach Siri, Shortcuts, Spotlight, the Action button, a widget's buttons and Control Center as
+App Intents (`Agent.Rules.intents`, given to every kind of app; the widget parts are in `Rules.widget` and
+`Rules.iPhoneWidget`). The system finds them in `Metadata.appintents` inside the bundle, which Xcode writes from
+the compiler's record of the code's constant values; a package build writes nothing of the sort, so build.sh does
+what Xcode does (`Template.appIntentsSetup`, one for a Mac bundle and one for an iOS one). When some Swift in
+`Sources/` or `Widget/` imports AppIntents and Xcode's `appintentsmetadataprocessor` is there, the compiler is
+asked for the record (`-emit-const-values`, with the protocols Xcode lists, `Template.appIntentsProtocols`,
+written into `.build` by the script), and `intents` runs that processor and then `appintentsnltrainingprocessor`
+(Siri's phrases) on each bundle before it's signed: the app (`Contents/Resources` on the Mac, the bundle's top
+on iOS) and its widget extension. The record is looked for where SwiftPM's build engine leaves it
+(`.build/out/Intermediates.noindex/<package>.build/<configuration>/<target>-p.build`); a build that doesn't
+leave it there warns and goes on. The phrase step needs `CFBundleDevelopmentRegion` in Info.plist and only
+warns when it fails. With only the Command Line Tools the build warns that the system won't see the intents,
+and the rule tells the agent to say so. Xcode's own builds (a phone, the Mac half of an app for both) extract
+them by themselves.
+
+On iPhone, a widget's or Live Activity's button runs its intent in the extension unless the intent is a
+`LiveActivityIntent`, which iOS performs in the app, starting it out of sight when it's closed. So the rule puts
+such an intent in `Widget/Shared/` and its work under `#if !LAMP_WIDGET`: the extension compiles with
+`LAMP_WIDGET` (a `.define` on its package target and `SWIFT_ACTIVE_COMPILATION_CONDITIONS` in the Xcode project),
+the app without it, and the work changes the data and calls `LampWidget.share`. `LiveActivityIntent` doesn't
+exist on macOS, so in an app for both it goes under `#if os(iOS)`. A Mac widget shares no code with the app, so
+its buttons can only change what the widget keeps itself.
+
 ## Naming: Lamp and Lamp
 
 The app is called **Lamp**: that's the name in everything the user reads (the interface, Help, the agent's

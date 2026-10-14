@@ -101,7 +101,7 @@ final class PhoneWidgetTests: XCTestCase {
     func testWithoutAWidgetNothingChanges() throws {
         let project = try app(.iphone, widget: false)
         XCTAssertEqual(try text("Package.swift", in: project).replacingOccurrences(of: "TeaTimer", with: "{{EXE}}"), Template.iPhonePackageSwift)
-        XCTAssertFalse(try text("build.sh", in: project).contains("Widget"))
+        XCTAssertFalse(try text("build.sh", in: project).contains("Widget.appex"), "no extension to build")
         XCTAssertFalse(FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(".lamp/widget-entitlements.plist").path))
     }
 

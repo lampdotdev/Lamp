@@ -213,7 +213,7 @@ enum Agent {
         let rules = [Rules.edit, Rules.ask, Rules.shell, Rules.universal, Rules.universalFrameworks,
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
-                     Rules.script, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
+                     Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
                      half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneWidget), Rules.store, Rules.kinds(mac: true),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
@@ -233,7 +233,7 @@ enum Agent {
                      mac ? Rules.macFrameworks : Rules.iPhoneFrameworks,
                      mac ? Rules.macBlocks : Rules.iPhoneBlocks]
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.permissions] }
-        rules += [Rules.script, mac ? Rules.macAccounts : Rules.iPhoneAccounts]
+        rules += [Rules.script, Rules.intents, mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules.append(Rules.computer) }
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneWidget, Rules.icloud] }
         rules += [Rules.store, Rules.kinds(mac: mac), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
@@ -275,7 +275,7 @@ enum Agent {
         permission screens, opening at login) exist only under `#if os(macOS)`; `LampMotion` and `LampHome` only under \
         `#if os(iOS)`; `LampImage` is NSImage on the Mac and UIImage on iOS. Its widgets and Live Activities are \
         the iPhone half's (below); the Mac half has none, and Widget/Shared/ is compiled into the Mac half too, so \
-        an `ActivityAttributes` type there goes under `#if os(iOS)`. Check both halves compile before a look: \
+        an `ActivityAttributes` type or a `LiveActivityIntent` there goes under `#if os(iOS)`. Check both halves compile before a look: \
         `swift build --product` and the app's name (the first target in Package.swift) for the Mac's, and \
         `./build.sh ios` for iOS's (it builds into build/iOS, beside the Mac's build).
         """
@@ -457,7 +457,8 @@ enum Agent {
         it shows nothing. A widget is a picture macOS redraws from the timeline, not a running view: no timers, \
         animation, scrolling or text fields. `Text(date, style: .timer)` and `.relative` count by themselves, \
         entries dated ahead change it on schedule, and macOS refreshes it when it chooses, minutes apart at best. \
-        It may load from the web with URLSession. \(Template.WidgetSharing.rule) \
+        It may load from the web with URLSession. \(Template.WidgetSharing.rule) A button in it \
+        (`Button(intent:)`) runs its App Intent in the widget, which can't change the app's data. \
         When a widget is all the user asked for ("make me a countdown widget"), they get only the widget, with \
         no app window: make Sources/App.swift just `@main struct MainApp: App { var body: some Scene { \
         LampWidgetOnly() } }`, with no commands, delete Sources/ContentView.swift with delete_file, and put \
@@ -471,6 +472,28 @@ enum Agent {
         you say once it's made is two sentences at most, on what the widget shows: no list of sizes or \
         options, no assumptions, no "it's ready", no question at the end. A widget they placed stays through \
         your changes and shows them by itself. To take the widget away, delete the files in Widget/.
+        """
+
+        /// App Intents: the app's actions given to Siri, Shortcuts and Spotlight. build.sh reads them out of the
+        /// code with Xcode's tools (`Template.appIntentsSetup`), so their text has to be literals.
+        static let intents = """
+        - Give the app's main actions to the system with App Intents, without being asked, whenever someone would \
+        want one without opening the app: Siri, Shortcuts, Spotlight, and on an iPhone the Action button. In \
+        Sources/Intents.swift, `import AppIntents` and write a struct per action: `struct AddItemIntent: AppIntent` \
+        with `static let title: LocalizedStringResource = "Add Item"`, its inputs as `@Parameter(title: "Item") var \
+        item: String`, and `func perform() async throws -> some IntentResult & ProvidesDialog` that does the work \
+        with the app's own code (LampStore and the rest: it runs in the app, started without a window when it isn't \
+        open) and ends `return .result(dialog: "Added \\(item)")`; `static let openAppWhenRun = true` only for one \
+        that has to show the app. Then one `struct AppShortcuts: AppShortcutsProvider` whose `static var \
+        appShortcuts` lists them, `AppShortcut(intent: AddItemIntent(), phrases: ["Add an item to \\(.applicationName)"], \
+        shortTitle: "Add Item", systemImageName: "cart")`: that is what Siri hears and Spotlight and Shortcuts show \
+        with no setup. Every phrase names `\\(.applicationName)`, and a phrase can name only a parameter that is an \
+        `AppEnum` or `AppEntity`, never a String. For the app's own things (lists, notes, places), an `AppEntity` \
+        with an `EntityQuery` lets Shortcuts pick one. Titles and phrases are plain literals: the build reads them \
+        from the code and fails on what it can't read. When the build warns that Xcode isn't installed, the app \
+        works but the system doesn't see its intents: say so. Nothing here can run an intent, so check that the \
+        build succeeds and that what perform calls works in the app, then tell the user in a sentence what to say \
+        to Siri or search for.
         """
 
         static let permissions = """
@@ -825,7 +848,14 @@ enum Agent {
         then: show a short line asking to open the app. A Live Activity starts from the app, \
         `Activity.request(attributes:content:)`, and is changed with `update` and ended with `end` from the app \
         while it runs; there's no server to push changes, so give a timer or progress an end date \
-        (`Text(timerInterval:countsDown:)`, `ProgressView(timerInterval:)`) and it moves by itself. To see them, \
+        (`Text(timerInterval:countsDown:)`, `ProgressView(timerInterval:)`) and it moves by itself. A button or \
+        toggle in a widget or Live Activity runs an App Intent, `Button(intent: AddCupIntent()) { … }` or \
+        `Toggle(isOn:intent:)`: write that intent in Widget/Shared/ as a `LiveActivityIntent`, which iOS performs \
+        in the app (starting it out of sight when it's closed), and keep the work under `#if !LAMP_WIDGET` (defined \
+        only in the widget, which can't reach the app's code): change the data there and `LampWidget.share` it, \
+        and the widget redraws. A Control Center control is a `ControlWidget` in the same `WidgetBundle`, marked \
+        `@available(iOS 18, *)`: `StaticControlConfiguration(kind: "AddCup") { ControlWidgetButton(action: \
+        AddCupIntent()) { Label("Add a Cup", systemImage: "cup.and.saucer") } }`. To see them, \
         `use_app` with `key` "lock" shows the lock screen, where a Live Activity is, and "home" the home screen; \
         then the picture. Not every iPhone has a Dynamic Island (the iPhone 14 Pro and Pro Max, and every iPhone \
         15 and later but the 16e have one; iPads don't): `look_at_app` says which simulator the app is open on, \
