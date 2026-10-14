@@ -20,6 +20,8 @@
 # answered: for those, use a second macOS user (permissions) or a clean VM (everything).
 set -euo pipefail
 
+# The checkout this script is in, taken here: inside a function zsh gives $0 the function's name.
+here="${0:A:h}/.."
 support="$HOME/Library/Application Support"
 if [ "${EDITION:-dev}" = release ]; then name="Lamp"; domain="dev.lamp.host"; else name="Lamp Dev"; domain="dev.lamp.host.dev"; fi
 state="$support/$name"
@@ -72,7 +74,14 @@ begin() {
   # Passed on only when set, so a plain begin opens Lamp as it always did.
   local env=()
   [ -n "${LAMP_PRETEND_MISSING:-}" ] && env=(--env "LAMP_PRETEND_MISSING=$LAMP_PRETEND_MISSING")
-  open "${env[@]}" -a "$name" 2>/dev/null || open "${env[@]}" "$(dirname "$0")/../build/$name.app"
+  # Lamp Dev is this checkout's own build when there is one: by name, macOS picks whichever copy it likes, and
+  # every worktree that ever built Lamp Dev has one, however old.
+  local own="$here/build/$name.app"
+  if [ "$name" = "Lamp Dev" ] && [ -d "$own" ]; then
+    open "${env[@]}" "$own"
+  else
+    open "${env[@]}" -a "$name" 2>/dev/null || open "${env[@]}" "$own"
+  fi
 }
 
 restore() {
