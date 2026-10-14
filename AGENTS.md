@@ -184,7 +184,8 @@ written: a kind the person didn't say only when this Mac can build it now (`Phon
 both), else a Mac app, and one they said either way (the build says what's missing). A line in the chat says so for
 anything but a Mac app. The starter ideas mix Mac and iPhone ones (`Ideas.mixed`). Later, "make it work on my
 iPhone too" is the agent's `make_app_for` (`Store.convert`), given every device the app runs on from then on (a
-new kind of device is one more name in `Platform(devices:)` and the tool's schema): it checks this Mac can build the new kind (opening the
+new kind of device is one more name in `Platform(devices:)` and the tool's schema; "watch" brings the iPhone with it,
+and the answer tells the agent to add or remove `Watch/` with the watch rule): it checks this Mac can build the new kind (opening the
 setup steps if not), quits every copy, changes the kind in meta.json, rewrites Lamp's own files, copies the Mac
 settings (UserDefaults) to a new signed id, and answers with the rules for the new kind, which stay in the
 conversation; the agent then adapts the code. A Mac app's data doesn't move: LampSupport keeps it under the app's
@@ -294,7 +295,7 @@ in Settings → Building, so the app can use what Apple ties to a team, which La
 platforms (`LampProject.bundleID`), and `Store.deploy` seals what it adds (icon, assets, Info.plist) with the
 team's certificate and the entitlements Xcode gave it (`Devices.signingIdentity`), never Lamp's. The agent gets
 both kinds' rules, each marked for its half, after one rule on sharing the code (`Agent.universalPrompt`). An app
-for both can't be shared as a `.lampapp` yet; its widgets and Live Activities are the iPhone half's (below).
+for both is shared as a `.lampapp` like any other (the file says what it's made for, format 6, and carries `Watch/` when it has one); its widgets and Live Activities are the iPhone half's (below).
 
 ## iCloud
 
@@ -549,6 +550,36 @@ holding home screen widgets and Live Activities (`ActivityConfiguration`) in one
   the viewer's own Home and Lock commands (`Simulator.Driver.pressMenuItem`; lock then wakes the screen, onto the
   lock screen) before the picture. Only the person can add a widget to the home screen; the chat's `WidgetCard`
   says how in iOS words (`WidgetCard.phoneStatus`), and iOS doesn't say whether they did, so it always does.
+
+### Apple Watch
+
+An iPhone app, and the iPhone half of an app for both, can have an Apple Watch app: Swift in `Watch/`
+(`Template.hasWatch`, asked before every build) is a SwiftUI watch app, and Swift in `Watch/Complications/`
+(`hasComplications`) its complications, a WidgetKit extension inside it. The rule is `Agent.Rules.iPhoneWatch`.
+
+- **Building.** `Template.withWatch` adds the watch's targets to Package.swift (`.watchOS(.v10)`, the
+  complications as an extension like the widget, the watch app's target excluding Complications/) and to
+  build.sh: the iPhone app is built by product name, so the watch code isn't compiled for iOS, and
+  `watchBuildSteps` builds for the watch simulator SDK into `<App>.app/Watch/<Exe>Watch.app` (`WKApplication`,
+  `WKCompanionAppBundleIdentifier`, id `<app's id>.watchkitapp`) with `PlugIns/<Exe>WatchComplications.appex`,
+  each signed before what holds it, the app group linked into their binaries as for the iPhone app. Without the
+  watch SDK the iPhone app builds without it, with a warning. On a phone and for an app for both,
+  `withWatchTarget` adds a watchOS app target embedded by an Embed Watch Content phase (`platformFilter = ios`)
+  and the complications' extension target embedded in it; Xcode takes synchronized-group exceptions per file, not
+  per folder, so the Complications/ files are listed each time the project is written.
+- **Data.** `LampWatch` in LampSupport (WatchConnectivity on iOS, calls that do nothing on the Mac) sends
+  everything shared as the session's application context and takes the watch's actions (`onAction`, once each
+  by id). The watch's half is `lampWatchSupportSwift`, written into both folders (`writeWatchSupport`; the
+  complications' copy compiles with `LAMP_COMPLICATION` and only reads): `@LampWatched` and `LampWatch.read` read
+  what the watch app kept in the folder it shares with its complications, and `send` goes as a message, which
+  wakes the iPhone app, or a transfer when the phone is away. While a complication is on the watch face, each
+  change also goes as a complication transfer (`transferCurrentComplicationUserInfo`, about 50 a day), which
+  wakes the watch app out of sight: `.lampWatch()` on its WindowGroup takes it (`backgroundTask(.watchConnectivity)`)
+  and redraws the complications.
+- **Simulator.** After the iPhone app opens, `Store.openWatchApp` installs and opens the watch app on the watch
+  simulator paired with that iPhone (`Simulator.pairedWatch`, which pairs a new one when Xcode has a watchOS
+  that pairs; `LAMP_PRETEND_MISSING=watch`); with none, one line in the chat says how to add watchOS. The agent
+  can't look at or use the watch. A shared `.lampapp` carries `Watch/` (format 6), without Lamp's files there.
 
 ### App Intents
 

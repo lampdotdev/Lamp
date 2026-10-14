@@ -215,7 +215,7 @@ enum Agent {
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
                      Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
-                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), Rules.store, Rules.kinds(mac: true),
+                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.store, Rules.kinds(mac: true),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
                      Rules.universalTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
@@ -236,7 +236,7 @@ enum Agent {
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.permissions] }
         rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules.append(Rules.computer) }
-        if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.icloud] }
+        if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.icloud] }
         rules += [Rules.store, Rules.kinds(mac: mac), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
                   Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
@@ -876,6 +876,29 @@ enum Agent {
         15 and later but the 16e have one; iPads don't): `look_at_app` says which simulator the app is open on, \
         and when it has none, say so and that the person can choose one under Try On. Only the person can add a widget to the home screen, and Lamp shows them how: don't \
         explain it, and say in a sentence that it's ready to add.
+        """
+
+        static let iPhoneWatch = """
+        - The app can have an Apple Watch app with complications. Make one when the user asks, or when a glance \
+        or a tap on the wrist suits it (a timer, a workout, a tally, a checklist). Write it in SwiftUI in a \
+        `Watch/` folder at the app's root, starting with Watch/WatchApp.swift: one `@main` App whose WindowGroup \
+        ends in `.lampWatch()`, which keeps complications current while the watch app is closed, and a screen or two \
+        of big controls. Complications go in Watch/Complications/: one `@main` `WidgetBundle` of \
+        `StaticConfiguration`s with `.supportedFamilies` from `.accessoryCircular`, `.accessoryRectangular`, \
+        `.accessoryInline` and `.accessoryCorner`, and `.containerBackground(.fill.tertiary, for: .widget)`. \
+        Neither shares code with Sources/ or has LampSupport.swift: declare the Codable types they read in each \
+        folder. The data: in the app, `LampWatch.share(Today(…), as: "today")` at launch and whenever it changes; \
+        on the watch, `@LampWatched("today") var today: Today?` in a view, or `LampWatch.read(Today.self, from: \
+        "today")` in a complication's timeline, nil until the phone has first shared. A tap \
+        on the watch: `LampWatch.send("addGlass", 1)`, done in the app by `LampWatch.onAction { name, payload in \
+        … }` set at launch (`payload.decode(Int.self)`), which shares what changed. Watch/LampWatchSupport.swift \
+        and its copy in Complications/ are Lamp's: never edit them. A workout on the watch, saved to Health with \
+        heart rate, calories and distance: `@StateObject private var workout = LampWorkout()` from that file, \
+        `try await workout.start(.running)`, `pause()`, `resume()`, `await workout.end()`, with `{"healthkit": \
+        true}` in capabilities.json; the simulator's watch measures nothing, so check it starts and ends. The watch \
+        app's icon is the app's. Lamp opens the watch app on an Apple Watch \
+        simulator beside the iPhone; `look_at_app` and `use_app` see only the iPhone, so don't try them on the \
+        watch. Say in a sentence that it's on the watch, and that a complication is added by editing a watch face.
         """
 
         /// What `LampNotifications` does beyond a plain message, said in both kinds' blocks.

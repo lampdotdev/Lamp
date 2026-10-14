@@ -30,10 +30,12 @@ enum DeviceFamily: String, Codable {
 /// The names are what the intro's sentence says ("Describe the iPhone & iPad app you wish you had").
 extension Platform {
     /// What an app made for these devices is: the names `make_app_for` and the naming call use ("mac",
-    /// "iphone", for iPhone and iPad). Nil for an empty list or a device Lamp doesn't make apps for yet.
+    /// "iphone" for iPhone and iPad, "watch"). A watch app is part of an iPhone app (`Template.hasWatch`), so
+    /// "watch" brings the iPhone with it. Nil for an empty list or a device Lamp doesn't make apps for.
     init?(devices: Set<String>) {
-        guard !devices.isEmpty, devices.isSubset(of: ["mac", "iphone"]) else { return nil }
-        self = devices.count == 2 ? .universal : devices.contains("mac") ? .mac : .iphone
+        guard !devices.isEmpty, devices.isSubset(of: ["mac", "iphone", "watch"]) else { return nil }
+        let phone = devices.contains("iphone") || devices.contains("watch")
+        self = devices.contains("mac") ? (phone ? .universal : .mac) : .iphone
     }
 }
 
@@ -913,7 +915,7 @@ final class Store: ObservableObject {
     /// (Xcode for an iPhone app; a team too for an app for both), else it's a Mac app, which needs neither. One
     /// they said is taken either way, and the build says what's missing. A line in the chat says what it'll be
     /// unless it's a Mac app, and the person changes it by asking (`convert`, the agent's `make_app_for`).
-    func chooseKind(_ project: LampProject, _ kind: Platform, said: Bool) async -> LampProject {
+    func chooseKind(_ project: LampProject, _ kind: Platform, said: Bool, watch: Bool = false) async -> LampProject {
         guard !project.scaffolded, kind != project.platform else { return project }
         if kind.hasIOS, !said {
             let both = kind == .universal
@@ -922,7 +924,10 @@ final class Store: ObservableObject {
         }
         setKind(project, kind)
         guard let chosen = current(project) else { return project }
-        if kind != .mac { log(chosen, .status, kind == .iphone ? "Making this for iPhone and iPad." : "Making this for the Mac, iPhone and iPad.") }
+        if kind != .mac {
+            let devices = kind == .iphone ? "iPhone and iPad" : "the Mac, iPhone and iPad"
+            log(chosen, .status, watch ? "Making this for \(devices), and Apple Watch." : "Making this for \(devices).")
+        }
         return chosen
     }
 
@@ -1342,8 +1347,7 @@ final class Store: ObservableObject {
     }
 
     /// Puts the app's .lampapp file on the clipboard, ready to paste into Slack, Messages, Mail or Finder.
-    /// Sharing is for Mac apps: an iPhone app's file would be opened as a Mac app by another Lamp.
-    func canShare(_ project: LampProject) -> Bool { project.platform == .mac && project.scaffolded }
+    func canShare(_ project: LampProject) -> Bool { project.scaffolded }
 
     func copyAppFile(_ project: LampProject) {
         guard canShare(project) else { return }
@@ -1391,7 +1395,8 @@ final class Store: ObservableObject {
     /// by opening an earlier file from it.
     func existingCopy(of package: Sharing.Package) -> LampProject? {
         guard let identity = package.identity else { return nil }
-        return projects.first { $0.platform == .mac && $0.scaffolded && Sharing.identity(of: $0, create: false) == identity }
+        // Only an app of the same kind: a file that's an iPhone app doesn't replace the Mac app it began as.
+        return projects.first { $0.platform == package.platform && $0.scaffolded && Sharing.identity(of: $0, create: false) == identity }
     }
 
     /// Opens a shared `.lampapp`. Its review (fixed checklist + AI check) opens only when setup is really done
@@ -1580,11 +1585,13 @@ final class Store: ObservableObject {
         defer { try? FileManager.default.removeItem(at: package.folder) }
         let project: LampProject
         do {
-            project = try Template.scaffold(name: uniqueName(package.name), in: root)
+            project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
             try Sharing.install(package, into: project)
             // The copy is the same app as the sender's: the next file shared from theirs can update it. A
-            // second copy made beside one that's already here (Keep Both) is an app of its own.
-            if let identity = package.identity, existingCopy(of: package) == nil {
+            // second copy made beside one that's already here (Keep Both), or beside one of another kind, is an
+            // app of its own.
+            if let identity = package.identity,
+               !projects.contains(where: { $0.id != project.id && Sharing.identity(of: $0, create: false) == identity }) {
                 Sharing.setIdentity(identity, of: project)
             }
         } catch {
@@ -1686,7 +1693,9 @@ final class Store: ObservableObject {
             let suggestion = await AppName.suggest(for: brief)
             progress[project.id]?.sketch = suggestion?.sketch ?? []
             progress[project.id]?.naming = false
-            if let suggestion, let kind = suggestion.kind { project = await chooseKind(project, kind, said: suggestion.kindSaid) }
+            if let suggestion, let kind = suggestion.kind {
+                project = await chooseKind(project, kind, said: suggestion.kindSaid, watch: suggestion.watch)
+            }
             if project.untitled, let name = suggestion?.name { project = await performRename(project, to: name) }
         }
         if Icons.load(project) == nil {
@@ -2104,6 +2113,7 @@ final class Store: ObservableObject {
     private func agentChangedFiles(_ project: LampProject) async -> Bool {
         var output = ""
         let ignored = "':!Sources/LampSupport.swift' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!icon.json' ':!\(Attachments.folder)'"
+            + Template.watchSupportPaths.map { " ':!\($0)'" }.joined()
         _ = await Versions.git("git status --porcelain -- . \(ignored)", cwd: project.dir) {
             output += $0
         }
@@ -2816,7 +2826,7 @@ final class Store: ObservableObject {
         guard !relative.isEmpty else { return (400, ["error": "Only files inside the app's folder can be deleted."]) }
         // Compared without regard to case: the Mac's usual file system treats "package.swift" as the same file.
         let protected = [".lamp", ".git", ".build", "build", ".gitignore", "Package.swift", "build.sh", "Sources/LampSupport.swift",
-                         Template.widgetFolder + "/" + Template.widgetSupportFile]
+                         Template.widgetFolder + "/" + Template.widgetSupportFile] + Template.watchSupportPaths
         let lowered = relative.lowercased()
         if protected.contains(where: { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + "/") }) {
             return (400, ["error": "\(relative) belongs to Lamp and can't be deleted."])
@@ -2909,9 +2919,22 @@ final class Store: ObservableObject {
     private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         let devices = Set(arguments["devices"] as? [String] ?? [])
         guard let kind = Platform(devices: devices) else {
-            return (400, ["error": "`devices` must list one or more of mac and iphone."])
+            return (400, ["error": "`devices` must list one or more of mac, iphone and watch."])
         }
-        return await convert(project, to: kind)
+        // Asked before the change: once an app isn't for the iPhone, its Watch/ no longer counts as a watch app.
+        let hadWatch = current(project).map(Template.hasWatch) ?? false
+        let (status, answer) = await convert(project, to: kind)
+        guard status == 200, let text = answer["text"] as? String, !text.hasPrefix("Not yet"), !text.hasPrefix("Nothing changed"),
+              let now = current(project) else { return (status, answer) }
+        // The watch app is code in Watch/, the agent's to write or take away: Lamp says which, with the rule.
+        let watch = devices.contains("watch")
+        if watch, !Template.hasWatch(now) {
+            return (200, ["text": text + "\n\nThen add its Apple Watch app in Watch/:\n" + Agent.Rules.iPhoneWatch])
+        }
+        if !watch, hadWatch || Template.hasWatch(now) {
+            return (200, ["text": text + "\n\nThen take its Apple Watch app away: delete the files in Watch/ with delete_file."])
+        }
+        return (200, answer)
     }
 
     /// Makes an app for other devices: a Mac app for the iPhone too, say. The kind is the app's (meta.json), and
@@ -3615,6 +3638,7 @@ final class Store: ObservableObject {
                 refreshOpenApps()
                 return crash
             }
+            await openWatchApp(project, phone: udid, live: stillOwns)
             if inFront {
                 // The Simulator was opened before the install; by now it may be behind Lamp again, and "ready"
                 // should mean the app is in front of the person, not somewhere to be found.
@@ -3631,6 +3655,39 @@ final class Store: ObservableObject {
         stamps[project.id] = BuildStamp.read(project.builtURL)
         return nil
     }
+
+    /// The app's Apple Watch app, when its build carries one, put on the watch simulator paired with the
+    /// iPhone's and opened there, so the two talk as they would on the person's wrist. What goes wrong here is
+    /// a line in the chat, never a crash for the agent to fix: the iPhone app is open and the watch is extra.
+    /// `live` says the launch is still the turn's, as the iPhone's launch checks it: Stop or Delete during a
+    /// wait leaves nothing more installed, and a watch app started meanwhile is closed again.
+    private func openWatchApp(_ project: LampProject, phone: String, live: () -> Bool) async {
+        let watchApp = Template.watchAppURL(in: project.builtURL, of: project)
+        guard FileManager.default.fileExists(atPath: watchApp.path) else { return }
+        let found = await Simulator.pairedWatch(of: phone)
+        guard live() else { return }
+        guard let watch = found else {
+            // Said once a session for each app, not at every launch.
+            if watchHintShown.insert(project.id).inserted {
+                log(project, .status, "To see the watch app, add watchOS in Xcode → Settings → Components; Lamp then opens it on an Apple Watch simulator.")
+            }
+            return
+        }
+        let id = Template.watchBundleID(project.bundleID)
+        do {
+            try await Simulator.boot(watch, show: false)
+            await Simulator.terminate(id, on: watch)
+            guard live() else { return }
+            try await Simulator.install(watchApp, on: watch)
+            guard live() else { return }
+            _ = try await Simulator.launch(id, on: watch, log: Runtime.folder(project).appendingPathComponent("watch-log.txt"))
+            if !live() { await Simulator.terminate(id, on: watch) }
+        } catch {
+            if live() { log(project, .status, "The watch app didn't open: \(error.localizedDescription)") }
+        }
+    }
+
+    private var watchHintShown: Set<String> = []
 
     /// Retry the phone operation alone: an account or device problem is never sent to the coding agent.
     func retryPhone(_ project: LampProject, udid: String) async {
@@ -3783,10 +3840,28 @@ final class Store: ObservableObject {
         if fm.fileExists(atPath: assets.path) {
             try? fm.copyItem(at: assets, to: app.appendingPathComponent(Sharing.Assets.folder))
         }
-        // A widget extension inside is signed first, as Xcode does: the app's signature then seals it.
+        // The watch app's icon: watchOS takes one only from a compiled asset catalog, so Xcode's own compiler makes
+        // it from the same square as the iPhone's, and Info.plist names it.
+        if fm.fileExists(atPath: app.appendingPathComponent("Watch").path), fm.fileExists(atPath: Icons.squareURL(project).path) {
+            let work = project.dir.appendingPathComponent(".lamp/watch-icon")
+            try? Template.writeWatchIconCatalog(at: work.appendingPathComponent("Icon.xcassets"), icon: Icons.squareURL(project))
+            _ = await Shell.run("""
+                for watch in "$LAMP_APP"/Watch/*.app(N); do
+                  xcrun actool "$LAMP_WORK/Icon.xcassets" --compile "$watch" --platform watchsimulator --minimum-deployment-target 10.0 \\
+                    --app-icon AppIcon --output-partial-info-plist "$LAMP_WORK/partial.plist" >/dev/null 2>&1 && \\
+                  plutil -replace CFBundleIcons -json '{"CFBundlePrimaryIcon":{"CFBundleIconName":"AppIcon"}}' "$watch/Info.plist"
+                done
+                """, cwd: project.dir, env: ["LAMP_APP": app.path, "LAMP_WORK": work.path]) { _ in }
+        }
+        // A widget extension inside is signed first, as Xcode does: the app's signature then seals it. The watch
+        // app the same way, its complications before it.
         _ = await Shell.run("""
             xattr -cr "$LAMP_APP"
             for widget in "$LAMP_APP"/PlugIns/*.appex(N); do codesign --force -s - "$widget"; done
+            for watch in "$LAMP_APP"/Watch/*.app(N); do
+              for extension in "$watch"/PlugIns/*.appex(N); do codesign --force -s - "$extension"; done
+              codesign --force -s - "$watch"
+            done
             codesign --force -s - "$LAMP_APP"
             """, cwd: project.dir, env: ["LAMP_APP": app.path]) { _ in }
     }
