@@ -59,14 +59,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private let launched = Date()
+
     /// Generated apps call back with lamp://edit?app=<slug> (⇧⌘E inside the app).
     func application(_ application: NSApplication, open urls: [URL]) {
         MainActor.assumeIsolated {
+            // An app's wand started Lamp: the chat beside that app is what was asked for, so Lamp's own window
+            // stays out of the way. Opened already, it stays as it was. The Dock icon brings it back.
+            let forPanel = urls.contains { $0.scheme == Edition.urlScheme && $0.host == "magic" }
+            if forPanel, Date().timeIntervalSince(launched) < 5, Onboarding.isDone { MagicPanel.keepMainWindowHidden() }
             urls.forEach(Store.shared.handle(url:))
         }
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// The Dock icon shows Lamp's window, also when only an app's chat panel was open.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        MainActor.assumeIsolated {
+            if let main = MagicPanel.mainWindow, !main.isVisible { main.makeKeyAndOrderFront(nil) }
+        }
+        return true
+    }
+
+    /// Closing Lamp's window quits it, except while an app's chat panel is open (the wand's): then Lamp's window
+    /// was put away for the panel, and Lamp is still in use.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        MainActor.assumeIsolated { !MagicPanel.shared.isOpen }
+    }
 
     /// Quitting mid-turn would leave the agent and its build running on their own, and the gateway the
     /// agent is talking to gone: ask first, and stop them if the user quits anyway.

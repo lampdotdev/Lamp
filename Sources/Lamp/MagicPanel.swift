@@ -29,6 +29,25 @@ final class MagicPanel: NSObject, NSWindowDelegate {
         }
     }()
 
+    /// Lamp's own window when it was put away for the panel (`keepMainWindowHidden`), to bring back from the Dock.
+    static weak var mainWindow: NSWindow?
+
+    /// Lamp was started by an app's wand: its window, which SwiftUI opens with the app, is put away as it
+    /// appears, so the panel is all there is. At launch it's the one ordinary window there is, and it's looked
+    /// for for a moment, since it can come after the link.
+    static func keepMainWindowHidden() {
+        Task { @MainActor in
+            for _ in 0..<30 {
+                if let main = NSApp.windows.first(where: { !($0 is NSPanel) && $0.isVisible && $0.canBecomeMain }) {
+                    mainWindow = main
+                    main.orderOut(nil)
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+    }
+
     /// The flag apps read, made to agree with the switch: when it changes, and at launch.
     static func syncSwitch() {
         _ = listen
@@ -41,6 +60,7 @@ final class MagicPanel: NSObject, NSWindowDelegate {
     }
 
     private var panel: NSPanel?
+    var isOpen: Bool { panel != nil }
     private(set) var appID: String?
     /// The app's window as it last said, in screen coordinates; nil when it's out of sight.
     private var appFrame: NSRect?
