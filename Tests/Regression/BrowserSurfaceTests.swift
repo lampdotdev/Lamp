@@ -39,4 +39,40 @@ final class BrowserSurfaceTests: XCTestCase {
         XCTAssertNotNil(send(UUID().uuidString, revision: beforeRestart)["error"])
         XCTAssertNil(publish(newBoot)["event"])
     }
+    func testSelectionActionsRequireSelectionCaptureAndKeepOldPageActionsWorking() throws {
+        let app = LampProject(id: "reader", name: "Reader", exe: "Reader", dir: URL(fileURLWithPath: "/tmp/reader"), instance: "reader-instance")
+        func exercise(selection: Bool) throws {
+            let bridge = BrowserSurfacePrototype(), boot = UUID().uuidString
+            var action: [String: Any] = ["id": "read", "label": "Read", "readsPage": !selection]
+            if selection { action["readsSelection"] = true } // Old apps omit this field.
+            let surface: [String: Any] = ["title": "Reader", "detail": "", "sections": [], "fields": [], "actions": [action], "busy": false]
+            let publish: [String: Any] = ["boot": boot, "surface": surface]
+            XCTAssertEqual(bridge.exchange(publish, app: app).0, 200)
+            let revision = try XCTUnwrap(bridge.native(["op": "surface-view", "app": app.id], projects: [app])["revision"])
+            var request: [String: Any] = ["op": "surface-action", "app": app.id, "id": UUID().uuidString,
+                                          "revision": revision, "action": "read", "fields": [String: String]()]
+            if selection {
+                XCTAssertNotNil(bridge.native(request, projects: [app])["error"])
+                request["page"] = ["url": "https://example.test/article", "title": "Article", "text": "Unselected article", "scope": "page"]
+                XCTAssertNotNil(bridge.native(request, projects: [app])["error"])
+            }
+            var page = ["url": "https://example.test/article", "title": "Article", "text": "Chosen passage"]
+            if selection { page["scope"] = "selection" }
+            request["page"] = page
+            XCTAssertEqual(bridge.native(request, projects: [app])["accepted"] as? Bool, true)
+            let event = try XCTUnwrap(bridge.exchange(publish, app: app).1["event"] as? [String: Any])
+            XCTAssertEqual((event["page"] as? [String: String])?["text"], "Chosen passage")
+            XCTAssertEqual((event["page"] as? [String: String])?["scope"], selection ? "selection" : "page")
+        }
+        try exercise(selection: true)
+        try exercise(selection: false)
+    }
+
+    func testAnActionCannotRequestBothThePageAndTheSelection() {
+        let app = LampProject(id: "reader", name: "Reader", exe: "Reader", dir: URL(fileURLWithPath: "/tmp/reader"))
+        let surface: [String: Any] = ["title": "Reader", "detail": "", "sections": [], "fields": [],
+                                     "actions": [["id": "read", "label": "Read", "readsPage": true, "readsSelection": true]], "busy": false]
+        XCTAssertEqual(BrowserSurfacePrototype().exchange(["boot": UUID().uuidString, "surface": surface], app: app).0, 400)
+    }
+
 }

@@ -69,8 +69,11 @@ LampBrowser.start(surface: {
 
 A Surface contains `title`, `detail`, `sections`, `fields`, `actions` and `busy`.
 Sections have title/text; fields have id/label/value; actions have id/label and
-readsPage (false by default). Event contains id/action/fields and optional page
-(url/title/text). The SDK marks the surface busy while its handler runs. Start
+readsPage or readsSelection (both false by default, never both true). Event contains
+id/action/fields and optional page (url/title/text/scope). A selection action receives
+only the selected readable passage with scope `selection`; an empty or private
+selection is refused, never replaced with the whole page. Use it for translation,
+explanations or other wishes about highlighted text. The SDK marks the surface busy while its handler runs. Start
 once from a shared app model, not an ephemeral window task. The older async
 `serve` API remains available for callers managing that lifetime themselves.
 `LampBrowser.openSetup()` asks Lamp to show the app's setup offer.
@@ -84,7 +87,7 @@ by Lamp.
 
 ## Boundaries and lifetime
 
-Opening a companion reads no page text. A clicked readsPage action asks Chrome
+Opening a companion reads no page text. A clicked readsPage or readsSelection action asks Chrome
 for optional permission on the current site, then captures that foreground,
 top-level document. Chrome calls its host permission **read and change**; this
 surface only offers bounded text capture. The sidebar states that the action
@@ -93,7 +96,10 @@ removed in Chrome, but does not give companion apps standing page access: each
 capture needs another sidebar click.
 
 Capture skips inputs, editable/private regions, hidden text, scripts and frames,
-and stops at 24,000 UTF-16 units. It does not read cookies or browser storage.
+and stops at 24,000 UTF-16 units. Page capture chooses the first main/article region,
+so some sites may supply navigation or omit useful sections. Selection capture uses
+the exact range in the main document and excludes shadow-root/frame selections.
+It does not read cookies or browser storage.
 The worker checks active tab, URL, document identity and permission epoch before
 delivery. Only the extension's own sidebar can send companion actions. The
 gateway rejects website Origins and requires app tokens or signed native

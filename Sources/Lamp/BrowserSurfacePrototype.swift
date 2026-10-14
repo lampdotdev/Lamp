@@ -8,7 +8,7 @@ final class BrowserSurfacePrototype {
     struct Surface: Codable {
         struct Section: Codable { var title: String; var text: String }
         struct Field: Codable { var id: String; var label: String; var value: String }
-        struct Action: Codable { var id: String; var label: String; var readsPage: Bool }
+        struct Action: Codable { var id: String; var label: String; var readsPage: Bool; var readsSelection: Bool? }
         var title: String
         var detail: String
         var sections: [Section]
@@ -19,7 +19,7 @@ final class BrowserSurfacePrototype {
             title.count <= 120 && detail.count <= 1000 && sections.count <= 20 && fields.count <= 12 && actions.count <= 8
             && sections.allSatisfy { $0.title.count <= 120 && $0.text.count <= 16000 }
             && fields.allSatisfy { !$0.id.isEmpty && $0.id.count <= 60 && $0.label.count <= 120 && $0.value.count <= 4000 }
-            && actions.allSatisfy { !$0.id.isEmpty && $0.id.count <= 60 && $0.label.count <= 120 }
+            && actions.allSatisfy { !$0.id.isEmpty && $0.id.count <= 60 && $0.label.count <= 120 && !($0.readsPage && $0.readsSelection == true) }
             && Set(actions.map(\.id)).count == actions.count && Set(fields.map(\.id)).count == fields.count
         }
     }
@@ -84,13 +84,14 @@ final class BrowserSurfacePrototype {
             return ["error": "The app changed. Wait for its companion to update, then try again."]
         }
         var event: [String: Any] = ["id": eventID, "action": action.id, "fields": fields]
-        if action.readsPage {
+        if action.readsPage || action.readsSelection == true {
             guard let page = body["page"] as? [String: String], let url = page["url"],
                   let u = URLComponents(string: url), u.user == nil, u.password == nil,
                   u.scheme == "https" || (u.scheme == "http" && ["localhost", "127.0.0.1"].contains(u.host ?? "")),
                   url.count <= 4000, let text = page["text"], text.utf8.count <= 100_000,
-                  let title = page["title"], title.count <= 1000 else { return ["error": "That page couldn't be read. Try again on a website."] }
-            event["page"] = ["url": url, "text": text, "title": title]
+                  let title = page["title"], title.count <= 1000,
+                  action.readsSelection != true || (page["scope"] == "selection" && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) else { return ["error": "That page couldn't be read. Try again on a website."] }
+            event["page"] = ["url": url, "text": text, "title": title, "scope": action.readsSelection == true ? "selection" : "page"]
         } else if body["page"] != nil { return ["error": "This action doesn't read a page."] }
         entry.event = event; entry.eventDate = Date(); entry.accepted.append(eventID)
         entry.accepted = Array(entry.accepted.suffix(64)); apps[id] = entry

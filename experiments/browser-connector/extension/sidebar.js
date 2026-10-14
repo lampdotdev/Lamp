@@ -27,7 +27,7 @@ function render(state) {
     label.textContent = field.label; input.value = field.value; input.dataset.field = field.id; input.maxLength = 4000;
     label.append(input); $('fields').append(label);
   }
-  $('consent').textContent = s.actions.some(a => a.readsPage) ? 'Using this page shares its text with this app and its AI.' : '';
+  $('consent').textContent = s.actions.some(a => a.readsPage) ? 'Using this page shares its text with this app and its AI.' : s.actions.some(a => a.readsSelection) ? 'Using a selection shares only that passage with this app and its AI.' : '';
   for (const action of s.actions) {
     const button = document.createElement('button'); button.textContent = action.label;
     button.disabled = busy || state.busy || s.busy;
@@ -42,7 +42,7 @@ async function act(action) {
   for (const button of $('actions').children) button.disabled = true;
   try {
     // Called directly from the click, before any await, so Chrome retains the permission gesture.
-    if (action.readsPage) {
+    if (action.readsPage || action.readsSelection) {
       if (!current) throw new Error('Click Lamp on the website first.');
       const origin = new URL(current.url).origin;
       if (!await chrome.permissions.request({origins:[origin+'/*']})) throw new Error('The page was not shared.');

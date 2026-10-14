@@ -131,6 +131,6 @@ importScripts('run-worker.js');
 importScripts('surface-worker.js');
 
 // Connection readiness is independent of long-running page reads.
-const companionHello = () => native({op:'companion-hello',version:1}).catch(() => {});
+const companionHello = () => native({op:'companion-hello',version:2}).catch(() => {});
 setInterval(companionHello, 2000);
 void companionHello();
