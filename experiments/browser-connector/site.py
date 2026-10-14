@@ -46,6 +46,9 @@ class Site(BaseHTTPRequestHandler):
         if self.path == '/unapproved':
             html = '<!doctype html><title>Unapproved demo site</title><h1>UNAPPROVED_SITE_CANARY</h1><button>Unapproved action</button>'
             self.send_response(200); self.send_header('Content-Type','text/html'); self.end_headers(); self.wfile.write(html.encode()); return
+        if self.path.split('?')[0] in ('/overlay', '/overlay/results', '/overlay/item'):
+            html = self.overlay_html(self.path.split('?')[0])
+            self.send_response(200); self.send_header('Content-Type','text/html; charset=utf-8'); self.end_headers(); self.wfile.write(html.encode()); return
         if self.path == '/task' and signed_in:
             html = self.task_html()
             self.send_response(200); self.send_header('Content-Type','text/html; charset=utf-8'); self.send_header('Cache-Control','no-store'); self.end_headers(); self.wfile.write(html.encode()); return
@@ -69,6 +72,36 @@ class Site(BaseHTTPRequestHandler):
         self.send_header('Cache-Control','no-store')
         self.end_headers()
         self.wfile.write(html.encode())
+    def overlay_html(self, path):
+        """A made-up catalogue built the way many real sites are: its search is a component with its insides in a
+        shadow root, opened as a modal dialog over a blurred page, with a switch, a menu of boxes and a link out."""
+        style = '<style>body{font:17px system-ui;margin:70px 40px;color:#243d48;background:#faf8f3;max-width:900px}a{color:#146678}li{margin:26px 0}</style>'
+        if path == '/overlay/item':
+            return '<!doctype html><title>Brass table lamp | Harbor Catalogue</title>' + style + '<main><h1>Brass table lamp</h1><p>In stock in Lisbon and Porto. $84.</p><a href="/overlay/results">All results</a></main>'
+        if path == '/overlay/results':
+            rows = ''.join(f'<li><a href="/overlay/item">Lamp number {n}</a> · ${40 + n}</li>' for n in range(1, 61))
+            return '<!doctype html><title>lamps, In stock, Lisbon | Harbor Catalogue</title>' + style + '<main><h1>60 lamps in stock in Lisbon</h1><ol>' + rows + '</ol><p>End of the list</p></main>'
+        return '<!doctype html><title>Harbor Catalogue</title>' + style + r'''<main><h1>Harbor Catalogue</h1><p>Find a lamp across our shops.</p><demo-search></demo-search>
+        <label>Password <input type="password" value="PASSWORD_CANARY_DO_NOT_CAPTURE"></label></main>
+        <script>
+        customElements.define('demo-search', class extends HTMLElement {
+          connectedCallback() {
+            const root = this.attachShadow({mode: 'open'});
+            root.innerHTML = `<style>dialog{width:560px;border:0;border-radius:14px;padding:22px;font:16px system-ui}dialog::backdrop{background:rgb(0 0 0/.25);backdrop-filter:blur(6px)}
+              button,input{font:inherit;padding:8px 12px;margin:6px 6px 6px 0}[popover]{margin:0;position:fixed;top:230px;left:calc(50% - 60px);padding:12px;border:1px solid #bbb;border-radius:10px}label{display:block;margin:8px 0}</style>
+              <button id="open">Search the catalogue</button>
+              <dialog><input type="search" aria-label="Search" placeholder="Search lamps…">
+                <button role="switch" aria-checked="false" aria-label="In stock only">In stock only</button>
+                <button id="where" aria-haspopup="true" aria-expanded="false">Shop</button>
+                <div popover="manual"><label><input type="checkbox"> Lisbon</label><label><input type="checkbox"> Porto</label><input aria-label="Private note" value="DRAFT_CANARY_DO_NOT_CAPTURE"></div>
+                <p id="count">60 lamps</p><a href="/overlay/results">See all</a></dialog>`;
+            const $ = s => root.querySelector(s), menu = $('[popover]');
+            $('#open').onclick = () => $('dialog').showModal();
+            $('[role=switch]').onclick = e => e.target.setAttribute('aria-checked', e.target.getAttribute('aria-checked') !== 'true');
+            $('#where').onclick = e => { menu.togglePopover(); e.target.setAttribute('aria-expanded', menu.matches(':popover-open')); };
+          }
+        });
+        </script>'''
     def task_html(self):
         return r'''<!doctype html><title>Harbor Insurance renewals</title>
         <style>body{font:17px system-ui;margin:65px 35px;color:#243d48;background:#faf8f3;max-width:900px}h1{font-size:30px}button,select{font:inherit;padding:9px;margin:8px 8px 8px 0}article{background:white;padding:16px;border:1px solid #ccc;margin:14px 0}table{border-collapse:collapse}td,th{padding:10px;border:1px solid #ccc}</style>
