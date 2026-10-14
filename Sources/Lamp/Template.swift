@@ -3845,6 +3845,9 @@ enum Template {
         private var known: [String: Data] = [:]
         /// Collections that can be shared, each in a zone of its own.
         private var shareable: Set<String> = []
+        /// Records moving from the app's first zone to their collection's own: each is taken out of the first
+        /// zone only once iCloud has saved it in the new one.
+        private var moving: Set<String> = []
         /// Collections whose list this person joined, with the owner of that list's zone.
         private var joined: [String: String] = [:]
         /// Each share as iCloud last gave it: the person's own by the collection's name, the one they joined by
@@ -3863,6 +3866,7 @@ enum Template {
             self.container = container
             known = LampStore.load([String: Data].self, from: "icloud.records") ?? [:]
             shareable = LampStore.load(Set<String>.self, from: "icloud.shareable") ?? []
+            moving = LampStore.load(Set<String>.self, from: "icloud.moving") ?? []
             joined = LampStore.load([String: String].self, from: "icloud.joined") ?? [:]
             shares = (LampStore.load([String: Data].self, from: "icloud.shares") ?? [:])
                 .compactMapValues { try? NSKeyedUnarchiver.unarchivedObject(ofClass: CKShare.self, from: $0) }
@@ -3946,6 +3950,11 @@ enum Template {
             guard let (engine, zone) = home(of: collection) else { return }
             let recordID = CKRecord.ID(recordName: Self.recordName(collection, id), zoneID: zone)
             engine.state.add(pendingRecordZoneChanges: [deleted ? .deleteRecord(recordID) : .saveRecord(recordID)])
+            // Deleted while still moving from the app's first zone: its copy there goes too.
+            if deleted, joined[collection] == nil, moving.remove(recordID.recordName) != nil {
+                LampStore.save(moving, to: "icloud.moving")
+                engine.state.add(pendingRecordZoneChanges: [.deleteRecord(CKRecord.ID(recordName: recordID.recordName, zoneID: zoneID))])
+            }
             // Sent now, not at the engine's leisure: the other device should see it within moments.
             Task { do { try await engine.sendChanges() } catch { print("LampSync: couldn't send to iCloud: \(error)") } }
         }
@@ -4045,12 +4054,18 @@ enum Template {
         }
 
         /// A record left in the app's first zone by a collection since made shareable: from a device that hadn't
-        /// moved it yet, or one this device never had. Taken in when it's newer than what's here, sent to the
-        /// collection's own zone and taken out of the first one, so nothing is lost and no stale copy stays to
-        /// come back. Its deletion from the first zone is passed over (`place`): the item lives on in the new one.
+        /// moved it yet, or one this device never had. Taken in when it's newer than what's here and sent to the
+        /// collection's own zone; once iCloud has it there it's taken out of the first one (`moved`), so there's
+        /// always a copy in iCloud and no stale one stays to come back. Its deletion from the first zone is
+        /// passed over (`place`): the item lives on in the new one. One deleted here meanwhile stays deleted.
         private func migrate(_ record: CKRecord, collection: String, id: String) {
             guard let engine else { return }
             let store = Self.prefix + collection
+            let destination = CKRecord.ID(recordName: record.recordID.recordName, zoneID: ownZone(collection))
+            if engine.state.pendingRecordZoneChanges.contains(.deleteRecord(destination)) {
+                engine.state.add(pendingRecordZoneChanges: [.deleteRecord(record.recordID)])
+                return
+            }
             if let json = record["json"] as? String {
                 let theirs = record["modified"] as? Date ?? .distantPast
                 let mine = LampStore.query("SELECT updated FROM forge_items WHERE collection = ? AND id = ?", store, id).first?["updated"] as? Double
@@ -4060,8 +4075,16 @@ enum Template {
                     collections[collection]?.reload(id: id, in: store)
                 }
             }
-            engine.state.add(pendingRecordZoneChanges: [.saveRecord(CKRecord.ID(recordName: record.recordID.recordName, zoneID: ownZone(collection))),
-                                                        .deleteRecord(record.recordID)])
+            moving.insert(record.recordID.recordName)
+            LampStore.save(moving, to: "icloud.moving")
+            engine.state.add(pendingRecordZoneChanges: [.saveRecord(destination)])
+        }
+
+        /// A moving record is saved in its collection's own zone: its copy in the first zone can go.
+        private func moved(_ recordID: CKRecord.ID) {
+            guard let engine, recordID.zoneID.zoneName != zoneID.zoneName, moving.remove(recordID.recordName) != nil else { return }
+            LampStore.save(moving, to: "icloud.moving")
+            engine.state.add(pendingRecordZoneChanges: [.deleteRecord(CKRecord.ID(recordName: recordID.recordName, zoneID: zoneID))])
         }
 
         private func remove(_ recordID: CKRecord.ID, type: CKRecord.RecordType, inShared: Bool) {
@@ -4335,7 +4358,10 @@ enum Template {
             case .sentDatabaseChanges(let sent):
                 for (zone, error) in sent.failedZoneSaves.map({ ($0.zone.zoneID.zoneName, $0.error) }) { print("LampSync: couldn't make the zone \(zone) in iCloud: \(error)") }
             case .sentRecordZoneChanges(let sent):
-                for record in sent.savedRecords { remember(record, inShared: inShared) }
+                for record in sent.savedRecords {
+                    remember(record, inShared: inShared)
+                    if !inShared { moved(record.recordID) }
+                }
                 for failure in sent.failedRecordSaves {
                     let recordID = failure.record.recordID
                     if failure.error.code != .serverRecordChanged { print("LampSync: couldn't save \(recordID.recordName) to iCloud: \(failure.error)") }
