@@ -4695,6 +4695,33 @@ enum Template {
         }
     }
 
+    /// Apple's weather attribution, which Apple's terms ask for wherever its weather is shown: the Apple Weather
+    /// mark for the light or dark look, linking to the page of where the data comes from.
+    ///
+    ///     VStack { WeatherView(now: now); LampWeatherAttribution() }
+    struct LampWeatherAttribution: View {
+        @Environment(\.colorScheme) private var scheme
+        @State private var attribution: WeatherAttribution?
+        var height: CGFloat = 12
+
+        var body: some View {
+            Group {
+                if let attribution {
+                    Link(destination: attribution.legalPageURL) {
+                        AsyncImage(url: scheme == .dark ? attribution.combinedMarkDarkURL : attribution.combinedMarkLightURL) { image in
+                            image.resizable().scaledToFit()
+                        } placeholder: {
+                            Text(attribution.serviceName).font(.caption2)
+                        }
+                        .frame(height: height)
+                    }
+                    .accessibilityLabel(attribution.serviceName)
+                }
+            }
+            .task { attribution = try? await WeatherService.shared.attribution }
+        }
+    }
+
     // MARK: - Music
 
     /// Apple Music: what the person has played lately, their library, the catalog, and playing a song. Needs
