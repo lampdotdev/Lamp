@@ -493,7 +493,6 @@ final class Store: ObservableObject {
             }
         }
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        if BrowserPrototype.enabled { try? BrowserPrototype.shared.prepareFixtures(root: root) }
         reload()
         restoreWaiting()
         for project in projects { discardIfUnused(project.id) }
@@ -2659,6 +2658,23 @@ final class Store: ObservableObject {
         refreshOpenApps()
     }
 
+    /// The sidebar in Chrome chose an app that isn't open: it opens as last built, behind the page the person is on.
+    /// Not while Lamp is building it, and only one try at a time while the app comes up.
+    func openForSidebar(_ project: LampProject) {
+        guard !busy.contains(project.id), macCopies(of: project).isEmpty,
+              FileManager.default.fileExists(atPath: project.installedURL.path),
+              openingForSidebar.insert(project.id).inserted else { return }
+        Task {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = false
+            _ = try? await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
+            refreshOpenApps()
+            try? await Task.sleep(for: .seconds(15))
+            openingForSidebar.remove(project.id)
+        }
+    }
+    private var openingForSidebar: Set<String> = []
+
     /// The agent's `use_app` tool: hands its clicks, typing and keys to the open app, which performs them on its
     /// own front window (LampDriver in LampSupport), then reports what happened with a fresh picture.
     private func use(_ project: LampProject, request body: Data) async -> (Int, [String: Any]) {
@@ -2667,6 +2683,13 @@ final class Store: ObservableObject {
               let actions = request["actions"] as? [[String: Any]], !actions.isEmpty,
               let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
             return (400, ["error": "use_app needs a list of actions."])
+        }
+        if request["sidebar"] as? Bool == true {
+            guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
+            guard !macCopies(of: project).isEmpty else {
+                return (200, ["text": "The app isn't open. Call look_at_app with sidebar first: it builds the app and opens it."])
+            }
+            return await BrowserPreview.use(project, actions: actions, page: request["page"] as? String, selection: request["selection"] as? String)
         }
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         // Not in the copy the person kept open: what it holds is theirs, and it isn't the agent's change.
@@ -2714,6 +2737,16 @@ final class Store: ObservableObject {
         if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
         return (200, ["text": text, "screenshots": Self.agentPictures(Runtime.pictures(of: project), in: project)])
     }
+
+    /// `look_at_app` with `sidebar`: the app is built and opened as for any look, then its sidebar in Chrome is
+    /// drawn by Lamp (BrowserPreview) in place of its windows, beside the page the agent names.
+    private func lookAtSidebar(_ project: LampProject, page: String?) async -> (Int, [String: Any]) {
+        guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
+        let window = await look(at: project)
+        guard window.0 == 200, !macCopies(of: project).isEmpty else { return window }
+        return await BrowserPreview.look(project, page: page)
+    }
+    private static let noSidebar = "Only a Mac app has a sidebar in Chrome, and only while Apps in Chrome is on in Lamp's Settings → Experimental."
 
     /// A line every app that writes its screen as text (`LampScreen` in LampSupport.swift) has in its binary.
     private static let screenTextMarker = "The screen as text, in reading order"
@@ -2809,7 +2842,9 @@ final class Store: ObservableObject {
             if FileTools.names.contains(name) { return reply(await file(name, arguments, for: project)) }
             let (status, answer): (Int, [String: Any])
             switch name {
-            case "look_at_app": (status, answer) = await look(at: project)
+            case "look_at_app":
+                (status, answer) = arguments["sidebar"] as? Bool == true
+                    ? await lookAtSidebar(project, page: arguments["page"] as? String) : await look(at: project)
             case "use_app":
                 let actions = (try? JSONSerialization.data(withJSONObject: arguments)) ?? Data("{}".utf8)
                 (status, answer) = await use(project, request: actions)
@@ -3067,8 +3102,8 @@ final class Store: ObservableObject {
         guard let capability = (arguments["capability"] as? String).flatMap(Capability.init(rawValue:)) else {
             return (400, ["error": "`capability` must be text, decisions, pictures or browser."])
         }
-        if capability == .browser && (!BrowserPrototype.enabled || !project.platform.hasMac) {
-            return (400, ["error": "Browser companions are available for Mac apps when the browser experiment is enabled."])
+        if capability == .browser && (!BrowserBridge.enabled || !project.platform.hasMac) {
+            return (400, ["error": "A sidebar in Chrome is only for a Mac app, while Apps in Chrome is on in Lamp's Settings → Experimental."])
         }
         let away = arguments["away"] as? Bool == true
         guard !away || (project.platform.hasIOS && capability != .browser) else {
@@ -4358,7 +4393,7 @@ final class Store: ObservableObject {
         switch capability {
         case .text: "\(project.name) just tried to use AI, but nothing on this Mac can answer yet. Set up one of the ways below and it will work the next time."
         case .decisions: "\(project.name) uses AI to make quick judgments, like yes or no, or which of a few options fits, but nothing on this Mac can make them yet. Set up one of the ways below and they will work the next time."
-        case .browser: "\(project.name) has a browser companion. Connect Lamp to Chrome to use it beside a website."
+        case .browser: "\(project.name) also works in Chrome. Connect Lamp to Chrome to use it beside a page."
         case .pictures: "\(project.name) just tried to make a picture, but nothing on this Mac can draw yet. Set up one of the ways below and it will work the next time."
         }
     }
@@ -4713,8 +4748,8 @@ final class Store: ObservableObject {
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
-        if BrowserPrototype.enabled, request.path.hasPrefix("/prototype/browser/") {
-            return BrowserPrototype.shared.handle(request, projects: projects)
+        if BrowserBridge.enabled, request.path.hasPrefix("/browser/") {
+            return BrowserBridge.shared.handle(request, projects: projects)
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
@@ -4805,7 +4840,11 @@ final class Store: ObservableObject {
     /// The routes the agent uses mid-turn: build and try the app, approvals, versions, and the MCP tools.
     private func agentRequest(_ request: Gateway.Request, route: String, for project: LampProject) async -> (Int, [String: Any]) {
         if route == "/mcp" { return await mcp(request.body, for: project, fileTools: request.path.contains("files=1")) }
-        if request.path == "/agent/look" { return await look(at: project) }
+        if request.path == "/agent/look" {
+            let arguments = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+            return arguments["sidebar"] as? Bool == true
+                ? await lookAtSidebar(project, page: arguments["page"] as? String) : await look(at: project)
+        }
         if request.path == "/agent/use" { return await use(project, request: request.body) }
         if request.path.hasPrefix("/agent/versions") {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
@@ -5022,10 +5061,6 @@ final class Store: ObservableObject {
         guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let task = (json["task"] as? String)?.trimmed, !task.isEmpty else { return (400, ["error": "Missing task."]) }
         let allowActions = json["act"] as? Bool ?? false
-        // An app built from a task the person showed Lamp does it where it was shown, in their browser.
-        if BrowserPrototype.enabled, let shown = BrowserRun.Shown.load(project) {
-            return await useBrowser(for: project, shown: shown, task: task, allowActions: allowActions)
-        }
         guard ComputerUse.enabled, await ComputerUse.status() == .ready else {
             // Asked once per app per launch: an app that keeps trying would otherwise raise a dialog per call.
             if computerUseRefused.insert(project.id).inserted {
@@ -5087,54 +5122,6 @@ final class Store: ObservableObject {
         }
     }
 
-    /// The browser prototype's task: on the site the person showed, through the extension in their own Chrome.
-    /// The job, its limits and the question before an action are the ones `useComputer` uses.
-    private func useBrowser(for project: LampProject, shown: BrowserRun.Shown, task: String, allowActions: Bool) async -> (Int, [String: Any]) {
-        let host = URL(string: shown.site)?.host ?? shown.site
-        guard BrowserRun.shared.mayUse(project, shown.site) else {
-            return (403, ["error": "\(project.title) may no longer use \(host). Show Lamp the task again to allow it."])
-        }
-        guard BrowserTaskPrototype.shared.recording.map({ $0.stopped != nil }) ?? true else {
-            return (409, ["error": "Lamp is recording in Chrome. Finish that first, then try again."])
-        }
-        guard let session = BrowserRun.shared.begin(for: project, shown: shown) else {
-            return (409, ["error": "Lamp is already doing a task in Chrome. Try again when it has finished."])
-        }
-        let chosen = AppAI.computerRoute(for: AppModels.load(project).text)
-        weak var job: ComputerUse.Job?
-        let work = ComputerUse.Job(task, appName: project.name, allowActions: allowActions,
-                                   browser: BrowserRun.Driver(session: session, shown: shown)) { [weak self] action in
-            guard let self, let job, !job.isStopped else { return false }
-            // Each action is asked about by itself: allowing one never allows the next.
-            switch await self.confirm(action, for: project, owner: ObjectIdentifier(job), offersAll: false) {
-            case .allow, .allowAll: return true
-            case .deny: return false
-            case .stop: job.stop(); return false
-            }
-        }
-        job = work
-        defer { work.close() }
-        let token = UUID().uuidString + UUID().uuidString
-        computerTasks[token] = work
-        defer { computerTasks[token] = nil }
-        do {
-            let (text, cost) = try await ComputerUse.answer(work, route: chosen, token: token)
-            record(project, cost: cost)
-            print("Browser task for \(project.name) through \(chosen.label): \(work.steps) steps, answered.")
-            if work.isStopped { return (409, ["error": ComputerUse.stoppedByPerson.message]) }
-            // The AI's own word that the site no longer has what the shown task used: said plainly, not passed off as an answer.
-            if text.hasPrefix("SITE CHANGED:") {
-                return (502, ["error": "\(host) looks different from when you showed Lamp this task (\(String(text.dropFirst(13)).trimmed.prefix(200))). Show Lamp the task again."])
-            }
-            return (200, ["text": text])
-        } catch {
-            if let spent = (error as? ComputerUse.Failure)?.cost, spent > 0 { record(project, cost: spent) }
-            print("Browser task for \(project.name) through \(chosen.label): \(work.steps) steps, ended: \(error.localizedDescription)")
-            if work.isStopped { return (409, ["error": ComputerUse.stoppedByPerson.message]) }
-            return (502, ["error": error.localizedDescription])
-        }
-    }
-
     /// Tasks a coding agent is driving right now, by the token that agent was given.
     private var computerTasks: [String: ComputerUse.Job] = [:]
 
@@ -5183,7 +5170,7 @@ final class Store: ObservableObject {
     private typealias ActionAnswer = ApprovalPanel.Answer
 
     /// Asks the person before an app clicks, types or presses keys in another app, beside where it happens.
-    private func confirm(_ action: ComputerUse.Action, for project: LampProject, owner: ObjectIdentifier?, offersAll: Bool = true) async -> ActionAnswer {
+    private func confirm(_ action: ComputerUse.Action, for project: LampProject, owner: ObjectIdentifier?) async -> ActionAnswer {
         await ApprovalPanel.ask(.init(
             asker: project.name,
             askerIcon: NSWorkspace.shared.icon(forFile: project.installedURL.path),
@@ -5193,8 +5180,7 @@ final class Store: ObservableObject {
             intent: action.intent,
             point: action.point,
             window: action.window,
-            owner: owner,
-            offersAll: offersAll))
+            owner: owner))
     }
 
     /// Shows an alert without stopping everything else: as a sheet on Lamp's window when there is one, so

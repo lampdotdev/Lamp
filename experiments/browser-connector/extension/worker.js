@@ -1,9 +1,13 @@
-let port, outstanding, chain = Promise.resolve(), pumping = false, permissionEpoch = 0;
+// One generic sidebar where each Lamp app draws its own parts. Nothing here reads as the person browses: Chrome
+// itself lights the toolbar icon on pages an app says it fits (declarativeContent), and a page's text is read only
+// when a sidebar button that reads it is clicked, with the access that click on the toolbar icon gave.
+let port, outstanding, chain = Promise.resolve();
 const profileReady = (async () => {
   const saved = await chrome.storage.local.get('profile');
   const profile = saved.profile || crypto.randomUUID();
   if (!saved.profile) await chrome.storage.local.set({profile});
-  await chrome.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});
+  await chrome.storage.local.setAccessLevel({accessLevel: 'TRUSTED_CONTEXTS'});
+  await chrome.storage.session.setAccessLevel({accessLevel: 'TRUSTED_CONTEXTS'});
   return profile;
 })();
 function connect() {
@@ -14,123 +18,155 @@ function connect() {
     if (value.error) pending?.reject(new Error(value.error)); else pending?.resolve(value);
   });
   port.onDisconnect.addListener(() => {
-    const error = new Error(chrome.runtime.lastError?.message || 'Lamp disconnected.');
-    outstanding?.reject(error); outstanding = null; port = null;
+    outstanding?.reject(new Error('Open Lamp on this Mac, then try again.')); outstanding = null; port = null;
   });
 }
-function native(body, stillValid = () => true) {
+// One question to Lamp at a time: the native host answers in order and holds no queue of its own.
+function native(body) {
   const next = chain.then(async () => {
     const profile = await profileReady;
     connect();
-    if (!stillValid()) throw new Error('Site permission changed during this read.');
-    return new Promise((resolve,reject) => { outstanding={resolve,reject}; port.postMessage({...body,profile}); });
+    return new Promise((resolve, reject) => { outstanding = {resolve, reject}; port.postMessage({...body, profile}); });
   });
   chain = next.catch(() => {});
   return next;
 }
-const pattern = origin => origin + '/*';
-async function status() {
-  const state = await native({op:'list'});
-  const removed=[];
-  for (const g of state.grants) if (!await chrome.permissions.contains({origins:[pattern(g.origin)]})) removed.push(g.id);
-  if (removed.length) { await native({op:'permissionRemoved',grants:removed}); return native({op:'list'}); }
+
+// The icon is dim until a page fits an app; then Chrome swaps in the lit one with a dot, for that tab only.
+async function icon(lit) {
+  const result = {};
+  for (const size of [16, 32]) {
+    const bitmap = await createImageBitmap(await (await fetch(chrome.runtime.getURL(`icons/lamp-${size}.png`))).blob());
+    const canvas = new OffscreenCanvas(size, size), g = canvas.getContext('2d');
+    if (!lit) { g.filter = 'grayscale(1)'; g.globalAlpha = 0.5; }
+    g.drawImage(bitmap, 0, 0, size, size);
+    if (lit) {
+      g.filter = 'none'; g.globalAlpha = 1;
+      g.beginPath(); g.arc(size * 0.78, size * 0.22, size * 0.2, 0, 2 * Math.PI);
+      g.fillStyle = '#e8772e'; g.fill(); g.lineWidth = Math.max(1, size / 16); g.strokeStyle = 'white'; g.stroke();
+    }
+    result[size] = g.getImageData(0, 0, size, size);
+  }
+  return result;
+}
+const dimmed = icon(false).then(imageData => chrome.action.setIcon({imageData})).catch(() => {});
+
+// What fits an app is what it declared to Lamp: sites (and a path) and CSS selectors Chrome matches by itself.
+const siteFits = (fit, url) => url.protocol === 'https:' &&
+  (!fit.site || url.hostname === fit.site || url.hostname.endsWith('.' + fit.site)) &&
+  (!fit.path || url.pathname.startsWith(fit.path));
+function matchers(fit) {
+  const base = {schemes: ['https'], ...(fit.path ? {pathPrefix: fit.path} : {})};
+  const make = pageUrl => new chrome.declarativeContent.PageStateMatcher(fit.selector ? {pageUrl, css: [fit.selector]} : {pageUrl});
+  return fit.site ? [make({...base, hostEquals: fit.site}), make({...base, hostSuffix: '.' + fit.site})] : [make(base)];
+}
+let rulesKey;
+async function syncRules(apps) {
+  const fits = apps.flatMap(app => app.fits || []);
+  const key = JSON.stringify(fits);
+  if (rulesKey === undefined) rulesKey = (await chrome.storage.local.get('rulesKey')).rulesKey ?? '';
+  if (key === rulesKey) return;
+  await chrome.declarativeContent.onPageChanged.removeRules(undefined);
+  const conditions = fits.flatMap(matchers);
+  if (conditions.length) {
+    const imageData = await icon(true);
+    await chrome.declarativeContent.onPageChanged.addRules([{conditions, actions: [new chrome.declarativeContent.SetIcon({imageData})]}]);
+  }
+  rulesKey = key;
+  await chrome.storage.local.set({rulesKey});
+}
+async function list() {
+  const state = await native({op: 'surface-list'});
+  await syncRules(state.apps).catch(() => {});
   return state;
 }
-async function allowed(job) {
-  const state=await status();
-  if (!state.grants.some(g=>g.id===job.grant && g.app===job.app && g.origin===job.origin)) throw new Error('Access was revoked.');
-}
-async function read(job) {
-  const epoch = permissionEpoch;
+
+// Lamp counts the extension as connected while it hears from it. Its answer says when the apps' fits changed.
+let fitsSeen = '';
+async function hello() {
   try {
-    await allowed(job);
-    let tabs=(await chrome.tabs.query({})).filter(t=>t.url===job.url && !t.incognito);
-    if (tabs.length>1) throw new Error('More than one matching page is open. Close the extra tabs.');
-    let tab=tabs[0];
-    if (!tab) {
-      if (!job.openClosed) throw new Error('That page is closed. Open it in Chrome, or approve opening a background tab.');
-      tab=await chrome.tabs.create({url:job.url,active:false});
-    }
-    const deadline=Date.now()+10000;
-    while ((tab=await chrome.tabs.get(tab.id)).status!=='complete') {
-      if (Date.now()>deadline) throw new Error('The page took too long to load.');
-      await new Promise(r=>setTimeout(r,100));
-    }
-    if (tab.url!==job.url || new URL(tab.url).origin!==job.origin) throw new Error('The page moved to another address.');
-    await allowed(job);
-    const [metadata]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:()=>location.href});
-    if (metadata.result!==job.url) throw new Error('The page changed before reading.');
-    const [capture]=await chrome.scripting.executeScript({target:{tabId:tab.id,documentIds:[metadata.documentId]},args:[job.url],func:expected=>{
-      // Check inside the document before touching its text, including same-document navigation.
-      if (location.href!==expected) throw new Error('The page changed before reading.');
-      const readText=root=>{
-        const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
-        const parts=[];let n,count=0;
-        while ((n=walker.nextNode()) && count<24000) {
-          const el=n.parentElement;
-          if (!el || el.closest('input,textarea,select,script,style,noscript,iframe,[contenteditable]:not([contenteditable="false"]),[hidden],[aria-hidden="true"]')) continue;
-          if (!el.checkVisibility({checkOpacity:true,checkVisibilityCSS:true})) continue;
-          const text=n.textContent.replace(/\s+/g,' ').trim();
-          if (text) {parts.push(text);count+=text.length+1;}
-        }
-        return parts.join('\n').slice(0,24000);
-      };
-      const main=document.querySelector('main,article,[role="main"]');
-      let text=readText(main||document.body);
-      if (main && text.length<500) text=readText(document.body);
-      return {url:location.href,title:document.title.slice(0,1000),text};
-    }});
-    if (capture.documentId!==metadata.documentId || capture.result.url!==job.url) throw new Error('The page changed during reading.');
-    await allowed(job);
-    await native({op:'deliver',...job,page:capture.result}, () => epoch === permissionEpoch);
-    await chrome.storage.local.set({lastRead:{app:job.app,url:job.url,at:new Date().toISOString(),background:!tab.active}});
-  } catch(error) { await native({op:'failure',...job,error:error.message}).catch(()=>{}); }
+    const reply = await native({op: 'companion-hello', version: 3});
+    if (reply.fits !== fitsSeen) { await list(); fitsSeen = reply.fits; }
+  } catch {}
 }
-async function pump() {
-  if (pumping) return;
-  pumping=true;
-  try {
-    await status();
-    const state=await native({op:'poll'});
-    for (const job of state.jobs) await read(job);
-  } catch {} finally {pumping=false;}
+
+// Which apps fit the tab the person clicked Lamp on. The click gives access to that tab until it navigates;
+// a declared selector is only asked about (is it there?), so nothing of the page leaves it here.
+async function fitting(tab, apps) {
+  let url; try { url = new URL(tab.url); } catch { return []; }
+  const near = apps.filter(app => (app.fits || []).some(fit => siteFits(fit, url)));
+  const selectors = [...new Set(near.flatMap(app => app.fits.filter(fit => fit.selector && siteFits(fit, url)).map(fit => fit.selector)))];
+  const present = new Set();
+  if (selectors.length) {
+    try {
+      const [found] = await chrome.scripting.executeScript({target: {tabId: tab.id}, args: [selectors],
+        func: list => list.map(s => { try { return !!document.querySelector(s); } catch { return false; } })});
+      selectors.forEach((s, i) => { if (found.result[i]) present.add(s); });
+    } catch {}
+  }
+  return near.filter(app => app.fits.some(fit => siteFits(fit, url) && (!fit.selector || present.has(fit.selector)))).map(app => app.id);
 }
-chrome.runtime.onMessage.addListener((message,sender,reply)=>{
-  if (sender.id!==chrome.runtime.id || !['access.html','inspect.html'].some(p=>sender.url===chrome.runtime.getURL(p))) return;
-  (async()=>{
-    if (message.op==='status') return status();
-    if (message.op==='grant') {
-      const state=await status(), req=state.requests.find(r=>r.id===message.id);
-      if (!req || req.origin!==message.origin || !await chrome.permissions.contains({origins:[pattern(req.origin)]})) throw new Error('Allow this site in Chrome first.');
-      return native({op:'grant',id:req.id,url:req.url,origin:req.origin,openClosed:message.openClosed===true});
-    }
-    if (message.op==='revoke') {
-      const state=await status(), grant=state.grants.find(g=>g.id===message.grant);
-      if (!grant) throw new Error('That grant has already ended.');
-      await native({op:'revoke',grant:grant.id});
-      const after=await status();
-      if (!after.grants.some(g=>g.origin===grant.origin)) await chrome.permissions.remove({origins:[pattern(grant.origin)]});
-      return {revoked:true};
-    }
-    throw new Error('Unknown action.');
-  })().then(reply,error=>reply({error:error.message}));
+chrome.action.onClicked.addListener(tab => {
+  if (tab.incognito) return;
+  // Opening has to happen inside the click, before anything is awaited, or Chrome refuses it.
+  chrome.sidePanel.setOptions({tabId: tab.id, path: `sidebar.html?tab=${tab.id}`, enabled: true});
+  chrome.sidePanel.open({tabId: tab.id}).catch(() => {});
+  (async () => {
+    const {apps} = await list().catch(() => ({apps: []}));
+    const site = (() => { try { return new URL(tab.url).hostname; } catch { return ''; } })();
+    await chrome.storage.session.set({['tab:' + tab.id]: {fitting: await fitting(tab, apps), site, at: Date.now()}});
+  })();
+});
+// A tab that moves on loses the click's access; its sidebar says to click Lamp again to use the new page.
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  if (change.status !== 'loading') return;
+  const key = 'tab:' + tabId;
+  chrome.storage.session.get(key).then(saved => { if (saved[key] && !saved[key].moved) chrome.storage.session.set({[key]: {...saved[key], moved: true}}); });
+});
+chrome.tabs.onRemoved.addListener(tabId => { chrome.storage.session.remove(['tab:' + tabId, 'draft:' + tabId, 'pick:' + tabId]); });
+
+const CLICK_AGAIN = 'Click Lamp in Chrome’s toolbar, then try again.';
+async function capture(tabId, scope) {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab || !tab.active || tab.incognito) throw new Error('Open that tab to use this.');
+  let url; try { url = new URL(tab.url); } catch { throw new Error(CLICK_AGAIN); }   // no address means no access
+  if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Open a website to use this.');
+  const [metadata] = await chrome.scripting.executeScript({target: {tabId}, func: () => location.href}).catch(() => { throw new Error(CLICK_AGAIN); });
+  if (metadata.result !== tab.url) throw new Error('The page changed. Try again.');
+  const target = {tabId, documentIds: [metadata.documentId]};
+  await chrome.scripting.executeScript({target, files: ['surface-capture.js']});
+  const [read] = await chrome.scripting.executeScript({target, args: [scope], func: scope => {
+    try { return globalThis.__lampCaptureSurface(scope); } catch (error) { return {url: location.href, error: error.message}; }
+  }});
+  const now = await chrome.tabs.get(tabId).catch(() => null);
+  if (!now?.active || now.url !== tab.url || read.documentId !== metadata.documentId || read.result?.url !== tab.url) throw new Error('The page changed while it was read. Try again.');
+  if (read.result.error) throw new Error(read.result.error);
+  return read.result;
+}
+
+// Only the extension's own sidebar speaks to Lamp. Websites have no way in: there is no external or page listener.
+chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL('sidebar.html?'))) return;
+  (async () => {
+    const tab = Number(message.tab);
+    if (message.op === 'surface-list') return list();
+    if (message.op === 'surface-open') return native({op: 'surface-open', app: message.app});
+    if (message.op === 'surface-view') return native({op: 'surface-view', app: message.app, tab});
+    if (message.op !== 'surface-action') throw new Error('Unknown action.');
+    const state = await native({op: 'surface-view', app: message.app, tab});
+    const action = state.surface?.actions.find(a => a.id === message.action);
+    if (!action || state.revision !== message.revision || state.busy || state.surface.busy) throw new Error('The app changed. Try again.');
+    const request = {op: 'surface-action', app: message.app, tab, revision: message.revision, action: action.id, id: message.id, fields: message.fields};
+    if (action.readsPage || action.readsSelection) request.page = await capture(tab, action.readsSelection ? 'selection' : 'page');
+    return native(request);
+  })().then(reply, error => reply({error: error.message}));
   return true;
 });
-chrome.permissions.onRemoved.addListener(()=>{permissionEpoch++;void status().catch(()=>{});});
-chrome.runtime.onInstalled.addListener(()=>{void pump();});
-chrome.runtime.onStartup.addListener(()=>{void pump();});
-chrome.alarms.onAlarm.addListener(()=>{void pump();});
-chrome.alarms.create('reconnect',{periodInMinutes:0.5});
-// A native port keeps MV3 alive through Chrome's documented native-messaging lifetime rule.
-setInterval(pump,1000);
-void pump();
 
-importScripts('recorder-worker.js');
-importScripts('run-worker.js');
-
-importScripts('surface-worker.js');
-
-// Connection readiness is independent of long-running page reads.
-const companionHello = () => native({op:'companion-hello',version:2}).catch(() => {});
-setInterval(companionHello, 2000);
-void companionHello();
+chrome.alarms.create('hello', {periodInMinutes: 0.5});
+chrome.alarms.onAlarm.addListener(() => { void hello(); });
+chrome.runtime.onStartup.addListener(() => { void hello(); });
+chrome.runtime.onInstalled.addListener(() => { rulesKey = ''; chrome.storage.local.remove('rulesKey'); void hello(); });
+// A connected native port keeps the worker alive, so Lamp hears from it every two seconds while Chrome is open.
+setInterval(hello, 2000);
+void dimmed.then(hello);

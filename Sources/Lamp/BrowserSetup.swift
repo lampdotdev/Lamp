@@ -18,7 +18,7 @@ final class BrowserSetup: ObservableObject {
     static var hostManifest: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Google/Chrome/NativeMessagingHosts/\(hostName).json")
     }
-    static var helper: URL { BrowserPrototype.folder.appendingPathComponent("BrowserNativeHost") }
+    static var helper: URL { BrowserBridge.folder.appendingPathComponent("BrowserNativeHost") }
     static var bundledHelper: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/BrowserNativeHost") }
     static var extensionID: String { (try? String(contentsOf: source.appendingPathComponent("extension-id.txt")))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
 
@@ -31,13 +31,13 @@ final class BrowserSetup: ObservableObject {
         }
     }
     func receiveHello(version: Int) {
-        guard version == 2 else { return }
+        guard version == 3 else { return }
         heard = Date(); refresh()
     }
     func refresh() {
         let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") != nil
         let installed = Self.validBridge()
-        let live = BrowserPrototype.enabled && installed && Date().timeIntervalSince(heard) < 15
+        let live = BrowserBridge.enabled && installed && Date().timeIntervalSince(heard) < 15
         if hasChrome != chrome { hasChrome = chrome }
         if bridgeInstalled != installed { bridgeInstalled = installed }
         if connected != live { connected = live }
@@ -70,18 +70,18 @@ final class BrowserSetup: ObservableObject {
               manifest["allowed_origins"] as? [String] == ["chrome-extension://\(extensionID)/"],
               let installed = try? Data(contentsOf: helper), let bundled = try? Data(contentsOf: bundledHelper),
               installed == bundled, FileManager.default.isExecutableFile(atPath: helper.path),
-              let configData = try? Data(contentsOf: BrowserPrototype.folder.appendingPathComponent("config.json")),
+              let configData = try? Data(contentsOf: BrowserBridge.folder.appendingPathComponent("config.json")),
               let config = try? JSONSerialization.jsonObject(with: configData) as? [String: Any],
               config["port"] as? Int == Int(Edition.gatewayPort),
-              config["secretPath"] as? String == BrowserPrototype.folder.appendingPathComponent("secret").path,
-              let secret = try? Data(contentsOf: BrowserPrototype.folder.appendingPathComponent("secret")), !secret.isEmpty else { return false }
+              config["secretPath"] as? String == BrowserBridge.folder.appendingPathComponent("secret").path,
+              let secret = try? Data(contentsOf: BrowserBridge.folder.appendingPathComponent("secret")), !secret.isEmpty else { return false }
         return true
     }
     func install() {
         do {
-            guard BrowserPrototype.enabled, Self.extensionID.count == 32 else { throw Failure() }
+            guard BrowserBridge.enabled, Self.extensionID.count == 32 else { throw Failure() }
             let fm = FileManager.default
-            try BrowserPrototype.shared.prepare()
+            try BrowserBridge.shared.prepare()
             try fm.createDirectory(at: Self.folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             let source = Self.source.appendingPathComponent("extension")
             if !Self.extensionMatches {
@@ -94,8 +94,8 @@ final class BrowserSetup: ObservableObject {
             let bytes = try Data(contentsOf: Self.bundledHelper)
             if (try? Data(contentsOf: Self.helper)) != bytes { try bytes.write(to: Self.helper, options: .atomic) }
             try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: Self.helper.path)
-            let config: [String: Any] = ["port": Int(Edition.gatewayPort), "secretPath": BrowserPrototype.folder.appendingPathComponent("secret").path]
-            try JSONSerialization.data(withJSONObject: config).write(to: BrowserPrototype.folder.appendingPathComponent("config.json"), options: .atomic)
+            let config: [String: Any] = ["port": Int(Edition.gatewayPort), "secretPath": BrowserBridge.folder.appendingPathComponent("secret").path]
+            try JSONSerialization.data(withJSONObject: config).write(to: BrowserBridge.folder.appendingPathComponent("config.json"), options: .atomic)
             try fm.createDirectory(at: Self.hostManifest.deletingLastPathComponent(), withIntermediateDirectories: true)
             let manifest: [String: Any] = ["name": Self.hostName, "description": "Lamp browser companion", "path": Self.helper.path,
                                          "type": "stdio", "allowed_origins": ["chrome-extension://\(Self.extensionID)/"]]
@@ -124,23 +124,23 @@ struct BrowserSetupGuide: View {
             Text("Use your apps in Chrome").font(.title2.bold())
             if browser.connected {
                 Label("Lamp is connected to Chrome", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                Text("Open Lamp in Chrome’s toolbar and choose Open app companion.")
+                Text("On a page your app is for, Lamp lights up in Chrome’s toolbar. Click it to open the app beside the page.")
                 HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }
             } else if !browser.hasChrome {
-                Text("Install Chrome to use your apps beside websites.").foregroundStyle(.secondary)
+                Text("Install Chrome to use your apps beside web pages.").foregroundStyle(.secondary)
                 Button("Get Chrome…") { NSWorkspace.shared.open(URL(string: "https://www.google.com/chrome/")!) }
             } else if !browser.bridgeInstalled {
-                Text("Connect Lamp to Chrome so your apps can exchange what you choose in the browser.").foregroundStyle(.secondary)
+                Text("Connect Lamp to Chrome so your apps can open beside the pages you visit.").foregroundStyle(.secondary)
                 Button("Install Connection") { browser.install() }.keyboardShortcut(.defaultAction)
             } else {
-                Text("This research build uses Chrome’s developer mode for its extension. Chrome will ask before a companion reads a new site.").foregroundStyle(.secondary)
+                Text("Until Lamp is in the Chrome Web Store, its extension is added in Chrome’s developer mode.").foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 12) {
                     Text("1. Open Chrome’s extensions and turn on Developer mode.")
                     Button("Open Chrome Extensions") { browser.openExtensions() }
                     Text("2. If Lamp is already listed, click its Reload button. Otherwise click Load unpacked and choose the Lamp extension folder.")
                     Button("Show Extension Folder") { browser.chooseFolder() }
                     Text("The folder’s location is copied too: in the chooser, press ⇧⌘G, then ⌘V and Return.").font(.caption).foregroundStyle(.secondary)
-                    Text("3. Pin Lamp in Chrome’s toolbar. This window will confirm when it connects.")
+                    Text("3. Pin Lamp in Chrome’s toolbar. This window says when it’s connected.")
                 }
                 Button("Repair Connection") { browser.install() }.controlSize(.small)
             }

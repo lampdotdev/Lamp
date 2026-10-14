@@ -13,7 +13,7 @@ enum Capability: String, CaseIterable, Codable, Identifiable {
         case .text: "Text"
         case .decisions: "Decisions"
         case .pictures: "Pictures"
-        case .browser: "Browser companion"
+        case .browser: "Chrome sidebar"
         }
     }
 
@@ -99,7 +99,7 @@ extension AppAI {
     /// amount to, so nothing else has to work that out again.
     @MainActor static func resolve(_ capability: Capability, for project: LampProject? = nil, in context: AIContext = .mac) -> Resolution {
         if capability == .browser {
-            let available = BrowserPrototype.enabled && project?.platform.hasMac != false && context == .mac
+            let available = BrowserBridge.enabled && project?.platform.hasMac != false && context == .mac
             let connected = available && BrowserSetup.shared.connected
             return Resolution(capability: .browser, tier: connected ? .best : .none,
                               answer: connected ? "Lamp in Chrome" : nil, provider: connected ? "browser" : nil,
@@ -337,7 +337,7 @@ struct SetupOffer: Codable, Equatable, Hashable {
 /// per conversation and again only when it changes, so most requests carry nothing.
 enum AIStatus {
     @MainActor static func line(for project: LampProject, offered: Set<SetupOffer>) -> String {
-        var lines = Capability.allCases.filter { $0 != .browser || (BrowserPrototype.enabled && project.platform.hasMac) }.map { capability in
+        var lines = Capability.allCases.filter { $0 != .browser || (BrowserBridge.enabled && project.platform.hasMac) }.map { capability in
             let resolution = AppAI.resolve(capability, for: project)
             var line = "- \(capability.title): \(AppAI.summary(resolution))"
             if resolution.tier != .best, offered.contains(SetupOffer(capability: capability)) { line += "; Lamp has offered the person a way to set it up" }

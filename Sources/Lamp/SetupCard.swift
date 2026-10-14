@@ -122,7 +122,7 @@ struct SetupCard: View {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
             }
         } else if declined {
-            Text(offer.capability == .browser ? "You can connect later in Lamp’s Experimental settings." : "No problem. You can set this up any time in Lamp's Settings, under AI Providers.")
+            Text(offer.capability == .browser ? "No problem. You can connect Chrome any time in Lamp’s Settings, under Experimental." : "No problem. You can set this up any time in Lamp's Settings, under AI Providers.")
         } else {
             Text(reason)
         }
@@ -165,7 +165,7 @@ struct UpgradeView: View {
         case .key(let provider): return Provider.keyProvider(provider) != nil
         case .signIn: return true
         case .drawIcons: return Icons.playgroundAvailable
-        case .browserExtension: return BrowserPrototype.enabled
+        case .browserExtension: return BrowserBridge.enabled
         }
     }
 
@@ -495,7 +495,7 @@ struct BrowserConnectionUpgrade: View {
     @State private var showGuide = false
     var body: some View {
         OptionRow(symbol: "sidebar.right", title: browser.connected ? "Connected to Chrome" : "Connect Lamp to Chrome",
-                  detail: browser.connected ? "Open Lamp in Chrome’s toolbar." : (browser.bridgeInstalled ? "Open Chrome and add or enable the Lamp extension." : "Install the connection and add Lamp to Chrome."), compact: compact) {
+                  detail: browser.connected ? "Click Lamp in Chrome’s toolbar beside a page." : (browser.bridgeInstalled ? "Add the Lamp extension in Chrome." : "Add Lamp to Chrome to use apps beside pages."), compact: compact) {
             Button(browser.connected ? "Open…" : "Set Up…") { showGuide = true }
         }
         .sheet(isPresented: $showGuide) { BrowserSetupGuide() }

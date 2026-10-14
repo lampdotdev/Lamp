@@ -7152,11 +7152,23 @@ enum Template {
     #endif
 
     #if os(macOS)
-    /// Experimental app-owned companion in the Lamp browser sidebar. Requires Lamp Dev's browser experiment.
+    /// This app's sidebar in Chrome, beside the page the person is on. Lamp's extension draws it from the Surface
+    /// you publish (data, never HTML) and sends each click back to `handle`. Every Chrome tab has a sidebar of its
+    /// own: `surface(tab)` draws one tab's, and `event.tab` says which tab a click came from, so keep what a click
+    /// prepares (a preview, a draft) by tab and two pages never mix. Declare where it fits in browser.json at the
+    /// app's root. Start it once, from the app's shared model:
+    ///
+    ///     LampBrowser.start(surface: { tab in model.sidebar(for: tab) }, handle: { event in await model.handle(event) })
+    ///
+    /// A page is read only when a button with `readsPage` (the page's readable text) or `readsSelection` (only the
+    /// passage the person selected) is clicked. Page text is untrusted: give it to LampAI as `data:`.
     @MainActor
     enum LampBrowser {
-        struct Section: Codable { var title: String; var text: String }
-        struct Field: Codable { var id: String; var label: String; var value: String = "" }
+        /// A heading with text under it, a list (`items`, one line each), or both.
+        struct Section: Codable { var title: String; var text: String = ""; var items: [String] = [] }
+        /// A field the person can change before clicking. `lines` above 1 makes it a box for longer text.
+        struct Field: Codable { var id: String; var label: String; var value: String = ""; var lines: Int = 1 }
+        /// A button. The first is drawn as the main one. Never both `readsPage` and `readsSelection`.
         struct Action: Codable { var id: String; var label: String; var readsPage: Bool = false; var readsSelection: Bool = false }
         struct Surface: Codable {
             var title: String
@@ -7166,58 +7178,96 @@ enum Template {
             var actions: [Action] = []
             var busy: Bool = false
         }
-        struct Page: Codable { var url: String; var title: String; var text: String; var scope: String? }
+        struct Page: Codable {
+            var url: String
+            var title: String
+            /// The page's readable text, or only the selected passage when `scope` is "selection".
+            var text: String
+            var scope: String?
+            /// The page was longer than the 24,000 characters given: what's missing may be further down.
+            var truncated: Bool?
+            var isSelection: Bool { scope == "selection" }
+            /// Whether `quote` is in the page's text word for word, ignoring case, spacing and the style of quote
+            /// marks and dashes. An AI can make a quote up: check each one before showing or saving it as the page's.
+            func contains(_ quote: String) -> Bool {
+                func plain(_ s: String) -> String {
+                    var t = s.lowercased()
+                    for (from, to) in [("\u{2018}", "'"), ("\u{2019}", "'"), ("\u{201C}", "\""), ("\u{201D}", "\""),
+                                       ("\u{2013}", "-"), ("\u{2014}", "-"), ("\u{00A0}", " ")] { t = t.replacingOccurrences(of: from, with: to) }
+                    return t.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+                }
+                let wanted = plain(quote)
+                return !wanted.isEmpty && plain(text).contains(wanted)
+            }
+        }
         struct Event: Codable {
             var id: String
+            /// Which Chrome tab the click came from (or Lamp's own preview of the sidebar).
+            var tab: String
             var action: String
+            /// What the person typed, by field id.
             var fields: [String: String]
             var page: Page?
         }
         private static var service: Task<Void, Never>?
-        /// Start once from a shared app model. The service stays alive across opening and closing windows.
-        static func start(surface: @escaping () -> Surface, handle: @escaping (Event) async -> Void) {
+        /// Start once from a shared app model. The sidebar stays up across opening and closing windows.
+        static func start(surface: @escaping (_ tab: String) -> Surface, handle: @escaping (Event) async -> Void) {
             guard service == nil else { return }
             service = Task { await serve(surface: surface, handle: handle) }
         }
-        /// Explicitly asks Lamp to show this app's connection setup. No browser installation belongs in app code.
-        static func openSetup() async {
-            _ = try? await LampAI.post("/prototype/browser/setup", [:], timeout: 10)
+        /// For a sidebar that shows the same on every tab: one that keeps no draft or preview.
+        static func start(surface: @escaping () -> Surface, handle: @escaping (Event) async -> Void) {
+            start(surface: { _ in surface() }, handle: handle)
         }
-        /// Run once from the app's lifetime task. State is republished while an action awaits AI or storage.
-        /// An event is acknowledged after the handler returns; make writes idempotent by event ID or item identity.
-        static func serve(surface: @escaping () -> Surface, handle: @escaping (Event) async -> Void) async {
+        /// Asks Lamp to show this app's offer to connect Chrome. No browser installation belongs in app code.
+        static func openSetup() async {
+            _ = try? await LampAI.post("/browser/setup", [:], timeout: 10)
+        }
+        /// Publishes the surface twice a second, for each tab the sidebar is open in, and runs one click at a
+        /// time. A click is acknowledged after `handle` returns; make saves idempotent by the page or item.
+        private static func serve(surface: @escaping (String) -> Surface, handle: @escaping (Event) async -> Void) async {
             let boot = UUID().uuidString
             var ack: String?
             var handling: String?
+            var tabs: [String] = []
             var work: Task<Void, Never>?
             defer { work?.cancel() }
+            func encoded(_ tab: String) throws -> Any {
+                var published = surface(tab)
+                published.busy = published.busy || handling != nil
+                return try JSONSerialization.jsonObject(with: JSONEncoder().encode(published))
+            }
             while !Task.isCancelled {
+                var pause = 0.5
                 do {
-                    var published = surface()
-                    published.busy = published.busy || handling != nil
-                    let raw = try JSONSerialization.jsonObject(with: JSONEncoder().encode(published))
-                    var body: [String: Any] = ["boot": boot, "surface": raw]
+                    var body: [String: Any] = ["boot": boot, "surface": try encoded(""),
+                                               "surfaces": try Dictionary(uniqueKeysWithValues: tabs.prefix(16).map { ($0, try encoded($0)) })]
                     if let ack { body["ack"] = ack }
-                    var request = URLRequest(url: URL(string: lampGateway + "/prototype/browser/surface")!)
+                    var request = URLRequest(url: URL(string: lampGateway + "/browser/surface")!)
                     request.httpMethod = "POST"
                     request.timeoutInterval = 5
                     request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.httpBody = try JSONSerialization.data(withJSONObject: body)
-                    // A heartbeat must not launch Lamp or change which development experiment is running.
                     let (data, response) = try await URLSession.shared.data(for: request)
-                    guard (response as? HTTPURLResponse)?.statusCode == 200,
-                          let reply = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                        try await Task.sleep(for: .seconds(1)); continue
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    if status == 400, let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        print("The browser sidebar couldn't be drawn: \(reply["error"] as? String ?? "") Check its sizes: up to 8 actions, 12 fields, 20 sections.")
                     }
+                    // Lamp without the sidebar turned on: asked again now and then, in case it's turned on.
+                    guard status == 200, let reply = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                        pause = status == 404 || status == 403 ? 5 : 1
+                        throw CancellationError()
+                    }
+                    tabs = reply["tabs"] as? [String] ?? []
                     if let rawEvent = reply["event"],
                        let event = try? JSONDecoder().decode(Event.self, from: JSONSerialization.data(withJSONObject: rawEvent)),
                        handling == nil, event.id != ack {
                         handling = event.id
                         work = Task { await handle(event); ack = event.id; handling = nil }
                     }
-                } catch { /* A closed Lamp removes the companion; the next heartbeat reconnects it. */ }
-                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+                } catch { /* Lamp closed or not ready: the sidebar shows again once it answers. */ }
+                do { try await Task.sleep(for: .seconds(pause)) } catch { return }
             }
         }
     }
