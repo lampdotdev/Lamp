@@ -46,7 +46,21 @@ final class BrowserCompanions {
         var offer: String
         var fits: [Fit]
 
-        static func url(_ project: LampProject) -> URL { project.dir.appendingPathComponent("browser.json") }
+        static let file = "browser.json"
+        static func url(_ project: LampProject) -> URL { project.dir.appendingPathComponent(file) }
+
+        /// A declaration from a file elsewhere (a shared app being opened), through the same checks; nil when it fails.
+        static func load(_ file: URL) -> Declaration? {
+            guard let data = try? Data(contentsOf: file), let value = try? JSONDecoder().decode(Declaration.self, from: data),
+                  value.problem == nil else { return nil }
+            return value
+        }
+        /// As Lamp writes it: only the fields it reads, whatever else the file it came from held.
+        static func encoded(_ declaration: Declaration) throws -> Data {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            return try encoder.encode(declaration)
+        }
 
         /// The declaration, or why it can't be used: said to the builder when it looks at the sidebar.
         static func read(_ project: LampProject) -> Result<Declaration, Problem> {
@@ -104,12 +118,17 @@ final class BrowserCompanions {
         var event: [String: Any]?
         var eventDate: Date?
         var accepted: [String] = []
-        /// Revisions a click was handled under. Never valid again, even for a tab the app has stopped drawing for.
+        /// The tabs the app drew for in its last heartbeat, as against ones shown the shared surface.
+        var drawn: Set<String> = []
+        /// Revisions a click was handled under, with the tab it came from ("tab revision"). Never valid again on that
+        /// tab, even once the app stops drawing for it; another tab that was shown the same revision keeps it.
         var spent: [String] = []
     }
     private var apps: [String: Registration] = [:]
     /// The tabs each app's sidebar is open in, by when each was last drawn.
     private var viewed: [String: [String: Date]] = [:]
+    /// How long a tab counts as open after its sidebar last asked what to show (shorter in tests).
+    var tabLifetime: TimeInterval = 10
 
     /// An app's heartbeat (`/browser/surface`): what its sidebar shows, by tab. Answered with the next click for
     /// it, if any, and the tabs it should draw for.
@@ -145,6 +164,7 @@ final class BrowserCompanions {
             revisions[tab] = before == shown ? (kept ?? UUID().uuidString) : UUID().uuidString
         }
         next.surfaces = surfaces; next.revisions = revisions; next.seen = Date(); next.name = app.name
+        next.drawn = Set(tabbed.keys)
         if let ack = body["ack"] as? String, ack == next.event?["id"] as? String { finish(&next) }
         if let date = next.eventDate, Date().timeIntervalSince(date) > 240 { finish(&next) }
         apps[app.id] = next
@@ -157,7 +177,7 @@ final class BrowserCompanions {
     private func finish(_ entry: inout Registration) {
         let tab = entry.event?["tab"] as? String ?? ""
         if let used = entry.event?["revision"] as? String {
-            entry.spent = Array((entry.spent + [used]).suffix(256))
+            entry.spent = Array((entry.spent + [tab + " " + used]).suffix(256))
             // A tab the app hadn't drawn for was shown the shared surface's revision: that one is spent too.
             if entry.revisions[""] == used { entry.revisions[""] = UUID().uuidString }
         }
@@ -168,7 +188,7 @@ final class BrowserCompanions {
 
     private func liveTabs(_ app: String) -> [String] {
         let now = Date()
-        viewed[app] = viewed[app]?.filter { now.timeIntervalSince($0.value) < 10 }
+        viewed[app] = viewed[app]?.filter { now.timeIntervalSince($0.value) < tabLifetime }
         return Array((viewed[app] ?? [:]).sorted { $0.value > $1.value }.prefix(16).map(\.key)).sorted()
     }
 
@@ -237,7 +257,7 @@ final class BrowserCompanions {
         }
         if entry.accepted.contains(eventID) { return ["accepted": true] }
         let surface = entry.surfaces[tab] ?? entry.surfaces[""]!
-        guard let shown = body["revision"] as? String, shown == revision(entry, tab), !entry.spent.contains(shown), !surface.busy, entry.event == nil,
+        guard let shown = body["revision"] as? String, shown == revision(entry, tab), !entry.spent.contains(tab + " " + shown), !surface.busy, entry.event == nil,
               let action = surface.actions.first(where: { $0.id == body["action"] as? String }),
               let fields = body["fields"] as? [String: String], fields.count <= 12,
               fields.allSatisfy({ key, value in surface.fields.contains { $0.id == key } && value.count <= 4000 }) else {
@@ -262,6 +282,29 @@ final class BrowserCompanions {
 
     private func revision(_ entry: Registration, _ tab: String) -> String {
         entry.surfaces[tab] != nil ? entry.revisions[tab] ?? "" : entry.revisions[""] ?? ""
+    }
+
+    /// Waits for a click from `tab` to be handled (an AI answer can take a minute), keeping the tab open meanwhile so
+    /// the app goes on drawing for it, then for the app to draw that tab once more, so what's shown next is what the
+    /// click led to. False when the app hasn't finished within `limit` or went away.
+    func awaitHandled(_ eventID: String, in project: LampProject, tab: String, limit: TimeInterval) async -> Bool {
+        let asked = Date()
+        func stillOpen() { if live(project) != nil { viewed[project.id, default: [:]][tab] = Date() } }
+        while !isHandled(eventID, in: project) {
+            guard Date().timeIntervalSince(asked) < limit else { return false }
+            stillOpen()
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        guard live(project) != nil else { return false }
+        // The next heartbeats bring the tab's own surface; a beat of grace for an app that draws one for every tab.
+        let settled = Date()
+        while Date().timeIntervalSince(settled) < 3, live(project).map({ !$0.drawn.contains(tab) }) ?? false {
+            stillOpen()
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        stillOpen()
+        try? await Task.sleep(for: .milliseconds(600))
+        return true
     }
 
     /// Whether the click with this id has been handled by the app (or dropped), for Lamp's preview to wait on.

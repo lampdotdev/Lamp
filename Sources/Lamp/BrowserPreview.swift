@@ -98,9 +98,9 @@ enum BrowserPreview {
             typed[project.id] = nil   // sent with the click, as the extension sends what was typed
             // The app has a while to handle it (an AI answer can take a minute); then the sidebar settles.
             let id = request["id"] as! String, asked = Date()
-            while !companions.isHandled(id, in: project), Date().timeIntervalSince(asked) < 150 { try? await Task.sleep(for: .milliseconds(250)) }
-            if !companions.isHandled(id, in: project) { happened.append("\(number): clicked \"\(button.label)\"; the app hasn't finished handling it after two and a half minutes."); break }
-            try? await Task.sleep(for: .milliseconds(1200))
+            guard await companions.awaitHandled(id, in: project, tab: tab, limit: 150) else {
+                happened.append("\(number): clicked \"\(button.label)\"; the app hasn't finished handling it after two and a half minutes."); break
+            }
             happened.append("\(number): clicked \"\(button.label)\"\(button.readsSelection == true ? ", with the selected passage" : request["page"] != nil ? ", with the page's text" : ""); the app handled it in \(Int(Date().timeIntervalSince(asked).rounded())) s.")
         }
         var text = "What happened:\n" + happened.joined(separator: "\n")

@@ -41,6 +41,16 @@ function shown(field) {
   const draft = drafts[selected]?.[field.id];
   return draft && draft.base === field.value ? draft.typed : field.value;
 }
+// A draft whose field is gone, or whose value the app has since replaced, is done with: kept, it would come back
+// the moment the app showed the old value again (an empty field for the next item, say) and be sent with a click.
+function settleDrafts(saved, fields) {
+  const kept = {};
+  for (const field of fields) {
+    const draft = saved?.[field.id];
+    if (draft && draft.base === field.value) kept[field.id] = draft;
+  }
+  return kept;
+}
 function typed(field, value) {
   drafts[selected] = {...drafts[selected], [field.id]: {base: field.value, typed: value}};
   chrome.storage.session.set({[keys.draft]: drafts});
@@ -61,6 +71,11 @@ function render(state) {
       for (const item of section.items) { const li = document.createElement('li'); li.textContent = item; list.append(li); }
       $('sections').append(list);
     }
+  }
+  const kept = settleDrafts(drafts[selected], s.fields);
+  if (JSON.stringify(kept) !== JSON.stringify(drafts[selected] || {})) {
+    drafts[selected] = kept;
+    chrome.storage.session.set({[keys.draft]: drafts});
   }
   for (const field of s.fields) {
     const label = document.createElement('label');

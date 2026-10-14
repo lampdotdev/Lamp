@@ -207,9 +207,13 @@ enum Agent {
         }
     }
 
-    static let systemPrompt = prompt(platform: .mac, device: "Mac")
+    /// The Mac prompt, made once for each state of Apps in Chrome: its rule is only for a Lamp where it's on, and the
+    /// switch can change while Lamp runs.
+    static var systemPrompt: String { BrowserBridge.enabled ? macPromptWithSidebar : macPrompt }
+    private static let macPrompt = prompt(platform: .mac, device: "Mac", sidebar: false)
+    private static let macPromptWithSidebar = prompt(platform: .mac, device: "Mac", sidebar: true)
 
-    static func iPhonePrompt(for family: DeviceFamily) -> String { prompt(platform: .iphone, device: family.name) }
+    static func iPhonePrompt(for family: DeviceFamily) -> String { prompt(platform: .iphone, device: family.name, sidebar: false) }
 
     /// An app for both gets both kinds' rules, each said to be for its half, after one rule on how the halves
     /// share one code: so a block or a design given to one kind is given to the pair in the same place.
@@ -223,7 +227,7 @@ enum Agent {
         }
         let onMac = "On the Mac", onPhone = "On iPhone and iPad"
         let rules = [Rules.edit, Rules.ask, Rules.shell, Rules.universal, Rules.universalFrameworks,
-                     half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks), half(onMac, Rules.browserCompanion),
+                     half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks), half(onMac, BrowserBridge.enabled ? Rules.browserCompanion : ""),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
                      Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
                      half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true),
@@ -239,13 +243,13 @@ enum Agent {
             .replacingOccurrences(of: "{{EXTRA_PERMISSIONS}}", with: "and calendars, reminders, contacts, photos, Bluetooth and Mail")
     }
 
-    private static func prompt(platform: Platform, device: String) -> String {
+    private static func prompt(platform: Platform, device: String, sidebar: Bool) -> String {
         let mac = platform == .mac
         var rules = [Rules.edit, Rules.ask, Rules.shell,
                      mac ? Rules.macFrameworks : Rules.iPhoneFrameworks,
                      mac ? Rules.macBlocks : Rules.iPhoneBlocks]
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.macShare, Rules.permissions] }
-        if mac { rules.append(Rules.browserCompanion) }
+        if mac && sidebar { rules.append(Rules.browserCompanion) }
         rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules.append(Rules.computer) }
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.iPhoneShare, Rules.icloud] }
@@ -379,9 +383,7 @@ enum Agent {
         or build steps; everything the app needs goes in Sources/.
         """
 
-        static var browserCompanion: String {
-            guard BrowserBridge.enabled else { return "" }
-            return """
+        static let browserCompanion = """
             - Some wishes are about web pages: keeping what's found on them (recipes, articles, products, places), \
             understanding or comparing what's being read, doing something with a passage. For those, the Mac app also \
             gets a sidebar in Chrome, beside the page, built with `LampBrowser` in LampSupport.swift (read it there \
@@ -419,7 +421,6 @@ enum Agent {
             - Call `offer_setup` with capability `browser` once if the end of a request says Chrome isn't connected.
 
             """
-        }
 
         static let macBlocks = """
         - LampSupport.swift has tested building blocks for common Mac jobs. Use them instead of writing your own: \

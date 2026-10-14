@@ -145,4 +145,59 @@ final class BrowserCompanionTests: XCTestCase {
             XCTAssertNil(BrowserCompanions.Declaration.selectorProblem(selector), selector)
         }
     }
+
+    // Two tabs first drawn alike share a revision. A click handled on one must not leave the other's buttons
+    // refused for good while its surface stays the same.
+    func testAClickOnOneTabLeavesAnotherTabWithTheSameSurfaceWorking() throws {
+        let bridge = BrowserCompanions()
+        let app = LampProject(id: "box", name: "Box", exe: "Box", dir: URL(fileURLWithPath: "/tmp/box"), instance: "box")
+        let boot = UUID().uuidString, main = surface(actions: [["id": "save", "label": "Save", "readsPage": false]])
+        func view(_ tab: String) -> String { bridge.native(["op": "surface-view", "app": app.id], tab: tab, projects: [app])["revision"] as? String ?? "" }
+        func click(_ tab: String, _ revision: String) -> [String: Any] {
+            bridge.native(["op": "surface-action", "app": app.id, "id": UUID().uuidString, "revision": revision, "action": "save",
+                           "fields": [String: String]()], tab: tab, projects: [app])
+        }
+        _ = bridge.exchange(["boot": boot, "surface": main], app: app)
+        _ = view("tA"); _ = view("tB")
+        _ = bridge.exchange(["boot": boot, "surface": main, "surfaces": ["tA": main, "tB": main]], app: app)
+        let a = view("tA"), b = view("tB")
+        XCTAssertEqual(a, b, "both tabs were shown the shared revision")
+        XCTAssertEqual(click("tA", a)["accepted"] as? Bool, true)
+        let event = try XCTUnwrap(bridge.exchange(["boot": boot, "surface": main, "surfaces": ["tA": main, "tB": main]], app: app).1["event"] as? [String: Any])
+        for _ in 0..<3 { _ = bridge.exchange(["boot": boot, "surface": main, "surfaces": ["tA": main, "tB": main], "ack": event["id"]!], app: app) }
+        XCTAssertNotNil(click("tA", a)["error"], "tab A's old button is spent")
+        XCTAssertEqual(click("tB", view("tB"))["accepted"] as? Bool, true, "tab B's buttons still work")
+    }
+
+    // Lamp's preview waits while the app works on a click (an AI answer can take a minute). The tab must stay open
+    // meanwhile, or the app stops drawing for it and the draft the click prepares is lost.
+    func testThePreviewKeepsItsTabOpenWhileAClickIsHandled() async throws {
+        let bridge = BrowserCompanions()
+        bridge.tabLifetime = 0.5
+        let app = LampProject(id: "box", name: "Box", exe: "Box", dir: URL(fileURLWithPath: "/tmp/box"), instance: "box")
+        let boot = UUID().uuidString, main = surface(actions: [["id": "read", "label": "Read", "readsPage": false]])
+        _ = bridge.exchange(["boot": boot, "surface": main], app: app)
+        let revision = try XCTUnwrap(bridge.native(["op": "surface-view", "app": app.id], tab: "preview", projects: [app])["revision"] as? String)
+        let id = UUID().uuidString
+        XCTAssertEqual(bridge.native(["op": "surface-action", "app": app.id, "id": id, "revision": revision, "action": "read",
+                                      "fields": [String: String]()], tab: "preview", projects: [app])["accepted"] as? Bool, true)
+        // The app, slower than the tab's lifetime: it keeps publishing, then acknowledges and draws the tab's draft.
+        let draft = surface(title: "Review", actions: [["id": "save", "label": "Save", "readsPage": false]])
+        let appSide = Task { @MainActor () -> [String] in
+            var tabs: [String] = []
+            for _ in 0..<6 {
+                tabs = bridge.exchange(["boot": boot, "surface": main], app: app).1["tabs"] as? [String] ?? []
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+            _ = bridge.exchange(["boot": boot, "surface": main, "ack": id], app: app)
+            _ = bridge.exchange(["boot": boot, "surface": main, "surfaces": ["preview": draft]], app: app)
+            return tabs
+        }
+        let handled = await bridge.awaitHandled(id, in: app, tab: "preview", limit: 10)
+        let tabsSeen = await appSide.value
+        XCTAssertTrue(handled)
+        XCTAssertEqual(tabsSeen, ["preview"], "the app was still told to draw the preview after the tab's lifetime")
+        let shown = bridge.native(["op": "surface-view", "app": app.id], tab: "preview", projects: [app])
+        XCTAssertEqual((shown["surface"] as? [String: Any])?["title"] as? String, "Review")
+    }
 }

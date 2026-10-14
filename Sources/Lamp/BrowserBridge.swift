@@ -9,8 +9,11 @@ import CryptoKit
 @MainActor
 final class BrowserBridge {
     nonisolated static let switchKey = "experimentBrowserCompanion"
+    /// Set by tests only: the switch as if this were Lamp Dev with it on or off.
+    nonisolated(unsafe) static var testOverride: Bool?
     nonisolated static var enabled: Bool {
-        Edition.isDev && (UserDefaults.standard.object(forKey: switchKey) != nil
+        if let testOverride { return testOverride }
+        return Edition.isDev && (UserDefaults.standard.object(forKey: switchKey) != nil
             ? UserDefaults.standard.bool(forKey: switchKey)
             : ProcessInfo.processInfo.environment["LAMP_BROWSER_PROTOTYPE"] == "1")
     }
