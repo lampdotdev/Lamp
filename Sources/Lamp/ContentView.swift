@@ -1987,12 +1987,27 @@ private struct TryOnChoices: View {
             }
             .pickerStyle(.inline)
         }
-        Picker("Simulator", selection: Binding(get: { project.device == nil && project.onIOS ? project.family : nil },
+        Picker("Simulator", selection: Binding(get: { project.device == nil && project.onIOS && project.simulator == nil ? project.family : nil },
                                                set: { if let family = $0 { store.setSimulator(project, family) } })) {
             Label("iPhone", systemImage: "iphone").tag(Optional(DeviceFamily.iphone))
             Label("iPad", systemImage: "ipad").tag(Optional(DeviceFamily.ipad))
         }
         .pickerStyle(.inline)
+        // A particular model, for what only some have (a Dynamic Island, an iPad's size). Listed once the
+        // simulators installed on this Mac are known.
+        if !store.simulators.isEmpty {
+            Menu("Choose Simulator") {
+                Picker("Choose Simulator", selection: Binding(get: { project.device == nil && project.onIOS ? project.simulator : nil },
+                                                              set: { udid in
+                    if let choice = store.simulators.first(where: { $0.udid == udid }) { store.setSimulator(project, choice) }
+                })) {
+                    ForEach(store.simulators) { choice in
+                        Label(choice.label, systemImage: choice.family == .ipad ? "ipad" : "iphone").tag(Optional(choice.udid))
+                    }
+                }
+                .pickerStyle(.inline)
+            }
+        }
         do {
             let paired = store.devices.filter(\.paired), unpaired = store.devices.filter { !$0.paired }
             Picker("Your Devices", selection: Binding(get: { project.onIOS ? project.device : nil }, set: { chosen in
@@ -2031,6 +2046,7 @@ private struct TryOnChoices: View {
 
     private func refresh() {
         store.refreshDevices()
+        store.refreshSimulators()
         Task { olderPhones = await PhoneTools.olderPhones() }
     }
 }
