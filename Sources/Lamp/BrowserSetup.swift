@@ -30,14 +30,20 @@ final class BrowserSetup: ObservableObject {
             }
         }
     }
+    /// Whether the extension has answered since this connection was installed. Kept, so Chrome being closed
+    /// doesn't make Lamp offer the setup again: it's set up, and works when Chrome next opens.
+    private static let heardKey = "browserCompanionHeard"
     func receiveHello(version: Int) {
         guard version == 3 else { return }
-        heard = Date(); refresh()
+        heard = Date()
+        UserDefaults.standard.set(true, forKey: Self.heardKey)
+        refresh()
     }
     func refresh() {
         let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") != nil
         let installed = Self.validBridge()
-        let live = BrowserBridge.enabled && installed && Date().timeIntervalSince(heard) < 15
+        let live = BrowserBridge.enabled && installed
+            && (Date().timeIntervalSince(heard) < 15 || UserDefaults.standard.bool(forKey: Self.heardKey))
         if hasChrome != chrome { hasChrome = chrome }
         if bridgeInstalled != installed { bridgeInstalled = installed }
         if connected != live { connected = live }
@@ -81,6 +87,8 @@ final class BrowserSetup: ObservableObject {
         do {
             guard BrowserBridge.enabled, Self.extensionID.count == 32 else { throw Failure() }
             let fm = FileManager.default
+            // A connection installed afresh counts as set up only once the extension answers through it.
+            if !Self.validBridge() { UserDefaults.standard.set(false, forKey: Self.heardKey) }
             try BrowserBridge.shared.prepare()
             try fm.createDirectory(at: Self.folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             let source = Self.source.appendingPathComponent("extension")
