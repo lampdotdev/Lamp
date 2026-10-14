@@ -4,7 +4,11 @@ import XCTest
 /// The app's folder is the agent's to write, its history included, and git runs the programs a repository
 /// names. Each test has a confined command (wrapped by Lamp, as the agent's are) leave one such thing in
 /// the history, then does what Lamp does with git on its own. The planted program makes a file beside the
-/// app, where the sandbox doesn't let a command write: wherever it ran, it must not have got there.
+/// app, where the sandbox doesn't let a command write: wherever it ran, it must not have got there. One
+/// test for each of Lamp's own git operations, by the program that operation runs: a save runs hooks,
+/// naming a version a signing program, a restore a filter for files coming out, and the look for unsaved
+/// work the file-watcher command. Reading a version's changes and the launch migration are checked in
+/// HistoryInTheSandboxTests.
 final class HistoryEscapeTests: XCTestCase {
     private var roots: [URL] = []
     override func tearDown() {
@@ -92,48 +96,23 @@ final class HistoryEscapeTests: XCTestCase {
         try await plantAndCheck("a hook") { _ in "cp tool .git/hooks/post-commit && cp tool .git/hooks/pre-commit && cp tool .git/hooks/post-index-change" }
     }
 
-    func testAHookNamedInSettings() async throws {
-        try await plantAndCheck("a hook named in settings") { "git config hook.planted.command \(Sandbox.quoted($0.tool)) && git config hook.planted.event post-commit" }
-    }
 
     func testTheFileWatcherCommand() async throws {
         try await plantAndCheck("the file-watcher command") { "git config core.fsmonitor \(Sandbox.quoted($0.tool))" }
     }
 
-    func testAFilterForFilesGoingIn() async throws {
-        try await plantAndCheck("a filter (in)") { "git config filter.planted.clean \(Sandbox.quoted($0.tool)) && \(self.everyFile)" }
-    }
 
     func testAFilterForFilesComingOut() async throws {
         try await plantAndCheck("a filter (out)") { "git config filter.planted.smudge \(Sandbox.quoted($0.tool)) && \(self.everyFile)" }
     }
 
-    func testALongRunningFilter() async throws {
-        try await plantAndCheck("a long-running filter") { "git config filter.planted.process \(Sandbox.quoted($0.tool)) && \(self.everyFile)" }
-    }
 
     func testASigningProgram() async throws {
         try await plantAndCheck("a signing program") { "git config commit.gpgsign true && git config tag.gpgsign true && git config gpg.program \(Sandbox.quoted($0.tool))" }
     }
 
-    func testSettingsBroughtInFromAnotherFile() async throws {
-        try await plantAndCheck("an include") {
-            "printf '[filter \"planted\"]\\n\\tclean = %s\\n' \(Sandbox.quoted($0.tool)) > more-settings && git config include.path ../more-settings && \(self.everyFile)"
-        }
-    }
 
-    func testARepositoryInsideTheApp() async throws {
-        try await plantAndCheck("a repository inside the app") {
-            let tool = Sandbox.quoted($0.tool)
-            return "mkdir -p Vendor/kit && cd Vendor/kit && git init -q && echo x > file && git add -A && git -c user.name=a -c user.email=a@b commit -qm one && git config core.fsmonitor \(tool) && git config filter.planted.clean \(tool) && \(self.everyFile) && cp ../../tool .git/hooks/post-index-change"
-        }
-    }
 
-    func testAHistoryThatPointsElsewhere() async throws {
-        try await plantAndCheck("a history that points elsewhere") {
-            "mv .git .history && echo 'gitdir: .history' > .git && git config filter.planted.clean \(Sandbox.quoted($0.tool)) && cp tool .history/hooks/post-commit && \(self.everyFile)"
-        }
-    }
 
     /// Not a program: the history says its files live in another folder, and Lamp's restore, with the
     /// clean-up after it, would empty that one.
