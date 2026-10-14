@@ -65,9 +65,9 @@ final class MagicPanel: NSObject, NSWindowDelegate {
     private func makePanel(for project: LampProject) -> NSPanel {
         // Non-activating: typing here doesn't bring Lamp, and its main window, in front of the app.
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 600),
-                            styleMask: [.titled, .closable, .resizable, .nonactivatingPanel, .utilityWindow],
+                            styleMask: [.titled, .closable, .resizable, .nonactivatingPanel],
                             backing: .buffered, defer: false)
-        panel.title = project.name
+        panel.title = "Editing \(project.name)"
         // A plain title bar over a solid chat: the panel floats over other windows, and what's behind it showing
         // through the chat made it hard to read.
         panel.backgroundColor = .windowBackgroundColor
@@ -85,6 +85,13 @@ final class MagicPanel: NSObject, NSWindowDelegate {
         // The chat's toolbar is for Lamp's window: kept out of this panel's title bar, where it overlapped the chat.
         host.sceneBridgingOptions = []
         panel.contentViewController = host
+        // Its two buttons at the right of the title bar, as a window's own buttons sit.
+        let buttons = NSHostingView(rootView: MagicButtons(project: project).environmentObject(Store.shared))
+        buttons.frame.size = buttons.fittingSize
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.view = buttons
+        accessory.layoutAttribute = .trailing
+        panel.addTitlebarAccessoryViewController(accessory)
         return panel
     }
 
@@ -283,43 +290,49 @@ final class MagicPanel: NSObject, NSWindowDelegate {
     }
 }
 
-/// The chat in the panel: the app's chat as in Lamp's window, and a way back to that window for the rest.
+/// The chat in the panel: the app's chat as in Lamp's window.
 private struct MagicChat: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button {
-                    MagicPanel.shared.point()
-                } label: {
-                    Image(systemName: "scope")
-                }
-                .help("Point at what you want to change")
-                .accessibilityLabel("Point at Something")
-                Spacer()
-                Button {
-                    store.showChat(project.id)
-                    MagicPanel.shared.close()
-                } label: {
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                }
-                .help("Open this chat in Lamp")
-                .accessibilityLabel("Open in Lamp")
+        ProjectView(project: store.current(project) ?? project)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .frame(minWidth: 320, minHeight: 360)
+    }
+}
+
+/// Pointing at part of the app, and taking the chat to Lamp's window: the panel's title bar buttons.
+private struct MagicButtons: View {
+    @EnvironmentObject private var store: Store
+    let project: LampProject
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Button {
+                MagicPanel.shared.point()
+            } label: {
+                Image(systemName: "scope")
             }
-            // Plain, in the text's own color like the rest of the chat's controls: a borderless button takes the
-            // accent color.
-            .buttonStyle(.plain)
-            .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(.primary)
-            .contentShape(Rectangle())
-            .padding(.horizontal, 14).padding(.vertical, 6)
-            Divider()
-            ProjectView(project: store.current(project) ?? project)
+            .help("Point at what you want to change")
+            .accessibilityLabel("Point at Something")
+            Button {
+                store.showChat(project.id)
+                MagicPanel.shared.close()
+            } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+            }
+            .help("Open this chat in Lamp")
+            .accessibilityLabel("Open in Lamp")
         }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .frame(minWidth: 320, minHeight: 360)
+        // Plain, in the text's own color like the rest of the chat's controls: a borderless button takes the
+        // accent color.
+        .buttonStyle(.plain)
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(.secondary)
+        .contentShape(Rectangle())
+        .padding(.horizontal, 12)
+        .frame(height: 28)
     }
 }
 
