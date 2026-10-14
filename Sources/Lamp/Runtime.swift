@@ -19,6 +19,8 @@ enum Runtime {
     static func folderPath(_ project: LampProject) -> String { String(folder(project).path.dropFirst(project.dir.path.count + 1)) }
     static func logURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("log.txt") }
     private static func builtURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("built") }
+    /// The build no longer stands for the sources (a build after a live change failed): the next look builds again.
+    static func forgetBuilt(_ project: LampProject) { try? FileManager.default.removeItem(at: builtURL(project)) }
 
     /// Remembers when the current build was made (the file's date, so crashes of older builds aren't blamed
     /// on it) and what it was made from: the fingerprint of the sources as they were when the build started.

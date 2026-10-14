@@ -442,9 +442,10 @@ every view draws again on a reload with its state kept), and builds that copy un
 device project, with its debug library off so the code is in the one binary). After a build, `Store.install` tries
 `reloadInPlace` first: when the app is open, was built live, and the change only touched or added files (none removed), didn't touch the App, and leaves every type
 holding what it did (`LiveReload.layout`: the compiler's own list of each type's stored properties and cases,
-from `-dump-ast`, compared for the open app's sources and the new ones; no reading of the text) (`LiveReload.reloadable`, comparing with the sources the
-open app runs, kept in `.lamp/live/running`), the whole module is compiled from the live copy and the changed files'
-objects linked into a library, which the app loads when asked with a request signed with its token, only from its
+from `-dump-ast` of just the changed files, compared for the open app's sources and the new ones; no reading of the
+text) (`LiveReload.reloadable`, comparing with the sources the
+open app runs, kept in `.lamp/live/running`), only the changed files are compiled (as primaries, the rest of the live copy read for context) and
+linked into a library, which the app loads when asked with a request signed with its token, only from its
 own `.lamp/live` (`LampLive` in LampSupport, under `#if LAMP_LIVE`). It points the app's own calls at the new
 functions by rewriting the symbol pointers they go through; types, metadata and stored globals are left alone. The
 build then waits to be installed until the app closes (`LiveReload.awaitInstall`, which unlike a held build doesn't
