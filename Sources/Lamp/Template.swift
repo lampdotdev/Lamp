@@ -1134,6 +1134,25 @@ enum Template {
         }
 
         func session(_ session: WCSession, didReceiveApplicationContext context: [String: Any]) { take(context) }
+        func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) { take(userInfo) }
+
+        /// Until what the phone sent while the watch app was closed has arrived, for a few seconds at most.
+        func settle() async {
+            for _ in 0..<50 {
+                let session = WCSession.default
+                if !WCSession.isSupported() || (session.activationState == .activated && !session.hasContentPending) { break }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            await MainActor.run { WidgetCenter.shared.reloadAllTimelines() }
+        }
+    }
+
+    extension Scene {
+        /// On the watch app's WindowGroup: when the phone shares something new while a complication is on the
+        /// watch face, watchOS wakes the app out of sight to take it, and the complication is redrawn.
+        func lampWatch() -> some Scene {
+            backgroundTask(.watchConnectivity) { await LampWatchLink.shared.settle() }
+        }
     }
     #endif
 
@@ -8311,6 +8330,7 @@ enum Template {
             private var handler: (@MainActor (String, Payload) -> Void)?
             private var waiting: [(String, Payload)] = []   // what the watch asked before there was a handler
             private var done: [String] = []                 // ids of actions done, newest last
+            private var complicationSent: [String: Data]?   // what the last complication transfer carried
             private static let key = "lamp.watch.shared"
 
             private override init() {
@@ -8347,6 +8367,12 @@ enum Template {
                 do { try session.updateApplicationContext(["lamp": values]) } catch {
                     print("LampWatch: couldn't send to the watch: \(error.localizedDescription)")
                 }
+                // The context waits for the watch app to run. With one of its complications on the watch face,
+                // a change also goes as a complication transfer, which wakes the watch app to redraw it. watchOS
+                // allows about 50 a day; past that it still arrives, only without the wake.
+                guard session.isComplicationEnabled, values != complicationSent else { return }
+                complicationSent = values
+                session.transferCurrentComplicationUserInfo(["lamp": values])
             }
 
             private func take(_ message: [String: Any]) {

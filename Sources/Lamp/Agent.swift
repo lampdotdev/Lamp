@@ -881,14 +881,15 @@ enum Agent {
         static let iPhoneWatch = """
         - The app can have an Apple Watch app with complications. Make one when the user asks, or when a glance \
         or a tap on the wrist suits it (a timer, a workout, a tally, a checklist). Write it in SwiftUI in a \
-        `Watch/` folder at the app's root, starting with Watch/WatchApp.swift: one `@main` App, a screen or two \
+        `Watch/` folder at the app's root, starting with Watch/WatchApp.swift: one `@main` App whose WindowGroup \
+        ends in `.lampWatch()`, which keeps complications current while the watch app is closed, and a screen or two \
         of big controls. Complications go in Watch/Complications/: one `@main` `WidgetBundle` of \
         `StaticConfiguration`s with `.supportedFamilies` from `.accessoryCircular`, `.accessoryRectangular`, \
         `.accessoryInline` and `.accessoryCorner`, and `.containerBackground(.fill.tertiary, for: .widget)`. \
         Neither shares code with Sources/ or has LampSupport.swift: declare the Codable types they read in each \
         folder. The data: in the app, `LampWatch.share(Today(…), as: "today")` at launch and whenever it changes; \
         on the watch, `@LampWatched("today") var today: Today?` in a view, or `LampWatch.read(Today.self, from: \
-        "today")` in a complication's timeline, nil until the phone has shared and the watch app has run. A tap \
+        "today")` in a complication's timeline, nil until the phone has first shared. A tap \
         on the watch: `LampWatch.send("addGlass", 1)`, done in the app by `LampWatch.onAction { name, payload in \
         … }` set at launch (`payload.decode(Int.self)`), which shares what changed. Watch/LampWatchSupport.swift \
         and its copy in Complications/ are Lamp's: never edit them. A workout on the watch, saved to Health with \

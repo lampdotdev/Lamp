@@ -572,11 +572,14 @@ An iPhone app, and the iPhone half of an app for both, can have an Apple Watch a
   by id). The watch's half is `lampWatchSupportSwift`, written into both folders (`writeWatchSupport`; the
   complications' copy compiles with `LAMP_COMPLICATION` and only reads): `@LampWatched` and `LampWatch.read` read
   what the watch app kept in the folder it shares with its complications, and `send` goes as a message, which
-  wakes the iPhone app, or a transfer when the phone is away. The watch gets new data when its app runs.
+  wakes the iPhone app, or a transfer when the phone is away. While a complication is on the watch face, each
+  change also goes as a complication transfer (`transferCurrentComplicationUserInfo`, about 50 a day), which
+  wakes the watch app out of sight: `.lampWatch()` on its WindowGroup takes it (`backgroundTask(.watchConnectivity)`)
+  and redraws the complications.
 - **Simulator.** After the iPhone app opens, `Store.openWatchApp` installs and opens the watch app on the watch
   simulator paired with that iPhone (`Simulator.pairedWatch`, which pairs a new one when Xcode has a watchOS
   that pairs; `LAMP_PRETEND_MISSING=watch`); with none, one line in the chat says how to add watchOS. The agent
-  can't look at or use the watch. A shared `.lampapp` doesn't carry `Watch/` yet.
+  can't look at or use the watch. A shared `.lampapp` carries `Watch/` (format 6), without Lamp's files there.
 
 ### App Intents
 
