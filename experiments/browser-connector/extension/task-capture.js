@@ -1,6 +1,6 @@
 (()=>{
  if(window.__lampTaskCapture)return;
- let id=null,site=null,banner=null,ticking=null,lastURL='',lastPage='';
+ let id=null,site=null,banner=null,bar=null,clock=null,ticking=null,paused=false,lastURL='',lastPage='';
  const privateSelector='input,textarea,select,[contenteditable]:not([contenteditable="false"]),[data-private],[hidden],[aria-hidden="true"],script,style,noscript,iframe';
  const address=()=>location.origin+location.pathname;
  const clean=(s,n)=>String(s||'').replace(/\s+/g,' ').trim().slice(0,n);
@@ -12,7 +12,7 @@
  function excerpt(){return visibleText(document.querySelector('main,article,[role="main"]')||document.body,1500);}
  function fieldLabel(el){const label=el.labels?.[0];return label?visibleText(label,120):clean(el.getAttribute('aria-label')||'field',120);}
  function send(kind,label=''){
-  if(!id||location.origin!==site||document.visibilityState!=='visible'||!banner?.isConnected||!banner.checkVisibility({checkOpacity:true,checkVisibilityCSS:true}))return;
+  if(!id||paused||location.origin!==site||document.visibilityState!=='visible'||!banner?.isConnected||!banner.checkVisibility({checkOpacity:true,checkVisibilityCSS:true}))return;
   const text=excerpt();
   if(kind==='page'&&lastURL===address()&&lastPage===text)return;
   lastURL=address();lastPage=text;
@@ -25,10 +25,23 @@
  function onChange(event){if(!event.isTrusted)return;const el=event.target;if(!el.matches('input,select,textarea')||el.closest('[data-private]')||el.matches('input[type="password"]'))return;
   const label=fieldLabel(el);if(/password|secret|token|one.time.code/i.test(label))return;send('change',label);
  }
- function stop(){id=null;clearInterval(ticking);banner?.remove();banner=null;document.removeEventListener('click',onClick,true);document.removeEventListener('change',onChange,true);}
- function start(next,origin,started){
-  if(id===next&&banner?.isConnected)return;
-  stop();if(location.origin!==origin)return;id=next;site=origin;lastURL='';lastPage='';
+ function stop(){id=null;paused=false;clearInterval(ticking);banner?.remove();banner=null;document.removeEventListener('click',onClick,true);document.removeEventListener('change',onChange,true);}
+ // At the limit the bar stays, to ask, and the page is no longer watched.
+ function pause(){
+  if(!id||paused)return;
+  paused=true;clearInterval(ticking);document.removeEventListener('click',onClick,true);document.removeEventListener('change',onChange,true);
+  draw();
+ }
+ function draw(){
+  bar.replaceChildren();bar.className=paused?'bar paused':'bar';
+  const dot=document.createElement('span'),words=document.createElement('b');dot.className='dot';
+  words.textContent=paused?'Lamp paused. Nothing has been sent.':'Lamp is recording';bar.append(dot,words);
+  if(!paused){clock=document.createElement('span');clock.className='clock';bar.append(clock);}
+  for(const [text,kind,op] of [[paused?'Show Lamp':'Stop and Show Lamp','stop','task-stop'],['Discard','discard','task-discard']]){const button=document.createElement('button');button.textContent=text;button.className=kind;button.onclick=e=>{if(!e.isTrusted)return;chrome.runtime.sendMessage({op}).catch(()=>{});};bar.append(button);}
+ }
+ function start(next,origin,started,held){
+  if(id===next&&banner?.isConnected){if(held)pause();return;}
+  stop();if(location.origin!==origin)return;id=next;site=origin;lastURL='';lastPage='';paused=held===true;
   // The bar floats over the page instead of sitting on its first lines, in a closed shadow root so the
   // page's own styles can't hide or restyle it. Nothing is recorded while it isn't on screen (see send).
   banner=document.createElement('div');banner.id='lamp-task-indicator';
@@ -37,6 +50,7 @@
   root.innerHTML=`<style>
    .bar{display:flex;align-items:center;gap:10px;padding:7px 8px 7px 14px;border-radius:999px;background:#17182b;color:white;font:13px/1.2 -apple-system,system-ui,sans-serif;box-shadow:0 6px 24px rgb(0 0 0/.28),0 0 0 1px rgb(255 255 255/.14);white-space:nowrap}
    .dot{width:9px;height:9px;border-radius:50%;background:#ff4b33;animation:pulse 1.6s ease-in-out infinite}
+   .paused .dot{background:#ffb02e;animation:none}
    @keyframes pulse{50%{opacity:.55}}
    @media (prefers-reduced-motion:reduce){.dot{animation:none}}
    b{font-weight:600}
@@ -46,13 +60,14 @@
    .discard{background:rgb(255 255 255/.14);color:white}
    button:hover{filter:brightness(.92)}
    button:focus-visible{outline:2px solid #ff8a24;outline-offset:2px}
-  </style><div class="bar" role="status"><span class="dot"></span><b>Lamp is recording</b><span class="clock"></span></div>`;
-  const bar=root.querySelector('.bar'),clock=root.querySelector('.clock');
-  for(const [text,kind,op] of [['Stop and Show Lamp','stop','task-stop'],['Discard','discard','task-discard']]){const button=document.createElement('button');button.textContent=text;button.className=kind;button.onclick=e=>{if(!e.isTrusted)return;chrome.runtime.sendMessage({op}).catch(()=>{});};bar.append(button);}
+  </style><div class="bar" role="status"></div>`;
+  bar=root.querySelector('.bar');draw();
+  document.documentElement.append(banner);
+  if(paused)return;
   const tick=()=>{const t=Math.max(0,Math.floor((Date.now()-started)/1000));clock.textContent=`${Math.floor(t/60)}:${String(t%60).padStart(2,'0')}`;};
   tick();ticking=setInterval(tick,1000);
-  document.documentElement.append(banner);document.addEventListener('click',onClick,true);document.addEventListener('change',onChange,true);send('page');
+  document.addEventListener('click',onClick,true);document.addEventListener('change',onChange,true);send('page');
  }
- window.__lampTaskCapture={start,stop};
- setInterval(()=>{if(id)send('page');},5000);
+ window.__lampTaskCapture={start,stop,pause};
+ setInterval(()=>{if(id&&!paused)send('page');},5000);
 })();

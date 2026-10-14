@@ -118,8 +118,14 @@ are separate from app grants. The popup has one thing to do at a time:
 - While recording, the time, **Stop and Show Lamp** and **Discard**.
 
 **Remove** beside a site ends Lamp's approval and Chrome's permission for it,
-unless an approved app still reads that site. A task lasts up to ten minutes and
-then stops as if Stop had been pressed, which the popup says before recording.
+unless an approved app still reads that site. A task is watched for up to ten
+minutes (or 600 events). At the limit it pauses and asks: watching ends, the
+recording stays on this Mac as it is, the bar and the popup offer **Show Lamp**
+and **Discard**, the badge turns to an amber pause mark and the popup is opened
+when Chrome allows it. Nothing is sent to the AI until the person chooses, however
+long that takes; Lamp decides when the limit is reached (`pauseIfDue`) and drops
+what arrives after it. `LAMP_BROWSER_TASK_LIMIT` (seconds) can shorten the limit
+to see the pause without the wait; it cannot lengthen it.
 A REC badge stays in Chrome's toolbar, and approved pages have a floating
 recording bar (a closed shadow root, so a page's styles can't hide it) with the
 time and one-click Stop and Discard. Unpinning or removing site permission

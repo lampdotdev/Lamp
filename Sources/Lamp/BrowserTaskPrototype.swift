@@ -21,7 +21,13 @@ final class BrowserTaskPrototype: ObservableObject {
         let origins: [String]
         var events: [Event]
         var stopped: Date?
+        /// When Lamp stopped taking this recording in because it reached a limit. It waits like that, on this
+        /// Mac, until the person chooses to show it to Lamp or discard it.
+        var paused: Date?
     }
+    /// How long one recording may run. The environment can only shorten it, to see the pause without the wait.
+    static let limit: TimeInterval = min(600, ProcessInfo.processInfo.environment["LAMP_BROWSER_TASK_LIMIT"].flatMap(TimeInterval.init).map { max(5, $0) } ?? 600)
+    static let mostEvents = 600
     struct Idea: Codable {
         let name: String
         let summary: String
@@ -60,6 +66,14 @@ final class BrowserTaskPrototype: ObservableObject {
         guard let recording else { return }
         try JSONEncoder().encode(recording).write(to: Self.folder.appendingPathComponent("recording.json"), options: .atomic)
     }
+    /// Pauses a recording that has run its time. Reaching a limit never stops it for the person: Stop sends the
+    /// recording to the AI, so only their own click does that.
+    private func pauseIfDue() {
+        guard var item = recording, item.stopped == nil, item.paused == nil,
+              Date().timeIntervalSince(item.started) >= Self.limit else { return }
+        item.paused = item.started.addingTimeInterval(Self.limit); recording = item
+        try? save()
+    }
     private func removeFiles() -> Bool {
         var removed = true
         for name in ["recording.json", "understanding.json", "ai-receipt.json", "build-receipt.json"] {
@@ -74,9 +88,11 @@ final class BrowserTaskPrototype: ObservableObject {
         guard let profile = body["profile"] as? String, UUID(uuidString: profile) != nil else { return fail("Unknown browser.") }
         let op = body["op"] as? String ?? ""
         if op == "taskStatus" {
+            pauseIfDue()
             let active = recording.map { $0.profile == profile && $0.stopped == nil } ?? false
             return ["sites": sites[profile] ?? [], "active": active, "id": active ? recording!.id : "",
-                    "elapsed": active ? Int(Date().timeIntervalSince(recording!.started)) : 0,
+                    "elapsed": active ? Int((recording!.paused ?? Date()).timeIntervalSince(recording!.started)) : 0,
+                    "paused": active && recording!.paused != nil,
                     "count": active ? recording!.events.count : 0, "phase": phase]
         }
         if op == "taskApprove" {
@@ -121,9 +137,14 @@ final class BrowserTaskPrototype: ObservableObject {
             return ["stopped": true]
         }
         if op == "taskEvents" {
-            guard Date().timeIntervalSince(item.started) <= 600,
-                  let input = body["events"] as? [[String: Any]], input.count <= 30,
-                  item.events.count + input.count <= 600 else { return fail("This recording is full. Stop or discard it.") }
+            pauseIfDue()
+            guard let input = body["events"] as? [[String: Any]], input.count <= 30 else { return fail("Rejected an event outside the approved capture.") }
+            // What arrives after the pause, or would take the recording past its size, is dropped and the recording
+            // kept as it is: full is a reason to ask the person, not to lose what they showed.
+            if recording?.paused == nil, item.events.count + input.count > Self.mostEvents {
+                item.paused = Date(); recording = item; try? save()
+            }
+            if recording?.paused != nil { return ["accepted": 0, "paused": true] }
             var events: [Event] = []
             for value in input {
                 guard let url = value["url"] as? String, let site = origin(url), item.origins.contains(site),
