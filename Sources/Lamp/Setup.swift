@@ -334,6 +334,7 @@ struct SettingsView: View {
 /// What's in Lamp but not yet for everyone: each switch here brings a feature into the interface.
 struct ExperimentalSettings: View {
     @AppStorage(MagicPanel.switchKey) private var magic = false
+    @AppStorage(LiveReload.switchKey) private var live = false
 
     var body: some View {
         Form {
@@ -341,6 +342,8 @@ struct ExperimentalSettings: View {
                 SettingsCheckboxes {
                     Toggle("Change apps while using them", isOn: $magic)
                         .checkboxNote("A wand in each app's title bar opens its chat beside it.")
+                    Toggle("Update open apps without restarting them", isOn: $live)
+                        .checkboxNote("Mac apps are built so most changes go straight into the open app and it keeps what's on screen.")
                 }
             } header: {
                 // Above the box, in a checkbox note's size and color rather than as a heading.
