@@ -3520,6 +3520,10 @@ final class Store: ObservableObject {
         }
         let command = universal ? "./build.sh \(project.onIOS ? "ios" : "mac")" : "./build.sh"
         var env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : [:]
+        // The open app takes the change first, when it can (LiveReload): a few seconds, where the whole build
+        // takes several more. That build goes on afterwards, for the app to be installed from when it closes.
+        if await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
+        await liveBuilds[project.id]?.value
         if LiveReload.eligible(project) { env["LAMP_LIVE"] = "1" }   // a change can go into the open app (LiveReload)
         let status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: env,
                                      started: { [weak self] in self?.turns[project.id]?.build = $0 }) { output.append($0) }
@@ -3542,10 +3546,64 @@ final class Store: ObservableObject {
         if progress[project.id]?.finished != nil { progress[project.id]?.unopened = !opened }
     }
 
+    /// The whole builds running after a change went into the open app, by app: a build waits for the one before.
+    private var liveBuilds: [String: Task<Void, Never>] = [:]
+    /// Apps whose change went in before their build: the install that follows the build has nothing to do.
+    private var reloadedBeforeBuild: Set<String> = []
+
+    /// The quick path: refresh the live copy only (build.sh with LAMP_LIVE_COPY), and when the change can go in,
+    /// compile just its files and put them into the open app; then build the whole app in the background, for
+    /// its install when it closes. False, having changed nothing in the open app, when any of it can't be done:
+    /// the build goes on the usual way, and its install decides.
+    private func reloadBeforeBuilding(_ project: LampProject, command: String, env: [String: String], fingerprint: String) async -> Bool {
+        reloadedBeforeBuild.remove(project.id)
+        guard LiveReload.eligible(project), !macCopies(of: project).isEmpty, Self.binary(of: project, contains: "reloaded.txt") else { return false }
+        await liveBuilds[project.id]?.value
+        var copy = env
+        copy["LAMP_LIVE"] = "1"
+        copy["LAMP_LIVE_COPY"] = "1"
+        guard await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: copy) { _ in } == 0,
+              await reloadInPlace(project, inFront: false) else { return false }
+        reloadedBeforeBuild.insert(project.id)
+        // Nothing to install until the whole build is done: the copy in build/ is the one before this change.
+        LiveReload.installed(project)
+        heldInstalls.installed(project.id)
+        // The open app runs these sources now, so they count as built; the whole build catches up behind it, and
+        // only then is there a copy to install when the app closes.
+        Runtime.markBuilt(project, from: fingerprint)
+        var full = env
+        full["LAMP_LIVE"] = "1"
+        liveBuilds[project.id] = Task { [weak self] in
+            var output: [String] = []
+            let status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: full) { output.append($0) }
+            guard let self else { return }
+            self.liveBuilds[project.id] = nil
+            guard let current = self.current(project) else { return }
+            if status == 0 {
+                BuildStamp.write(to: current.builtURL)
+                LiveReload.awaitInstall(current)
+                if self.heldInstalls.mayInstall(current.id, running: self.isRunning(current)) { self.installHeldIcons(for: [current.id]) }
+            } else {
+                // What the open app runs compiled file by file; the whole didn't. Built again next time.
+                Runtime.forgetBuilt(current)
+                print("Building \(current.name) after a change went in live failed:\n" + output.suffix(30).joined(separator: "\n"))
+            }
+        }
+        return true
+    }
+
     /// Puts the change just built into the open Mac app, when it was built live and the change can go in that
     /// way (`LiveReload.reloadable`). True when it went in: the app is updated where it is, and the build is held,
     /// to be installed when the app closes. False sends the change the usual way, by reopening the app.
     private func reloadInPlace(_ project: LampProject, inFront: Bool) async -> Bool {
+        // The change went in before the build (`reloadBeforeBuilding`): only the word that it did is left to say.
+        if reloadedBeforeBuild.remove(project.id) != nil, let app = macCopies(of: project).first {
+            if inFront {
+                app.activate()
+                log(project, .status, "\(project.name) is updated")
+            }
+            return true
+        }
         guard LiveReload.eligible(project), let app = macCopies(of: project).first,
               Self.binary(of: project, contains: "reloaded.txt") else { return false }
         let changed: [String]

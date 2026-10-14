@@ -475,6 +475,8 @@ enum Template {
         # ../../Sources lands on .lamp/live/Sources), unoptimized and linked so a change can go into the open app.
         if [[ "${LAMP_LIVE:-}" == 1 ]]; then
         \(liveCopySteps)
+          # Lamp only wants the live copy, to put a change into the open app before building the whole of it.
+          [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
           mkdir -p "$LIVE/xcode"
           rsync -a --delete --exclude DerivedData .lamp/device/ "$LIVE/xcode/device/"
           ln -sfn ../../Assets "$LIVE/Assets"
@@ -10572,6 +10574,8 @@ enum Template {
     if [[ "${LAMP_LIVE:-}" == 1 ]]; then
     \(liveCopySteps)
       cmp -s Package.swift "$LIVE/Package.swift" || cp Package.swift "$LIVE/Package.swift"
+      # Lamp only wants the live copy, to put a change into the open app before building the whole of it.
+      [[ "${LAMP_LIVE_COPY:-}" == 1 ]] && exit 0
       FLAGS=(-c debug --package-path "$LIVE" --scratch-path "$LIVE/.build" -Xswiftc -DLAMP_LIVE -Xswiftc -enable-testing -Xlinker -interposable)
     fi
     \(appIntentsSetup(ios: false))
