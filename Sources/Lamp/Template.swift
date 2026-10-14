@@ -717,9 +717,10 @@ enum Template {
         /// Mac apps: what the app opens when Finder hands it something. "folder", "file" for any file, a
         /// file extension ("png"), or a type identifier ("public.image").
         var opens: [String]?
-        /// Mac apps: the app works in the background (it watches or waits for something), so it opens at
-        /// login and keeps running after its last window closes. Declared in Info.plist as LampBackground,
-        /// which LampSupport reads at launch (LampBackground).
+        /// The app works in the background. On a Mac it watches or waits for something, so it opens at login and
+        /// keeps running after its last window closes: declared in Info.plist as LampBackground, which LampSupport
+        /// reads at launch (LampBackground). On iPhone iOS wakes it to run its LampSchedules: the fetch mode and
+        /// Lamp's one task identifier (`lists`).
         var background: Bool?
         /// The app keeps data in iCloud (LampSync in LampSupport): signed for a CloudKit container of its own,
         /// named in Info.plist as LampICloudContainer. Only for apps Apple signs for a team: those with an
@@ -729,6 +730,8 @@ enum Template {
         var weather: Bool?
         /// iPhone apps: the app reads and controls the person's home (LampHome): an entitlement.
         var homekit: Bool?
+        /// iPhone apps: notifications that break through Focus (`LampNotifications.send(timeSensitive:)`): an entitlement.
+        var timeSensitive: Bool?
 
         static func load(_ project: LampProject) -> Capabilities { load(project.dir.appendingPathComponent(file)) }
 
@@ -744,7 +747,8 @@ enum Template {
             return Capabilities(healthkit: healthkit == true ? true : nil, nfc: nfc == true ? true : nil, siri: siri == true ? true : nil,
                                 backgroundModes: some(modes), bonjourServices: some(services), backgroundTasks: some(tasks), opens: some(kinds),
                                 background: background == true ? true : nil, icloud: icloud == true ? true : nil,
-                                weather: weather == true ? true : nil, homekit: homekit == true ? true : nil)
+                                weather: weather == true ? true : nil, homekit: homekit == true ? true : nil,
+                                timeSensitive: timeSensitive == true ? true : nil)
         }
 
         var isEmpty: Bool { checked == Capabilities() }
@@ -815,6 +819,7 @@ enum Template {
             // with Lamp's signature, can't have it, which `weather(for:)` says.
             if weather == true, teamSigned { lines.append("  <key>com.apple.developer.weatherkit</key><true/>") }
             if homekit == true, platform == .ios { lines.append("  <key>com.apple.developer.homekit</key><true/>") }
+            if timeSensitive == true, platform == .ios { lines.append("  <key>com.apple.developer.usernotifications.time-sensitive</key><true/>") }
             // Health is the iPhone's: a Mac has no Health data, and its signature can't claim the entitlement.
             if healthkit == true, platform == .ios {
                 lines.append("  <key>com.apple.developer.healthkit</key><true/>")
@@ -837,7 +842,13 @@ enum Template {
         var lists: [String: [String]] {
             var lists: [String: [String]] = [:]
             // iCloud's notifications of changes made elsewhere reach the app in the background through this mode.
-            let modes = icloud == true && !modes.contains("remote-notification") ? modes + ["remote-notification"] : modes
+            var modes = icloud == true && !modes.contains("remote-notification") ? modes + ["remote-notification"] : modes
+            // An app that works in the background is woken by iOS for its LampSchedules: one task, refreshed.
+            var tasks = tasks
+            if background == true {
+                if !modes.contains("fetch") { modes.append("fetch") }
+                if !tasks.contains(Template.scheduleTask) { tasks.append(Template.scheduleTask) }
+            }
             if !modes.isEmpty { lists["UIBackgroundModes"] = modes }
             if !services.isEmpty { lists["NSBonjourServices"] = services }
             if !tasks.isEmpty { lists["BGTaskSchedulerPermittedIdentifiers"] = tasks }
@@ -1254,6 +1265,9 @@ enum Template {
 
     /// The widget's bundle id. macOS only takes an extension whose id begins with its app's.
     static func widgetBundleID(for project: LampProject) -> String { project.bundleID + ".widget" }
+
+    /// The background task an iPhone app that works in the background is woken for (`LampSchedule` on iOS).
+    static let scheduleTask = "lamp.schedule"
 
     /// The folder a Mac app and its widget share when Lamp signs them for the person's team: the team's id and
     /// the app's. macOS honours a group named so from the signature alone; one named "group.…" would need a
@@ -1748,6 +1762,7 @@ enum Template {
     typealias LampImage = NSImage
     #else
     import UIKit
+    import BackgroundTasks
     import HomeKit
     import WidgetKit
     import CoreMotion
@@ -6357,6 +6372,148 @@ enum Template {
         }
     }
 
+    extension Scene {
+        /// The iPhone's half of background work (see LampSchedule there); nothing more on the Mac, where an app
+        /// declared to work in the background keeps running instead.
+        func lampBackground() -> some Scene { self }
+    }
+
+    #endif
+
+    #if os(iOS)
+    /// Does something at a time of day or every so often, also while the app is closed: the same calls as on the
+    /// Mac. While the app is open it runs on time, and catches up on what was missed when it comes back to the
+    /// front. While it's closed iOS wakes it in the background to run what's due, when iOS judges best: near the
+    /// time, not on the dot, less for an app the person rarely opens, and not at all if they turned Background
+    /// App Refresh off. Needs `{"background": true}` in capabilities.json and `.lampBackground()` on the
+    /// app's WindowGroup. Make the schedules where the app starts (in the App), so a background launch has them.
+    ///
+    ///     @State private var briefing = LampSchedule.daily("briefing", hour: 7, minute: 30) { await makeBriefing() }
+    ///     @State private var check = LampSchedule.every("prices", minutes: 60) { await checkPrices() }
+    @MainActor
+    final class LampSchedule {
+        /// The one background task Lamp declares for an app (`Template.Capabilities.lists`).
+        nonisolated static let identifier = "lamp.schedule"
+        private static var all: [String: LampSchedule] = [:]
+
+        private let name: String
+        private let interval: TimeInterval?
+        private let time: (hour: Int, minute: Int)?
+        private let work: () async -> Void
+        private var timer: Timer?
+        fileprivate var running: Task<Void, Never>?
+
+        static func daily(_ name: String, hour: Int, minute: Int = 0, _ work: @escaping () async -> Void) -> LampSchedule {
+            LampSchedule(name: name, interval: nil, time: (hour, minute), work: work)
+        }
+
+        /// iOS wakes an app in the background a few times an hour at most: anything under 15 minutes runs that
+        /// often only while the app is open.
+        static func every(_ name: String, minutes: Double, _ work: @escaping () async -> Void) -> LampSchedule {
+            LampSchedule(name: name, interval: max(1, minutes) * 60, time: nil, work: work)
+        }
+
+        private init(name: String, interval: TimeInterval?, time: (hour: Int, minute: Int)?, work: @escaping () async -> Void) {
+            self.name = name
+            self.interval = interval
+            self.time = time
+            self.work = work
+            Self.all[name] = self
+            Self.watch
+            arm()
+        }
+
+        private var lastRunKey: String { "lampSchedule.\(name).lastRun" }
+
+        /// When it should next run, as on the Mac: a time that passed while the app was closed counts as due.
+        fileprivate var due: Date {
+            let lastRun = UserDefaults.standard.object(forKey: lastRunKey) as? Date
+            if let interval { return lastRun.map { $0.addingTimeInterval(interval) } ?? Date() }
+            let now = Date()
+            var next = Calendar.current.nextDate(after: now, matching: DateComponents(hour: time!.hour, minute: time!.minute), matchingPolicy: .nextTime) ?? now
+            if let previous = Calendar.current.date(byAdding: .day, value: -1, to: next), previous <= now, (lastRun ?? .distantPast) < previous {
+                next = now
+            }
+            return next
+        }
+
+        private func arm() {
+            guard running == nil else { return }
+            timer?.invalidate()
+            let delay = max(0, due.timeIntervalSinceNow)
+            timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated { self?.fire() }
+            }
+            timer?.tolerance = min(60, delay / 10)
+        }
+
+        /// The run counts once it's finished: one iOS cut short is still due, and runs again at the next wake.
+        /// While it runs nothing starts another (`running`).
+        @discardableResult private func fire() -> Task<Void, Never> {
+            if let running { return running }
+            let task = Task { @MainActor [weak self] in
+                guard let self else { return }
+                await work()
+                UserDefaults.standard.set(Date(), forKey: lastRunKey)
+                running = nil
+                arm()
+            }
+            running = task
+            return task
+        }
+
+        /// Coming back to the front catches up; going to the back asks iOS for time when the next one is due.
+        private static let watch: Void = {
+            let center = NotificationCenter.default
+            center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { all.values.forEach { $0.arm() } }
+            }
+            center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { askForTime() }
+            }
+        }()
+
+        /// Set by `lampBackground()`, which hands iOS the code to run for the task. iOS ends an app that asks for
+        /// a task it has no code for, so it's asked only once that's there: when the app goes to the back (by
+        /// then SwiftUI has set its scenes up) and at the end of a background run, never as a schedule is made.
+        static var hasHandler = false
+
+        /// Whether the app declared background work, so iOS will run it: Lamp lists the task in Info.plist.
+        static var isDeclared: Bool {
+            (Bundle.main.object(forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers") as? [String])?.contains(identifier) == true
+        }
+
+        /// Asks iOS to wake the app when the next schedule is due. One request stands for all of them.
+        static func askForTime() {
+            guard isDeclared, hasHandler, let next = all.values.map(\.due).min() else { return }
+            let request = BGAppRefreshTaskRequest(identifier: identifier)
+            request.earliestBeginDate = max(next, Date().addingTimeInterval(60))
+            do { try BGTaskScheduler.shared.submit(request) } catch { print("LampSchedule: iOS turned down running it in the background (the simulator always does): \(error.localizedDescription)") }
+        }
+
+        /// What iOS's wake runs (`lampBackground()`). The next wake is asked for first: iOS gives a refresh about
+        /// half a minute, and work that outlasts it must not leave the app with none booked. Then everything due
+        /// runs, and the wake waits for each run, also one the app's own timer started a moment before, since iOS
+        /// suspends the app as soon as this returns. A run cut short by iOS is done again at the next wake.
+        static func runDue() async {
+            askForTime()
+            var runs: [Task<Void, Never>] = []
+            for schedule in all.values {
+                if let running = schedule.running { runs.append(running) } else if schedule.due <= Date() { runs.append(schedule.fire()) }
+            }
+            for run in runs { await run.value }
+            askForTime()
+        }
+    }
+
+    extension Scene {
+        /// Lets iOS run the app's `LampSchedule`s while it's closed. Put it on the WindowGroup of an app that
+        /// declares `{"background": true}`; without that declaration it does nothing.
+        func lampBackground() -> some Scene {
+            MainActor.assumeIsolated { LampSchedule.hasHandler = true }
+            return backgroundTask(.appRefresh(LampSchedule.identifier)) { await LampSchedule.runDue() }
+        }
+    }
     #endif
 
     /// Text from files and pictures, read on this device (no AI call, free and private): PDFs (with recognition for
@@ -7021,19 +7178,71 @@ enum Template {
     /// Notifications. Asks permission the first time.
     ///
     ///     LampNotifications.send("Export finished", body: "Saved 12 files to Documents")
+    ///     LampNotifications.send("Water the plants", at: tomorrow9am, id: "plants", actions: ["Done", "Tomorrow"])
+    ///     LampNotifications.send("Leave now", body: "Traffic is heavy", timeSensitive: true)
+    ///     LampNotifications.onAction { action, id in … }   // at launch: "Done", or "" when the banner was tapped
+    ///
+    /// `at` shows it later, also while the app is closed (the same `id` replaces one waiting; `cancel(id)` takes it
+    /// back). `actions` are buttons on it, which do their work without opening the app. `timeSensitive` breaks
+    /// through Focus and stays on the Lock Screen longer, for what can't wait: on iPhone, with
+    /// `{"timeSensitive": true}` in capabilities.json.
     enum LampNotifications {
-        /// Shows notifications even while this app is in front (the system hides them otherwise).
+        /// Shows notifications even while this app is in front (the system hides them otherwise), and passes on
+        /// what the person did with one.
         private final class Presenter: NSObject, UNUserNotificationCenterDelegate {
             func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                         withCompletionHandler completion: @escaping (UNNotificationPresentationOptions) -> Void) {
                 completion([.banner, .sound, .list])
             }
+
+            func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                        withCompletionHandler completion: @escaping () -> Void) {
+                let action = response.actionIdentifier == UNNotificationDefaultActionIdentifier ? "" : response.actionIdentifier
+                let id = response.notification.request.identifier
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        if let handler = LampNotifications.handler { handler(action, id) } else { LampNotifications.unhandled.append((action, id)) }
+                    }
+                    completion()
+                }
+            }
         }
         private static let presenter = Presenter()
+        /// Sets of buttons are added one after another (the system replaces the whole list each time, so two at
+        /// once would lose one), and notifications are added and cancelled in the order asked.
+        private static let categories = DispatchQueue(label: "LampNotifications.categories")
+        /// For each id, which send or cancel came last: a send whose permission prompt was still up when a later
+        /// send or a cancel came for the same id doesn't add its notification afterwards.
+        private static let latestLock = NSLock()
+        nonisolated(unsafe) private static var latest: [String: Int] = [:]
+        private static func next(_ id: String) -> Int {
+            latestLock.lock(); defer { latestLock.unlock() }
+            latest[id, default: 0] += 1
+            return latest[id]!
+        }
+        private static func isLatest(_ id: String, _ turn: Int) -> Bool {
+            latestLock.lock(); defer { latestLock.unlock() }
+            return latest[id] == turn
+        }
+        nonisolated(unsafe) fileprivate static var handler: (@MainActor (String, String) -> Void)?
+        nonisolated(unsafe) fileprivate static var unhandled: [(String, String)] = []
 
-        static func send(_ title: String, body: String = "", sound: Bool = true) {
+        /// What to do when the person presses one of a notification's buttons (its title), or taps it ("").
+        /// Set it where the app starts, so a press that launches the app reaches it.
+        static func onAction(_ handle: @escaping @MainActor (_ action: String, _ id: String) -> Void) {
+            UNUserNotificationCenter.current().delegate = presenter
+            handler = handle
+            let waiting = unhandled
+            unhandled = []
+            DispatchQueue.main.async { MainActor.assumeIsolated { waiting.forEach { handle($0.0, $0.1) } } }
+        }
+
+        static func send(_ title: String, body: String = "", sound: Bool = true, at date: Date? = nil, id: String? = nil,
+                         actions: [String] = [], timeSensitive: Bool = false) {
             let center = UNUserNotificationCenter.current()
             if center.delegate == nil { center.delegate = presenter }
+            let id = id ?? UUID().uuidString
+            let turn = next(id)
             center.requestAuthorization(options: [.alert, .sound]) { granted, error in
                 guard granted else {
                     print("LampNotifications: not allowed\(error.map { " (\($0.localizedDescription))" } ?? "")")
@@ -7043,7 +7252,47 @@ enum Template {
                 content.title = title
                 content.body = body
                 if sound { content.sound = .default }
-                center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+                #if os(iOS)
+                if timeSensitive { content.interruptionLevel = .timeSensitive }
+                #endif
+                // Adding and a cancel's removal take turns on one queue, each finished before the next, so a cancel
+                // that comes after a send is never followed by that send's add.
+                let add = {
+                    categories.async {
+                        guard isLatest(id, turn) else { return }
+                        let trigger = date.map {
+                            UNCalendarNotificationTrigger(dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: $0), repeats: false)
+                        }
+                        let added = DispatchSemaphore(value: 0)
+                        center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger)) { _ in added.signal() }
+                        added.wait()
+                    }
+                }
+                guard !actions.isEmpty else { return add() }
+                // A set of buttons is a category the system must know before the notification is shown: one per
+                // set, named after its buttons, added to those the app already has, one change at a time.
+                let category = "lamp." + actions.joined(separator: "|")
+                content.categoryIdentifier = category
+                categories.async {
+                    let fetched = DispatchSemaphore(value: 0)
+                    var known = Set<UNNotificationCategory>()
+                    center.getNotificationCategories { known = $0; fetched.signal() }
+                    fetched.wait()
+                    if !known.contains(where: { $0.identifier == category }) {
+                        let buttons = actions.map { UNNotificationAction(identifier: $0, title: $0, options: []) }
+                        center.setNotificationCategories(known.union([UNNotificationCategory(identifier: category, actions: buttons, intentIdentifiers: [])]))
+                    }
+                    add()
+                }
+            }
+        }
+
+        /// Takes back a notification sent with `at` that hasn't been shown yet, or clears one that has.
+        static func cancel(_ id: String) {
+            _ = next(id)
+            categories.async {
+                UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id])
+                UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
             }
         }
     }
