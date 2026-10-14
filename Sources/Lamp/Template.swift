@@ -7831,7 +7831,8 @@ enum Template {
             let service: String
             /// The account, when the folder's name carries one (Google Drive's email, OneDrive's "Personal").
             let account: String?
-            /// Where its files are: for Google Drive, its My Drive folder (Shared drives sit beside it).
+            /// Where its files are: for Google Drive, its My Drive folder in whatever language the Mac names it (Shared
+            /// drives sit beside it); the account's folder when that can't be told.
             let url: URL
         }
 
@@ -7851,9 +7852,7 @@ enum Template {
                 let known = ["GoogleDrive": "Google Drive", "Dropbox": "Dropbox", "OneDrive": "OneDrive", "Box": "Box"]
                 let service = known[parts[0]] ?? name
                 var url = storage.appendingPathComponent(name)
-                if service == "Google Drive", fm.fileExists(atPath: url.appendingPathComponent("My Drive").path) {
-                    url = url.appendingPathComponent("My Drive")
-                }
+                if service == "Google Drive", let myDrive = myDrive(in: url) { url = myDrive }
                 found.append(Synced(service: service, account: parts.count > 1 && known[parts[0]] != nil ? parts[1] : nil, url: url))
             }
             // Dropbox from before macOS's File Provider kept its folder in the home folder.
@@ -7862,6 +7861,22 @@ enum Template {
                 found.append(Synced(service: "Dropbox", account: nil, url: oldDropbox))
             }
             return found
+        }
+
+        /// Google Drive names its My Drive folder in the Mac's language, beside Shared drives and Other computers.
+        /// A name it is known to use comes first; otherwise the account's only folder, when there is just one.
+        private static func myDrive(in account: URL) -> URL? {
+            let known = ["My Drive", "Meine Ablage", "Mi unidad", "Mon Drive", "Il mio Drive", "Meu Drive", "Mijn Drive",
+                         "Min enhet", "Mój dysk", "Мой диск", "マイドライブ", "내 드라이브", "我的云端硬盘", "我的雲端硬碟"]
+                .map(\.precomposedStringWithCanonicalMapping)
+            let folders = ((try? FileManager.default.contentsOfDirectory(atPath: account.path)) ?? [])
+                .filter { !$0.hasPrefix(".") }.sorted()
+                .map { account.appendingPathComponent($0) }
+                .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true }
+            if let named = folders.first(where: { known.contains($0.lastPathComponent.precomposedStringWithCanonicalMapping) }) {
+                return named
+            }
+            return folders.count == 1 ? folders[0] : nil
         }
 
         /// The first synced folder of a service ("Google Drive", "Dropbox", "iCloud Drive", "OneDrive"), or nil when
@@ -7880,6 +7895,7 @@ enum Template {
                 .sorted { date($0) > date($1) }
         }
     }
+    // end LampFolders
 
     /// A keyboard shortcut that works from any app, with no permission needed. Keep the returned value alive.
     ///
