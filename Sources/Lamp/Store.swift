@@ -3565,12 +3565,11 @@ final class Store: ObservableObject {
         guard await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: copy) { _ in } == 0,
               await reloadInPlace(project, inFront: false) else { return false }
         reloadedBeforeBuild.insert(project.id)
-        // Nothing to install until the whole build is done: the copy in build/ is the one before this change.
+        // Nothing to install until the whole build is done: the copy in build/ is the one before this change. Only
+        // then do these sources count as built, so a Lamp quit meanwhile builds them again (`recoverUnfinishedBuild`).
         LiveReload.installed(project)
         heldInstalls.installed(project.id)
-        // The open app runs these sources now, so they count as built; the whole build catches up behind it, and
-        // only then is there a copy to install when the app closes.
-        Runtime.markBuilt(project, from: fingerprint)
+        LiveReload.startedBuilding(project)
         var full = env
         full["LAMP_LIVE"] = "1"
         liveBuilds[project.id] = Task { [weak self] in
@@ -3578,8 +3577,10 @@ final class Store: ObservableObject {
             let status = await Shell.run(Shell.compatibleSDK + command, cwd: project.dir, env: full) { output.append($0) }
             guard let self else { return }
             self.liveBuilds[project.id] = nil
+            LiveReload.finishedBuilding(project)
             guard let current = self.current(project) else { return }
             if status == 0 {
+                Runtime.markBuilt(current, from: fingerprint)
                 BuildStamp.write(to: current.builtURL)
                 LiveReload.awaitInstall(current)
                 // Waiting for the app to close; closed already (while this built), it goes in now.
@@ -3601,19 +3602,25 @@ final class Store: ObservableObject {
     /// to be installed when the app closes. False sends the change the usual way, by reopening the app.
     private func reloadInPlace(_ project: LampProject, inFront: Bool) async -> Bool {
         // The change went in before the build (`reloadBeforeBuilding`): only the word that it did is left to say.
-        if reloadedBeforeBuild.remove(project.id) != nil, let app = macCopies(of: project).first {
-            if inFront {
-                app.activate()
-                log(project, .status, "\(project.name) is updated")
+        // Closed since, the app is installed the usual way, from the whole build once it's done.
+        if reloadedBeforeBuild.remove(project.id) != nil {
+            if let app = macCopies(of: project).first {
+                if inFront {
+                    app.activate()
+                    log(project, .status, "\(project.name) is updated")
+                }
+                return true
             }
-            return true
+            await liveBuilds[project.id]?.value
+            return false
         }
         guard LiveReload.eligible(project), let app = macCopies(of: project).first,
               Self.binary(of: project, contains: "reloaded.txt") else { return false }
         let changed: [String]
         switch await LiveReload.verdict(project) {
         case .reload(let files): changed = files
-        case .unchanged: return false
+        // The open app already runs these sources (a change that went in before its build): nothing to do.
+        case .unchanged: return true
         case .reopen(let why):
             log(project, .detail, "Reopening \(project.name) for this change: \(why).")
             return false
@@ -3701,6 +3708,8 @@ final class Store: ObservableObject {
         // A change that can go into the open app goes in there, keeping what's on screen; the build waits to be
         // installed until the app closes (LiveReload).
         if await reloadInPlace(project, inFront: inFront) { return nil }
+        // A whole build after an early change may still be writing build/: what's installed is what it makes.
+        await liveBuilds[project.id]?.value
         // Asked once in a turn: a second build in it leaves the app the person kept open alone.
         let asked = owner?.keptOpen == true && isRunning(project)
         guard !asked, await quit(project, for: owner, only: .mac) else {
@@ -4559,6 +4568,7 @@ final class Store: ObservableObject {
         refreshOpenApps()
         // Builds that were waiting for their app to close when Lamp was last quit: still waiting, and one
         // whose app has closed since goes in now.
+        projects.forEach(LiveReload.recoverUnfinishedBuild)
         for project in projects where Runtime.holdsBuild(project) || LiveReload.awaitsInstall(project) {
             _ = heldInstalls.mayInstall(project.id, running: true)
         }

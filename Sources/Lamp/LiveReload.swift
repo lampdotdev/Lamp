@@ -62,6 +62,23 @@ enum LiveReload {
         try? Data().write(to: pendingURL(project))
     }
     static func installed(_ project: LampProject) { try? FileManager.default.removeItem(at: pendingURL(project)) }
+
+    /// A whole build running after a change went in early (`Store.reloadBeforeBuilding`), kept on disk: if Lamp
+    /// quits before it's done, nothing says the open app's change was ever built, so at the next launch what Lamp
+    /// knows of the open app is dropped and the next change takes the usual build.
+    private static func buildingURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("building") }
+    static func startedBuilding(_ project: LampProject) {
+        try? FileManager.default.createDirectory(at: folder(project), withIntermediateDirectories: true)
+        try? Data().write(to: buildingURL(project))
+    }
+    static func finishedBuilding(_ project: LampProject) { try? FileManager.default.removeItem(at: buildingURL(project)) }
+    /// At launch: a build that was still going when Lamp quit.
+    static func recoverUnfinishedBuild(_ project: LampProject) {
+        guard FileManager.default.fileExists(atPath: buildingURL(project).path) else { return }
+        finishedBuilding(project)
+        forget(project)
+        Runtime.forgetBuilt(project)
+    }
     static func awaitsInstall(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: pendingURL(project).path) }
 
     /// What to do with a change: put the files it touched (relative to Sources) into the open app, reopen the
