@@ -39,7 +39,7 @@ enum Runtime {
         if project.platform == .universal { hasher.update(data: Data(project.destination.rawValue.utf8)) }
         // A Mac app's App Intents are kept or left out by whether it can be signed for a team, so a new team is a
         // change for an app that has them (Store.intentsCanComeBack).
-        // The same for a share extension, which a Mac app keeps only when it's signed for a team.
+        // The same for a share extension, which a Mac app keeps only when it's signed for a team (Store.shareCanComeBack).
         if project.platform == .mac, Store.usesAppIntents(project) || Template.hasShare(project) { hasher.update(data: Data(Devices.team.utf8)) }
         let roots = ["Sources", Template.widgetFolder, Template.shareFolder, "Package.swift", "icon.json", "capabilities.json"].map { project.dir.appendingPathComponent($0) }
         for root in roots {

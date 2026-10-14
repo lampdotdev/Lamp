@@ -1760,6 +1760,11 @@ enum Template {
             var order = 0
             for input in inputs {
                 let title = input.attributedTitle?.string ?? input.attributedContentText?.string
+                // Text may come in the item itself, with nothing attached.
+                if input.attachments?.isEmpty ?? true, let text = input.attributedContentText?.string, !text.isEmpty {
+                    lock.lock(); found.append((order, Item(text: text))); lock.unlock()
+                    order += 1
+                }
                 for provider in input.attachments ?? [] {
                     let place = order
                     order += 1
@@ -1800,6 +1805,12 @@ enum Template {
                     let isImage = url.flatMap { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) } ?? false
                     then(url.flatMap { keep($0, kind: isImage ? .image : .file) })
                 }
+            } else if has(.plainText), !has(.image) {
+                // Before the data below: plain text is data too, and a quote would arrive as a nameless file.
+                provider.loadItem(forTypeIdentifier: UTType.plainText.identifier) { value, _ in
+                    let text = (value as? String) ?? (value as? NSAttributedString)?.string ?? (value as? Data).flatMap { String(data: $0, encoding: .utf8) }
+                    then(text.map { Item(text: $0) })
+                }
             } else if has(.image) || has(.movie) || has(.data) {
                 // A picture or file handed over as a file of its own, or only as data.
                 let kind: Item.Kind = has(.image) ? .image : .file
@@ -1809,11 +1820,6 @@ enum Template {
                     provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in
                         then(data.flatMap { keep($0, type: type, kind: kind) })
                     }
-                }
-            } else if has(.plainText) || has(.text) {
-                provider.loadItem(forTypeIdentifier: (has(.plainText) ? UTType.plainText : UTType.text).identifier) { value, _ in
-                    let text = (value as? String) ?? (value as? NSAttributedString)?.string ?? (value as? Data).flatMap { String(data: $0, encoding: .utf8) }
-                    then(text.map { Item(text: $0) })
                 }
             } else {
                 then(nil)

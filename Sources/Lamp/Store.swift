@@ -2487,9 +2487,11 @@ final class Store: ObservableObject {
            NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).isEmpty {
             if await updateForThisForge(project) { return }
         }
-        // Its App Intents were left out for want of a team to sign it for, and there is one now: built again,
-        // since the build that left them out has none to put back.
-        if await Self.intentsCanComeBack(project), !busy.contains(project.id),
+        // Its App Intents or its share extension were left out for want of a team to sign it for, and there is one
+        // now: built again, since the build that left them out has none to put back.
+        let intentsBack = await Self.intentsCanComeBack(project)
+        let shareBack = await Self.shareCanComeBack(project)
+        if intentsBack || shareBack, !busy.contains(project.id),
            NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).isEmpty {
             if await updateForThisForge(project, because: "Signing \(project.name) for your Apple team…") { return }
         }
@@ -4899,6 +4901,16 @@ final class Store: ObservableObject {
               FileManager.default.fileExists(atPath: project.installedURL.path), !hasIntentsMetadata(project.installedURL),
               (try? String(contentsOf: teamSigningFailure(project), encoding: .utf8)) != Devices.team else { return false }
         guard await Subprocess.run("/usr/bin/xcrun", ["-f", "appintentsmetadataprocessor"], timeout: 20).status == 0 else { return false }
+        return await Devices.signingIdentity(for: Devices.team) != nil
+    }
+
+    /// The same for a Mac app's share extension, which `deploy` leaves out of an app it can't sign for a team:
+    /// a team to sign for now, which hasn't already failed, brings it back with a build.
+    nonisolated static func shareCanComeBack(_ project: LampProject) async -> Bool {
+        guard project.platform == .mac, Template.hasShare(project),
+              FileManager.default.fileExists(atPath: project.installedURL.path),
+              !FileManager.default.fileExists(atPath: Template.shareURL(in: project.installedURL, of: project).path),
+              (try? String(contentsOf: teamSigningFailure(project), encoding: .utf8)) != Devices.team else { return false }
         return await Devices.signingIdentity(for: Devices.team) != nil
     }
 
