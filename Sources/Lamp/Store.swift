@@ -4400,9 +4400,14 @@ final class Store: ObservableObject {
         let prefix = Edition.appBundlePrefix
         // By the app's whole id first: an app for both carries the team in its id, which isn't its folder's name.
         let byBundle = Dictionary(projects.map { ($0.bundleID, $0.id) }, uniquingKeysWith: { first, _ in first })
-        let onMac = NSWorkspace.shared.runningApplications
-            .compactMap { $0.isTerminated ? nil : $0.bundleIdentifier }
-            .compactMap { byBundle[$0] ?? ($0.hasPrefix(prefix) ? String($0.dropFirst(prefix.count)) : nil) }
+        // Then by where it runs from: a copy with another id at an app's place is that app's (`macCopies`).
+        let byPlace = Dictionary(projects.map { ($0.installedURL.standardizedFileURL.resolvingSymlinksInPath(), $0.id) },
+                                 uniquingKeysWith: { first, _ in first })
+        let onMac = NSWorkspace.shared.runningApplications.filter { !$0.isTerminated }.compactMap { app -> String? in
+            if let id = app.bundleIdentifier, let project = byBundle[id] { return project }
+            if let place = app.bundleURL?.standardizedFileURL.resolvingSymlinksInPath(), let project = byPlace[place] { return project }
+            return app.bundleIdentifier.flatMap { $0.hasPrefix(prefix) ? String($0.dropFirst(prefix.count)) : nil }
+        }
         simulatorApps = simulatorApps.filter { Simulator.isRunning(pid: $0.value.pid) }
         deviceApps = deviceApps.filter { $0.value.isRunning }
         let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys)
@@ -4432,7 +4437,7 @@ final class Store: ObservableObject {
     /// it to close (a build, Lamp's Quit, Delete) goes on.
     func forceQuit(_ project: LampProject) {
         guard let pid = notResponding.removeValue(forKey: project.id),
-              let app = NSRunningApplication(processIdentifier: pid), app.bundleIdentifier == project.bundleID else { return }
+              let app = macCopies(of: project).first(where: { $0.processIdentifier == pid }) else { return }
         app.forceTerminate()
     }
 
