@@ -66,8 +66,10 @@ final class MagicPanel: NSObject, NSWindowDelegate {
     private var appFrame: NSRect?
     private var observers: [NSObjectProtocol] = []
     private var busyWatch: AnyCancellable?
-    /// Put away while the person points at part of the app, because it was over the app.
-    private var steppedAside = false
+    /// The copy of the app the person is pointing in, while the panel is put away because it was over the app.
+    /// Tied to that process: a change that reopens the app ends the pointing with it, and the new copy has
+    /// nothing to point with, so it never says the pointing ended.
+    private var steppedAside: pid_t?
     static let width: CGFloat = 400
     private static let gap: CGFloat = 8
 
@@ -79,7 +81,7 @@ final class MagicPanel: NSObject, NSWindowDelegate {
         let panel = self.panel ?? makePanel(for: project)
         self.panel = panel
         if appFrame != nil { place() } else { panel.center() }
-        steppedAside = false
+        steppedAside = nil
         panel.makeKeyAndOrderFront(nil)
         listen(for: project)
     }
@@ -93,7 +95,7 @@ final class MagicPanel: NSObject, NSWindowDelegate {
         if let appID, let project = Store.shared.projects.first(where: { $0.id == appID }) { Store.shared.announceDraft(of: project) }
         panel?.orderOut(nil)
         panel = nil
-        steppedAside = false
+        steppedAside = nil
         appID = nil
         appFrame = nil
     }
@@ -182,6 +184,8 @@ final class MagicPanel: NSObject, NSWindowDelegate {
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated {
+                let ended = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier
+                if let ended, ended == self?.steppedAside { self?.comeBack() }
                 guard let self, let current = Store.shared.projects.first(where: { $0.id == id }), Store.shared.busy.contains(id),
                       let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                       app.bundleIdentifier == current.bundleID
@@ -217,18 +221,19 @@ final class MagicPanel: NSObject, NSWindowDelegate {
     /// app can be pointed at and the line saying how to stop isn't covered.
     func point() {
         guard let appID, let project = Store.shared.projects.first(where: { $0.id == appID }) else { return }
-        if let panel, let appFrame, panel.frame.intersects(appFrame) {
-            steppedAside = true
+        let copy = Store.shared.macCopies(of: project).first
+        if let panel, let appFrame, let copy, panel.frame.intersects(appFrame) {
+            steppedAside = copy.processIdentifier
             panel.orderOut(nil)
         }
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(Edition.notificationPrefix + "pick"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
-        Store.shared.macCopies(of: project).first?.activate()
+        copy?.activate()
     }
 
     private func comeBack() {
-        guard steppedAside else { return }
-        steppedAside = false
+        guard steppedAside != nil else { return }
+        steppedAside = nil
         updateVisibility()
     }
 
@@ -331,7 +336,8 @@ final class MagicPanel: NSObject, NSWindowDelegate {
         let ours = front == ProcessInfo.processInfo.processIdentifier || copies.contains { $0.processIdentifier == front }
         // While the app is closed for a change, the chat is where the change is followed.
         let updating = copies.isEmpty && Store.shared.busy.contains(appID)
-        if steppedAside && !copies.isEmpty { panel.orderOut(nil) } else if ours || updating { panel.orderFront(nil) } else { panel.orderOut(nil) }
+        let pointing = steppedAside.map { pid in copies.contains { $0.processIdentifier == pid } } ?? false
+        if pointing { panel.orderOut(nil) } else if ours || updating { panel.orderFront(nil) } else { panel.orderOut(nil) }
     }
 
     /// Beside the app's window, on whichever side has room, as tall as it; over its right edge when neither has.
