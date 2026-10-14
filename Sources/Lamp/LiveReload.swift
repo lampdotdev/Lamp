@@ -184,7 +184,11 @@ enum LiveReload {
             if let m = typeDecl.firstMatch(in: line, range: range) {
                 let name = String(line[Range(m.range(at: 3), in: line)!])
                 let outer = scopes.compactMap(\.type).last
-                scopes.append((indent, outer.map { $0 + "." + name } ?? name))
+                let type = outer.map { $0 + "." + name } ?? name
+                scopes.append((indent, type))
+                // Every type is listed, members or not: an empty one the open app has is still its, and a first
+                // field added to it changes what it holds.
+                if seen.insert(type + "\t").inserted { out.append(type + "\t") }
             } else if let m = varDecl.firstMatch(in: line, range: range) {
                 let rest = String(line[Range(m.range(at: 4), in: line)!])
                 if let owner, rest.contains("readImpl=stored"), !rest.contains(" static") {
