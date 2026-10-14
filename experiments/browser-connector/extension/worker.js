@@ -126,3 +126,4 @@ setInterval(pump,1000);
 void pump();
 
 importScripts('recorder-worker.js');
+importScripts('run-worker.js');

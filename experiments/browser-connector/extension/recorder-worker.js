@@ -69,7 +69,7 @@ async function taskInject(tab){
  if(!taskRecording||tab.incognito||!tab.url||!/^https?:/.test(tab.url))return;
  const site=new URL(tab.url).origin;
  if(!taskRecording.origins.includes(site)||!await chrome.permissions.contains({origins:[pattern(site)]}))return;
- await chrome.scripting.executeScript({target:{tabId:tab.id},files:['task-capture.js']});
+ await chrome.scripting.executeScript({target:{tabId:tab.id},files:['page.js','task-capture.js']});
  await chrome.scripting.executeScript({target:{tabId:tab.id},args:[taskRecording.id,site,taskRecording.started,taskRecording.paused===true],func:(id,site,started,paused)=>window.__lampTaskCapture?.start(id,site,started,paused)});
 }
 async function taskSync(){
@@ -98,6 +98,7 @@ chrome.runtime.onMessage.addListener((msg,sender,reply)=>{
   taskChecks.add(check);check.finally(()=>taskChecks.delete(check));
   return;
  }
+ if(msg.op==='task-alive'&&sender.id===chrome.runtime.id&&sender.tab){taskStateReady.then(()=>reply({alive:!!taskRecording&&taskRecording.id===msg.id&&!taskFinishing}));return true;}
  if(!fromUI&&!(fromPage&&['task-stop','task-discard'].includes(msg.op)))return;
  (async()=>{
   await taskStateReady;

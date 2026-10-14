@@ -150,6 +150,7 @@ final class BrowserPrototype {
               UUID(uuidString: profile) != nil else { return fail("Missing browser identity.") }
         let op = body["op"] as? String ?? ""
         if op.hasPrefix("task") { return BrowserTaskPrototype.shared.native(body, origin: origin) }
+        if op.hasPrefix("run") { return BrowserRun.shared.native(body) }
         if op == "list" || op == "poll" {
             var jobs: [[String: Any]] = []
             if op == "poll" {
