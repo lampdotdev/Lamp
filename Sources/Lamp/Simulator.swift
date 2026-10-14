@@ -17,11 +17,56 @@ enum Simulator {
     /// The apps Lamp makes need this iOS (the scaffold's deployment target), so only simulators that run it count.
     static let minimumIOS = PhoneTools.minimumIOS
 
-    /// The iPhone (or iPad) to use: one that's already booted, else the newest available, among those on a
-    /// runtime the apps can run on. Sorted by name after the runtime, so the choice is the same every time.
-    static func device(_ family: DeviceFamily = .iphone) -> String? {
+    /// The iPhone (or iPad) to use: the one chosen under Try On while it's still installed, else one that's
+    /// already booted, else the newest available, among those on a runtime the apps can run on. Sorted by name
+    /// after the runtime, so the choice is the same every time.
+    static func device(_ family: DeviceFamily = .iphone, preferring chosen: String? = nil) -> String? {
         let listing = Subprocess.runBlocking("/usr/bin/xcrun", ["simctl", "list", "devices", "available", "-j"], mergeErrors: false, timeout: 30).output
+        if let chosen, choices(listing: listing).contains(where: { $0.udid == chosen }) { return chosen }
         return device(family, listing: listing)
+    }
+
+    /// One simulator Try On can offer: an iPhone or iPad on a runtime the apps run on.
+    struct Choice: Identifiable, Hashable, Sendable {
+        var id: String { udid }
+        let udid: String
+        let name: String          // "iPhone 16 Pro"
+        let family: DeviceFamily
+        let version: Int          // the iOS major version it runs
+        /// The name, with its iOS when another simulator has the same name.
+        var label: String
+    }
+
+    /// Every iPhone and iPad simulator the apps can run on, iPhones first, each name once with the newest iOS
+    /// first when one name is installed for several.
+    static func choices(listing: String) -> [Choice] {
+        guard let data = listing.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let devices = json["devices"] as? [String: [[String: Any]]] else { return [] }
+        var found: [(udid: String, name: String, family: DeviceFamily, version: Int)] = []
+        for (runtime, list) in devices {
+            guard let range = runtime.range(of: "SimRuntime.iOS-"),
+                  let major = Int(runtime[range.upperBound...].split(separator: "-").first ?? ""), major >= minimumIOS else { continue }
+            for device in list {
+                guard let name = device["name"] as? String, let udid = device["udid"] as? String else { continue }
+                let family: DeviceFamily? = name.hasPrefix("iPad") ? .ipad : name.hasPrefix("iPhone") ? .iphone : nil
+                if let family { found.append((udid, name, family, major)) }
+            }
+        }
+        let names = Dictionary(grouping: found, by: \.name)
+        return found.sorted { ($0.family == .iphone ? 0 : 1, $0.name, -$0.version) < ($1.family == .iphone ? 0 : 1, $1.name, -$1.version) }
+            .map { Choice(udid: $0.udid, name: $0.name, family: $0.family, version: $0.version,
+                          label: (names[$0.name]?.count ?? 0) > 1 ? "\($0.name) (iOS \($0.version))" : $0.name) }
+    }
+
+    static func choices() async -> [Choice] {
+        choices(listing: await Subprocess.run("/usr/bin/xcrun", ["simctl", "list", "devices", "available", "-j"], mergeErrors: false, timeout: 30).output)
+    }
+
+    /// The name of a simulator, for saying where the app opened.
+    static func name(of udid: String) -> String? {
+        let listing = Subprocess.runBlocking("/usr/bin/xcrun", ["simctl", "list", "devices", "available", "-j"], mergeErrors: false, timeout: 30).output
+        return choices(listing: listing).first { $0.udid == udid }?.name
     }
 
     /// Shared with the prerequisite check, so a passed check selects the same simulator as a build.

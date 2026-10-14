@@ -827,7 +827,9 @@ enum Agent {
         while it runs; there's no server to push changes, so give a timer or progress an end date \
         (`Text(timerInterval:countsDown:)`, `ProgressView(timerInterval:)`) and it moves by itself. To see them, \
         `use_app` with `key` "lock" shows the lock screen, where a Live Activity is, and "home" the home screen; \
-        then the picture. Only the person can add a widget to the home screen, and Lamp shows them how: don't \
+        then the picture. Only some iPhones have a Dynamic Island (the Pro models): `look_at_app` says which \
+        simulator the app is open on, and when it has none, say so and that the person can choose one under \
+        Try On. Only the person can add a widget to the home screen, and Lamp shows them how: don't \
         explain it, and say in a sentence that it's ready to add.
         """
 

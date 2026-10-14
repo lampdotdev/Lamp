@@ -42,6 +42,7 @@ enum Template {
         try JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
                                              platform: project.platform, family: project.platform.hasIOS ? project.family : nil,
                                              device: project.device, target: project.platform == .universal ? project.chosen : nil,
+                                             simulator: project.platform.hasIOS ? project.simulator : nil,
                                              instance: project.instance.isEmpty ? nil : project.instance,
                                              wish: project.untitled && project.fromWish ? true : nil))
             .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))

@@ -76,6 +76,8 @@ struct LampProject: Identifiable, Hashable {
     var device: String?
     /// For an app made for both: where Try On last put it. Meaningless for the other kinds, which have one place.
     var chosen: Destination = .mac
+    /// iOS apps: the simulator chosen by name under Try On (its udid), or nil for Lamp's own pick of the family.
+    var simulator: String?
     /// Where the app is built for and opened now.
     var destination: Destination {
         switch platform {
@@ -117,6 +119,7 @@ struct ProjectMeta: Codable {
     var family: DeviceFamily?  // iOS apps: which simulator they open on; nil means iPhone
     var device: String?        // iOS apps: the person's own phone (its udid) that Play puts the app on, if any
     var target: Destination?   // apps for both: where Try On last put it; nil means the Mac
+    var simulator: String?     // iOS apps: the simulator chosen by name under Try On, if any
     var instance: String?      // LampProject.instance
     var wish: Bool?            // LampProject.fromWish
 }
@@ -475,7 +478,7 @@ final class Store: ObservableObject {
         startGateway()
         watchOpenApps()
         // Asking for phones runs devicectl, so only for someone with iPhone apps; Try On asks again when it's opened.
-        if projects.contains(where: { $0.platform.hasIOS }) { refreshDevices() }
+        if projects.contains(where: { $0.platform.hasIOS }) { refreshDevices(); refreshSimulators() }
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
@@ -576,7 +579,7 @@ final class Store: ObservableObject {
                                 instance: meta.instance ?? dir.lastPathComponent,
                                 untitled: meta.untitled ?? false, fromWish: meta.wish ?? false,
                                 platform: meta.platform ?? .mac, family: meta.family ?? .iphone,
-                                device: meta.device, chosen: meta.target ?? .mac)
+                                device: meta.device, chosen: meta.target ?? .mac, simulator: meta.simulator)
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
@@ -917,23 +920,28 @@ final class Store: ObservableObject {
     /// one change, so a choice made from the Mac or from the other simulator lands whole. The app is quit
     /// when it has to be opened afresh elsewhere: on the other simulator, or, for an app for both leaving
     /// the Mac, so its Mac copy stops writing its pictures over the iPhone's.
-    func setDevice(_ project: LampProject, _ udid: String?, family: DeviceFamily? = nil) {
+    /// `simulator` names one simulator for the app's looks and opens (`Simulator.choices`); leaving it out
+    /// keeps the one chosen, and `.some(nil)` goes back to Lamp's own pick of the family.
+    func setDevice(_ project: LampProject, _ udid: String?, family: DeviceFamily? = nil, simulator: String?? = nil) {
         let family = family ?? project.family
         let moving = project.platform == .universal && project.chosen != .ios
-        guard project.platform.hasIOS, project.device != udid || project.family != family || moving,
+        let newSimulator = simulator ?? project.simulator
+        let otherSimulator = newSimulator != project.simulator
+        guard project.platform.hasIOS, project.device != udid || project.family != family || moving || otherSimulator,
               begin(project) != nil else { return }
         clearPhoneRetry(project)
         var changed = project
         changed.device = udid
         changed.family = family
         changed.chosen = .ios
+        changed.simulator = newSimulator
         try? Template.saveMeta(changed)
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
         syncLocalNetwork()
         let name = devices.first(where: { $0.udid == udid })?.name
         let said = name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
-            ?? "\(changed.name) will open on the \(changed.family.name) simulator from now on."
-        guard moving || (udid == nil && project.family != family) else {
+            ?? "\(changed.name) will open on the \(simulatorName(changed)) simulator from now on."
+        guard moving || (udid == nil && (project.family != family || otherSimulator)) else {
             log(changed, .status, said)
             finish(changed)
             return
@@ -948,7 +956,24 @@ final class Store: ObservableObject {
     /// Back to a simulator from a phone, as one change: the family is set on the project as it is after
     /// the phone is forgotten, not on the copy the menu held.
     func setSimulator(_ project: LampProject, _ family: DeviceFamily) {
-        setDevice(project, nil, family: family)
+        setDevice(project, nil, family: family, simulator: .some(nil))
+    }
+
+    /// One simulator by name, from Try On's list.
+    func setSimulator(_ project: LampProject, _ choice: Simulator.Choice) {
+        setDevice(project, nil, family: choice.family, simulator: .some(choice.udid))
+    }
+
+    /// Every simulator Try On can offer, looked up when the menu opens.
+    @Published var simulators: [Simulator.Choice] = []
+
+    func refreshSimulators() {
+        Task { simulators = await Simulator.choices() }
+    }
+
+    /// The simulator an iOS app opens on, as the person would call it: the one chosen by name, or the family.
+    func simulatorName(_ project: LampProject) -> String {
+        project.simulator.flatMap { udid in simulators.first { $0.udid == udid }?.name } ?? project.family.name
     }
 
     /// The person's paired iPhones and iPads, for Try On. Looked up when the list is wanted (opening the
@@ -958,7 +983,7 @@ final class Store: ObservableObject {
     /// What Try On shows beside Play: the simulator's kind, or the chosen phone's name, or this Mac.
     func tryOnName(_ project: LampProject) -> String {
         guard project.onIOS else { return "My Mac" }
-        guard let udid = project.device else { return project.family.name }
+        guard let udid = project.device else { return simulatorName(project) }
         return devices.first(where: { $0.udid == udid })?.name ?? "Your phone"
     }
 
@@ -3367,7 +3392,7 @@ final class Store: ObservableObject {
     /// The iPhone counterpart of `install`: the built app goes into the booted simulator and is launched there,
     /// with what it prints going to the same log the Mac apps use. Returns what's known if it died at once.
     private func installOnSimulator(_ project: LampProject, owner: Turn, inFront: Bool) async -> String? {
-        guard let udid = Simulator.device(project.family) else {
+        guard let udid = Simulator.device(project.family, preferring: project.simulator) else {
             let problem = "No \(project.family.name) simulator with iOS \(Simulator.minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components."
             log(project, .error, problem)
             return problem
@@ -3401,7 +3426,8 @@ final class Store: ObservableObject {
             if simulatorLeases[udid] == project.id { simulatorLeases[udid] = before.flatMap { simulatorApps[$0] != nil ? $0 : nil } }
             return message
         }
-        note("Opening \(project.name) on the \(project.family.name) simulator…", for: project)
+        let simulator = Simulator.name(of: udid) ?? project.family.name
+        note("Opening \(project.name) on the \(simulator) simulator…", for: project)
         await finishSimulatorBundle(project)
         do {
             try await Simulator.boot(udid, show: inFront)
@@ -3439,7 +3465,7 @@ final class Store: ObservableObject {
                 // The Simulator was opened before the install; by now it may be behind Lamp again, and "ready"
                 // should mean the app is in front of the person, not somewhere to be found.
                 await Simulator.show(udid)
-                log(project, .status, "\(project.name) is ready on the \(project.family.name) simulator")
+                log(project, .status, "\(project.name) is ready on the \(simulator) simulator")
             }
         } catch {
             // A failure to boot, install or launch is reported like a crash: the agent must hear about it.
@@ -4693,7 +4719,9 @@ final class Store: ObservableObject {
             try? await Task.sleep(for: .seconds(1))
             let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
             if let udid = simulatorApps[project.id]?.udid, await Simulator.screenshot(on: udid, to: picture) { screenshots = [picture] }
-            var text = note + " " + (screenshots.isEmpty ? "No picture of the iPhone could be taken."
+            // Which simulator: what it can show depends on it (a Dynamic Island is only on some iPhones).
+            let on = simulatorApps[project.id].flatMap { Simulator.name(of: $0.udid) }.map { " It's open on the \($0) simulator." } ?? ""
+            var text = note + on + " " + (screenshots.isEmpty ? "No picture of the iPhone could be taken."
                 : Privacy.sharesPictures ? "A picture of the iPhone's screen follows. Points for use_app are pixels in it." : Privacy.picturesOff)
             if !Privacy.sharesLog { text += " " + Privacy.logOff }
             // The screen in words, beside its picture. Reading it needs the same permission as use_app, which
