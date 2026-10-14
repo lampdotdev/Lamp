@@ -318,11 +318,12 @@ struct SettingsView: View {
             AppsSettings().tabItem { Label("Apps", systemImage: "square.grid.2x2") }.tag("apps")
             ProvidersSettings().tabItem { Label("AI Providers", systemImage: "cpu") }.tag("providers")
             MemorySettings().tabItem { Label("Memory", systemImage: "note.text") }.tag("memory")
+            if Edition.isDev { BrowserExperimentalSettings().tabItem { Label("Experimental", systemImage: "flask") }.tag("experimental") }
         }
         .frame(width: 560)
         .onAppear {
             if tab == "local" { tab = "providers" }   // Local Models is now Native Mac AI, under Providers
-            if !["building", "apps", "providers", "memory"].contains(tab) { tab = "building" }
+            if !(["building", "apps", "providers", "memory"] + (Edition.isDev ? ["experimental"] : [])).contains(tab) { tab = "building" }
         }
     }
 }
@@ -1778,3 +1779,19 @@ private struct LocalAISheet: View {
     }
 }
 
+
+private struct BrowserExperimentalSettings: View {
+    @AppStorage("experimentBrowserCompanion") private var enabled = ProcessInfo.processInfo.environment["LAMP_BROWSER_PROTOTYPE"] == "1"
+    var body: some View {
+        Form {
+            SettingsCheckboxes {
+                Toggle("Browser companions", isOn: $enabled)
+                if enabled { BrowserConnectionUpgrade(compact: true).underCheckbox() }
+            }
+        }.settingsPane()
+        .onChange(of: enabled) { _, value in
+            if value { try? BrowserPrototype.shared.prepare() }
+            BrowserSetup.shared.refresh()
+        }
+    }
+}

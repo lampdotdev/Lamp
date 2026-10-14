@@ -1236,13 +1236,13 @@ struct AppInfoView: View {
             // What answers this app, read-only: models are chosen in Settings. Nothing that answers is Not Ready.
             Section {
                 let _ = (settingsRevision, models)
-                ForEach(Capability.allCases) { capability in
+                ForEach(Capability.allCases.filter { $0 != .browser }) { capability in
                     answerRow(capability.title, AppAI.resolve(capability, for: project))
                 }
                 if project.platform.hasIOS {
                     // Away from the Mac a phone answers only through the OpenRouter key: without one, one row says so.
                     if Provider.hasKey {
-                        ForEach(Capability.allCases) { capability in
+                        ForEach(Capability.allCases.filter { $0 != .browser }) { capability in
                             answerRow("\(capability.title) away", AppAI.resolve(capability, for: project, in: .phoneAway))
                         }
                     } else {

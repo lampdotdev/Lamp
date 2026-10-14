@@ -3057,10 +3057,13 @@ final class Store: ObservableObject {
     /// `offer_setup`: the agent asks Lamp to offer the person a way to set up a capability, with its reason.
     private func agentOffer(_ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
         guard let capability = (arguments["capability"] as? String).flatMap(Capability.init(rawValue:)) else {
-            return (400, ["error": "`capability` must be text, decisions or pictures."])
+            return (400, ["error": "`capability` must be text, decisions, pictures or browser."])
+        }
+        if capability == .browser && (!BrowserPrototype.enabled || !project.platform.hasMac) {
+            return (400, ["error": "Browser companions are available for Mac apps when the browser experiment is enabled."])
         }
         let away = arguments["away"] as? Bool == true
-        guard !away || project.platform.hasIOS else {
+        guard !away || (project.platform.hasIOS && capability != .browser) else {
             return (400, ["error": "`away` is only for iPhone apps."])
         }
         let why = (arguments["why"] as? String)?.trimmed ?? ""
@@ -4187,6 +4190,7 @@ final class Store: ObservableObject {
         switch capability {
         case .text: "\(project.name) just tried to use AI, but nothing on this Mac can answer yet. Set up one of the ways below and it will work the next time."
         case .decisions: "\(project.name) uses AI to make quick judgments, like yes or no, or which of a few options fits, but nothing on this Mac can make them yet. Set up one of the ways below and they will work the next time."
+        case .browser: "\(project.name) has a browser companion. Connect Lamp to Chrome to use it beside a website."
         case .pictures: "\(project.name) just tried to make a picture, but nothing on this Mac can draw yet. Set up one of the ways below and it will work the next time."
         }
     }

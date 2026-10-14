@@ -106,6 +106,13 @@ else
   ICON_NAME_KEY=''
   UPDATE_KEYS=''   # a development build never updates itself
 fi
+# One generic browser companion, installed through Lamp's setup guide, never generated per app.
+if [ "$FLAVOR" = dev ]; then
+  mkdir -p "$APP/Contents/Helpers" "$APP/Contents/Resources/BrowserCompanion"
+  xcrun swiftc -O -target arm64-apple-macos14 experiments/browser-connector/NativeHost.swift -o "$APP/Contents/Helpers/BrowserNativeHost"
+  cp -R experiments/browser-connector/extension "$APP/Contents/Resources/BrowserCompanion/"
+  cp experiments/browser-connector/extension-id.txt "$APP/Contents/Resources/BrowserCompanion/"
+fi
 cp Resources/THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/"
 install -m 755 Resources/lamp-approve.sh "$APP/Contents/Resources/lamp-approve.sh"
 cp Resources/lamp-tools.ts Resources/lamp-tools.json "$APP/Contents/Resources/"   # the agent's tools: pi's extension and the registry both it and the MCP endpoint read
@@ -200,6 +207,7 @@ SPARKLE="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
 sign "$SPARKLE/Autoupdate"
 sign "$SPARKLE/Updater.app"
 sign "$APP/Contents/Frameworks/Sparkle.framework"
+if [ "$FLAVOR" = dev ]; then sign "$APP/Contents/Helpers/BrowserNativeHost"; fi
 sign "${APP_ENTITLEMENTS[@]}" "$APP"
 [ "$SIGN_ID" = "-" ] && echo "Signed ad-hoc (macOS may ask for Keychain access after each rebuild)"
 echo "Built $APP"
