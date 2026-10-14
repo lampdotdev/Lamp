@@ -345,6 +345,7 @@ enum Template {
         var body: some SwiftUI.Scene {
             WindowGroup {
                 ContentView()
+                    .lampWand()
             }
         }
     }
@@ -397,6 +398,7 @@ enum Template {
         var body: some SwiftUI.Scene {
             WindowGroup("{{NAME}}") {
                 ContentView()
+                    .lampWand()
             }
             #if os(macOS)
             .commands { LampCommands() }
@@ -2905,6 +2907,7 @@ enum Template {
     // shortcuts that work in every app, login items, the clipboard) is under `#if os(macOS)`; the rest is the
     // same on both.
     import SwiftUI
+    import Combine
     import SQLite3
     import JavaScriptCore
     import EventKit
@@ -3287,6 +3290,555 @@ enum Template {
     let lampGateway = "http://{{MACHOST}}:{{PORT}}"
     #else
     let lampGateway = "http://127.0.0.1:{{PORT}}"
+    #endif
+
+    extension View {
+        /// Lamp's wand, on the root view of the app's window: on the person's iPhone it puts the wand in the app,
+        /// which opens this app's chat in Lamp. It does nothing on a Mac or in the simulator. The app's own
+        /// `@main` is the one place every launch goes through, so this is where the wand starts, as the Mac's
+        /// starts from `LampCommands`.
+        func lampWand() -> some View {
+            #if os(iOS) && !targetEnvironment(simulator)
+            onAppear { LampWand.start() }
+            #else
+            self
+            #endif
+        }
+    }
+
+    #if os(iOS) && !targetEnvironment(simulator)
+
+    /// The wand in this app on the person's phone: a button over the app that opens a sheet with the app's chat in
+    /// Lamp and a box to ask for a change, which Lamp makes on the Mac and installs here. It shows only while
+    /// Lamp, on the same Wi‑Fi, answers that this app opens on this phone.
+    /// Every message to Lamp and back is sealed with the secret that came with the build, and each is sent with its
+    /// own id, so sending again after a lost answer never asks for the change twice.
+    @MainActor
+    final class LampWand: ObservableObject {
+        static let shared = LampWand()
+
+        typealias Phase = LampWandFlow.Phase
+
+        struct Line: Identifiable, Equatable {
+            let id: Int
+            let me: Bool
+            let text: String
+        }
+
+        @Published private(set) var on = false
+        @Published private(set) var lines: [Line] = []
+        /// Where the change is and what the box holds, kept in the app's settings as it changes.
+        private let saved = LampWandSaved()
+        private var flow: LampWandFlow {
+            get { saved.flow }
+            set { saved.flow = newValue }
+        }
+        private var forwarding: AnyCancellable?
+
+        var phase: Phase { flow.phase }
+        var question: Bool { flow.question }
+        var changed: Bool { flow.changed }
+        var doing: String? { flow.doing }
+        var note: String? { flow.note }
+        var busy: Bool { flow.busy }
+        var draft: String {
+            get { flow.draft }
+            set { flow.draft = newValue }
+        }
+
+        private var button: UIViewController?
+        private weak var sheet: UIViewController?
+        private var dismissal: Dismissal?
+        private var polling: Task<Void, Never>?
+
+        private init() {
+            forwarding = saved.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        }
+
+        private static var started = false
+
+        /// Once, from `lampWand()`: the window on screen gets the wand now, and every window that comes forward later.
+        static func start() {
+            guard !started else { return }
+            started = true
+            NotificationCenter.default.addObserver(forName: UIScene.didActivateNotification, object: nil, queue: .main) { note in
+                MainActor.assumeIsolated { shared.activated(note.object as? UIWindowScene) }
+            }
+            for case let scene as UIWindowScene in UIApplication.shared.connectedScenes where scene.activationState == .foregroundActive {
+                shared.activated(scene)
+            }
+        }
+
+        /// A change may have been going when the app last closed (an install closes it): its end is followed
+        /// from here, whether or not Lamp answers the first time.
+        private func activated(_ scene: UIWindowScene?) {
+            guard let scene, let window = scene.windows.first(where: \.isKeyWindow)
+                    ?? scene.windows.first(where: { !$0.isHidden && $0.windowLevel == .normal }) else { return }
+            attach(to: window)
+            Task {
+                await refresh()
+                poll()
+            }
+        }
+
+        /// The button sits in the app's own window, above its content and below anything the app presents.
+        private func attach(to window: UIWindow) {
+            if let view = button?.view, view.window === window { window.bringSubviewToFront(view); return }
+            button?.view.removeFromSuperview()
+            let controller = UIHostingController(rootView: LampWandButton(wand: self) { [weak self] in self?.present() })
+            controller.view.backgroundColor = .clear
+            controller.view.translatesAutoresizingMaskIntoConstraints = false
+            window.addSubview(controller.view)
+            NSLayoutConstraint.activate([
+                controller.view.widthAnchor.constraint(equalToConstant: 64),
+                controller.view.heightAnchor.constraint(equalToConstant: 64),
+                controller.view.trailingAnchor.constraint(equalTo: window.safeAreaLayoutGuide.trailingAnchor, constant: -14),
+                controller.view.bottomAnchor.constraint(equalTo: window.safeAreaLayoutGuide.bottomAnchor, constant: -2),
+            ])
+            button = controller
+        }
+
+        func present() {
+            guard sheet == nil, let window = button?.view.window, var top = window.rootViewController else { return }
+            while let next = top.presentedViewController, !next.isBeingDismissed { top = next }
+            let controller = UIHostingController(rootView: LampWandSheet(wand: self))
+            if let sheet = controller.sheetPresentationController {
+                sheet.detents = [.medium(), .large()]
+                sheet.largestUndimmedDetentIdentifier = .medium   // the app stays in use above it
+                sheet.prefersGrabberVisible = true
+            }
+            let dismissal = Dismissal { [weak self] in self?.closed() }
+            controller.presentationController?.delegate = dismissal
+            self.dismissal = dismissal
+            top.present(controller, animated: true)
+            sheet = controller
+            poll()
+        }
+
+        private func closed() {
+            sheet = nil
+            flow.closed()
+        }
+
+        func send() {
+            guard let sent = flow.send(id: UUID().uuidString) else { return }
+            lines.append(Line(id: (lines.last?.id ?? 0) + 1, me: true, text: sent.text))
+            Task { await deliver() }
+            poll()
+        }
+
+        /// Sends what Lamp hasn't confirmed, with its own id: Lamp takes each id once, so a message that did
+        /// arrive before its answer was lost is answered with how it's going, not asked for again.
+        private func deliver() async {
+            guard let unsent = flow.unsent else { return }
+            if let reply = try? await call(["op": "send", "id": unsent.id, "text": unsent.text]) {
+                take(reply)
+                if flow.delivered(reply, id: unsent.id, sheetOpen: sheet != nil) { present() }
+            } else {
+                flow.unreachable()
+            }
+        }
+
+        private func refresh() async {
+            if flow.unsent != nil { return await deliver() }
+            var message: [String: Any] = ["op": "status"]
+            if let request = flow.request { message["id"] = request }
+            if let reply = try? await call(message) {
+                take(reply)
+                if flow.apply(reply, sheetOpen: sheet != nil) { present() }
+            } else {
+                flow.unreachable()
+            }
+        }
+
+        /// What every answer carries whatever it's about: whether the wand is on, and the app's recent chat.
+        private func take(_ reply: [String: Any]) {
+            on = reply["on"] as? Bool ?? false
+            if !on { sheet?.dismiss(animated: true) }
+            let texts = reply["lines"] as? [[String: Any]] ?? []
+            if !texts.isEmpty || on {
+                lines = texts.enumerated().map { Line(id: $0.offset, me: $0.element["me"] as? Bool ?? false, text: $0.element["text"] as? String ?? "") }
+            }
+        }
+
+        /// Follows the change while one is going, the sheet is open, or Lamp couldn't be reached (less often then).
+        private func poll() {
+            guard polling == nil else { return }
+            polling = Task { [weak self] in
+                while let self, self.flow.shouldPoll(sheetOpen: self.sheet != nil) {
+                    try? await Task.sleep(for: .seconds(self.flow.phase == .away ? 10 : 2))
+                    await self.refresh()
+                }
+                self?.polling = nil
+            }
+        }
+
+        /// One sealed question to Lamp and its sealed answer, which must carry the question's nonce.
+        private func call(_ message: [String: Any]) async throws -> [String: Any] {
+            let key = LampWandSeal.key("{{PHONE_SECRET}}")
+            var message = message
+            let nonce = UUID().uuidString
+            message["nonce"] = nonce
+            message["at"] = Date().timeIntervalSince1970
+            guard let body = LampWandSeal.seal(message, key: key) else { throw URLError(.cannotDecodeContentData) }
+            var request = URLRequest(url: URL(string: lampGateway + "/ai/wand")!)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 8
+            request.setValue("Bearer {{TOKEN}}", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = body
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let reply = LampWandSeal.open(data, key: key, nonce: nonce) else { throw URLError(.badServerResponse) }
+            return reply
+        }
+
+        private final class Dismissal: NSObject, UIAdaptivePresentationControllerDelegate {
+            let done: () -> Void
+            init(_ done: @escaping () -> Void) { self.done = done }
+            func presentationControllerDidDismiss(_ presentationController: UIPresentationController) { done() }
+        }
+    }
+
+    /// How the wand's messages are sealed, the same way Lamp's `PhoneWand` opens and seals them.
+    enum LampWandSeal {
+        static func key(_ secret: String) -> SymmetricKey {
+            SymmetricKey(data: SHA256.hash(data: Data("lamp-wand\n\(secret)".utf8)))
+        }
+
+        static func seal(_ message: [String: Any], key: SymmetricKey) -> Data? {
+            guard let json = try? JSONSerialization.data(withJSONObject: message),
+                  let box = try? AES.GCM.seal(json, using: key).combined else { return nil }
+            return try? JSONSerialization.data(withJSONObject: ["sealed": box.base64EncodedString()])
+        }
+
+        /// The reply, when it's sealed with the key, says it's a reply (the app's own message sent back isn't)
+        /// and answers the question with this nonce.
+        static func open(_ data: Data, key: SymmetricKey, nonce: String) -> [String: Any]? {
+            guard let outer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let sealed = (outer["sealed"] as? String).flatMap({ Data(base64Encoded: $0) }),
+                  let box = try? AES.GCM.SealedBox(combined: sealed),
+                  let opened = try? AES.GCM.open(box, using: key),
+                  let reply = (try? JSONSerialization.jsonObject(with: opened)) as? [String: Any],
+                  reply["reply"] as? Bool == true, reply["nonce"] as? String == nonce else { return nil }
+            return reply
+        }
+    }
+    // end LampWandSeal
+
+    /// What the wand's sheet shows and what it does next, apart from the screen and the network: what Lamp's
+    /// answers mean for the box, the status line and when to ask again.
+    struct LampWandFlow {
+        enum Phase: String { case idle, working, waiting, installing, done, failed, away }
+
+        var phase = Phase.idle
+        /// Waiting for an answer to the agent's questions, rather than for the Mac.
+        var question = false
+        var changed = false
+        var doing: String?
+        var note: String?
+        var draft = ""
+        /// The message followed.
+        var request: String?
+        /// The message whose end the person has seen: the sheet rose at Done, or it didn't work.
+        var shown: String?
+        /// A message Lamp hasn't confirmed, sent again with the same id until it answers. The box waits meanwhile,
+        /// so nothing takes its place before Lamp has it.
+        var unsent: (id: String, text: String)?
+
+        /// One change at a time, as on the Mac.
+        var busy: Bool { unsent != nil || phase == .working || phase == .installing || (phase == .waiting && !question) }
+        /// A change whose end the person hasn't seen yet.
+        var unfinished: Bool { request != nil && request != shown }
+
+        func shouldPoll(sheetOpen: Bool) -> Bool { busy || phase == .away || sheetOpen }
+
+        /// What's typed, as the next message; nil when there's nothing to send or a change is going.
+        mutating func send(id: String) -> (id: String, text: String)? {
+            let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, !busy else { return nil }
+            request = id
+            unsent = (id, text)
+            draft = ""
+            phase = .working
+            doing = nil
+            note = nil
+            return unsent
+        }
+
+        /// Lamp didn't answer: said when there's something to wait for, and asked again until it does.
+        mutating func unreachable() {
+            if phase != .idle || unfinished || unsent != nil { phase = .away }
+        }
+
+        /// Lamp's answer to sending `id`. Turned away (now, or the first time, when that answer was lost), what
+        /// was typed goes back in the box. True when the sheet should rise by itself.
+        mutating func delivered(_ reply: [String: Any], id: String, sheetOpen: Bool) -> Bool {
+            guard let sent = unsent, sent.id == id else { return apply(reply, sheetOpen: sheetOpen) }
+            unsent = nil
+            let lost = reply["id"] as? String == id && reply["phase"] as? String == Phase.failed.rawValue
+            if let refused = reply["refused"] as? String {
+                draft = sent.text
+                request = nil   // nothing to follow: its reason stays on screen
+                phase = .failed
+                note = refused
+                return false
+            }
+            if reply["busy"] as? Bool == true || lost { draft = sent.text }
+            return apply(reply, sheetOpen: sheetOpen)
+        }
+
+        /// Lamp's answer about the change followed. True when the sheet should rise by itself.
+        mutating func apply(_ reply: [String: Any], sheetOpen: Bool) -> Bool {
+            guard reply["on"] as? Bool == true, reply["refused"] == nil else { return false }
+            // Another change from a phone was going: that's the one to follow.
+            if reply["busy"] as? Bool == true, let going = reply["id"] as? String { request = going }
+            guard let id = reply["id"] as? String, id == request, let named = reply["phase"] as? String,
+                  let now = Phase(rawValue: named) else {
+                // Lamp doesn't know the change followed: nothing to wait for.
+                if unsent == nil, phase != .failed { phase = .idle }
+                return false
+            }
+            phase = now
+            doing = reply["doing"] as? String
+            note = reply["note"] as? String
+            question = reply["question"] as? Bool ?? false
+            changed = reply["changed"] as? Bool ?? false
+            switch now {
+            case .done where shown != id:
+                // The app was put back by the install, or the change ended while the sheet was closed: it rises
+                // by itself, once, with what came of it.
+                shown = id
+                return !sheetOpen
+            case .failed:
+                shown = id
+            case .waiting where question:
+                shown = id
+            default:
+                break
+            }
+            return false
+        }
+
+        /// The sheet was closed after the change ended: the wand is plain again.
+        mutating func closed() {
+            if phase == .done || phase == .failed { phase = .idle; note = nil }
+        }
+    }
+    // end LampWandFlow
+
+    /// The wand's flow, kept in the app's settings as it changes, so the message followed and the one whose end
+    /// was already shown outlast the relaunch an install brings.
+    final class LampWandSaved: ObservableObject {
+        static let requestKey = "lamp.wand.request"
+        static let shownKey = "lamp.wand.shown"
+        private let defaults: UserDefaults
+
+        @Published var flow: LampWandFlow {
+            didSet {
+                defaults.set(flow.request, forKey: Self.requestKey)
+                defaults.set(flow.shown, forKey: Self.shownKey)
+            }
+        }
+
+        init(_ defaults: UserDefaults = .standard) {
+            self.defaults = defaults
+            // Both are read before the flow is set: setting it saves both, and would wipe one not read yet.
+            var restored = LampWandFlow()
+            restored.request = defaults.string(forKey: Self.requestKey)
+            restored.shown = defaults.string(forKey: Self.shownKey)
+            flow = restored
+        }
+    }
+    // end LampWandSaved
+
+    /// The wand: round, in the corner the thumb reaches. While a change is going it says so (a turning ring, an
+    /// orange dot when it waits for the person, a check when it's done), so the sheet can be closed meanwhile.
+    struct LampWandButton: View {
+        @ObservedObject var wand: LampWand
+        let open: () -> Void
+        @State private var turning = false
+
+        var body: some View {
+            if wand.on {
+                Group {
+                    if #available(iOS 26, *) {
+                        Button(action: open) { symbol }
+                            .buttonStyle(.glass)
+                            .buttonBorderShape(.circle)
+                    } else {
+                        Button(action: open) { symbol }
+                            .buttonStyle(.plain)
+                            .background(.regularMaterial, in: .circle)
+                            .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+                    }
+                }
+                .overlay(alignment: .topTrailing) { badge }
+                .overlay {
+                    if wand.phase == .working || wand.phase == .installing {
+                        Circle()
+                            .trim(from: 0, to: 0.28)
+                            .stroke(.tint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                            .frame(width: 60, height: 60)
+                            .rotationEffect(.degrees(turning ? 360 : 0))
+                            .animation(.linear(duration: 1.1).repeatForever(autoreverses: false), value: turning)
+                            .onAppear { turning = true }
+                            .onDisappear { turning = false }
+                            .allowsHitTesting(false)
+                    }
+                }
+                .accessibilityLabel("Change This App")
+                .frame(width: 64, height: 64)
+            }
+        }
+
+        private var symbol: some View {
+            Image(systemName: "wand.and.sparkles")
+                .font(.system(size: 20, weight: .medium))
+                .frame(width: 52, height: 52)
+                .contentShape(.circle)
+        }
+
+        @ViewBuilder private var badge: some View {
+            switch wand.phase {
+            case .waiting, .away:
+                Circle().fill(.orange).frame(width: 14, height: 14)
+                    .overlay(Circle().stroke(.background, lineWidth: 2))
+            case .done:
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.white, .green)
+            default:
+                EmptyView()
+            }
+        }
+    }
+
+    /// The sheet: the app's recent chat as Lamp has it, where the change is, and the box.
+    struct LampWandSheet: View {
+        @ObservedObject var wand: LampWand
+
+        var body: some View {
+            VStack(spacing: 0) {
+                HStack {
+                    Label("Change This App", systemImage: "wand.and.sparkles").font(.headline)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 22)
+                .padding(.bottom, 8)
+                ScrollViewReader { scroller in
+                    ScrollView {
+                        VStack(spacing: 10) {
+                            ForEach(wand.lines) { line in
+                                HStack {
+                                    if line.me { Spacer(minLength: 48) }
+                                    Text(line.text)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 9)
+                                        .foregroundStyle(line.me ? .white : .primary)
+                                        .background(line.me ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary.opacity(0.6)),
+                                                    in: .rect(cornerRadius: 18))
+                                    if !line.me { Spacer(minLength: 48) }
+                                }
+                            }
+                            if wand.phase != .idle { LampWandStatus(wand: wand).id("status") }
+                            Color.clear.frame(height: 1).id("end")
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                    }
+                    .defaultScrollAnchor(.bottom)
+                    .onChange(of: wand.lines) { withAnimation { scroller.scrollTo("end", anchor: .bottom) } }
+                    .onChange(of: wand.phase) { withAnimation { scroller.scrollTo("end", anchor: .bottom) } }
+                }
+                HStack(alignment: .bottom, spacing: 10) {
+                    TextField(wand.busy ? "Lamp is on it…" : "What should change?", text: $wand.draft, axis: .vertical)
+                        .lineLimit(1...4)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 11)
+                        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 22))
+                        .disabled(wand.busy)
+                        .onSubmit { wand.send() }
+                    Button { wand.send() } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.circle)
+                    .disabled(wand.busy || wand.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityLabel("Send")
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+                .padding(.top, 6)
+            }
+        }
+    }
+
+    /// Where the change is, as one line under the chat.
+    struct LampWandStatus: View {
+        @ObservedObject var wand: LampWand
+
+        var body: some View {
+            HStack(alignment: .top, spacing: 12) {
+                icon.frame(width: 24, height: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.subheadline.weight(.semibold))
+                    if let detail { Text(detail).font(.subheadline).foregroundStyle(.secondary) }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .background(tint.opacity(0.12), in: .rect(cornerRadius: 16))
+            .animation(.default, value: wand.phase)
+        }
+
+        private var title: String {
+            switch wand.phase {
+            case .idle: ""
+            case .working: "Working…"
+            case .waiting: wand.question ? "Waiting for your answer" : "Waiting for you on your Mac"
+            case .installing: "Installing…"
+            case .done: "Done"
+            case .failed: "Didn't work"
+            case .away: "Can't reach your Mac"
+            }
+        }
+
+        private var detail: String? {
+            switch wand.phase {
+            case .working: wand.doing
+            case .waiting: wand.question ? "Answer here or on your Mac." : "Lamp needs your OK for one step."
+            case .installing: "The app will close and open again."
+            case .done: wand.changed ? "Your change is in the app." : nil
+            case .failed: wand.note
+            case .away: "Lamp tries again when your iPhone is on the same Wi‑Fi as your Mac."
+            case .idle: nil
+            }
+        }
+
+        private var tint: Color {
+            switch wand.phase {
+            case .waiting, .away: .orange
+            case .done: .green
+            case .failed: .red
+            default: .accentColor
+            }
+        }
+
+        @ViewBuilder private var icon: some View {
+            switch wand.phase {
+            case .working, .installing: ProgressView()
+            case .waiting: Image(systemName: wand.question ? "questionmark.bubble" : "desktopcomputer").foregroundStyle(.orange)
+            case .away: Image(systemName: "wifi.exclamationmark").foregroundStyle(.orange)
+            case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.title3)
+            case .failed: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).font(.title3)
+            case .idle: EmptyView()
+            }
+        }
+    }
     #endif
 
     /// Where the person turns a permission on: System Settings on a Mac, Settings on a phone.

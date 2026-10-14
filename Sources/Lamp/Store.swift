@@ -169,6 +169,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     var fromCard: Bool? = nil         // for a request: it was clicked on the agent's card, which shows it
     var result: Talk.Result? = nil    // what a request made, as the agent put it
     var noted: NoteReceipt? = nil     // what a save of Lamp's notes changed, with Undo
+    var fromPhone: Bool? = nil        // for a request: sent from the wand in the app on the person's phone (PhoneWand)
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -244,6 +245,8 @@ struct QueuedMessage: Identifiable {
     var replaces: String? = nil
     /// Every request that left the chat when this one was sent, oldest first.
     var tookBack: [String] = []
+    /// The id the app's wand on the person's phone gave it (PhoneWand), so its sheet can follow the turn.
+    var phone: String? = nil
 }
 
 extension QueuedMessage {
@@ -1317,6 +1320,7 @@ final class Store: ObservableObject {
         logs[project.id] = logs.removeValue(forKey: old.id)
         usage[project.id] = usage.removeValue(forKey: old.id)
         queued[project.id] = queued.removeValue(forKey: old.id)
+        followWand(from: old.id, to: project.id)
         if let turn = turns.removeValue(forKey: old.id) {   // the rename itself is a turn: it moves with the app
             turns[project.id] = turn
             agentTokens[turn.agentToken] = project.id
@@ -1630,7 +1634,7 @@ final class Store: ObservableObject {
 
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
     /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
-    func send(_ prompt: String, attachments: [URL] = [], answering card: UUID? = nil, to project: LampProject) {
+    func send(_ prompt: String, attachments: [URL] = [], answering card: UUID? = nil, phone: String? = nil, to project: LampProject) {
         // Waiting for setup can outlast this run, and the files may be temporary (a pasted screenshot):
         // keep copies, so the request still has them after a relaunch.
         let files = setup.ready ? attachments : keepForLater(attachments)
@@ -1643,7 +1647,7 @@ final class Store: ObservableObject {
             card = open.id
             saveChat(project)
         }
-        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card))
+        queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card, phone: phone))
         startQueued(project)
         saveWaiting()
     }
@@ -1764,6 +1768,7 @@ final class Store: ObservableObject {
             Analytics.capture(.appFirstRequest, ["kind": kind, "has_attachments": messages.contains { !$0.attachments.isEmpty }])
         }
         let started = Date()
+        if let phone = messages.last(where: { $0.phone != nil })?.phone { startWand(phone, for: project) }
         Task {
             var project = project
             let saved = post(messages, to: project)
@@ -1780,6 +1785,7 @@ final class Store: ObservableObject {
             var worked = false
             var result = TurnResult(end: .failed, watched: true)
             defer {
+                if let phone = wandTurns.removeValue(forKey: project.id) { endWand(phone, of: project, after: result.end, owner: owner) }
                 // A new app's card stays, showing the result; a later turn's activity line goes away. So does a
                 // new app's card when the agent only asked questions: nothing was built, and the answers bring it back.
                 if newApp {
@@ -1969,6 +1975,10 @@ final class Store: ObservableObject {
             log(project, .user, message.text, attachments: names.isEmpty ? nil : names)
             if let card = message.card, Talk.shows(logs[project.id]?.first { $0.id == card }), let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].fromCard = true
+                saveChat(project)
+            }
+            if message.phone != nil, let last = logs[project.id]?.indices.last {
+                logs[project.id]?[last].fromPhone = true
                 saveChat(project)
             }
             if message.replaces != nil || !message.tookBack.isEmpty, let last = logs[project.id]?.indices.last {
@@ -4709,7 +4719,7 @@ final class Store: ObservableObject {
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
-        let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
+        let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/wand", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
                      "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/kind", "/agent/art", "/agent/talk", "/mcp", "/pi/key"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
@@ -4764,6 +4774,7 @@ final class Store: ObservableObject {
         // setup incomplete, and that's exactly when the phone has to hear that its copy should go.
         if route == "/ai/keys" { return keysForPhone(project) }
         if route == "/ai/status" { return await aiStatus(for: project) }
+        if route == "/ai/wand" { return wand(request, for: project) }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
     }
@@ -4976,6 +4987,150 @@ final class Store: ObservableObject {
             reply[capability.rawValue] = setup.ready && AppAI.resolve(capability, for: project).tier != .none
         }
         return (200, reply)
+    }
+
+    // MARK: - The wand in an app on the person's phone (PhoneWand)
+
+    /// Messages sent from phones' wands, by their id, until a day after they arrived.
+    private var wandRequests: [String: PhoneWand.Request] = [:]
+    /// For each app, the phone's message its turn in progress is doing.
+    private var wandTurns: [String: String] = [:]
+    /// For each app whose turn does a phone's message, the hold that keeps the Mac awake meanwhile: asleep,
+    /// it would drop off the network while the phone waits. It goes with the turn, however the turn ends.
+    private var wandAwake: [String: NSObjectProtocol] = [:]
+    private lazy var wandTaken = PhoneWand.Taken(file: root.deletingLastPathComponent().appendingPathComponent("Phone Wand.json"))
+
+    /// `/ai/wand`, from the wand in an app on the person's phone (`LampWand` in LampSupport.swift): "send" a
+    /// change, or ask how one is going ("status"). Both come sealed with the app's phone secret and are
+    /// answered sealed, with the app's recent chat for its sheet.
+    private func wand(_ request: Gateway.Request, for project: LampProject) -> (Int, [String: Any]) {
+        // Only from the phone on this Mac's Wi‑Fi: not the simulator's copy, the Mac half of an app for both or the
+        // agent, all of which run on this Mac and can read the app's secret, and not a VPN's peers or a virtual
+        // machine, which could be handed it.
+        guard request.fromNetwork, !request.fromThisMac, request.fromLocalNetwork, project.platform.hasIOS else {
+            return (403, ["error": "Not for this app."])
+        }
+        let secret = Template.phoneSecret(for: project)
+        let message: [String: Any]
+        do { message = try PhoneWand.open(request.body, secret: secret) } catch {
+            return (401, ["error": "This message can't be read."])
+        }
+        // The reply carries the question's own nonce, so the app takes no reply but the one to it.
+        var reply: [String: Any] = ["nonce": message["nonce"] as? String ?? "", "on": PhoneWand.isAvailable(for: project)]
+        guard PhoneWand.isAvailable(for: project) else { return (200, PhoneWand.seal(reply, secret: secret)) }
+        let id = (message["id"] as? String).flatMap { UUID(uuidString: $0) != nil ? $0 : nil }
+        if message["op"] as? String == "send", let id {
+            if !wandTaken.contains(id) {
+                // Whatever happens to it, the id is taken now: a copy sent later never asks for what was turned away.
+                let text = (message["text"] as? String)?.trimmed ?? ""
+                let now = Date()
+                wandRequests = wandRequests.filter { now.timeIntervalSince($0.value.arrived) < 86_400 }
+                if let refusal = PhoneWand.refusal(of: text, ready: setup.ready, sentToday: wandTaken.count(for: project.id)) {
+                    _ = wandTaken.take(id, for: project.id, counted: false)
+                    wandRequests[id] = PhoneWand.turnedAway(id, for: project.id, .refused(refusal), at: now)
+                } else if let going = wandRequests.values.first(where: { $0.project == project.id && $0.ended == nil }) {
+                    // One change from the phone at a time: the sheet follows the one going, and keeps what was typed.
+                    _ = wandTaken.take(id, for: project.id, counted: false)
+                    wandRequests[id] = PhoneWand.turnedAway(id, for: project.id, .busy(going.id), at: now)
+                } else {
+                    _ = wandTaken.take(id, for: project.id)
+                    wandRequests[id] = PhoneWand.Request(id: id, project: project.id, arrived: now)
+                    send(text, phone: id, to: project)
+                }
+            }
+            // A message turned away gets the same answer however often it's sent, so a retry after a lost answer
+            // still hears it, and the phone puts what was typed back in its box.
+            let mine = wandRequests[id].flatMap { $0.project == project.id ? $0 : nil }
+            if let answer = PhoneWand.answer(toTurnedAway: mine) {
+                if let going = answer["going"] as? String {
+                    reply["busy"] = true
+                    reply.merge(wandStatus(going, of: project), uniquingKeysWith: { $1 })
+                } else {
+                    reply.merge(answer, uniquingKeysWith: { $1 })
+                }
+                reply["lines"] = PhoneWand.lines(from: logs[project.id] ?? [])
+                return (200, PhoneWand.seal(reply, secret: secret))
+            }
+        }
+        if let id { reply.merge(wandStatus(id, of: project), uniquingKeysWith: { $1 }) }
+        reply["lines"] = PhoneWand.lines(from: logs[project.id] ?? [])
+        return (200, PhoneWand.seal(reply, secret: secret))
+    }
+
+    /// Where a message from the phone is: read off its turn while it goes, kept once it ended.
+    private func wandStatus(_ id: String, of project: LampProject) -> [String: Any] {
+        guard var request = wandRequests[id] else {
+            // Taken before Lamp last opened: what became of it is gone with that run.
+            guard wandTaken.contains(id, for: project.id) else { return [:] }
+            return ["id": id, "phase": PhoneWand.Phase.failed.rawValue, "note": "Lamp on your Mac was restarted."]
+        }
+        guard request.project == project.id else { return [:] }
+        var status: [String: Any] = ["id": id]
+        if request.ended == nil {
+            if wandTurns[request.project] == id, let turn = turns[request.project] {
+                if approvals[request.project] != nil {
+                    status["phase"] = PhoneWand.Phase.waiting.rawValue
+                } else if turn.phoneReady != nil {
+                    status["phase"] = PhoneWand.Phase.installing.rawValue
+                } else {
+                    status["phase"] = PhoneWand.Phase.working.rawValue
+                    if let doing = PhoneWand.doing(from: logs[request.project] ?? []) { status["doing"] = doing }
+                }
+                return status
+            }
+            if queued[request.project]?.contains(where: { $0.phone == id }) == true {
+                status["phase"] = PhoneWand.Phase.working.rawValue
+                return status
+            }
+            // Neither waiting nor going: taken back on the Mac before it was sent.
+            request.ended = .failed
+            request.note = "Taken back on your Mac."
+            wandRequests[id] = request
+        }
+        status["phase"] = request.ended?.rawValue
+        status["question"] = request.asked
+        status["changed"] = request.changed
+        if let note = request.note { status["note"] = note }
+        return status
+    }
+
+    /// A turn that does a phone's message starts: the Mac stays awake until it ends.
+    private func startWand(_ id: String, for project: LampProject) {
+        wandTurns[project.id] = id
+        wandAwake[project.id] = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled, .userInitiated],
+                                                                       reason: "A change asked for from an iPhone")
+    }
+
+    /// How the turn that did a phone's message ended, kept for its sheet.
+    private func endWand(_ id: String, of project: LampProject, after end: TurnEnd, owner: Turn) {
+        if let awake = wandAwake.removeValue(forKey: project.id) { ProcessInfo.processInfo.endActivity(awake) }
+        guard var request = wandRequests[id] else { return }
+        if owner.wasStopped {
+            request.ended = .failed
+            request.note = "Stopped on your Mac."
+        } else if end == .failed || owner.phoneReady == false {
+            request.ended = .failed
+            request.note = "It didn't work. Lamp on your Mac says why."
+        } else if Talk.open(in: logs[project.id] ?? []) != nil {
+            // The agent asked: the sheet shows the questions, and a typed answer is the next message.
+            request.ended = .waiting
+            request.asked = true
+        } else {
+            request.ended = .done
+            request.changed = end == .changed
+        }
+        wandRequests[id] = request
+    }
+
+    /// A renamed app keeps the phone's message its turn is doing.
+    private func followWand(from old: String, to new: String) {
+        if let id = wandTurns.removeValue(forKey: old) { wandTurns[new] = id }
+        if let awake = wandAwake.removeValue(forKey: old) { wandAwake[new] = awake }
+        for (id, request) in wandRequests where request.project == old {
+            var moved = request
+            moved.project = new
+            wandRequests[id] = moved
+        }
     }
 
     /// What an app on the person's own phone keeps so its AI works away from the Mac:

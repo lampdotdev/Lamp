@@ -399,6 +399,11 @@ struct LogRow: View, Equatable {
                 }
                 // The width limit goes around the buttons too, so they stay next to a short message.
                 .frame(maxWidth: 480 + 50, alignment: .trailing)
+                if line.fromPhone == true {
+                    Label("From iPhone", systemImage: "iphone")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .onHover { hovered = $0 }

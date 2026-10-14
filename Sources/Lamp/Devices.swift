@@ -28,9 +28,18 @@ enum Devices {
     /// This Mac's Bonjour name on the local network, which an app on a phone reaches Lamp
     /// at. Bonjour resolves it on the same Wi‑Fi, and it survives the Mac's address changing.
     static var macHost: String {
+        // Asked for every request from a phone (`Store.isMacHost`), which a phone's wand makes every two seconds:
+        // kept a minute rather than running scutil each time.
+        hostLock.lock()
+        defer { hostLock.unlock() }
+        if let known = knownHost, Date().timeIntervalSince(known.at) < 60 { return known.name }
         let name = Subprocess.runBlocking("/usr/sbin/scutil", ["--get", "LocalHostName"], mergeErrors: false, timeout: 5).output.trimmed
-        return (name.isEmpty ? ProcessInfo.processInfo.hostName.replacingOccurrences(of: ".local", with: "") : name) + ".local"
+        let host = (name.isEmpty ? ProcessInfo.processInfo.hostName.replacingOccurrences(of: ".local", with: "") : name) + ".local"
+        knownHost = (host, Date())
+        return host
     }
+    nonisolated(unsafe) private static var knownHost: (name: String, at: Date)?
+    private static let hostLock = NSLock()
 
     /// The Apple team the apps are signed for, as Xcode shows it (ten letters and digits).
     static var team: String {
