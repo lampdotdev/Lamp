@@ -3753,6 +3753,7 @@ final class Store: ObservableObject {
                                          env: signingEnv.merging(["LAMP_IDENTITY": team]) { $1 }) { output.append($0) } == 0
                     && AppSigning.isCertificateSigned(project.builtURL) && (!hasWidget || AppSigning.isCertificateSigned(widget))
                 if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
+                Self.rememberTeamSigning(failed: !signed, for: project)
             }
             // Not signed for a team, the app's intents would be listed by macOS and never run: they're taken out.
             if !signed, project.platform == .mac {
@@ -4845,11 +4846,26 @@ final class Store: ObservableObject {
         FileManager.default.fileExists(atPath: app.appendingPathComponent("Contents/Resources/Metadata.appintents").path)
     }
 
-    /// A Mac app installed without its App Intents, which a team on this Mac could now sign it for.
+    /// A Mac app installed without its App Intents, which a build could now give them: Xcode's tool is here to
+    /// read them, there's a team on this Mac to sign for, and signing for that team hasn't already failed (its
+    /// key refused), so an app whose intents can't come back opens as it is instead of being built every time.
     nonisolated static func intentsCanComeBack(_ project: LampProject) async -> Bool {
         guard project.platform == .mac, usesAppIntents(project),
-              FileManager.default.fileExists(atPath: project.installedURL.path), !hasIntentsMetadata(project.installedURL) else { return false }
+              FileManager.default.fileExists(atPath: project.installedURL.path), !hasIntentsMetadata(project.installedURL),
+              (try? String(contentsOf: teamSigningFailure(project), encoding: .utf8)) != Devices.team else { return false }
+        guard await Subprocess.run("/usr/bin/xcrun", ["-f", "appintentsmetadataprocessor"], timeout: 20).status == 0 else { return false }
         return await Devices.signingIdentity(for: Devices.team) != nil
+    }
+
+    /// Where `deploy` notes the team it couldn't sign an app for; a build the person or the agent asks for
+    /// tries again either way.
+    nonisolated static func teamSigningFailure(_ project: LampProject) -> URL {
+        project.dir.appendingPathComponent(".lamp/team-signing-failed")
+    }
+
+    nonisolated static func rememberTeamSigning(failed: Bool, for project: LampProject) {
+        let file = teamSigningFailure(project)
+        if failed { try? Devices.team.write(to: file, atomically: true, encoding: .utf8) } else { try? FileManager.default.removeItem(at: file) }
     }
 
     /// Whether the app's code, or its widget's, uses App Intents, as build.sh decides it.
