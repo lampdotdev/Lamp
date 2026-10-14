@@ -146,11 +146,15 @@ enum Ideas {
              "Tilt Maze: a marble game where I tilt the phone to roll a ball through a maze to the hole, avoiding traps. A new maze each level, a little harder each time, with my best times."),
     ]
 
-    static func pool(for kind: AppKind) -> [Idea] { kind == .mac ? pool : phonePool }
+    /// Mac and iPhone ideas in turn: a new app's kind is worked out from what's asked for (Store.chooseKind),
+    /// so the ideas are for either.
+    static let mixed: [Idea] = (0..<max(pool.count, phonePool.count)).flatMap { index in
+        [pool.indices.contains(index) ? pool[index] : nil, phonePool.indices.contains(index) ? phonePool[index] : nil].compactMap { $0 }
+    }
 
-    /// Six at a time from the kind's pool, in order and starting over at the end.
-    static func page(_ index: Int, kind: AppKind = .mac) -> [Idea] {
-        let pool = pool(for: kind)
+    /// Six at a time, in order and starting over at the end.
+    static func page(_ index: Int) -> [Idea] {
+        let pool = mixed
         let start = (index * 6) % pool.count
         return (0..<6).map { pool[(start + $0) % pool.count] }
     }
@@ -158,8 +162,8 @@ enum Ideas {
     /// Six for a new app's empty chat. Until the person has an app, the first six, chosen to be a good first
     /// look; after that a random six, so the chat keeps turning up ones they haven't seen, leaving out any
     /// they've already made (by name).
-    static func starters(made names: [String], kind: AppKind = .mac) -> [Idea] {
-        let pool = pool(for: kind)
+    static func starters(made names: [String]) -> [Idea] {
+        let pool = mixed
         guard !names.isEmpty else { return Array(pool.prefix(6)) }
         let made = Set(names.map { $0.lowercased() })
         return Array(pool.filter { !made.contains($0.title.lowercased()) }.shuffled().prefix(6))
@@ -175,10 +179,10 @@ enum Ideas {
 
     /// Six new ideas from Apple's on-device model, or nil when it's unavailable or fails. Free and private,
     /// so it can run before the user has chosen what builds their apps.
-    static func invent(avoiding seen: [String], kind: AppKind = .mac) async -> [Idea]? {
+    static func invent(avoiding seen: [String]) async -> [Idea]? {
         #if canImport(FoundationModels)
         if #available(macOS 26, *), canInvent {
-            return await Inventor.invent(avoiding: seen, device: kind.rawValue)
+            return await Inventor.invent(avoiding: seen, device: "Mac or iPhone")
         }
         #endif
         return nil
@@ -193,29 +197,15 @@ final class IdeaDeck: ObservableObject {
     /// The next six, already made up, so asking for more is instant.
     @Published private(set) var invented: [Idea]?
     /// What the ideas are for: a Mac, or an iPhone or iPad.
-    private(set) var kind: AppKind
     private var page = 0
     private var inventing = false
     private var seen: Set<String>
 
     /// Opens on `first`: the welcome's first page, or the six a new app's chat drew.
-    init(first: [Idea]? = nil, kind: AppKind = .mac) {
-        self.kind = kind
-        let first = first ?? Ideas.page(0, kind: kind)
+    init(first: [Idea]? = nil) {
+        let first = first ?? Ideas.page(0)
         ideas = first
         seen = Set(first.map(\.title))
-    }
-
-    /// Starts over on another kind's first page, dropping any ideas made up for the old one.
-    func show(_ kind: AppKind) {
-        guard kind != self.kind else { return }
-        self.kind = kind
-        page = 0
-        invented = nil
-        let first = Ideas.page(0, kind: kind)
-        seen.formUnion(first.map(\.title))
-        withAnimation { ideas = first }
-        prefetch()
     }
 
     /// What the button for more shows: one icon for both kinds, since either way it's a fresh idea.
@@ -228,7 +218,7 @@ final class IdeaDeck: ObservableObject {
             self.invented = nil
         } else {
             page += 1
-            next = Ideas.page(page, kind: kind)
+            next = Ideas.page(page)
         }
         seen.formUnion(next.map(\.title))
         withAnimation { ideas = next }
@@ -238,13 +228,10 @@ final class IdeaDeck: ObservableObject {
     func prefetch() {
         guard Ideas.canInvent, invented == nil, !inventing else { return }
         inventing = true
-        let kind = kind
         Task {
-            let avoiding = Array(seen) + Ideas.pool(for: kind).map(\.title)
-            let made = await Ideas.invent(avoiding: avoiding, kind: kind)
+            let avoiding = Array(seen) + Ideas.mixed.map(\.title)
+            let made = await Ideas.invent(avoiding: avoiding)
             inventing = false
-            // Made up for a kind that's no longer chosen: ask again for this one.
-            guard kind == self.kind else { return prefetch() }
             invented = made
         }
     }

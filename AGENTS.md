@@ -20,7 +20,7 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `ask`, `show_result`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `ask`, `show_result`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
@@ -31,7 +31,7 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `ask`, `show_result`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `ask`, `show_result`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **How the agent talks** (`Talk`, `TalkCards.swift`): in a sentence or two and in cards, not paragraphs. Its
   pieces are tools: `ask` puts questions in the chat as a card answered by clicking, laid out as the agent
@@ -178,7 +178,17 @@ Xcode, the person's own Claude Code and Codex or tools from the PATH; a new chec
 
 ## iPhone apps
 
-A new app's intro (`NewAppIntro`) and the welcome's first-app step (`IdeaStep`) have a row of kinds to pick from, Mac / iPhone & iPad / Mac, iPhone & iPad (`AppKind`, `Store.setKind`), and the starter ideas follow the choice (`Ideas.phonePool`). New App makes a draft, a folder with only `.lamp/meta.json`
+Nobody picks what a new app runs on. The first request's naming call (`AppName.suggest`) also says whether it's
+for the Mac, iPhone & iPad, or both, and whether the person said so; `Store.chooseKind` takes that before anything is
+written: a kind the person didn't say only when this Mac can build it now (`PhoneTools.checked`: Xcode, and a team for
+both), else a Mac app, and one they said either way (the build says what's missing). A line in the chat says so for
+anything but a Mac app. The starter ideas mix Mac and iPhone ones (`Ideas.mixed`). Later, "make it work on my
+iPhone too" is the agent's `make_app_for` (`Store.convert`): it checks this Mac can build the new kind (opening the
+setup steps if not), quits every copy, changes the kind in meta.json, rewrites Lamp's own files, copies the Mac
+settings (UserDefaults) to a new signed id, and answers with the rules for the new kind, which stay in the
+conversation; the agent then adapts the code. A Mac app's data doesn't move: LampSupport keeps it under the app's
+plain id (`{{DATAID}}`, `Edition.appBundlePrefix` and the folder name) whatever it's signed as, and moves it there
+once from a folder named after its signed id. New App makes a draft, a folder with only `.lamp/meta.json`
 (`Template.draft`), so its kind and name are just that file; the scaffold is written and committed when it first
 builds (`Store.materialize`, in the first turn after naming and in `run`), and `LampProject.scaffolded` tells the two apart. An iOS app is one app for both devices, as Apple has it; **Try On** (in the toolbar and the app's right-click menu) picks which simulator it opens in (`LampProject.family`, iPhone to begin with), or one simulator by name under Choose Simulator (`LampProject.simulator`, kept in `meta.json`; the list is `Simulator.choices`), for what only some models have, such as the Dynamic Island. Lamp's own pick of the family is used when the chosen one is no longer installed, and `look_at_app` tells the agent which simulator the app is open on. It runs in the iPhone or iPad simulator on this Mac (`LampProject.platform == .iphone`,
 kept in `meta.json` and through renames). It needs Xcode, not just the Command Line Tools: `Simulator`

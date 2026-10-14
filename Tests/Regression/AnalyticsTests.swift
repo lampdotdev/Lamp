@@ -20,8 +20,8 @@ final class AnalyticsTests: XCTestCase {
 
     func testInventedIdeasAreNotSentByName() {
         let builtIn = Ideas.pool[0]
-        XCTAssertEqual(Analytics.idea(builtIn, kind: .mac), builtIn.title)
+        XCTAssertEqual(Analytics.idea(builtIn), builtIn.title)
         let invented = Idea("Plant Diary", "leaf", 0.3, "Notes on my plants", "An app that…")
-        XCTAssertEqual(Analytics.idea(invented, kind: .mac), "invented")
+        XCTAssertEqual(Analytics.idea(invented), "invented")
     }
 }

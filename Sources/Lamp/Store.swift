@@ -899,12 +899,28 @@ final class Store: ObservableObject {
         return nil
     }
 
-    /// The kind chosen in a new app's intro: a draft only says what it will be, so this is a change to that.
-    /// Quietly, as nothing in the chat would make sense of it.
-    func setKind(_ project: LampProject, _ kind: AppKind) {
-        let platform = kind.platform
-        guard !project.scaffolded, !busy.contains(project.id),
-              let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
+    /// What a new app is made as, worked out from its first request (`AppName.suggest`) before anything is built:
+    /// nobody is asked to choose. A kind the person didn't say is only taken when this Mac can build it now
+    /// (Xcode for an iPhone app; a team too for an app for both), else it's a Mac app, which needs neither. One
+    /// they said is taken either way, and the build says what's missing. A line in the chat says what it'll be
+    /// unless it's a Mac app, and the person changes it by asking (`convert`, the agent's `make_app_for`).
+    func chooseKind(_ project: LampProject, _ kind: Platform, said: Bool) async -> LampProject {
+        guard !project.scaffolded, kind != project.platform else { return project }
+        if kind.hasIOS, !said {
+            let both = kind == .universal
+            let ready = await Task.detached { PhoneTools.checked(family: .iphone, phone: nil, requiresTeam: both, requiresPaidTeam: false).ready }.value
+            guard ready else { return project }
+        }
+        setKind(project, kind)
+        guard let chosen = current(project) else { return project }
+        if kind != .mac { log(chosen, .status, kind == .iphone ? "Making this for iPhone and iPad." : "Making this for the Mac, iPhone and iPad.") }
+        return chosen
+    }
+
+    /// A draft's kind: a draft only says what it will be, so this is a change to that, made while its first
+    /// request is under way (`chooseKind`), before anything is written for it.
+    private func setKind(_ project: LampProject, _ platform: Platform) {
+        guard !project.scaffolded, let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
         var changed = projects[index]
         changed.platform = platform
         // Choosing what to make doesn't need installed tools. Send checks the selected simulator
@@ -1660,6 +1676,7 @@ final class Store: ObservableObject {
             let suggestion = await AppName.suggest(for: brief)
             progress[project.id]?.sketch = suggestion?.sketch ?? []
             progress[project.id]?.naming = false
+            if let suggestion, let kind = suggestion.kind { project = await chooseKind(project, kind, said: suggestion.kindSaid) }
             if let name = suggestion?.name { project = await performRename(project, to: name) }
         }
         if Icons.load(project) == nil {
@@ -2718,6 +2735,7 @@ final class Store: ObservableObject {
             case "read_notes", "save_notes": (status, answer) = notes(name, arguments, for: project)
             case "make_art": (status, answer) = await makeArt(arguments, for: project)
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
+            case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
             case "ask", "show_result": (status, answer) = talk(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
@@ -2852,6 +2870,70 @@ final class Store: ObservableObject {
         logs[project.id]?[at].result?.switched = [index]
         saveChat(project)
         send(result.guesses[index].request, answering: line.id, to: project)
+    }
+
+    /// `make_app_for`: the person asked for the app on other devices, and the agent asks Lamp to make it so.
+    private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
+        let kind: Platform? = switch arguments["kind"] as? String {
+        case "mac": .mac
+        case "iphone": .iphone
+        case "both": .universal
+        default: nil
+        }
+        guard let kind else { return (400, ["error": "`kind` must be mac, iphone or both."]) }
+        return await convert(project, to: kind)
+    }
+
+    /// Makes an app for other devices: a Mac app for the iPhone too, say. The kind is the app's (meta.json), and
+    /// Lamp's own files follow it (`Template.writeOwnedFiles`); the app's code is the agent's to adapt, so the
+    /// answer carries the rules for the new kind, which stay in the conversation for later requests. The app's
+    /// data stays put: on a Mac it's kept under the app's plain id whatever it's signed as (`LampStore.folder`),
+    /// and its settings (UserDefaults, kept under the signed id) are copied across when that id changes. Every
+    /// copy is quit first, since the next build is signed as something else, which macOS sees as a new app:
+    /// permissions given to the old one are asked for again, once.
+    func convert(_ project: LampProject, to kind: Platform) async -> (Int, [String: Any]) {
+        guard let current = current(project), let index = projects.firstIndex(where: { $0.id == project.id }) else {
+            return (404, ["error": "Lamp can't find the app."])
+        }
+        let words = kind == .mac ? "the Mac" : kind == .iphone ? "iPhone and iPad" : "the Mac, iPhone and iPad"
+        guard kind != current.platform else { return (200, ["text": "It's already made for \(words)."]) }
+        if kind.hasIOS {
+            let both = kind == .universal
+            let report = await Task.detached { PhoneTools.checked(family: .iphone, phone: nil, requiresTeam: both, requiresPaidTeam: false) }.value
+            if let issue = report.issue {
+                PhoneSetup.shared.show()
+                return (200, ["text": "Not yet: this Mac can't build it for \(words). \(issue.title): \(issue.message) Lamp opened its setup steps. " +
+                              "Tell the person in a sentence, and that you'll make the change when they ask again once it's done. Change nothing else for it."])
+            }
+        }
+        await quit(current)
+        var changed = current
+        changed.platform = kind
+        // Where it opens next: where it's newly made for, so the person sees the change.
+        changed.chosen = current.platform == .mac ? .ios : .mac
+        if !kind.hasIOS { changed.device = nil }
+        do { try Template.saveMeta(changed) } catch { return (500, ["error": "Lamp couldn't save the change: \(error.localizedDescription)"]) }
+        projects[index] = changed
+        if changed.scaffolded {
+            do { try Template.writeOwnedFiles(for: changed) } catch {
+                return (500, ["error": "Lamp couldn't write the build files for it: \(error.localizedDescription)"])
+            }
+        }
+        if current.platform.hasMac, kind.hasMac, current.bundleID != changed.bundleID {
+            _ = await Shell.run("defaults export \"$LAMP_OLD\" - | defaults import \"$LAMP_NEW\" -", cwd: changed.dir,
+                                env: ["LAMP_OLD": current.bundleID, "LAMP_NEW": changed.bundleID]) { _ in }
+        }
+        syncLocalNetwork()
+        log(changed, .status, "\(changed.name) is made for \(words) now.")
+        let rules: String = switch kind {
+        case .universal: Agent.Rules.universal + Agent.Rules.universalFrameworks + Agent.Rules.universalTry
+        case .iphone: Agent.Rules.iPhoneFrameworks + Agent.Rules.iPhoneTry
+        case .mac: Agent.Rules.macFrameworks
+        }
+        return (200, ["text": "Done: \(changed.name) is made for \(words) from now on, and that replaces what your instructions said " +
+                      "about what it runs on. Adapt its code now, in this request, and build it before you finish. " +
+                      (kind == .universal ? "Put what only one platform has under `#if os(macOS)` or `#if os(iOS)`. " : "") +
+                      "What applies now:\n" + rules.replacingOccurrences(of: "{{DEVICE}}", with: changed.family.name)])
     }
 
     /// `offer_setup`: the agent asks Lamp to offer the person a way to set up a capability, with its reason.
@@ -4259,7 +4341,7 @@ final class Store: ObservableObject {
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/art", "/agent/talk", "/mcp", "/pi/key"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/kind", "/agent/art", "/agent/talk", "/mcp", "/pi/key"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -4365,6 +4447,9 @@ final class Store: ObservableObject {
         }
         if route == "/agent/setup" {
             return agentOffer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
+        }
+        if route == "/agent/kind" {
+            return await agentKind((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/approve" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
