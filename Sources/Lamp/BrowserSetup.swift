@@ -31,7 +31,7 @@ final class BrowserSetup: ObservableObject {
         }
     }
     func receiveHello(version: Int) {
-        guard version == 1 else { return }
+        guard version == 2 else { return }
         heard = Date(); refresh()
     }
     func refresh() {
@@ -137,7 +137,7 @@ struct BrowserSetupGuide: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("1. Open Chrome’s extensions and turn on Developer mode.")
                     Button("Open Chrome Extensions") { browser.openExtensions() }
-                    Text("2. Click Load unpacked, then choose the Lamp extension folder.")
+                    Text("2. If Lamp is already listed, click its Reload button. Otherwise click Load unpacked and choose the Lamp extension folder.")
                     Button("Show Extension Folder") { browser.chooseFolder() }
                     Text("The folder’s location is copied too: in the chooser, press ⇧⌘G, then ⌘V and Return.").font(.caption).foregroundStyle(.secondary)
                     Text("3. Pin Lamp in Chrome’s toolbar. This window will confirm when it connects.")

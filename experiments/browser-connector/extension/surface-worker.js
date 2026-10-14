@@ -9,7 +9,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (!action || state.revision !== message.revision || state.busy || state.surface.busy) throw new Error('The app changed. Try again.');
     const request = {op:'surface-action', app:message.app, revision:message.revision,
       action:action.id, id:message.id, fields:message.fields};
-    if (action.readsPage) {
+    if (action.readsPage || action.readsSelection) {
       const epoch = permissionEpoch;
       const [tab] = await chrome.tabs.query({active:true, windowId:message.windowId});
       if (!tab || tab.incognito || !tab.url || tab.id !== message.tabId || tab.url !== message.url) throw new Error('The page changed. Try again.');
@@ -18,10 +18,15 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       if (!await chrome.permissions.contains({origins:[pattern(url.origin)]})) throw new Error('Allow this site in Chrome first.');
       const [metadata] = await chrome.scripting.executeScript({target:{tabId:tab.id}, func:() => location.href});
       if (metadata.result !== tab.url) throw new Error('The page changed. Try again.');
-      const [capture] = await chrome.scripting.executeScript({target:{tabId:tab.id, documentIds:[metadata.documentId]}, files:['surface-capture.js']});
+      await chrome.scripting.executeScript({target:{tabId:tab.id, documentIds:[metadata.documentId]}, files:['surface-capture.js']});
+      const [capture] = await chrome.scripting.executeScript({target:{tabId:tab.id, documentIds:[metadata.documentId]}, args:[action.readsSelection ? 'selection' : 'page'], func:scope => {
+        try { return globalThis.__lampCaptureSurface(scope); }
+        catch (error) { return {url:location.href,error:error.message}; }
+      }});
       const [current] = await chrome.tabs.query({active:true, windowId:message.windowId});
       if (epoch !== permissionEpoch || current?.id !== tab.id || current?.url !== tab.url ||
           capture.documentId !== metadata.documentId || capture.result?.url !== tab.url) throw new Error('The page changed during reading. Try again.');
+      if (capture.result.error) throw new Error(capture.result.error);
       request.page = capture.result;
       return native(request, () => epoch === permissionEpoch);
     }

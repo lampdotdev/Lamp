@@ -6669,7 +6669,7 @@ enum Template {
     enum LampBrowser {
         struct Section: Codable { var title: String; var text: String }
         struct Field: Codable { var id: String; var label: String; var value: String = "" }
-        struct Action: Codable { var id: String; var label: String; var readsPage: Bool = false }
+        struct Action: Codable { var id: String; var label: String; var readsPage: Bool = false; var readsSelection: Bool = false }
         struct Surface: Codable {
             var title: String
             var detail: String = ""
@@ -6678,7 +6678,7 @@ enum Template {
             var actions: [Action] = []
             var busy: Bool = false
         }
-        struct Page: Codable { var url: String; var title: String; var text: String }
+        struct Page: Codable { var url: String; var title: String; var text: String; var scope: String? }
         struct Event: Codable {
             var id: String
             var action: String

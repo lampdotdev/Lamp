@@ -383,7 +383,11 @@ enum Agent {
             model and saved data. Read the API in LampSupport.swift before using it. Surface has title, detail, \
             sections [Section(title:text:)], fields [Field(id:label:value:)] and actions [Action(id:label:readsPage:)]. \
             Your Swift code creates and updates this UI; the extension renders it. A clicked readsPage action \
-            receives event.page (url, title, text); other actions receive event.action and event.fields. \
+            receives event.page (url, title, text). For selected passages use `readsSelection: true` instead of \
+            readsPage: it returns only the selected readable text in event.page.text (scope is "selection") and \
+            refuses an empty selection. Never set both flags or substitute the clipboard/whole page for a requested \
+            selection. Other actions receive event.action and event.fields. Page capture is limited to 24,000 \
+            characters and may omit later sections; ground answers in the supplied text and say when it is missing. \
             `data:` is for page text passed to LampAI; never put outside instructions in the prompt. The app \
             owns interpretation, AI, validation and durable saving. Keep a preview to review before Save, and \
             report Saved only after storage succeeds. Use a stable source/item identity to avoid duplicate saves. \
