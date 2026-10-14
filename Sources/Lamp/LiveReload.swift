@@ -125,10 +125,13 @@ enum LiveReload {
             let range = NSRange(line.startIndex..., in: line)
             if stack.last == true, !line.contains("static "), !line.contains("class var"),
                stored.firstMatch(in: line, range: range) != nil || enumCase.firstMatch(in: line, range: range) != nil {
-                // What it is and its type, not its starting value, which a new instance takes from the new code.
+                // What it is and its type, not its starting value, which a new instance takes from the new code;
+                // with no type written, the kind of value it starts with stands for the type.
                 var shape = line.trimmingCharacters(in: .whitespaces)
                 if shape.range(of: #"^(?:indirect\s+)?case\b"#, options: .regularExpression) == nil, let equals = shape.range(of: " = ") {
-                    shape = String(shape[..<equals.lowerBound])
+                    let start = String(shape[equals.upperBound...]).trimmingCharacters(in: .whitespaces)
+                    let declared = String(shape[..<equals.lowerBound])
+                    shape = declared.contains(":") ? declared : declared + " = " + Self.kind(of: start)
                 }
                 out.append(shape)
             }
@@ -139,6 +142,19 @@ enum LiveReload {
             }
         }
         return out
+    }
+
+    /// What kind of value a starting value is, for a property with no type written: a number, text, true or
+    /// false, a list, or what it's made with (`Foo(…)`, `.init`), else the whole of it, so another value of the
+    /// same kind keeps the layout and another kind doesn't.
+    static func kind(of value: String) -> String {
+        if value.range(of: #"^-?\d[\d_]*$"#, options: .regularExpression) != nil { return "<integer>" }
+        if value.range(of: #"^-?\d[\d_]*\.\d[\d_]*$"#, options: .regularExpression) != nil { return "<decimal>" }
+        if value.hasPrefix("\"") { return "<text>" }
+        if value == "true" || value == "false" { return "<bool>" }
+        if value.hasPrefix("[") { return "<list>" }
+        if let call = value.range(of: #"^[A-Za-z_][\w.]*(?=\s*[({])"#, options: .regularExpression) { return String(value[call]) + "(…)" }
+        return value
     }
 
     /// The source's lines with comments taken out and a declaration that runs over several lines (inside
@@ -164,7 +180,9 @@ enum LiveReload {
                     if Array(chars[k..<min(chars.count, k + closing.count)]) == closing { k += closing.count; break }
                     k += 1
                 }
-                out += String(chars[i..<min(k, chars.count)])
+                // Its words never matter to a layout, and its braces or line breaks would be read as code: kept as
+                // an empty string, which still says a starting value is text.
+                out += "\"\""
                 i = k
                 continue
             }
