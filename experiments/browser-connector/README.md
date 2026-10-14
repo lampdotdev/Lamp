@@ -200,3 +200,38 @@ experiment. Long-run recovery, shadow DOM, complex SPAs, account selection,
 full-screen indicator behavior, onward AI-provider retention and hostile
 same-user native apps need separate work. The standing-access view
 (`access.html`) still has its first plain layout.
+
+## An app that does the shown task
+
+**Build This App** now makes an app that does the task itself, on the site where it was shown, in a tab of
+the person's own Chrome. Pressing it is the person's yes to that app using that site
+(`BrowserRun.allow`, kept by the app's instance so naming the app doesn't lose it); the review says so in one
+line, the popup lists the apps that may use each site, and **Remove** beside a site ends every app's use of it.
+What was shown is kept with the app (`.lamp/shown-task.json`: the site, where it began, the reviewed steps and
+what was used, by name) and the build request carries a note for the builder: the app asks with the
+`LampComputer.ask` / `.perform` it already has, and for an app built this way Lamp answers through the browser
+instead of the other apps on the Mac (`Store.useBrowser`).
+
+The run is AI-driven: one more driver behind `ComputerUse.Job` (`BrowserRun.Driver`), so the limits, Stop, the
+route the app's text goes along and the question before an action are that job's, for every engine. The AI is
+given what was shown and works from it; it reads the page as a list of what can be used, each with an id, and
+the text in view (`task-drive.js`), and uses one control at a time. Lamp, not the AI, decides what each step
+is (`BrowserRun.verdict`): opening, searching, filtering, switches, boxes, menus and same-site links go ahead;
+a button or form Lamp can't place, and anything whose name says it sends, buys, borrows, saves, deletes or
+changes an account, waits for the person in Lamp's approval panel, one action at a time (no "Allow All"
+here); `ask` refuses those outright. Links to other sites and password fields are never used.
+
+The run works in a tab of its own, in front, with the bar saying which app is working and **Stop**. A page that
+needs the person (a check that they are human, a sign-in page) is handed to them: the bar says so and offers
+**Continue**; after five minutes with nobody there the AI answers with what it has and says what's missing.
+Lamp never types into password fields or gets past those checks. A site that sends the tab elsewhere ends the
+run with a plain message, and the AI says plainly when the site no longer has what the task used
+("looks different from when you showed Lamp this task").
+
+The page's own clicks (`element.click()`, events for typing and Return) are what an extension can send; a site
+that only listens to clicks from a real person won't respond. The debugger permission, which could send real
+input, is not used.
+
+`/overlay/sign-in` and the **Reserve this lamp** button on `/overlay/item` are made-up pages for trying the
+handover and the approval without anyone's account.
+

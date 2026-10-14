@@ -4847,6 +4847,10 @@ final class Store: ObservableObject {
         guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let task = (json["task"] as? String)?.trimmed, !task.isEmpty else { return (400, ["error": "Missing task."]) }
         let allowActions = json["act"] as? Bool ?? false
+        // An app built from a task the person showed Lamp does it where it was shown, in their browser.
+        if BrowserPrototype.enabled, let shown = BrowserRun.Shown.load(project) {
+            return await useBrowser(for: project, shown: shown, task: task, allowActions: allowActions)
+        }
         guard ComputerUse.enabled, await ComputerUse.status() == .ready else {
             // Asked once per app per launch: an app that keeps trying would otherwise raise a dialog per call.
             if computerUseRefused.insert(project.id).inserted {
@@ -4908,6 +4912,54 @@ final class Store: ObservableObject {
         }
     }
 
+    /// The browser prototype's task: on the site the person showed, through the extension in their own Chrome.
+    /// The job, its limits and the question before an action are the ones `useComputer` uses.
+    private func useBrowser(for project: LampProject, shown: BrowserRun.Shown, task: String, allowActions: Bool) async -> (Int, [String: Any]) {
+        let host = URL(string: shown.site)?.host ?? shown.site
+        guard BrowserRun.shared.mayUse(project, shown.site) else {
+            return (403, ["error": "\(project.title) may no longer use \(host). Show Lamp the task again to allow it."])
+        }
+        guard BrowserTaskPrototype.shared.recording.map({ $0.stopped != nil }) ?? true else {
+            return (409, ["error": "Lamp is recording in Chrome. Finish that first, then try again."])
+        }
+        guard let session = BrowserRun.shared.begin(for: project, shown: shown) else {
+            return (409, ["error": "Lamp is already doing a task in Chrome. Try again when it has finished."])
+        }
+        let chosen = AppAI.computerRoute(for: AppModels.load(project).text)
+        weak var job: ComputerUse.Job?
+        let work = ComputerUse.Job(task, appName: project.name, allowActions: allowActions,
+                                   browser: BrowserRun.Driver(session: session, shown: shown)) { [weak self] action in
+            guard let self, let job, !job.isStopped else { return false }
+            // Each action is asked about by itself: allowing one never allows the next.
+            switch await self.confirm(action, for: project, owner: ObjectIdentifier(job), offersAll: false) {
+            case .allow, .allowAll: return true
+            case .deny: return false
+            case .stop: job.stop(); return false
+            }
+        }
+        job = work
+        defer { work.close() }
+        let token = UUID().uuidString + UUID().uuidString
+        computerTasks[token] = work
+        defer { computerTasks[token] = nil }
+        do {
+            let (text, cost) = try await ComputerUse.answer(work, route: chosen, token: token)
+            record(project, cost: cost)
+            print("Browser task for \(project.name) through \(chosen.label): \(work.steps) steps, answered.")
+            if work.isStopped { return (409, ["error": ComputerUse.stoppedByPerson.message]) }
+            // The AI's own word that the site no longer has what the shown task used: said plainly, not passed off as an answer.
+            if text.hasPrefix("SITE CHANGED:") {
+                return (502, ["error": "\(host) looks different from when you showed Lamp this task (\(String(text.dropFirst(13)).trimmed.prefix(200))). Show Lamp the task again."])
+            }
+            return (200, ["text": text])
+        } catch {
+            if let spent = (error as? ComputerUse.Failure)?.cost, spent > 0 { record(project, cost: spent) }
+            print("Browser task for \(project.name) through \(chosen.label): \(work.steps) steps, ended: \(error.localizedDescription)")
+            if work.isStopped { return (409, ["error": ComputerUse.stoppedByPerson.message]) }
+            return (502, ["error": error.localizedDescription])
+        }
+    }
+
     /// Tasks a coding agent is driving right now, by the token that agent was given.
     private var computerTasks: [String: ComputerUse.Job] = [:]
 
@@ -4956,7 +5008,7 @@ final class Store: ObservableObject {
     private typealias ActionAnswer = ApprovalPanel.Answer
 
     /// Asks the person before an app clicks, types or presses keys in another app, beside where it happens.
-    private func confirm(_ action: ComputerUse.Action, for project: LampProject, owner: ObjectIdentifier?) async -> ActionAnswer {
+    private func confirm(_ action: ComputerUse.Action, for project: LampProject, owner: ObjectIdentifier?, offersAll: Bool = true) async -> ActionAnswer {
         await ApprovalPanel.ask(.init(
             asker: project.name,
             askerIcon: NSWorkspace.shared.icon(forFile: project.installedURL.path),
@@ -4966,7 +5018,8 @@ final class Store: ObservableObject {
             intent: action.intent,
             point: action.point,
             window: action.window,
-            owner: owner))
+            owner: owner,
+            offersAll: offersAll))
     }
 
     /// Shows an alert without stopping everything else: as a sheet on Lamp's window when there is one, so

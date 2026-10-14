@@ -13,11 +13,14 @@ button{font:inherit;font-weight:600;border-radius:9px;padding:8px 14px;border:1p
 button:hover{background:var(--card)}
 button.main{width:100%;padding:10px 14px;border:0;color:white;background:linear-gradient(var(--orange-top),var(--orange));text-shadow:0 1px 1px rgb(140 50 0/.35)}
 button.main:hover{filter:brightness(1.05)}
+/* With several sites the popup scrolls; Start stays in reach while what it agrees to scrolls above it. */
+#start{position:sticky;bottom:6px;box-shadow:0 0 0 6px var(--page)}
 button.link{border:0;background:none;padding:0;font-weight:400;color:var(--soft);text-decoration:underline}
 button:focus-visible{outline:2px solid #b04e0a;outline-offset:2px}
 .note{font-size:12px;color:var(--soft);margin:8px 0 0}
 #sites{margin:0 0 8px}
 #sites label{display:flex;align-items:center;gap:8px;padding:3px 0}
+#sites .used{margin:-2px 0 4px 21px;font-size:12px;color:var(--soft)}
 #sites span{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .card{background:var(--card);border-radius:10px;padding:8px 12px;margin:0 0 8px}
 .card h2{font-size:12px;font-weight:650;margin:0 0 2px}
@@ -49,7 +52,7 @@ footer a{color:var(--soft)}
   <div id="ask" hidden>
     <p>Lamp isn’t allowed to watch <span class="site" id="here"></span> yet.</p>
     <button class="main" id="approveSite">Let Lamp Watch This Site</button>
-    <p class="note">Chrome will ask you to confirm, in its own words. Lamp only reads, and only while you’re recording.</p>
+    <p class="note">Chrome will ask you to confirm, in its own words. Lamp watches only while you’re recording.</p>
   </div>
   <p id="elsewhere" hidden>Go to the website where you do the task, then click the lamp again.</p>
   <div id="ready" hidden>

@@ -25,6 +25,8 @@ enum ApprovalPanel {
         let window: CGRect?
         /// The task asking, so stopping it elsewhere (the stop control on the glow) closes its question.
         var owner: ObjectIdentifier? = nil
+        /// False where each action is the person's to allow one at a time, with no way to allow the rest unseen.
+        var offersAll = true
 
         var title: String { "\(asker) wants to use \(target)" }
     }
@@ -177,7 +179,7 @@ private struct ApprovalView: View {
             HStack {
                 Button("Don't Allow") { answer(.deny) }
                 Spacer()
-                Button("Allow All for This Task") { answer(.allowAll) }
+                if request.offersAll { Button("Allow All for This Task") { answer(.allowAll) } }
                 Button("Allow") { answer(.allow) }
                     .buttonStyle(.borderedProminent)
                     .tint(Color(nsColor: ComputerOverlay.tint))

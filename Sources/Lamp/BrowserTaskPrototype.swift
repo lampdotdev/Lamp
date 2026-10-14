@@ -90,7 +90,8 @@ final class BrowserTaskPrototype: ObservableObject {
         if op == "taskStatus" {
             pauseIfDue()
             let active = recording.map { $0.profile == profile && $0.stopped == nil } ?? false
-            return ["sites": sites[profile] ?? [], "active": active, "id": active ? recording!.id : "",
+            return ["sites": sites[profile] ?? [], "users": BrowserRun.shared.users(of: sites[profile] ?? [], projects: Store.shared.projects),
+                    "active": active, "id": active ? recording!.id : "",
                     "elapsed": active ? Int((recording!.paused ?? Date()).timeIntervalSince(recording!.started)) : 0,
                     "paused": active && recording!.paused != nil,
                     "count": active ? recording!.events.count : 0, "phase": phase]
@@ -106,6 +107,7 @@ final class BrowserTaskPrototype: ObservableObject {
         if op == "taskRevoke" {
             guard let site = body["origin"] as? String else { return fail("Missing site.") }
             sites[profile]?.removeAll { $0 == site }
+            BrowserRun.shared.revoke(site: site)
             if recording?.profile == profile, recording?.origins.contains(site) == true { discard() }
             do { try JSONEncoder().encode(sites).write(to: Self.folder.appendingPathComponent("sites.json"), options: .atomic) }
             catch { return fail("Lamp stopped watching that site, but couldn’t save the change. Remove it again.") }
@@ -202,9 +204,12 @@ final class BrowserTaskPrototype: ObservableObject {
             Write the steps, the idea's name and its summary in plain words for someone who is not a developer. Each step is one
             short sentence that starts with a verb in the past tense. The summary is one sentence saying what the app does for them.
             Where uncertain is not empty, say it to them as \"you\", never as \"the person\" or \"the user\".
-            Suggest exactly one useful small Mac app that reduces this repeated work. The build request must be concrete and self-contained,
-            include the business fields/examples actually observed, and say what the person will enter or import. Do not assume a connector,
-            browser automation, ongoing observation or access to accounts. Do not invent actions or fields that weren't seen. No attribution.
+            Suggest exactly one useful small Mac app that does this repeated work for them. The app does the task itself on the same
+            site, in the person's own browser, each time they ask: Lamp drives the site the way they showed. The build request must be
+            concrete and self-contained: say what the person gives the app each time (what they searched for or chose here), what
+            the app brings back from the site and how it shows and keeps it, with the fields and examples actually observed. The
+            app never asks the person to copy in what the site shows. Do not assume any other connector, account or ongoing
+            observation. Do not invent actions or fields that weren't seen. No attribution.
             """
             let (text, cost) = try await AppAI.complete(prompt: prompt, images: [], system: system, json: true,
                                                        model: AppAI.defaultOpenRouterModel)
@@ -226,6 +231,40 @@ final class BrowserTaskPrototype: ObservableObject {
             phase = "failed"
         }
     }
+    /// The site the task was shown on, as the person reads it.
+    var site: String {
+        guard let item = recording else { return "" }
+        let hosts = item.events.compactMap { URLComponents(string: $0.url)?.host }
+        return Dictionary(grouping: hosts, by: { $0 }).max { $0.value.count < $1.value.count }?.key ?? ""
+    }
+
+    /// For the agent that builds the app, not for the person: how the app does the shown task. It rides with the
+    /// request as a file, so the chat shows the person's words and not the code.
+    private static func buildersNote(site: String) -> String {
+        let host = URL(string: site)?.host ?? site
+        return """
+        # How this app does the task
+
+        The person showed Lamp this task on \(host). Lamp can now do it there for them, in a tab of their own Chrome,
+        where they are already signed in. The app asks Lamp with the block it already has in LampSupport.swift:
+
+            let found = try await LampComputer.ask("Find … on \(host). Reply as JSON: [{…}]")      // looks around only
+            let done = try await LampComputer.perform("… on \(host), then …")                      // may also do things
+
+        - Say in plain words what to find or do, with what the person typed or chose in the app, and say exactly what
+          to reply (ask for JSON and decode it; the reply is text).
+        - Lamp works from what the person showed, so the task doesn't have to spell out the clicks.
+        - `ask` opens pages, searches, filters and reads. `perform` may also press things that send, save, buy, borrow
+          or delete, and Lamp asks the person before each one. Use `perform` only for a feature that needs it.
+        - A run takes from half a minute to a few minutes and opens a tab the person can watch. Start one only when
+          the person asks (a button), show that it's working, and let them keep using the app.
+        - On failure show `error.localizedDescription` as it is: it's written for the person (a page asked them to
+          sign in, the site changed, they stopped it).
+        - Don't ask the person to type or paste in what the site shows; that is what the run is for. Keep what comes
+          back with LampStore so it's there next time.
+        """
+    }
+
     func build() {
         guard phase == "review", !appRequest.trimmed.isEmpty, let item = recording else { return }
         let store = Store.shared
@@ -233,16 +272,36 @@ final class BrowserTaskPrototype: ObservableObject {
         guard let project = store.selected else { return }
         let kept = steps.map(\.text.trimmed).filter { !$0.isEmpty }
         let listed = kept.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
-        let approved = "Build \(appName.trimmed). \(summary)\n\n\(appRequest.trimmed)\n\nWhat I do by hand today:\n\(listed)"
-        let evidence = project.dir.appendingPathComponent("Attachments/browser-task.json")
+        let approved = """
+        Build \(appName.trimmed). \(summary)
+
+        \(appRequest.trimmed)
+
+        I showed Lamp this task in my browser, so the app can do it there for me: the attached note says how. What I do by hand today:
+        \(listed)
+        """
+        // Written aside: sending a request copies its attachments into the app.
+        let aside = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-shown-\(UUID().uuidString)")
+        let evidence = aside.appendingPathComponent("browser-task.json")
+        let note = aside.appendingPathComponent("doing-the-task.md")
+        // The site the person did most of the task on: one app uses one site in this first version.
+        let site = Dictionary(grouping: item.events.compactMap { URLComponents(string: $0.url).flatMap { parts in parts.host.map { "\(parts.scheme ?? "https")://\($0)\(parts.port.map { ":\($0)" } ?? "")" } } }, by: { $0 })
+            .max { $0.value.count < $1.value.count }?.key ?? item.origins.first ?? ""
+        let shown = BrowserRun.Shown(site: site, start: item.events.first { $0.url.hasPrefix(site) }?.url, profile: item.profile, steps: kept,
+                                     used: item.events.filter { $0.kind != "page" && !$0.label.isEmpty }.map { "\($0.kind) “\($0.label)”" })
         do {
             try FileManager.default.createDirectory(at: evidence.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(item).write(to: evidence, options: .atomic)
+            try Self.buildersNote(site: site).write(to: note, atomically: true, encoding: .utf8)
+            try FileManager.default.createDirectory(at: BrowserRun.Shown.url(for: project).deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(shown).write(to: BrowserRun.Shown.url(for: project), options: .atomic)
         } catch { self.error = "Lamp couldn’t start the app. Press Build again."; return }
+        // Pressing Build This App is the person's yes to this app using that site for them.
+        BrowserRun.shared.allow(project, name: appName.trimmed, site: site)
         phase = "building"
         try? JSONSerialization.data(withJSONObject: ["recording": item.id, "project": project.id, "buildPressed": true])
             .write(to: Self.folder.appendingPathComponent("build-receipt.json"))
-        store.send(approved, attachments: [evidence], to: project)
+        store.send(approved, attachments: [evidence, note], to: project)
         reviewWindow?.close(); reviewWindow = nil
         store.showChat(project.id)
     }
@@ -312,6 +371,10 @@ private struct BrowserTaskReview: View {
                     }
                 }
                 Text(model.summary).fixedSize(horizontal: false, vertical: true)
+                if !model.site.isEmpty {
+                    Label("It does this for you on \(model.site), in your Chrome, and asks before anything that sends, buys, saves or deletes.",
+                          systemImage: "hand.raised").foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
                 if !model.uncertain.isEmpty {
                     Label(model.uncertain, systemImage: "questionmark.circle").foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
