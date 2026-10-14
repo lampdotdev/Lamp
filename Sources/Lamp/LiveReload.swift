@@ -28,11 +28,14 @@ enum LiveReload {
 
     /// After an install: the open app is the build, so what it runs is what the build used, with the other
     /// things the build puts in the app as they were.
-    static func markRunning(_ project: LampProject) {
+    static func markRunning(_ project: LampProject, keepLayout: Bool = false) {
         let fm = FileManager.default
         try? fm.removeItem(at: running(project))
         try? fm.copyItem(at: sources(project), to: running(project))
         try? inputs(project).write(to: runningInputs(project), atomically: true, encoding: .utf8)
+        // After a change that went in live, the types hold what they did (that's why it could), so what's kept
+        // stays true; after an install it's worked out again.
+        if !keepLayout { try? fm.removeItem(at: runningLayout(project)) }
     }
 
     private static func runningInputs(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-inputs.txt") }
@@ -71,7 +74,7 @@ enum LiveReload {
         case unchanged
     }
 
-    static func verdict(_ project: LampProject) -> Verdict {
+    static func verdict(_ project: LampProject) async -> Verdict {
         let built = swiftFiles(in: sources(project)), open = swiftFiles(in: running(project))
         guard !open.isEmpty else { return .reopen("Lamp doesn't know what the open copy was built from") }
         // A new file only brings new types and functions, which the library holds; one taken away may have held
@@ -92,15 +95,26 @@ enum LiveReload {
             guard new != old else { continue }
             if (path as NSString).lastPathComponent == "LampSupport.swift" { return .reopen("Lamp's own building blocks changed") }
             if declaresApp(new) { return .reopen("\(path) is the app's entry point") }
-            let before = shape(of: old), after = shape(of: new)
-            if before != after {
-                let what = Set(after).subtracting(before).first ?? Set(before).subtracting(after).first ?? "the order of the fields"
-                return .reopen("\(path) changes what its types hold (\(what))")
-            }
             changed.append(path)
         }
-        return changed.isEmpty ? .unchanged : .reload(changed)
+        guard !changed.isEmpty else { return .unchanged }
+        // What the types hold, by the compiler: the open app's, worked out once per install and kept, and the new
+        // code's, kept for when the change has gone in.
+        async let after = layout(of: sources(project), module: project.exe)
+        let saved = (try? String(contentsOf: runningLayout(project), encoding: .utf8)).map { $0.components(separatedBy: "\n").filter { !$0.isEmpty } }
+        let fresh = saved == nil ? await layout(of: running(project), module: project.exe) : nil
+        guard let before = saved ?? fresh else { return .reopen("the compiler couldn't say what the open app's types hold") }
+        if saved == nil { try? before.joined(separator: "\n").write(to: runningLayout(project), atomically: true, encoding: .utf8) }
+        guard let now = await after else { return .reopen("the compiler couldn't say what the new code's types hold") }
+        if before != now {
+            let what = now.first { !before.contains($0) } ?? before.first { !now.contains($0) }.map { "no longer " + $0 } ?? "the order of a type's fields"
+            return .reopen("a type's stored data changed (\(what))")
+        }
+        return .reload(changed)
     }
+
+    /// What the open app's types hold (`layout`), kept beside the sources it runs; gone when those change.
+    private static func runningLayout(_ project: LampProject) -> URL { folder(project).appendingPathComponent("running-layout.txt") }
 
     private static func swiftFiles(in folder: URL) -> [String: URL] {
         let base = folder.standardizedFileURL.path + "/"
@@ -109,107 +123,61 @@ enum LiveReload {
                           uniquingKeysWith: { first, _ in first })
     }
 
-    /// What a type's memory is made of, as far as the text shows it, in the order written (a field's place is
-    /// part of the layout): the stored properties (a `let` or `var` line that opens no body, not static) and the
-    /// enum cases with what they carry (a `case` naming one or more cases, not a switch's `case .x:` or
-    /// `case let`). The open app's objects were laid out by the old ones; a change to these needs a fresh start.
-    static func shape(of source: String) -> [String] {
-        let stored = try! NSRegularExpression(pattern: #"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:private|fileprivate|internal|public|open)(?:\(set\))?\s+)*(?:weak\s+|unowned\s+|lazy\s+)*(?:let|var)\s+\w+[^{]*$"#)
-        let enumCase = try! NSRegularExpression(pattern: #"^\s*(?:indirect\s+)?case\s+(?!let\b|var\b)[A-Za-z_]\w*(?:\(.*\))?\s*(?:=\s*[^:]+)?\s*(?:,\s*[A-Za-z_]\w*(?:\(.*\))?\s*)*$"#)
-        let typeOpening = try! NSRegularExpression(pattern: #"\b(?:struct|class|enum|actor)\b"#)
-        let notType = try! NSRegularExpression(pattern: #"\b(?:func|var|let|init|subscript)\b|="#)
-        // Only what's declared directly in a type's body counts: a local `let` in a function, or a closure's,
-        // isn't part of any layout. Each brace is a type's when its line opens a struct, class, enum or actor.
-        var stack: [Bool] = [], out: [String] = [], pending = false
-        for line in declarations(in: source) {
-            let range = NSRange(line.startIndex..., in: line)
-            if stack.last == true, !line.contains("static "), !line.contains("class var"),
-               stored.firstMatch(in: line, range: range) != nil || enumCase.firstMatch(in: line, range: range) != nil {
-                // What it is and its type, not its starting value, which a new instance takes from the new code;
-                // with no type written, the kind of value it starts with stands for the type.
-                var shape = line.trimmingCharacters(in: .whitespaces)
-                if shape.range(of: #"^(?:indirect\s+)?case\b"#, options: .regularExpression) == nil, let equals = shape.range(of: " = ") {
-                    let start = String(shape[equals.upperBound...]).trimmingCharacters(in: .whitespaces)
-                    let declared = String(shape[..<equals.lowerBound])
-                    shape = declared.contains(":") ? declared : declared + " = " + Self.kind(of: start)
+    /// What the open app's objects are laid out by, as the compiler sees it: for each struct, class, enum and
+    /// actor, its stored properties with their types (inferred ones included) and its cases with what they
+    /// carry, in order, from the type-checked syntax tree (`-dump-ast`). Comparing the open app's with the new
+    /// code's says whether a library can go in: no reading of the text, which formatting, comments, strings and
+    /// inferred types all fool. Nil when the compiler can't say (the code doesn't type-check).
+    static func layout(of folder: URL, module: String) async -> [String]? {
+        let files = swiftFiles(in: folder).values.map(\.path).sorted()
+        guard !files.isEmpty else { return nil }
+        let quoted = files.map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }.joined(separator: " ")
+        var output: [String] = []
+        let status = await Shell.run("""
+            set -- \(quoted)
+            SDK="$(xcrun --sdk macosx --show-sdk-path)"
+            PLUGINS="$(dirname "$(dirname "$(xcrun -f swiftc)")")/lib/swift/host/plugins"
+            xcrun swiftc -frontend -dump-ast "$@" -module-name "$LAMP_EXE" -parse-as-library -D DEBUG -D LAMP_LIVE \\
+              -target arm64-apple-macosx14.0 -sdk "$SDK" -plugin-path "$PLUGINS" -plugin-path "$SDK/../../usr/lib/swift/host/plugins" 2>/dev/null
+            """, cwd: folder, env: ["LAMP_EXE": module]) { output.append($0) }
+        guard status == 0 else { return nil }
+        return members(inDump: output.joined(separator: "\n"))
+    }
+
+    /// The stored members of every type in a `-dump-ast` printout: each line's indent says what it's inside, so
+    /// a function's locals (inside a func or closure) never count, nor a static or a computed property.
+    static func members(inDump dump: String) -> [String] {
+        let typeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((struct|class|enum|actor)_decl\b[^"]*"([^"]+)""#)
+        let scopeDecl = try! NSRegularExpression(pattern: #"^(\s*)\((func_decl|accessor_decl|constructor_decl|destructor_decl|closure_expr|subscript_decl|top_level_code_decl)\b"#)
+        // A declaration's position (decl_context=…, range=[…]) comes before its name; neither holds a quote.
+        let varDecl = try! NSRegularExpression(pattern: #"^(\s*)\(var_decl\b[^"]*"([^"]+)" interface_type="([^"]*)"(.*)$"#)
+        let caseDecl = try! NSRegularExpression(pattern: #"^(\s*)\(enum_element_decl\b[^"]*"([^"]+)" interface_type="([^"]*)""#)
+        var scopes: [(indent: Int, type: String?)] = [], out: [String] = [], seen = Set<String>()
+        for raw in dump.split(separator: "\n") {
+            let line = String(raw), range = NSRange(line.startIndex..., in: line)
+            let indent = line.prefix { $0 == " " }.count
+            while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
+            // What a member line belongs to is the nearest scope around it: a type's member when that's the type,
+            // nothing when it's a function, an accessor or a closure (a local).
+            let owner = scopes.last?.type
+            if let m = typeDecl.firstMatch(in: line, range: range) {
+                let name = String(line[Range(m.range(at: 3), in: line)!])
+                let outer = scopes.compactMap(\.type).last
+                scopes.append((indent, outer.map { $0 + "." + name } ?? name))
+            } else if let m = varDecl.firstMatch(in: line, range: range) {
+                let rest = String(line[Range(m.range(at: 4), in: line)!])
+                if let owner, rest.contains("readImpl=stored"), !rest.contains(" static") {
+                    let entry = owner + "." + String(line[Range(m.range(at: 2), in: line)!]) + ": " + String(line[Range(m.range(at: 3), in: line)!])
+                    if seen.insert(entry).inserted { out.append(entry) }
                 }
-                out.append(shape)
-            }
-            // A type's declaration may go on over more lines (its conformances, a `where`) before its opening
-            // brace: it waits for the brace while the lines between only continue it.
-            let declaresType = typeOpening.firstMatch(in: line, range: range) != nil && notType.firstMatch(in: line, range: range) == nil
-            let continues = pending && notType.firstMatch(in: line, range: range) == nil
-            let isType = declaresType || continues
-            if !line.trimmingCharacters(in: .whitespaces).isEmpty { pending = (declaresType || continues) && !line.contains("{") }
-            for character in line {
-                if character == "{" { stack.append(isType && !stack.contains(false)) }
-                else if character == "}", !stack.isEmpty { stack.removeLast() }
+            } else if let m = caseDecl.firstMatch(in: line, range: range), let owner {
+                let entry = owner + " case " + String(line[Range(m.range(at: 2), in: line)!]) + ": " + String(line[Range(m.range(at: 3), in: line)!])
+                if seen.insert(entry).inserted { out.append(entry) }
+            } else if scopeDecl.firstMatch(in: line, range: range) != nil {
+                scopes.append((indent, nil))
             }
         }
         return out
-    }
-
-    /// What kind of value a starting value is, for a property with no type written: a plain number, text, or
-    /// true or false, whose type the literal settles, so another value of the same kind keeps the layout. Anything
-    /// else (a list, a call, an expression) is kept whole: its type can't be read from the text, so any change to
-    /// it counts.
-    static func kind(of value: String) -> String {
-        if value.range(of: #"^-?\d[\d_]*$"#, options: .regularExpression) != nil { return "<integer>" }
-        if value.range(of: #"^-?\d[\d_]*\.\d[\d_]*$"#, options: .regularExpression) != nil { return "<decimal>" }
-        if value == "\"\"" { return "<text>" }
-        if value == "true" || value == "false" { return "<bool>" }
-        return value
-    }
-
-    /// The source's lines with comments taken out and a declaration that runs over several lines (inside
-    /// parentheses: a case's payload, a property's type) joined into one, so the layout check reads each
-    /// declaration whole whatever its formatting. Strings are kept as they are, comment marks in them included.
-    static func declarations(in source: String) -> [String] {
-        let chars = Array(source)
-        var out = "", depth = 0, i = 0
-        func at(_ k: Int) -> Character { k < chars.count ? chars[k] : "\0" }
-        while i < chars.count {
-            let c = chars[i]
-            // A string, plain, raw (#"…"#, with any number of #) or multi-line ("""…"""), copied whole: what's in it
-            // is never a comment or a bracket.
-            var hashes = 0
-            while at(i + hashes) == "#" { hashes += 1 }
-            if at(i + hashes) == "\"" {
-                let triple = at(i + hashes + 1) == "\"" && at(i + hashes + 2) == "\""
-                let quote = triple ? 3 : 1
-                let closing = Array(String(repeating: "\"", count: quote) + String(repeating: "#", count: hashes))
-                var k = i + hashes + quote
-                while k < chars.count {
-                    if hashes == 0, chars[k] == "\\" { k += 2; continue }   // an escaped character in a plain string
-                    if Array(chars[k..<min(chars.count, k + closing.count)]) == closing { k += closing.count; break }
-                    k += 1
-                }
-                // Its words never matter to a layout, and its braces or line breaks would be read as code: kept as
-                // an empty string, which still says a starting value is text.
-                out += "\"\""
-                i = k
-                continue
-            }
-            if c == "/", at(i + 1) == "/" {
-                while i < chars.count, chars[i] != "\n" { i += 1 }
-                continue
-            }
-            if c == "/", at(i + 1) == "*" {
-                i += 2
-                while i < chars.count, !(chars[i] == "*" && at(i + 1) == "/") { i += 1 }
-                i += 2
-                continue
-            }
-            if c == "(" { depth += 1 } else if c == ")" { depth = max(0, depth - 1) }
-            // One declaration a line: a body opened or closed, or a `;`, ends the line, so a type written on one
-            // line (`enum Shape { case star, circle }`) is read like any other.
-            if depth == 0, c == "{" { out += "{\n" }
-            else if depth == 0, c == "}" { out += "\n}\n" }
-            else if depth == 0, c == ";" { out += "\n" }
-            else { out.append(c == "\n" && depth > 0 ? " " : c) }
-            i += 1
-        }
-        return out.split(separator: "\n", omittingEmptySubsequences: true).map { String($0).replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression) }
     }
 
     /// The App runs once, at launch: a change to it can't show in an app that's already open.
@@ -235,7 +203,7 @@ enum LiveReload {
             PLUGINS="$(dirname "$(dirname "$(xcrun -f swiftc)")")/lib/swift/host/plugins"
             cd "$LAMP_WORK"
             xcrun swiftc -c "$@" -module-name "$LAMP_EXE" -parse-as-library -Onone -enable-testing \
-              -D DEBUG -D LAMP_LIVE -target arm64-apple-macosx14.0 -sdk "$SDK" -plugin-path "$PLUGINS" 2>&1
+              -D DEBUG -D LAMP_LIVE -target arm64-apple-macosx14.0 -sdk "$SDK" -plugin-path "$PLUGINS" -plugin-path "$SDK/../../usr/lib/swift/host/plugins" 2>&1
             xcrun swiftc -emit-library ${(Q)${(z)LAMP_OBJECTS}} -o "$LAMP_LIBRARY" -target arm64-apple-macosx14.0 -sdk "$SDK" \
               -Xlinker -undefined -Xlinker dynamic_lookup -Xlinker -interposable 2>&1
             codesign --force -s - "$LAMP_LIBRARY" 2>&1
