@@ -4704,6 +4704,9 @@ enum Template {
         @State private var attribution: WeatherAttribution?
         var height: CGFloat = 12
 
+        /// Apple's page of weather sources, linked to until the mark has loaded, so the attribution is never missing.
+        private static let sourcesPage = URL(string: "https://weatherkit.apple.com/legal-attribution.html")!
+
         var body: some View {
             Group {
                 if let attribution {
@@ -4716,9 +4719,21 @@ enum Template {
                         .frame(height: height)
                     }
                     .accessibilityLabel(attribution.serviceName)
+                } else {
+                    Link("Weather data sources", destination: Self.sourcesPage).font(.caption2)
                 }
             }
-            .task { attribution = try? await WeatherService.shared.attribution }
+            .task {
+                // Asked again, less often each time, until it answers: offline at first is no reason to go without.
+                var pause: UInt64 = 2
+                while attribution == nil, !Task.isCancelled {
+                    attribution = try? await WeatherService.shared.attribution
+                    if attribution == nil {
+                        try? await Task.sleep(nanoseconds: pause * 1_000_000_000)
+                        pause = min(pause * 2, 60)
+                    }
+                }
+            }
         }
     }
 
