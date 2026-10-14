@@ -87,8 +87,9 @@ final class BrowserSetup: ObservableObject {
         do {
             guard BrowserBridge.enabled, Self.extensionID.count == 32 else { throw Failure() }
             let fm = FileManager.default
-            // A connection installed afresh counts as set up only once the extension answers through it.
-            if !Self.validBridge() { UserDefaults.standard.set(false, forKey: Self.heardKey) }
+            // New extension files have to be loaded in Chrome again, so the setup counts only once it answers.
+            // A new helper alone (every build of Lamp has one) needs nothing from the person.
+            if !Self.extensionMatches { UserDefaults.standard.set(false, forKey: Self.heardKey) }
             try BrowserBridge.shared.prepare()
             try fm.createDirectory(at: Self.folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             let source = Self.source.appendingPathComponent("extension")
