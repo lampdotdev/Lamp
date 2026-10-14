@@ -884,6 +884,8 @@ final class Store: ObservableObject {
         selection = id
         chatFocusRequest += 1
         NSApp.activate()
+        // Lamp's window may have been put away for an app's chat panel (started by its wand): back it comes.
+        if let main = MagicPanel.mainWindow, !main.isVisible { main.makeKeyAndOrderFront(nil) }
     }
 
     // MARK: - Actions
