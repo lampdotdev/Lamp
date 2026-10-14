@@ -4,7 +4,22 @@ const taskURL=url=>{const u=new URL(url);return u.origin+u.pathname;};
 async function taskStatus(){
  const s=await native({op:'taskStatus'});
  if(taskRecording && (!s.active || s.id!==taskRecording.id)){await taskClear();}
+ else if(taskRecording&&s.paused)await taskPause();
  return s;
+}
+// Lamp says when a recording has reached its limit. It is kept as it is and nothing is sent: watching ends
+// on every page, the bar and the badge say it is paused, and the popup comes forward to ask what to do.
+async function taskPause(){
+ if(!taskRecording||taskRecording.paused)return;
+ taskRecording.paused=true;taskBuffer=[];
+ await chrome.storage.session.set({taskRecording});
+ await chrome.action.setBadgeBackgroundColor({color:'#b26a00'});
+ await chrome.action.setBadgeText({text:'II'});
+ await chrome.action.setTitle({title:'Lamp paused. Click to choose what to do.'});
+ for(const tab of await chrome.tabs.query({})){if(tab.incognito||!tab.url||!/^https?:/.test(tab.url))continue;
+  try{await chrome.scripting.executeScript({target:{tabId:tab.id},func:()=>{window.__lampTaskCapture?.pause();}});}catch{}
+ }
+ chrome.action.openPopup().catch(()=>{});
 }
 async function taskClear(){
  taskRecording=null;taskBuffer=[];
@@ -17,10 +32,13 @@ async function taskClear(){
 }
 function taskFlush(){
  if(taskFlushPromise)return taskFlushPromise;
- if(!taskRecording||!taskBuffer.length)return Promise.resolve();
+ if(!taskRecording||taskRecording.paused||!taskBuffer.length)return Promise.resolve();
  const session=taskRecording,epoch=permissionEpoch,batch=taskBuffer.splice(0,30);
  taskFlushPromise=(async()=>{
-  try{await native({op:'taskEvents',id:session.id,events:batch},()=>taskRecording?.id===session.id&&epoch===permissionEpoch);}
+  try{
+   const kept=await native({op:'taskEvents',id:session.id,events:batch},()=>taskRecording?.id===session.id&&epoch===permissionEpoch);
+   if(kept.paused&&taskRecording?.id===session.id)await taskPause();
+  }
   catch{if(taskRecording?.id===session.id){await native({op:'taskDiscard',id:session.id}).catch(()=>{});await taskClear();}}
   finally{taskFlushPromise=null;}
  })();
@@ -52,7 +70,7 @@ async function taskInject(tab){
  const site=new URL(tab.url).origin;
  if(!taskRecording.origins.includes(site)||!await chrome.permissions.contains({origins:[pattern(site)]}))return;
  await chrome.scripting.executeScript({target:{tabId:tab.id},files:['task-capture.js']});
- await chrome.scripting.executeScript({target:{tabId:tab.id},args:[taskRecording.id,site,taskRecording.started],func:(id,site,started)=>window.__lampTaskCapture?.start(id,site,started)});
+ await chrome.scripting.executeScript({target:{tabId:tab.id},args:[taskRecording.id,site,taskRecording.started,taskRecording.paused===true],func:(id,site,started,paused)=>window.__lampTaskCapture?.start(id,site,started,paused)});
 }
 async function taskSync(){
  await taskStateReady;
@@ -60,7 +78,6 @@ async function taskSync(){
  taskSyncing=true;
  try{
   if(!(await chrome.action.getUserSettings()).isOnToolbar){await taskFinish(true);return;}
-  if(Date.now()-taskRecording.started>=600000){await taskFinish(false);return;}
   for(const site of taskRecording.origins)if(!await chrome.permissions.contains({origins:[pattern(site)]})){await native({op:'taskRevoke',origin:site});await taskFinish(true);return;}
   await taskStatus();
   if(taskRecording)for(const tab of await chrome.tabs.query({}))await taskInject(tab).catch(()=>{});
@@ -72,7 +89,7 @@ chrome.runtime.onMessage.addListener((msg,sender,reply)=>{
  const fromPage=sender.id===chrome.runtime.id&&sender.frameId===0&&sender.tab&&!sender.tab.incognito&&taskRecording&&
    taskRecording.origins.includes(sender.origin||new URL(sender.url).origin);
  if(msg.op==='task-event'){
-  if(!fromPage||taskFinishing||msg.id!==taskRecording.id||taskBuffer.length>=30)return;
+  if(!fromPage||taskFinishing||taskRecording.paused||msg.id!==taskRecording.id||taskBuffer.length>=30)return;
   const site=sender.origin||new URL(sender.url).origin;
   if(new URL(msg.event.url).origin!==site||!taskRecording.origins.includes(site))return;
   // Verify persistent browser permission again before admitting the event to the local buffer.
