@@ -2487,6 +2487,12 @@ final class Store: ObservableObject {
            NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).isEmpty {
             if await updateForThisForge(project) { return }
         }
+        // Its App Intents were left out for want of a team to sign it for, and there is one now: built again,
+        // since the build that left them out has none to put back.
+        if await Self.intentsCanComeBack(project), !busy.contains(project.id),
+           NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).isEmpty {
+            if await updateForThisForge(project, because: "Signing \(project.name) for your Apple team…") { return }
+        }
         if let running = NSRunningApplication.runningApplications(withBundleIdentifier: project.bundleID).first {
             // Ask the app to show a window (opening a new one if all were closed); see LampWindows. The app
             // says when it has: a window, or the panel of an app that lives in the menu bar, which isn't an
@@ -3017,10 +3023,10 @@ final class Store: ObservableObject {
 
     /// Rebuilds the app from its code, reinstalls it and relaunches it.
     /// Rebuilds an app made by an older Lamp and opens it. False if it didn't build, leaving the old one in place.
-    private func updateForThisForge(_ project: LampProject) async -> Bool {
+    private func updateForThisForge(_ project: LampProject, because reason: String? = nil) async -> Bool {
         guard begin(project) != nil else { return false }
         defer { finish(project) }
-        log(project, .status, "Updating \(project.name) for this version of Lamp…")
+        log(project, .status, reason ?? "Updating \(project.name) for this version of Lamp…")
         guard await build(project) == nil else {
             log(project, .status, "Couldn't update \(project.name), so it opened as it was")
             return false
@@ -3738,7 +3744,25 @@ final class Store: ObservableObject {
                                      cwd: project.dir, env: signingEnv.merging(["LAMP_IDENTITY": identity]) { $1 }) { output.append($0) } == 0
                 && AppSigning.isCertificateSigned(project.builtURL)
             if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
-        } else if identity != "-" {
+        } else {
+            // A Mac app is signed for the person's Apple team when there is one: macOS runs an app's App Intents
+            // (Siri, Shortcuts, Spotlight) only for an app signed with a team. Otherwise Lamp's own certificate.
+            if project.platform == .mac, let team = await Devices.signingIdentity(for: Devices.team) {
+                var output: [String] = []
+                signed = await Shell.run(AppSigning.command(adHoc: false, widget: hasWidget, ownKeychain: false), cwd: project.dir,
+                                         env: signingEnv.merging(["LAMP_IDENTITY": team]) { $1 }) { output.append($0) } == 0
+                    && AppSigning.isCertificateSigned(project.builtURL) && (!hasWidget || AppSigning.isCertificateSigned(widget))
+                if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
+                Self.rememberTeamSigning(failed: !signed, for: project)
+            }
+            // Not signed for a team, the app's intents would be listed by macOS and never run: they're taken out.
+            if !signed, project.platform == .mac {
+                for bundle in [project.builtURL, widget] {
+                    try? fm.removeItem(at: bundle.appendingPathComponent("Contents/Resources/Metadata.appintents"))
+                }
+            }
+        }
+        if !signed, project.platform != .universal, identity != "-" {
             var output: [String] = []
             signingEnv["LAMP_IDENTITY"] = identity
             signingEnv["LAMP_KEYCHAIN"] = AppSigning.keychain
@@ -4780,6 +4804,7 @@ final class Store: ObservableObject {
             : Privacy.sharesPictures ? "Pictures of its windows follow, frontmost first; x and y for use_app are pixels in the first." : Privacy.picturesOff)
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         text += Self.handingHint(for: project)
+        text += await Self.intentsHint(for: project)
         // The front window in words, beside its picture, from the app itself (LampScreen in LampSupport.swift).
         if Privacy.sharesPictures, !screenshots.isEmpty, Self.binary(of: project, contains: Self.screenTextMarker),
            let words = await Runtime.screenText(of: project, since: since) { text += "\n\n" + words }
@@ -4795,6 +4820,64 @@ final class Store: ObservableObject {
         guard !project.onIOS, !Template.Capabilities.load(project).kinds.isEmpty else { return "" }
         return "\n\nTo hand it a file or folder as Finder would, run `open -g -a \(Sandbox.quoted(project.installedURL.path)) <path>`, " +
             "then `use_app` with a wait to see the result. Use that path, not the copy in build/ or the bundle id: those start a second copy."
+    }
+
+    /// For a Mac app whose code has App Intents and whose installed copy has none: `deploy` takes them out of an
+    /// app it couldn't sign for an Apple team, since macOS lists such an app's intents and never runs them. Read
+    /// off the installed copy, so a team that's chosen but couldn't sign (its key refused) is told as well.
+    nonisolated static func intentsHint(for project: LampProject) async -> String {
+        guard project.platform == .mac, usesAppIntents(project), !hasIntentsMetadata(project.installedURL) else { return "" }
+        if await Subprocess.run("/usr/bin/xcrun", ["-f", "appintentsmetadataprocessor"], timeout: 20).status != 0 {
+            return "\n\nSiri, Shortcuts and Spotlight can't see this app's App Intents: reading them out of the code takes Xcode, which " +
+                "isn't installed. Tell the user they come on once Xcode is installed."
+        }
+        if await Devices.signingIdentity(for: Devices.team) == nil {
+            return "\n\nSiri, Shortcuts and Spotlight can't use this app's App Intents yet: macOS runs them only for an app signed for an " +
+                "Apple developer team, and Lamp has none to sign with. Tell the user they come on once they choose their team in Lamp's " +
+                "Settings → Building (it needs Xcode signed in to their Apple account)."
+        }
+        return "\n\nSiri, Shortcuts and Spotlight can't use this app's App Intents: Lamp couldn't sign it for the user's Apple team, most " +
+            "likely because macOS asked for access to the team's signing key and it wasn't allowed. Tell the user to choose Always Allow " +
+            "when macOS asks during the next build."
+    }
+
+    /// Whether a bundle carries App Intents for the system to find.
+    nonisolated static func hasIntentsMetadata(_ app: URL) -> Bool {
+        FileManager.default.fileExists(atPath: app.appendingPathComponent("Contents/Resources/Metadata.appintents").path)
+    }
+
+    /// A Mac app installed without its App Intents, which a build could now give them: Xcode's tool is here to
+    /// read them, there's a team on this Mac to sign for, and signing for that team hasn't already failed (its
+    /// key refused), so an app whose intents can't come back opens as it is instead of being built every time.
+    nonisolated static func intentsCanComeBack(_ project: LampProject) async -> Bool {
+        guard project.platform == .mac, usesAppIntents(project),
+              FileManager.default.fileExists(atPath: project.installedURL.path), !hasIntentsMetadata(project.installedURL),
+              (try? String(contentsOf: teamSigningFailure(project), encoding: .utf8)) != Devices.team else { return false }
+        guard await Subprocess.run("/usr/bin/xcrun", ["-f", "appintentsmetadataprocessor"], timeout: 20).status == 0 else { return false }
+        return await Devices.signingIdentity(for: Devices.team) != nil
+    }
+
+    /// Where `deploy` notes the team it couldn't sign an app for; a build the person or the agent asks for
+    /// tries again either way.
+    nonisolated static func teamSigningFailure(_ project: LampProject) -> URL {
+        project.dir.appendingPathComponent(".lamp/team-signing-failed")
+    }
+
+    nonisolated static func rememberTeamSigning(failed: Bool, for project: LampProject) {
+        let file = teamSigningFailure(project)
+        if failed { try? Devices.team.write(to: file, atomically: true, encoding: .utf8) } else { try? FileManager.default.removeItem(at: file) }
+    }
+
+    /// Whether the app's code, or its widget's, uses App Intents, as build.sh decides it.
+    nonisolated static func usesAppIntents(_ project: LampProject) -> Bool {
+        ["Sources", "Widget"].contains { folder in
+            let root = project.dir.appendingPathComponent(folder)
+            guard let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else { return false }
+            return files.contains { item in
+                guard let url = item as? URL, url.pathExtension == "swift", url.lastPathComponent != "LampSupport.swift" else { return false }
+                return (try? String(contentsOf: url, encoding: .utf8))?.contains("import AppIntents") == true
+            }
+        }
     }
 
     private func record(_ project: LampProject, cost: Double) {

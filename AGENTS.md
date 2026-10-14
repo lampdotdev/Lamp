@@ -493,6 +493,49 @@ holding home screen widgets and Live Activities (`ActivityConfiguration`) in one
   lock screen) before the picture. Only the person can add a widget to the home screen; the chat's `WidgetCard`
   says how in iOS words (`WidgetCard.phoneStatus`), and iOS doesn't say whether they did, so it always does.
 
+### App Intents
+
+An app's actions reach Siri, Shortcuts, Spotlight, the Action button, a widget's buttons and Control Center as
+App Intents (`Agent.Rules.intents`, given to every kind of app; the widget parts are in `Rules.widget` and
+`Rules.iPhoneWidget`). The system finds them in `Metadata.appintents` inside the bundle, which Xcode writes from
+the compiler's record of the code's constant values; a package build writes nothing of the sort, so build.sh does
+what Xcode does (`Template.appIntentsSetup`, one for a Mac bundle and one for an iOS one). When some Swift in
+`Sources/` or `Widget/` imports AppIntents and Xcode's `appintentsmetadataprocessor` is there, the compiler is
+asked for the record (`-emit-const-values`, with the protocols Xcode lists, `Template.appIntentsProtocols`,
+written into `.build` by the script), and `intents` runs that processor and then `appintentsnltrainingprocessor`
+(Siri's phrases) on each bundle before it's signed: the app (`Contents/Resources` on the Mac, the bundle's top
+on iOS) and its widget extension. The record is looked for where SwiftPM's build engine leaves it
+(`.build/out/Intermediates.noindex/<package>.build/<configuration>/<target>-p.build`); a build that doesn't
+leave it there warns and goes on. The phrase step needs `CFBundleDevelopmentRegion` in Info.plist and only
+warns when it fails. With only the Command Line Tools the build warns that the system won't see the intents,
+and the rule tells the agent to say so. Xcode's own builds (a phone, the Mac half of an app for both) extract
+them by themselves.
+
+macOS runs a Mac app's intents only when the app is signed for an Apple team: signed as Lamp signs by itself
+(its own certificate, or ad hoc) the intents are listed in Spotlight and Shortcuts, but the app's connection to
+the service that runs them is refused, and running one reports success and does nothing. So when a team is
+chosen in Settings → Building and this Mac has its Apple Development certificate (`Devices.signingIdentity`),
+`Store.deploy` signs a Mac app with that, from the login keychain where Xcode keeps it
+(`AppSigning.command(ownKeychain: false)`), widget first as before; otherwise it takes `Metadata.appintents` out
+of the app and its widget and signs with Lamp's certificate. Moving between the two changes the app's signature,
+which macOS treats as a new app: its permissions are cleared once and the chat says so (the same path as any
+change of certificate). The team's certificate keeps its name through Apple's yearly renewal, which is what the
+signature's requirement names, so permissions last as long as with Lamp's own. The agent is told the rule
+(`Agent.Rules.macIntents`), and `look_at_app` says why when a Mac app with intents was installed without them
+(`Store.intentsHint`, read off the installed copy: no Xcode, no team, or a team whose key wasn't allowed). A team
+chosen later brings them back: it's part of such an app's fingerprint, and opening one installed without them
+builds it again once a team can sign it (`Store.intentsCanComeBack`). Settings → Building shows the team (`PhoneSigningSection`, "Signing") with an iPhone or
+iPad app, which needs one, or when this Mac has a team's certificate; with only Mac apps, None is a choice and
+nothing is chosen for the person.
+
+On iPhone, a widget's or Live Activity's button runs its intent in the extension unless the intent is a
+`LiveActivityIntent`, which iOS performs in the app, starting it out of sight when it's closed. So the rule puts
+such an intent in `Widget/Shared/` and its work under `#if !LAMP_WIDGET`: the extension compiles with
+`LAMP_WIDGET` (a `.define` on its package target and `SWIFT_ACTIVE_COMPILATION_CONDITIONS` in the Xcode project),
+the app without it, and the work changes the data and calls `LampWidget.share`. `LiveActivityIntent` doesn't
+exist on macOS, so in an app for both it goes under `#if os(iOS)`. A Mac widget shares no code with the app, so
+its buttons can only change what the widget keeps itself.
+
 ## Naming: Lamp and Lamp
 
 The app is called **Lamp**: that's the name in everything the user reads (the interface, Help, the agent's

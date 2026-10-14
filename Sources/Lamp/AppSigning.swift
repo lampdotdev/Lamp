@@ -10,6 +10,11 @@ import Foundation
 /// first time (scripts/signing-identity.sh) in Lamp's own keychain, which Lamp can unlock itself, so
 /// signing never asks for keychain access the way the login keychain does. It never leaves this Mac and
 /// isn't trusted for anything else.
+///
+/// When the person has chosen their Apple team (Settings → Building) and this Mac has that team's Apple
+/// Development certificate, a Mac app is signed with that instead (`Store.deploy`): macOS runs an app's App
+/// Intents only for an app signed for a team. Its permissions then go with that certificate, which keeps its
+/// name through Apple's yearly renewal.
 enum AppSigning {
     @MainActor private static var cached: String?
 
@@ -26,8 +31,11 @@ enum AppSigning {
     /// and `LAMP_KEYCHAIN`. An app with a widget is signed from the inside out: the widget first, with the
     /// entitlements in `LAMP_WIDGET_ENTITLEMENTS` (macOS shows no widget that isn't sandboxed, and the app
     /// itself must stay unsandboxed), then the app around it, whose signature seals the widget's.
-    static func command(adHoc: Bool, widget: Bool) -> String {
-        let sign = adHoc ? "codesign --force -s -" : "codesign --force --keychain \"$LAMP_KEYCHAIN\" -s \"$LAMP_IDENTITY\""
+    /// With `ownKeychain` false the identity is looked for where codesign looks by itself (the login keychain,
+    /// where Xcode keeps the person's Apple Development certificates).
+    static func command(adHoc: Bool, widget: Bool, ownKeychain: Bool = true) -> String {
+        let keychain = ownKeychain ? " --keychain \"$LAMP_KEYCHAIN\"" : ""
+        let sign = adHoc ? "codesign --force -s -" : "codesign --force\(keychain) -s \"$LAMP_IDENTITY\""
         let app = "\(sign) \"$LAMP_APP\" 2>&1"
         guard widget else { return app }
         return "\(sign) --entitlements \"$LAMP_WIDGET_ENTITLEMENTS\" \"$LAMP_WIDGET\" 2>&1 && " + app

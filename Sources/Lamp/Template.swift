@@ -164,6 +164,74 @@ enum Template {
         try writeWidgetSupport(for: project)
     }
 
+    // MARK: - App Intents
+
+    /// The protocols whose conformances the compiler records for App Intents, as Xcode lists them.
+    static let appIntentsProtocols = #"["AnyResolverProviding","AppEntity","AppEnum","AppExtension","AppIntent","AppIntentsPackage","AppShortcutProviding","AppShortcutsProvider","AppUnionValue","AppUnionValueCasesProviding","DynamicOptionsProvider","EntityQuery","ExtensionPointDefining","IntentValueQuery","Resolver","TransientEntity","_AssistantIntentsProvider","_GenerativeFunctionExtractable","_IntentValueRepresentable"]"#
+
+    /// The part of build.sh that gives an app's App Intents (Shortcuts, Siri, Spotlight, the Action button, a
+    /// widget's buttons) to the system. Xcode reads them from the compiler's record of the code's constant
+    /// values and writes them into the bundle as Metadata.appintents, where the system looks; a package build
+    /// does neither, so the script asks the compiler for the record and runs Xcode's own two tools on it, the
+    /// one that writes the metadata and the one that teaches Siri the app's phrases. `intents` does that for
+    /// one bundle, before it is signed. Only when the code uses App Intents and Xcode is installed: with just
+    /// the Command Line Tools the app builds as it did, and the system doesn't see its intents.
+    static func appIntentsSetup(ios: Bool) -> String {
+        let sdk = ios ? "\"$SDK\"" : "\"$(xcrun --sdk macosx --show-sdk-path)\""
+        let family = ios ? "iOS" : "macOS"
+        let deployment = ios ? "17.0" : "14.0"
+        let triple = ios ? "arm64-apple-ios17.0-simulator" : "$(uname -m)-apple-macos14.0"
+        let binary = ios ? "$bundle/$target" : "$bundle/Contents/MacOS/$target"
+        let resources = ios ? "$bundle" : "$bundle/Contents/Resources"
+        let plist = ios ? "$bundle/Info.plist" : "$bundle/Contents/Info.plist"
+        return """
+        # App Intents (Shortcuts, Siri, Spotlight, a widget's buttons): Xcode's tools write what the code declares into the app.
+        INTENTS=""
+        if grep -rqs --include='*.swift' -e 'import AppIntents' Sources Widget; then
+          if PROCESSOR="$(xcrun -f appintentsmetadataprocessor 2>/dev/null)"; then
+            INTENTS=1
+            mkdir -p .build
+            echo '\(appIntentsProtocols)' > .build/appintents-protocols.json
+            FLAGS+=(-Xswiftc -emit-const-values -Xswiftc -const-gather-protocols-list -Xswiftc "$PWD/.build/appintents-protocols.json")
+          else
+            echo "warning: Xcode isn't installed, so Siri, Shortcuts and Spotlight won't see this app's App Intents." >&2
+          fi
+        fi
+        intents() {   # a program, its bundle, the bundle's id, the folder of its code
+          [[ -n "$INTENTS" ]] || return 0
+          local target="$1" bundle="$PWD/$2" id="$3" code="$4"
+          local bindir="$(swift build "${FLAGS[@]}" --show-bin-path)"
+          local work="$PWD/.build/appintents/$target"
+          local toolchain="$(dirname "$(dirname "$(dirname "$PROCESSOR")")")"
+          rm -rf "$work"
+          mkdir -p "$work/ssu" "\(resources)"
+          : > "$work/none.txt"
+          find "$(dirname "$(dirname "$bindir")")/Intermediates.noindex/{{EXE}}.build/$(basename "$bindir")/$target-p.build" \\
+            -name '*.swiftconstvalues' > "$work/constvalues.txt" 2>/dev/null || true
+          if [[ ! -s "$work/constvalues.txt" ]]; then
+            echo "warning: $target's App Intents weren't added: this Swift keeps the compiler's record where Lamp doesn't look." >&2
+            return 0
+          fi
+          find -L "$PWD/$code" -name '*.swift' > "$work/sources.txt"
+          if ! "$PROCESSOR" --toolchain-dir "$toolchain" --module-name "$target" --sdk-root \(sdk) \\
+              --xcode-version "$(plutil -extract ProductBuildVersion raw "$toolchain/../../../version.plist" 2>/dev/null || echo 0)" \\
+              --platform-family \(family) --deployment-target \(deployment) --target-triple "\(triple)" \\
+              --bundle-identifier "$id" --output "\(resources)" --binary-file "\(binary)" \\
+              --source-file-list "$work/sources.txt" --swift-const-vals-list "$work/constvalues.txt" \\
+              --metadata-file-list "$work/none.txt" --static-metadata-file-list "$work/none.txt" \\
+              --compile-time-extraction --deployment-aware-processing --no-app-shortcuts-localization > "$work/log.txt" 2>&1; then
+            grep -iE "error|warning" "$work/log.txt" >&2 || cat "$work/log.txt" >&2
+            echo "error: $target's App Intents couldn't be read." >&2
+            return 1
+          fi
+          "$(dirname "$PROCESSOR")/appintentsnltrainingprocessor" --infoplist-path "\(plist)" --source-file "\(plist)" \\
+            --temp-dir-path "$work/ssu" --bundle-id "$id" --product-path "\(resources)" \\
+            --extracted-metadata-path "\(resources)/Metadata.appintents" --metadata-file-list "$work/none.txt" \\
+            --archive-ssu-assets >> "$work/log.txt" 2>&1 || echo "warning: Siri wasn't taught $target's phrases; Shortcuts still has them." >&2
+        }
+        """
+    }
+
     // MARK: - iPhone apps
 
     static let iPhonePackageSwift = """
@@ -191,12 +259,13 @@ enum Template {
         return package.replacingOccurrences(of: one, with: widgetTargets)
     }
 
-    /// The app and its widget extension, as Package.swift lists them.
+    /// The app and its widget extension, as Package.swift lists them. The extension compiles with LAMP_WIDGET, so
+    /// code in Widget/Shared/ can leave out what only the app has (an intent whose work the system does in the app).
     private static let widgetTargets = """
             targets: [
                 .executableTarget(name: "{{EXE}}", path: "Sources"),
                 .executableTarget(name: "{{EXE}}Widget", path: "Widget",
-                                  swiftSettings: [.unsafeFlags(["-application-extension"])],
+                                  swiftSettings: [.unsafeFlags(["-application-extension"]), .define("LAMP_WIDGET")],
                                   linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]),
             ]
 
@@ -380,6 +449,7 @@ enum Template {
     cd "$(dirname "$0")"
     SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
     FLAGS=(-c release --triple arm64-apple-ios17.0-simulator --sdk "$SDK" -Xswiftc -g)
+    \(appIntentsSetup(ios: true))
     # The simulator takes an app's entitlements (Health, iCloud) from a section of its binary, as Xcode puts
     # them, and refuses an app whose signature claims them without a provisioning profile. Lamp writes the file.
     ENT=".lamp/entitlements.plist"
@@ -400,6 +470,7 @@ enum Template {
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
     <plist version="1.0"><dict>
+      <key>CFBundleDevelopmentRegion</key><string>en</string>
       <key>CFBundleExecutable</key><string>{{EXE}}</string>
       <key>CFBundleIdentifier</key><string>{{BUNDLE}}</string>
       <key>CFBundleName</key><string>{{NAME}}</string>
@@ -417,6 +488,7 @@ enum Template {
     {{USAGE}}
     </dict></plist>
     PLIST
+    intents {{EXE}} "$APP" "{{BUNDLE}}" Sources
     codesign --force -s - "$APP"
     echo "Built $APP"
 
@@ -432,8 +504,8 @@ enum Template {
             return script.replacingOccurrences(of: old, with: new)
         }
         var script = iPhoneBuildSh
-        script = swap(script, "FLAGS=(-c release --triple arm64-apple-ios17.0-simulator --sdk \"$SDK\" -Xswiftc -g)\n",
-                      "FLAGS=(-c release --triple arm64-apple-ios17.0-simulator --sdk \"$SDK\" -Xswiftc -g)\nBASE=(\"${FLAGS[@]}\")\n")
+        // The widget's flags are the app's, App Intents' included, before the app's entitlements are added.
+        script = swap(script, "# The simulator takes an app's entitlements", "BASE=(\"${FLAGS[@]}\")\n# The simulator takes an app's entitlements")
         script = swap(script, "swift build \"${FLAGS[@]}\" 2>&1\n", """
             # The widget extension's entitlements, linked into its own binary the same way.
             WFLAGS=("${BASE[@]}")
@@ -486,6 +558,7 @@ enum Template {
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
         <plist version="1.0"><dict>
+          <key>CFBundleDevelopmentRegion</key><string>en</string>
           <key>CFBundleExecutable</key><string>{{EXE}}Widget</string>
           <key>CFBundleIdentifier</key><string>{{BUNDLE}}.widget</string>
           <key>CFBundleName</key><string>{{NAME}}</string>
@@ -503,6 +576,7 @@ enum Template {
           </dict>
         </dict></plist>
         PLIST
+        intents {{EXE}}Widget "$WIDGET" "{{BUNDLE}}.widget" Widget
         codesign --force -s - "$WIDGET"
 
         """
@@ -544,7 +618,7 @@ enum Template {
         \t\tB00000000000000000000004 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
         \t\tB00000000000000000000005 /* {{EXE}}Widget */ = {isa = PBXNativeTarget; buildConfigurationList = B00000000000000000000006; buildPhases = (B00000000000000000000003 /* Sources */, B00000000000000000000004 /* Frameworks */); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (B00000000000000000000002 /* Widget */); name = "{{EXE}}Widget"; packageProductDependencies = (); productName = "{{EXE}}Widget"; productReference = B00000000000000000000001 /* {{EXE}}Widget.appex */; productType = "com.apple.product-type.app-extension"; };
         \t\tB00000000000000000000006 /* Build configuration list for the widget */ = {isa = XCConfigurationList; buildConfigurations = (B00000000000000000000007 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-        \t\tB00000000000000000000007 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = Widget.entitlements; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = "Widget-Info.plist"; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}.widget"; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+        \t\tB00000000000000000000007 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = Widget.entitlements; CODE_SIGN_IDENTITY = "Apple Development"; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = {{TEAM}}; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = "Widget-Info.plist"; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks"); MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = "{{BUNDLE}}.widget"; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SWIFT_ACTIVE_COMPILATION_CONDITIONS = LAMP_WIDGET; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
         \t\tB00000000000000000000008 /* {{EXE}}Widget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B00000000000000000000001 /* {{EXE}}Widget.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
         \t\tB00000000000000000000009 /* Embed Foundation Extensions */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (B00000000000000000000008 /* {{EXE}}Widget.appex in Embed Foundation Extensions */); name = "Embed Foundation Extensions"; runOnlyForDeploymentPostprocessing = 0; };
         \t\tB0000000000000000000000A /* PBXTargetDependency */ = {isa = PBXTargetDependency; platformFilter = ios; target = B00000000000000000000005 /* {{EXE}}Widget */; targetProxy = B0000000000000000000000B /* PBXContainerItemProxy */; };
@@ -1426,6 +1500,7 @@ enum Template {
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
         <plist version="1.0"><dict>
+          <key>CFBundleDevelopmentRegion</key><string>en</string>
           <key>CFBundleExecutable</key><string>{{EXE}}Widget</string>
           <key>CFBundleIdentifier</key><string>{{BUNDLE}}.widget</string>
           <key>CFBundleName</key><string>{{NAME}}</string>
@@ -1441,6 +1516,7 @@ enum Template {
         PLIST
         cat > "build/{{EXE}}Widget.entitlements" <<PLIST
         \(widgetEntitlementsPlist)PLIST
+        intents {{EXE}}Widget "$WIDGET" "{{BUNDLE}}.widget" Widget
         codesign --force -s - --entitlements "build/{{EXE}}Widget.entitlements" "$WIDGET"
 
         """
@@ -8008,8 +8084,10 @@ enum Template {
     # Builds build/{{EXE}}.app. Run after every change.
     set -euo pipefail
     cd "$(dirname "$0")"
-    swift build -c release -Xswiftc -g 2>&1
-    BIN="$(swift build -c release -Xswiftc -g --show-bin-path)/{{EXE}}"
+    FLAGS=(-c release -Xswiftc -g)
+    \(appIntentsSetup(ios: false))
+    swift build "${FLAGS[@]}" 2>&1
+    BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"
     APP="build/{{EXE}}.app"
     rm -rf "$APP"
     mkdir -p "$APP/Contents/MacOS"
@@ -8018,6 +8096,7 @@ enum Template {
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
     <plist version="1.0"><dict>
+      <key>CFBundleDevelopmentRegion</key><string>en</string>
       <key>CFBundleExecutable</key><string>{{EXE}}</string>
       <key>CFBundleIdentifier</key><string>{{BUNDLE}}</string>
       <key>CFBundleName</key><string>{{NAME}}</string>
@@ -8030,6 +8109,7 @@ enum Template {
     {{MAC_USAGE}}
     </dict></plist>
     PLIST
+    intents {{EXE}} "$APP" "{{BUNDLE}}" Sources
     codesign --force -s - "$APP"
     echo "Built $APP"
 
