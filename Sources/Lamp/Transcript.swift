@@ -289,13 +289,15 @@ struct Transcript: View {
     /// Without the offers to draw an icon that have nothing left to offer: the icon was drawn or designed
     /// again, or icons are no longer drawn by hand. A line that stayed would say what's no longer so.
     @MainActor static func withoutSpentOffers(_ lines: [LogLine], dir: URL) -> [LogLine] {
-        guard lines.contains(where: { $0.kind == .drawIcon || $0.kind == .widget }) else { return lines }
+        guard lines.contains(where: { $0.kind == .drawIcon || $0.kind == .widget || $0.kind == .iphoneSetup }) else { return lines }
         let project = Store.shared.projects.first { $0.dir == dir }
         return lines.filter { line in
             switch line.kind {
             case .drawIcon: project.map { Icons.awaitsDrawing(line.text, in: $0, byHand: AppAI.iconsByHand) } ?? false
             // The widget's card, likewise, while there's a widget to add.
             case .widget: project.map { WidgetCard.isShown(for: $0) } ?? false
+            // The offer to set up iPhone apps, while the app is still only a Mac app.
+            case .iphoneSetup: project?.platform == .mac
             default: true
             }
         }
@@ -461,6 +463,10 @@ struct LogRow: View, Equatable {
             if let project = Store.shared.projects.first(where: { $0.dir == dir }) { DrawIconLine(project: project) }
         case .widget:
             WidgetCardView(dir: dir)
+        case .iphoneSetup:
+            if let project = Store.shared.projects.first(where: { $0.dir == dir }) {
+                IPhoneSetupLine(project: project, wanted: Platform(rawValue: line.text) ?? .iphone)
+            }
         case .ask, .result:
             // Drawn by Transcript, which knows whether they're still waiting.
             EmptyView()

@@ -152,7 +152,9 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// `noted` is the receipt for a save of Lamp's notes (`NoteCard`).
     /// `ask` and `result` are the agent's own cards (`Talk`): questions to click through, and what a request
     /// made with its guesses as buttons. Their text is the same in plain words.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result }
+    /// `iphoneSetup` says a first request that read as an iPhone app was made for the Mac, since this Mac can't
+    /// build one yet, and offers the setup (`IPhoneSetupLine`); its text is the kind that was wanted.
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -912,15 +914,19 @@ final class Store: ObservableObject {
 
     /// What a new app is made as, worked out from its first request (`AppName.suggest`) before anything is built:
     /// nobody is asked to choose. A kind the person didn't say is only taken when this Mac can build it now
-    /// (Xcode for an iPhone app; a team too for an app for both), else it's a Mac app, which needs neither. One
-    /// they said is taken either way, and the build says what's missing. A line in the chat says what it'll be
-    /// unless it's a Mac app, and the person changes it by asking (`convert`, the agent's `make_app_for`).
+    /// (Xcode for an iPhone app; a team too for an app for both), else it's a Mac app, which needs neither, and
+    /// the chat says so with the setup a button away (`IPhoneSetupLine`). One they said is taken either way, and
+    /// the build says what's missing. A line in the chat says what it'll be unless it's a Mac app, and the person
+    /// changes it by asking (`convert`, the agent's `make_app_for`).
     func chooseKind(_ project: LampProject, _ kind: Platform, said: Bool, watch: Bool = false) async -> LampProject {
         guard !project.scaffolded, kind != project.platform else { return project }
         if kind.hasIOS, !said {
             let both = kind == .universal
             let ready = await Task.detached { PhoneTools.checked(family: .iphone, phone: nil, requiresTeam: both, requiresPaidTeam: false).ready }.value
-            guard ready else { return project }
+            guard ready else {
+                log(project, .iphoneSetup, kind.rawValue)
+                return project
+            }
         }
         setKind(project, kind)
         guard let chosen = current(project) else { return project }

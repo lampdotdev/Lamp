@@ -410,6 +410,50 @@ struct DrawIconLine: View {
     }
 }
 
+/// A first request that read as an iPhone app, made for the Mac because this Mac can't build one yet. The
+/// button opens the iPhone setup; once it's done, the app is asked to be made for the iPhone as well (or
+/// instead), as the person would ask, so the change goes through the agent like any other.
+struct IPhoneSetupLine: View {
+    let project: LampProject
+    let wanted: Platform
+    @ObservedObject private var asked = Asked.shared
+    @ObservedObject private var store = Store.shared
+
+    /// Apps whose setup is under way: one click per app, so a second can't queue the same conversion again.
+    /// Once setup is done the request is the app's turn, queued or running, which keeps the button off until
+    /// it ends; an app still only for the Mac then (the turn failed, was stopped or undone) can try again.
+    @MainActor final class Asked: ObservableObject {
+        static let shared = Asked()
+        @Published var ids: Set<String> = []
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "iphone").foregroundStyle(.secondary)
+            Text("\(project.name) is a Mac app for now. Your iPhone needs a little setup first.").foregroundStyle(.secondary)
+            Button("Set Up iPhone Apps…", action: setUp)
+                .controlSize(.small)
+                .disabled(asked.ids.contains(project.id) || store.busy.contains(project.id) || !(store.queued[project.id] ?? []).isEmpty)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func setUp() {
+        let id = project.id, both = wanted == .universal
+        asked.ids.insert(id)
+        // Resolved again each time: an app that's gone, or no longer only a Mac app, has nothing to set up for,
+        // and the setup lets go of the request rather than hold up the ones behind it.
+        PhoneSetup.shared.perform(resolve: {
+            guard let current = Store.shared.current(project), current.platform == .mac else { return nil }
+            return PhoneSetup.Context(family: .iphone, requiresTeam: both)
+        }, cancelled: { Asked.shared.ids.remove(id) }) {
+            Asked.shared.ids.remove(id)
+            guard let current = Store.shared.current(project), current.platform == .mac else { return }
+            Store.shared.send(both ? "Make it work on my iPhone too." : "Make it an iPhone app instead.", to: current)
+        }
+    }
+}
+
 /// What Settings says under a capability's picker when it isn't answered the best way it could be: why,
 /// and the same upgrades the chat's card offers.
 struct CapabilityNote: View {
