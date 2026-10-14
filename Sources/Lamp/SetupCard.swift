@@ -417,9 +417,11 @@ struct IPhoneSetupLine: View {
     let project: LampProject
     let wanted: Platform
     @ObservedObject private var asked = Asked.shared
+    @ObservedObject private var store = Store.shared
 
-    /// Apps whose setup is under way, or whose request has gone to the agent: one click per app, so a second
-    /// can't queue the same conversion again.
+    /// Apps whose setup is under way: one click per app, so a second can't queue the same conversion again.
+    /// Once setup is done the request is the app's turn, queued or running, which keeps the button off until
+    /// it ends; an app still only for the Mac then (the turn failed, was stopped or undone) can try again.
     @MainActor final class Asked: ObservableObject {
         static let shared = Asked()
         @Published var ids: Set<String> = []
@@ -431,7 +433,7 @@ struct IPhoneSetupLine: View {
             Text("\(project.name) is a Mac app for now. Your iPhone needs a little setup first.").foregroundStyle(.secondary)
             Button("Set Up iPhone Apps…", action: setUp)
                 .controlSize(.small)
-                .disabled(asked.ids.contains(project.id))
+                .disabled(asked.ids.contains(project.id) || store.busy.contains(project.id) || !(store.queued[project.id] ?? []).isEmpty)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -444,7 +446,8 @@ struct IPhoneSetupLine: View {
         PhoneSetup.shared.perform(resolve: {
             guard let current = Store.shared.current(project), current.platform == .mac else { return nil }
             return PhoneSetup.Context(family: .iphone, requiresTeam: both)
-        }, cancelled: { asked.ids.remove(id) }) {
+        }, cancelled: { Asked.shared.ids.remove(id) }) {
+            Asked.shared.ids.remove(id)
             guard let current = Store.shared.current(project), current.platform == .mac else { return }
             Store.shared.send(both ? "Make it work on my iPhone too." : "Make it an iPhone app instead.", to: current)
         }
