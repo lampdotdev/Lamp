@@ -511,6 +511,21 @@ warns when it fails. With only the Command Line Tools the build warns that the s
 and the rule tells the agent to say so. Xcode's own builds (a phone, the Mac half of an app for both) extract
 them by themselves.
 
+macOS runs a Mac app's intents only when the app is signed for an Apple team: signed as Lamp signs by itself
+(its own certificate, or ad hoc) the intents are listed in Spotlight and Shortcuts, but the app's connection to
+the service that runs them is refused, and running one reports success and does nothing. So when a team is
+chosen in Settings → Building and this Mac has its Apple Development certificate (`Devices.signingIdentity`),
+`Store.deploy` signs a Mac app with that, from the login keychain where Xcode keeps it
+(`AppSigning.command(ownKeychain: false)`), widget first as before; otherwise it takes `Metadata.appintents` out
+of the app and its widget and signs with Lamp's certificate. Moving between the two changes the app's signature,
+which macOS treats as a new app: its permissions are cleared once and the chat says so (the same path as any
+change of certificate). The team's certificate keeps its name through Apple's yearly renewal, which is what the
+signature's requirement names, so permissions last as long as with Lamp's own. The agent is told the rule
+(`Agent.Rules.macIntents`), and `look_at_app` says when a Mac app with intents has no team to sign with
+(`Store.intentsHint`). Settings → Building shows the team (`PhoneSigningSection`, "Signing") with an iPhone or
+iPad app, which needs one, or when this Mac has a team's certificate; with only Mac apps, None is a choice and
+nothing is chosen for the person.
+
 On iPhone, a widget's or Live Activity's button runs its intent in the extension unless the intent is a
 `LiveActivityIntent`, which iOS performs in the app, starting it out of sight when it's closed. So the rule puts
 such an intent in `Widget/Shared/` and its work under `#if !LAMP_WIDGET`: the extension compiles with

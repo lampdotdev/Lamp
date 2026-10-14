@@ -719,7 +719,7 @@ struct BuildingSettings: View {
                     }
                 }
             }
-            if hasPhoneApps { PhoneSigningSection() }
+            PhoneSigningSection(phoneApps: hasPhoneApps)
         }
         .settingsPane()
         .onChange(of: notify) { Notifier.shared.setBadge(store.unread.count) }
@@ -811,26 +811,36 @@ struct AppsSettings: View {
     }
 }
 
-/// How an iPhone or iPad app is signed for the person's own phone, in Building. Where an app opens (a
-/// simulator or a phone) is chosen per app under Try On; this is the team its phone builds are signed for.
+/// The Apple team Lamp signs for, in Building: an iPhone or iPad app's phone builds and the Mac half of an app
+/// for both, and a Mac app, which macOS then lets offer its actions to Siri, Shortcuts and Spotlight. Where an
+/// app opens (a simulator or a phone) is chosen per app under Try On. Shown with an iPhone or iPad app, which
+/// needs a team, or when this Mac has a team's certificate to sign a Mac app with; a Mac app can do without
+/// one, so only then is None a choice and nothing is chosen for the person.
 struct PhoneSigningSection: View {
+    let phoneApps: Bool
     @AppStorage("appleTeam") private var team = ""
     @State private var teams: [(id: String, name: String)] = []
 
     var body: some View {
-        Section("iPhone and iPad apps") {
-            if teams.isEmpty {
-                TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
-            } else {
-                Picker("Apple Team", selection: $team) {
-                    ForEach(teams, id: \.id) { Text("\($0.name) (\($0.id))").tag($0.id) }
-                    if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
+        Group {
+            if phoneApps || !teams.isEmpty {
+                Section("Signing") {
+                    if teams.isEmpty {
+                        TextField("Apple Team ID", text: $team, prompt: Text("Ten letters and digits, from Xcode → Settings → Accounts"))
+                    } else {
+                        Picker("Apple Team", selection: $team) {
+                            if !phoneApps { Text("None").tag("") }
+                            ForEach(teams, id: \.id) { Text("\($0.name) (\($0.id))").tag($0.id) }
+                            if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
+                        }
+                    }
+                    if phoneApps { Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() } }
                 }
             }
-            Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() }
         }
-        .task {
+        .task(id: phoneApps) {
             teams = await Devices.knownTeams()
+            guard phoneApps else { return }
             // The account signed in to Xcode is the one that can sign, so its team is the first choice
             // whenever the stored one isn't among Xcode's.
             let signedIn = Devices.xcodeTeams()

@@ -233,7 +233,7 @@ enum Agent {
                      mac ? Rules.macFrameworks : Rules.iPhoneFrameworks,
                      mac ? Rules.macBlocks : Rules.iPhoneBlocks]
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.permissions] }
-        rules += [Rules.script, Rules.intents, mac ? Rules.macAccounts : Rules.iPhoneAccounts]
+        rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules.append(Rules.computer) }
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneWidget, Rules.icloud] }
         rules += [Rules.store, Rules.kinds(mac: mac), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
@@ -494,6 +494,12 @@ enum Agent {
         works but the system doesn't see its intents: say so. Nothing here can run an intent, so check that the \
         build succeeds and that what perform calls works in the app, then tell the user in a sentence what to say \
         to Siri or search for.
+        """
+
+        /// A Mac app's intents run only when it's signed for a team (`Store.intentsHint` says when it isn't).
+        static let macIntents = """
+        - A Mac app's App Intents work when Lamp signs it for the user's Apple developer team; when it can't, \
+        `look_at_app` says so, and you tell the user how to turn them on as it says.
         """
 
         static let permissions = """

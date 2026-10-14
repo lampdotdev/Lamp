@@ -3738,7 +3738,24 @@ final class Store: ObservableObject {
                                      cwd: project.dir, env: signingEnv.merging(["LAMP_IDENTITY": identity]) { $1 }) { output.append($0) } == 0
                 && AppSigning.isCertificateSigned(project.builtURL)
             if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
-        } else if identity != "-" {
+        } else {
+            // A Mac app is signed for the person's Apple team when there is one: macOS runs an app's App Intents
+            // (Siri, Shortcuts, Spotlight) only for an app signed with a team. Otherwise Lamp's own certificate.
+            if project.platform == .mac, let team = await Devices.signingIdentity(for: Devices.team) {
+                var output: [String] = []
+                signed = await Shell.run(AppSigning.command(adHoc: false, widget: hasWidget, ownKeychain: false), cwd: project.dir,
+                                         env: signingEnv.merging(["LAMP_IDENTITY": team]) { $1 }) { output.append($0) } == 0
+                    && AppSigning.isCertificateSigned(project.builtURL) && (!hasWidget || AppSigning.isCertificateSigned(widget))
+                if !signed { print("Signing \(project.name) for the team failed:\n" + output.joined(separator: "\n")) }
+            }
+            // Not signed for a team, the app's intents would be listed by macOS and never run: they're taken out.
+            if !signed, project.platform == .mac {
+                for bundle in [project.builtURL, widget] {
+                    try? fm.removeItem(at: bundle.appendingPathComponent("Contents/Resources/Metadata.appintents"))
+                }
+            }
+        }
+        if !signed, project.platform != .universal, identity != "-" {
             var output: [String] = []
             signingEnv["LAMP_IDENTITY"] = identity
             signingEnv["LAMP_KEYCHAIN"] = AppSigning.keychain
@@ -4780,6 +4797,7 @@ final class Store: ObservableObject {
             : Privacy.sharesPictures ? "Pictures of its windows follow, frontmost first; x and y for use_app are pixels in the first." : Privacy.picturesOff)
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         text += Self.handingHint(for: project)
+        text += await Self.intentsHint(for: project)
         // The front window in words, beside its picture, from the app itself (LampScreen in LampSupport.swift).
         if Privacy.sharesPictures, !screenshots.isEmpty, Self.binary(of: project, contains: Self.screenTextMarker),
            let words = await Runtime.screenText(of: project, since: since) { text += "\n\n" + words }
@@ -4795,6 +4813,28 @@ final class Store: ObservableObject {
         guard !project.onIOS, !Template.Capabilities.load(project).kinds.isEmpty else { return "" }
         return "\n\nTo hand it a file or folder as Finder would, run `open -g -a \(Sandbox.quoted(project.installedURL.path)) <path>`, " +
             "then `use_app` with a wait to see the result. Use that path, not the copy in build/ or the bundle id: those start a second copy."
+    }
+
+    /// For a Mac app whose code has App Intents but which isn't signed for an Apple team: macOS lists such an
+    /// app's intents and never runs them, so `deploy` takes them out, and the agent is told why they're missing.
+    nonisolated static func intentsHint(for project: LampProject) async -> String {
+        guard project.platform == .mac, usesAppIntents(project),
+              await Devices.signingIdentity(for: Devices.team) == nil else { return "" }
+        return "\n\nSiri, Shortcuts and Spotlight can't use this app's App Intents yet: macOS runs them only for an app signed for an " +
+            "Apple developer team, and Lamp has none to sign with. Tell the user they come on once they choose their team in Lamp's " +
+            "Settings → Building (it needs Xcode signed in to their Apple account)."
+    }
+
+    /// Whether the app's code, or its widget's, uses App Intents, as build.sh decides it.
+    nonisolated static func usesAppIntents(_ project: LampProject) -> Bool {
+        ["Sources", "Widget"].contains { folder in
+            let root = project.dir.appendingPathComponent(folder)
+            guard let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else { return false }
+            return files.contains { item in
+                guard let url = item as? URL, url.pathExtension == "swift", url.lastPathComponent != "LampSupport.swift" else { return false }
+                return (try? String(contentsOf: url, encoding: .utf8))?.contains("import AppIntents") == true
+            }
+        }
     }
 
     private func record(_ project: LampProject, cost: Double) {

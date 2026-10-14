@@ -104,6 +104,27 @@ final class AppIntentsTests: XCTestCase {
         XCTAssertTrue(Agent.universalPrompt(for: .iphone).contains("`LiveActivityIntent` there goes under `#if os(iOS)`"))
     }
 
+    /// A Mac app not signed for a team has its intents taken out, so the agent is told why, and how they come on.
+    func testAMacAppWithoutATeamIsToldWhyItsIntentsAreMissing() async throws {
+        let team = UserDefaults.standard.object(forKey: "appleTeam")
+        defer { UserDefaults.standard.set(team, forKey: "appleTeam") }
+        UserDefaults.standard.set("", forKey: "appleTeam")
+        let mac = try app(.mac)
+        let hint = await Store.intentsHint(for: mac)
+        XCTAssertTrue(hint.contains("Settings → Building"))
+        try FileManager.default.removeItem(at: mac.dir.appendingPathComponent("Sources/Intents.swift"))
+        let none = await Store.intentsHint(for: mac)
+        XCTAssertEqual(none, "", "no intents, nothing to say")
+        let phone = try app(.iphone)
+        let phoneHint = await Store.intentsHint(for: phone)
+        XCTAssertEqual(phoneHint, "", "the simulator runs them however the app is signed")
+    }
+
+    func testATeamIdentityIsLookedForWhereXcodeKeepsIt() {
+        XCTAssertFalse(AppSigning.command(adHoc: false, widget: true, ownKeychain: false).contains("--keychain"))
+        XCTAssertTrue(AppSigning.command(adHoc: false, widget: false).contains("--keychain \"$LAMP_KEYCHAIN\""))
+    }
+
     /// Builds the app with build.sh and looks for the intent in what Xcode's tools wrote.
     func testALiveBuildCarriesTheIntent() throws {
         guard ProcessInfo.processInfo.environment["LAMP_LIVE_INTENTS"] != nil else { throw XCTSkip("set LAMP_LIVE_INTENTS to build") }
