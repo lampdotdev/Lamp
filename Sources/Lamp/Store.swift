@@ -1084,7 +1084,7 @@ final class Store: ObservableObject {
 
         let fm = FileManager.default
         let renamed = LampProject(id: current.id, name: unique, exe: current.exe, dir: current.dir, instance: current.instance,
-                                  platform: current.platform, family: current.family, device: current.device, chosen: current.chosen)
+                                  platform: current.platform, family: current.family, device: current.device, chosen: current.chosen, simulator: current.simulator)
         try? Template.saveMeta(renamed)
         if fm.fileExists(atPath: current.installedURL.path) {
             try? fm.moveItem(at: current.installedURL, to: renamed.installedURL)
@@ -1132,7 +1132,7 @@ final class Store: ObservableObject {
         let slug = Template.freeSlug(for: exe, in: root)
         let copy = LampProject(id: slug, name: name, exe: exe, dir: root.appendingPathComponent(slug),
                                instance: UUID().uuidString, platform: project.platform, family: project.family,
-                               device: project.device, chosen: project.chosen)
+                               device: project.device, chosen: project.chosen, simulator: project.simulator)
         do {
             try fm.createDirectory(at: copy.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
             // Everything at the top but what a build makes again (Lamp's own files are rewritten before it).
@@ -1191,7 +1191,13 @@ final class Store: ObservableObject {
         let project: LampProject
         do {
             // The same app under its new name: it keeps its identity, so a snapshot from before still finds it.
-            project = try Template.scaffold(name: name, platform: old.platform, family: old.family, instance: old.instance, in: root)
+            var made = try Template.scaffold(name: name, platform: old.platform, family: old.family, instance: old.instance, in: root)
+            // Where it opens comes along too: the device it was put on, and the simulator chosen by name.
+            made.device = old.device
+            made.chosen = old.chosen
+            made.simulator = old.simulator
+            try Template.saveMeta(made)
+            project = made
         } catch {
             NSAlert(error: error).runModal()
             return old
@@ -1222,7 +1228,7 @@ final class Store: ObservableObject {
         let exe = Template.identifier(from: name)
         let slug = exe.lowercased() == old.id ? old.id : Template.freeSlug(for: exe, in: root)
         let project = LampProject(id: slug, name: name, exe: exe, dir: root.appendingPathComponent(slug), instance: old.instance,
-                                  platform: old.platform, family: old.family, device: old.device, chosen: old.chosen)
+                                  platform: old.platform, family: old.family, device: old.device, chosen: old.chosen, simulator: old.simulator)
         do {
             if slug != old.id { try FileManager.default.moveItem(at: old.dir, to: project.dir) }
             try Template.saveMeta(project)
@@ -3426,7 +3432,7 @@ final class Store: ObservableObject {
             if simulatorLeases[udid] == project.id { simulatorLeases[udid] = before.flatMap { simulatorApps[$0] != nil ? $0 : nil } }
             return message
         }
-        let simulator = Simulator.name(of: udid) ?? project.family.name
+        let simulator = await Simulator.name(of: udid) ?? project.family.name
         note("Opening \(project.name) on the \(simulator) simulator…", for: project)
         await finishSimulatorBundle(project)
         do {
@@ -4720,7 +4726,8 @@ final class Store: ObservableObject {
             let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
             if let udid = simulatorApps[project.id]?.udid, await Simulator.screenshot(on: udid, to: picture) { screenshots = [picture] }
             // Which simulator: what it can show depends on it (a Dynamic Island is only on some iPhones).
-            let on = simulatorApps[project.id].flatMap { Simulator.name(of: $0.udid) }.map { " It's open on the \($0) simulator." } ?? ""
+            var on = ""
+            if let udid = simulatorApps[project.id]?.udid, let name = await Simulator.name(of: udid) { on = " It's open on the \(name) simulator." }
             var text = note + on + " " + (screenshots.isEmpty ? "No picture of the iPhone could be taken."
                 : Privacy.sharesPictures ? "A picture of the iPhone's screen follows. Points for use_app are pixels in it." : Privacy.picturesOff)
             if !Privacy.sharesLog { text += " " + Privacy.logOff }

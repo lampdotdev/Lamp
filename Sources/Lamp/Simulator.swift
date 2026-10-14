@@ -33,6 +33,7 @@ enum Simulator {
         let name: String          // "iPhone 16 Pro"
         let family: DeviceFamily
         let version: Int          // the iOS major version it runs
+        let runtime: [Int]        // the whole iOS version, [18, 6]: for ordering and for telling two copies apart
         /// The name, with its iOS when another simulator has the same name.
         var label: String
     }
@@ -43,30 +44,38 @@ enum Simulator {
         guard let data = listing.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let devices = json["devices"] as? [String: [[String: Any]]] else { return [] }
-        var found: [(udid: String, name: String, family: DeviceFamily, version: Int)] = []
+        var found: [(udid: String, name: String, family: DeviceFamily, runtime: [Int])] = []
         for (runtime, list) in devices {
-            guard let range = runtime.range(of: "SimRuntime.iOS-"),
-                  let major = Int(runtime[range.upperBound...].split(separator: "-").first ?? ""), major >= minimumIOS else { continue }
+            guard let range = runtime.range(of: "SimRuntime.iOS-") else { continue }
+            let version = runtime[range.upperBound...].split(separator: "-").compactMap { Int($0) }
+            guard let major = version.first, major >= minimumIOS else { continue }
             for device in list {
                 guard let name = device["name"] as? String, let udid = device["udid"] as? String else { continue }
                 let family: DeviceFamily? = name.hasPrefix("iPad") ? .ipad : name.hasPrefix("iPhone") ? .iphone : nil
-                if let family { found.append((udid, name, family, major)) }
+                if let family { found.append((udid, name, family, version)) }
             }
         }
         let names = Dictionary(grouping: found, by: \.name)
-        return found.sorted { ($0.family == .iphone ? 0 : 1, $0.name, -$0.version) < ($1.family == .iphone ? 0 : 1, $1.name, -$1.version) }
-            .map { Choice(udid: $0.udid, name: $0.name, family: $0.family, version: $0.version,
-                          label: (names[$0.name]?.count ?? 0) > 1 ? "\($0.name) (iOS \($0.version))" : $0.name) }
+        // iPhones first, by name, and of one name the newest iOS first, comparing the whole version.
+        func newer(_ a: [Int], _ b: [Int]) -> Bool { a.lexicographicallyPrecedes(b) == false && a != b }
+        return found.sorted { left, right in
+            let l = (left.family == .iphone ? 0 : 1, left.name), r = (right.family == .iphone ? 0 : 1, right.name)
+            return l != r ? l < r : newer(left.runtime, right.runtime)
+        }.map {
+            let ios = $0.runtime.map(String.init).joined(separator: ".")
+            return Choice(udid: $0.udid, name: $0.name, family: $0.family, version: $0.runtime.first ?? 0, runtime: $0.runtime,
+                          label: (names[$0.name]?.count ?? 0) > 1 ? "\($0.name) (iOS \(ios))" : $0.name)
+        }
     }
 
     static func choices() async -> [Choice] {
         choices(listing: await Subprocess.run("/usr/bin/xcrun", ["simctl", "list", "devices", "available", "-j"], mergeErrors: false, timeout: 30).output)
     }
 
-    /// The name of a simulator, for saying where the app opened.
-    static func name(of udid: String) -> String? {
-        let listing = Subprocess.runBlocking("/usr/bin/xcrun", ["simctl", "list", "devices", "available", "-j"], mergeErrors: false, timeout: 30).output
-        return choices(listing: listing).first { $0.udid == udid }?.name
+    /// The name of a simulator, for saying where the app opened. Asked without waiting on the main thread:
+    /// a slow simulator service mustn't hold up Lamp.
+    static func name(of udid: String) async -> String? {
+        await choices().first { $0.udid == udid }?.name
     }
 
     /// Shared with the prerequisite check, so a passed check selects the same simulator as a build.
