@@ -287,7 +287,10 @@ An app with an iPhone half may keep data in iCloud: `{"icloud": true}` in `capab
 has one container on both platforms). It becomes the CloudKit entitlements everywhere Apple signs the app
 for a team (the phone's and the Mac's `App.entitlements`, the simulator's ad hoc signature in
 `Store.finishSimulatorBundle`) and `LampICloudContainer` in each Info.plist, which is how the app knows it was
-built for iCloud. A Mac app on its own is refused it: Lamp's signature can't carry iCloud (see "Apps for both").
+built for iCloud, and `CKSharingSupported`, so the system hands the app an invitation to something shared. A Mac
+app on its own is refused it, even when `Store.deploy` signs it with the team's certificate (see "App Intents"):
+iCloud is an entitlement macOS honours only with a provisioning profile, which only Xcode's signing brings (the
+Mac half of an app for both).
 The data goes through `LampSync` in LampSupport.swift, the one building block for it: collections like
 `LampStore`'s, kept on the device in LampStore as well (under `icloud.<name>`), and sent and fetched by
 CloudKit's own `CKSyncEngine` in a zone of the app's in the private database, one record per item carrying its
@@ -303,6 +306,22 @@ the chat where the build would start (`Devices.membershipProblem`, in `Store.ins
 the simulator and saved; on the Mac half that build is the turn's only one, so the change stays in the app's
 files unsaved, as after any build that fails. In the simulator nothing is signed for a team, so a free
 account goes on working there.
+
+**Sharing between people.** A collection made with `LampSync.collection(name, of:, shared: true)` can be shared
+with other people, each on their own iCloud account, with no server: CloudKit's zone-wide sharing. Such a
+collection lives in a zone of its own in the owner's private database (`Shared.<name>`), which is what a
+`CKShare` covers; the items it held in the app's first zone are sent to it once and the copies left behind are
+passed over. `LampShareButton` makes the share when there's none and opens the system's own screen
+(`UICloudSharingController` on iOS, `NSSharingService(.cloudSharing)` on the Mac), which also shows who's in it
+and is where the owner stops sharing and others leave (`stopSharing()` does the same from code). An invitation
+reaches the app through `@LampShareInvitations` in its App (an app delegate adaptor; on iOS its scene delegate,
+since the invitation goes to a scene) and `LampSync.accept`, which accepts it. What others shared is synced by a
+second `CKSyncEngine` on the shared database and kept on the device apart from the person's own list of that
+name (`icloud~<name>` beside `icloud.<name>`): joined, the collection shows the shared list, and the person's own
+comes back when they leave or the owner stops; nothing of theirs goes into the other person's list. Another of
+their devices follows a join or a leave from the shared database's zones. Everyone in a share needs the app on
+their own device, so for an app Lamp builds that means a phone Lamp installed it on (signed for the person's
+team), and joining can't be tried in the simulator; the rule (`Agent.Rules.icloud`) tells the agent to say so.
 
 ## Apple Health
 

@@ -3613,11 +3613,14 @@ final class Store: ObservableObject {
         }
         // Its entitlements are in the binary already (build.sh), where the simulator reads them: a signature
         // that claimed them would be refused, so the signature below claims none.
-        // The container's name, for LampSync to read; taken back when no longer declared.
+        // The container's name, for LampSync to read, and that the app takes invitations to what others
+        // shared; taken back when no longer declared.
         if let container = capabilities.container(for: project) {
             script += "plutil -replace LampICloudContainer -string '\(container.replacingOccurrences(of: "'", with: "'\\''"))' \"$P\"\n"
+            script += "plutil -replace CKSharingSupported -bool YES \"$P\"\n"
         } else {
             script += "{ plutil -remove LampICloudContainer \"$P\" 2>/dev/null || true; }\n"
+            script += "{ plutil -remove CKSharingSupported \"$P\" 2>/dev/null || true; }\n"
         }
         // iOS reads icons by name and scale from the bundle itself when told to in Info.plist: the home screen
         // sizes for iPhone (60pt at 2x and 3x) and iPad (76pt and 83.5pt at 2x), all cut from the one square.

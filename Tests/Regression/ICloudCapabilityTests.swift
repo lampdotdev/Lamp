@@ -40,7 +40,7 @@ final class ICloudCapabilityTests: XCTestCase {
         XCTAssertTrue(capabilities.entitlementsPlist(for: both, platform: .mac).contains("<key>com.apple.developer.aps-environment</key><string>development</string>"))
         XCTAssertFalse(capabilities.entitlementsPlist(for: both, platform: .mac).contains("<key>aps-environment</key>"))
         XCTAssertEqual(capabilities.lists["UIBackgroundModes"], ["remote-notification"])
-        XCTAssertEqual(capabilities.icloudPlistLine(for: both), "  <key>LampICloudContainer</key><string>iCloud.\(both.bundleID)</string>")
+        XCTAssertEqual(capabilities.icloudPlistLine(for: both), "  <key>LampICloudContainer</key><string>iCloud.\(both.bundleID)</string>\n  <key>CKSharingSupported</key><true/>")
         // An iPhone app's container carries the team too, though its simulator bundle doesn't: containers are global.
         var phone = both; phone.platform = .iphone
         XCTAssertEqual(capabilities.container(for: phone), "iCloud." + phone.deviceBundleID(team: "ABCDE12345"))

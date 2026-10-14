@@ -723,8 +723,10 @@ enum Template {
         /// Lamp's one task identifier (`lists`).
         var background: Bool?
         /// The app keeps data in iCloud (LampSync in LampSupport): signed for a CloudKit container of its own,
-        /// named in Info.plist as LampICloudContainer. Only for apps Apple signs for a team: those with an
-        /// iPhone half; a Mac app on its own carries Lamp's signature, which iCloud refuses.
+        /// named in Info.plist as LampICloudContainer, and may share it with other people (CKSharingSupported).
+        /// Only for apps Xcode signs for a team: those with an iPhone half. A Mac app on its own is signed by
+        /// Lamp, even with the team's certificate, and iCloud wants a provisioning profile, which only Xcode's
+        /// signing brings.
         var icloud: Bool?
         /// The app gets the weather from Apple (LampWeather): an entitlement, so for apps Apple signs for a team.
         var weather: Bool?
@@ -903,7 +905,8 @@ enum Template {
         func macInfo(for project: LampProject) -> [String: Any?] {
             ["CFBundleDocumentTypes": documentTypes.isEmpty ? nil : documentTypes,
              "LampBackground": background == true ? true : nil,
-             "LampICloudContainer": container(for: project)]
+             "LampICloudContainer": container(for: project),
+             "CKSharingSupported": container(for: project) == nil ? nil : true]
         }
 
         /// Declares a Mac app's capabilities in its Info.plist, before it's signed (Store.deploy): written by
@@ -924,9 +927,10 @@ enum Template {
                 .joined(separator: "\n")
         }
 
-        /// The container's name for the app to read, as an Info.plist line, or nothing.
+        /// The container's name for the app to read, as Info.plist lines, or nothing. With it the app says it
+        /// takes invitations to what others shared (CKSharingSupported), so the system opens it for one.
         func icloudPlistLine(for project: LampProject) -> String {
-            container(for: project).map { "  <key>LampICloudContainer</key><string>\($0.xmlEscaped)</string>" } ?? ""
+            container(for: project).map { "  <key>LampICloudContainer</key><string>\($0.xmlEscaped)</string>\n  <key>CKSharingSupported</key><true/>" } ?? ""
         }
     }
 
@@ -3714,6 +3718,21 @@ enum Template {
     /// elsewhere, in a zone of the app's own in the person's private database. The same item changed in two
     /// places at once: the later change wins. An item is a record with its JSON, so adding a property to a
     /// saved type is safe (decode it with a default) and removing or renaming one is not, as with LampStore.
+    ///
+    /// A collection made with `shared: true` can also be shared with other people, each signed in to their own
+    /// iCloud account and with the app on their own device: a family's grocery list, a chore chart. Everyone
+    /// in it sees and changes the same items.
+    ///
+    ///     @StateObject private var groceries = LampSync.collection("groceries", of: Item.self, shared: true)
+    ///     LampShareButton(groceries)       // invites people; once shared, who's in it, Stop Sharing, Remove Me
+    ///     groceries.people                 // the others in it, by name; empty while it isn't shared
+    ///     groceries.sharedBy               // who shared it with this person, or nil when it's theirs
+    ///     await groceries.stopSharing()    // its owner ends it for everyone; anyone else leaves it
+    ///
+    /// and in the App, so an invitation reaches the app: `@LampShareInvitations private var invitations`.
+    /// Such a collection has a zone of its own, which is what a share covers. Someone who joins another
+    /// person's list sees it in place of their own list of that name, which is kept and comes back when they
+    /// leave or the owner stops sharing; nothing of theirs goes into the other person's list.
     @MainActor
     final class LampSync: NSObject, ObservableObject, CKSyncEngineDelegate {
         static let shared = LampSync()
@@ -3723,23 +3742,36 @@ enum Template {
         /// Whether the app was built for iCloud (capabilities.json) and the device has an account.
         @Published private(set) var isSyncing = false
 
-        /// The one object for a collection's name, so every view that asks sees the same items.
-        static func collection<T: Codable & Identifiable>(_ name: String, of type: T.Type) -> Collection<T> {
+        /// The one object for a collection's name, so every view that asks sees the same items. `shared: true`
+        /// lets it be shared with other people (`LampShareButton`); once made so, it stays so.
+        static func collection<T: Codable & Identifiable>(_ name: String, of type: T.Type, shared isShareable: Bool = false) -> Collection<T> {
             if let existing = shared.collections[name] as? Collection<T> { return existing }
+            if isShareable { shared.makeShareable(name) }
             let collection = Collection<T>(name: name)
             shared.collections[name] = collection
+            shared.sharingChanged(name)
             return collection
         }
+
+        /// Joins what someone shared with this person, from the invitation they opened. `LampShareInvitations`
+        /// calls it; an app has no other reason to.
+        static func accept(_ metadata: CKShare.Metadata) async { await shared.accept(metadata) }
 
         /// A list of one kind of thing, kept here and in iCloud.
         final class Collection<T: Codable & Identifiable>: ObservableObject, LampSyncedCollection {
             let name: String
             @Published private(set) var items: [T] = []
-            private let local: LampStore.Collection<T>
+            /// The other people in it, by name: empty while it isn't shared.
+            @Published fileprivate(set) var people: [String] = []
+            /// Who shared it with this person, or nil when it's their own.
+            @Published fileprivate(set) var sharedBy: String?
+            var isShared: Bool { sharedBy != nil || !people.isEmpty }
+            /// Where its items are kept on this device: the person's own list, or the one they joined.
+            private var local: LampStore.Collection<T>
 
             init(name: String) {
                 self.name = name
-                local = LampStore.collection(LampSync.prefix + name, of: T.self)
+                local = LampStore.collection(LampSync.shared.storeName(name), of: T.self)
                 items = local.all()
             }
 
@@ -3760,30 +3792,65 @@ enum Template {
 
             var count: Int { items.count }
 
+            /// Its owner ends the sharing for everyone, and keeps the items; anyone else leaves, and their own
+            /// list comes back.
+            func stopSharing() async { await LampSync.shared.stopSharing(name) }
+
             private func replace(_ item: T) {
                 if let index = items.firstIndex(where: { "\($0.id)" == "\(item.id)" }) { items[index] = item } else { items.append(item) }
             }
 
             // What the engine needs of a collection whose type it doesn't know.
-            func reload(id: String) {
-                guard let json = LampStore.query("SELECT json FROM forge_items WHERE collection = ? AND id = ?", LampSync.prefix + name, id).first?["json"] as? String,
+            func reload(id: String, in store: String) {
+                guard store == local.name,
+                      let json = LampStore.query("SELECT json FROM forge_items WHERE collection = ? AND id = ?", store, id).first?["json"] as? String,
                       let data = json.data(using: .utf8), let item = try? LampStore.decoder.decode(T.self, from: data) else { return }
                 replace(item)
             }
 
-            func forget(id: String) { items.removeAll { "\($0.id)" == id } }
+            func forget(id: String, in store: String) {
+                guard store == local.name else { return }
+                items.removeAll { "\($0.id)" == id }
+            }
+
+            func reloadAll() {
+                local = LampStore.collection(LampSync.shared.storeName(name), of: T.self)
+                items = local.all()
+            }
+
+            func show(people: [String], sharedBy: String?) {
+                if self.people != people { self.people = people }
+                if self.sharedBy != sharedBy { self.sharedBy = sharedBy }
+            }
         }
 
-        // MARK: The engine
+        // MARK: The engines
 
         static let prefix = "icloud."
+        /// Where a list someone else shared is kept on this device, apart from the person's own of that name.
+        static let joinedPrefix = "icloud~"
+        /// A shareable collection's zone is this and its name, in its owner's private database and, for the
+        /// people it's shared with, in their shared database.
+        static let zonePrefix = "Shared."
         private var collections: [String: any LampSyncedCollection] = [:]
+        /// The person's own data, in their private database.
         private var engine: CKSyncEngine?
+        /// What others shared with them, in their shared database.
+        private var sharedEngine: CKSyncEngine?
         private var container: CKContainer?
         private let zoneID = CKRecordZone.ID(zoneName: "Lamp", ownerName: CKCurrentUserDefaultName)
         /// Each record as iCloud last saw it (its system fields, archived), so a change is sent as a change
         /// to that record and not as a second copy of it.
         private var known: [String: Data] = [:]
+        /// Collections that can be shared, each in a zone of its own.
+        private var shareable: Set<String> = []
+        /// Collections whose list this person joined, with the owner of that list's zone.
+        private var joined: [String: String] = [:]
+        /// Each share as iCloud last gave it: the person's own by the collection's name, the one they joined by
+        /// `joinedPrefix` and the name.
+        private var shares: [String: CKShare] = [:]
+        /// The system's sharing screen's delegate, kept while it's open.
+        private var screen: AnyObject?
 
         private override init() {
             super.init()
@@ -3794,28 +3861,43 @@ enum Template {
             let container = CKContainer(identifier: identifier)
             self.container = container
             known = LampStore.load([String: Data].self, from: "icloud.records") ?? [:]
-            let state = LampStore.load(CKSyncEngine.State.Serialization.self, from: "icloud.state")
-            var configuration = CKSyncEngine.Configuration(database: container.privateCloudDatabase, stateSerialization: state, delegate: self)
+            shareable = LampStore.load(Set<String>.self, from: "icloud.shareable") ?? []
+            joined = LampStore.load([String: String].self, from: "icloud.joined") ?? [:]
+            shares = (LampStore.load([String: Data].self, from: "icloud.shares") ?? [:])
+                .compactMapValues { try? NSKeyedUnarchiver.unarchivedObject(ofClass: CKShare.self, from: $0) }
+            var configuration = CKSyncEngine.Configuration(database: container.privateCloudDatabase,
+                                                           stateSerialization: LampStore.load(CKSyncEngine.State.Serialization.self, from: "icloud.state"), delegate: self)
             configuration.automaticallySync = true
             let engine = CKSyncEngine(configuration)
             self.engine = engine
-            engine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
+            var sharedConfiguration = CKSyncEngine.Configuration(database: container.sharedCloudDatabase,
+                                                                 stateSerialization: LampStore.load(CKSyncEngine.State.Serialization.self, from: "icloud.sharedState"), delegate: self)
+            sharedConfiguration.automaticallySync = true
+            let sharedEngine = CKSyncEngine(sharedConfiguration)
+            self.sharedEngine = sharedEngine
+            engine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))] + shareable.map { .saveZone(CKRecordZone(zoneID: ownZone($0))) })
             Task {
                 await checkAccount()
                 // Asked for straight away rather than left to the engine's own timing, so a fresh install
                 // shows what's in iCloud as soon as it can.
                 do { try await engine.fetchChanges() } catch { print("LampSync: couldn't fetch from iCloud: \(error)") }
+                do { try await sharedEngine.fetchChanges() } catch { print("LampSync: couldn't fetch what was shared: \(error)") }
             }
         }
 
         private func checkAccount() async {
             guard let container else { return }
+            #if os(macOS)
+            let settings = "System Settings"
+            #else
+            let settings = "Settings"
+            #endif
             do {
                 let account = try await container.accountStatus()
                 isSyncing = account == .available
                 status = switch account {
                 case .available: "Synced with iCloud"
-                case .noAccount: "Not signed in to iCloud on this device, so the data stays here. Sign in under System Settings to sync it."
+                case .noAccount: "Not signed in to iCloud on this device, so the data stays here. Sign in under \(settings) to sync and share it."
                 case .restricted: "iCloud is restricted on this device, so the data stays here."
                 case .temporarilyUnavailable: "iCloud isn't available right now; the data stays here until it is."
                 default: "Couldn't tell whether iCloud is available; the data stays here for now."
@@ -3827,10 +3909,41 @@ enum Template {
             print("LampSync: \(status)")
         }
 
+        private func ownZone(_ name: String) -> CKRecordZone.ID {
+            CKRecordZone.ID(zoneName: Self.zonePrefix + name, ownerName: CKCurrentUserDefaultName)
+        }
+
+        private static func collectionName(ofZone zone: String) -> String? {
+            zone.hasPrefix(zonePrefix) && zone.count > zonePrefix.count ? String(zone.dropFirst(zonePrefix.count)) : nil
+        }
+
+        /// Where a collection's items are kept on this device.
+        fileprivate func storeName(_ name: String) -> String { (joined[name] != nil ? Self.joinedPrefix : Self.prefix) + name }
+
+        /// The engine and zone a collection's changes go to: the list it joined, its own zone when it can be
+        /// shared, or the app's first zone.
+        private func home(of name: String) -> (CKSyncEngine, CKRecordZone.ID)? {
+            if let owner = joined[name], let sharedEngine { return (sharedEngine, CKRecordZone.ID(zoneName: Self.zonePrefix + name, ownerName: owner)) }
+            guard let engine else { return nil }
+            return (engine, shareable.contains(name) ? ownZone(name) : zoneID)
+        }
+
+        /// The collection now has a zone of its own: what it holds goes there. The copies left in the app's
+        /// first zone are passed over from now on (`place`).
+        private func makeShareable(_ name: String) {
+            guard !shareable.contains(name) else { return }
+            shareable.insert(name)
+            LampStore.save(shareable, to: "icloud.shareable")
+            guard let engine else { return }
+            engine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: ownZone(name)))])
+            let ids = LampStore.query("SELECT id FROM forge_items WHERE collection = ?", Self.prefix + name).compactMap { $0["id"] as? String }
+            engine.state.add(pendingRecordZoneChanges: ids.map { .saveRecord(CKRecord.ID(recordName: Self.recordName(name, $0), zoneID: ownZone(name))) })
+        }
+
         /// Something changed here: iCloud is told at its next send.
         fileprivate func changed(_ collection: String, id: String, deleted: Bool) {
-            guard let engine else { return }
-            let recordID = CKRecord.ID(recordName: Self.recordName(collection, id), zoneID: zoneID)
+            guard let (engine, zone) = home(of: collection) else { return }
+            let recordID = CKRecord.ID(recordName: Self.recordName(collection, id), zoneID: zone)
             engine.state.add(pendingRecordZoneChanges: [deleted ? .deleteRecord(recordID) : .saveRecord(recordID)])
             // Sent now, not at the engine's leisure: the other device should see it within moments.
             Task { do { try await engine.sendChanges() } catch { print("LampSync: couldn't send to iCloud: \(error)") } }
@@ -3843,16 +3956,39 @@ enum Template {
             return (String(recordName[..<bar]), String(recordName[recordName.index(after: bar)...]))
         }
 
-        /// Everything kept here goes up again: after a sign-in, or when the zone in iCloud was deleted.
+        /// Which collection, item and store on this device a record is for, or nil when it's for none shown
+        /// here: a copy left in the app's first zone by a collection since made shareable, or a list from
+        /// someone other than the one this person joined.
+        private func place(_ recordID: CKRecord.ID, inShared: Bool) -> (collection: String, id: String, store: String)? {
+            guard let (collection, id) = Self.parse(recordName: recordID.recordName) else { return nil }
+            let zone = recordID.zoneID.zoneName
+            if inShared {
+                guard zone == Self.zonePrefix + collection, joined[collection] == recordID.zoneID.ownerName else { return nil }
+                return (collection, id, Self.joinedPrefix + collection)
+            }
+            if zone == zoneID.zoneName { return shareable.contains(collection) ? nil : (collection, id, Self.prefix + collection) }
+            return zone == Self.zonePrefix + collection ? (collection, id, Self.prefix + collection) : nil
+        }
+
+        /// What `known` files a record under: the same record name can be in the app's first zone, a
+        /// shareable collection's own zone and a list joined from someone else.
+        private func knownKey(_ recordID: CKRecord.ID, inShared: Bool) -> String {
+            let zone = recordID.zoneID
+            if inShared { return "shared|" + zone.ownerName + "|" + zone.zoneName + "|" + recordID.recordName }
+            return zone.zoneName == zoneID.zoneName ? recordID.recordName : zone.zoneName + "|" + recordID.recordName
+        }
+
+        /// Everything of the person's own goes up again: after a sign-in, or when a zone in iCloud was deleted.
         private func resendEverything() {
             guard let engine else { return }
-            known = [:]
+            known = known.filter { $0.key.hasPrefix("shared|") }
             LampStore.save(known, to: "icloud.records")
-            engine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
+            engine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))] + shareable.map { .saveZone(CKRecordZone(zoneID: ownZone($0))) })
             let rows = LampStore.query("SELECT collection, id FROM forge_items WHERE collection LIKE ?", Self.prefix + "%")
             let changes = rows.compactMap { row -> CKSyncEngine.PendingRecordZoneChange? in
                 guard let collection = row["collection"] as? String, let id = row["id"] as? String else { return nil }
-                return .saveRecord(CKRecord.ID(recordName: Self.recordName(String(collection.dropFirst(Self.prefix.count)), id), zoneID: zoneID))
+                let name = String(collection.dropFirst(Self.prefix.count))
+                return .saveRecord(CKRecord.ID(recordName: Self.recordName(name, id), zoneID: shareable.contains(name) ? ownZone(name) : zoneID))
             }
             engine.state.add(pendingRecordZoneChanges: changes)
         }
@@ -3860,14 +3996,14 @@ enum Template {
         /// The record to send for a change: the item's JSON on the record iCloud knows, or on a new one, with
         /// the time the item was changed here, so a conflict is settled by when the edits were made and not
         /// by when they happened to be sent.
-        private func record(for recordID: CKRecord.ID) -> CKRecord? {
-            guard let (collection, id) = Self.parse(recordName: recordID.recordName),
-                  let row = LampStore.query("SELECT json, updated FROM forge_items WHERE collection = ? AND id = ?", Self.prefix + collection, id).first,
+        private func record(for recordID: CKRecord.ID, inShared: Bool) -> CKRecord? {
+            guard let (collection, id, store) = place(recordID, inShared: inShared),
+                  let row = LampStore.query("SELECT json, updated FROM forge_items WHERE collection = ? AND id = ?", store, id).first,
                   let json = row["json"] as? String
             else { return nil }   // deleted here since: nothing to send
             let modified = (row["updated"] as? Double).map { Date(timeIntervalSince1970: $0) } ?? Date()
             let record: CKRecord
-            if let data = known[recordID.recordName], let unarchiver = try? NSKeyedUnarchiver(forReadingFrom: data),
+            if let data = known[knownKey(recordID, inShared: inShared)], let unarchiver = try? NSKeyedUnarchiver(forReadingFrom: data),
                let kept = CKRecord(coder: unarchiver) {
                 record = kept
             } else {
@@ -3881,62 +4017,298 @@ enum Template {
 
         /// A record from iCloud, taken as this device's copy of the item, unless this device has a newer
         /// edit of it still to be sent: that one stays, and goes up as a change to the record iCloud has.
-        private func apply(_ record: CKRecord) {
-            guard let (collection, id) = Self.parse(recordName: record.recordID.recordName),
+        /// A share is kept as who the collection is shared with.
+        private func apply(_ record: CKRecord, inShared: Bool) {
+            if let share = record as? CKShare {
+                keep(share, inShared: inShared)
+                return
+            }
+            guard let (collection, id, store) = place(record.recordID, inShared: inShared),
                   let json = record["json"] as? String else { return }
             let theirs = record["modified"] as? Date ?? Date()
-            if let engine, engine.state.pendingRecordZoneChanges.contains(.saveRecord(record.recordID)),
-               let updated = LampStore.query("SELECT updated FROM forge_items WHERE collection = ? AND id = ?", Self.prefix + collection, id).first?["updated"] as? Double,
+            if let engine = inShared ? sharedEngine : engine, engine.state.pendingRecordZoneChanges.contains(.saveRecord(record.recordID)),
+               let updated = LampStore.query("SELECT updated FROM forge_items WHERE collection = ? AND id = ?", store, id).first?["updated"] as? Double,
                Date(timeIntervalSince1970: updated) > theirs {
-                remember(record)
+                remember(record, inShared: inShared)
                 return
             }
             LampStore.execute("INSERT OR REPLACE INTO forge_items (collection, id, json, updated) VALUES (?, ?, ?, ?)",
-                              Self.prefix + collection, id, json, theirs.timeIntervalSince1970)
-            collections[collection]?.reload(id: id)
-            remember(record)
+                              store, id, json, theirs.timeIntervalSince1970)
+            collections[collection]?.reload(id: id, in: store)
+            remember(record, inShared: inShared)
         }
 
-        private func remove(_ recordID: CKRecord.ID) {
-            guard let (collection, id) = Self.parse(recordName: recordID.recordName) else { return }
-            LampStore.execute("DELETE FROM forge_items WHERE collection = ? AND id = ?", Self.prefix + collection, id)
-            collections[collection]?.forget(id: id)
-            known[recordID.recordName] = nil
+        private func remove(_ recordID: CKRecord.ID, type: CKRecord.RecordType, inShared: Bool) {
+            if type == CKRecord.SystemType.share {
+                guard let name = Self.collectionName(ofZone: recordID.zoneID.zoneName) else { return }
+                shares[(inShared ? Self.joinedPrefix : "") + name] = nil
+                saveShares()
+                sharingChanged(name)
+                return
+            }
+            guard let (collection, id, store) = place(recordID, inShared: inShared) else { return }
+            LampStore.execute("DELETE FROM forge_items WHERE collection = ? AND id = ?", store, id)
+            collections[collection]?.forget(id: id, in: store)
+            known[knownKey(recordID, inShared: inShared)] = nil
         }
 
-        private func remember(_ record: CKRecord) {
+        private func remember(_ record: CKRecord, inShared: Bool) {
             let archiver = NSKeyedArchiver(requiringSecureCoding: true)
             record.encodeSystemFields(with: archiver)
-            known[record.recordID.recordName] = archiver.encodedData
+            known[knownKey(record.recordID, inShared: inShared)] = archiver.encodedData
+        }
+
+        // MARK: Sharing
+
+        /// A collection's share, from iCloud or the sharing screen: the person's own, or the one of the list
+        /// they joined.
+        private func keep(_ share: CKShare, inShared: Bool) {
+            let zone = share.recordID.zoneID
+            guard let name = Self.collectionName(ofZone: zone.zoneName), !inShared || joined[name] == zone.ownerName else { return }
+            shares[(inShared ? Self.joinedPrefix : "") + name] = share
+            saveShares()
+            sharingChanged(name)
+        }
+
+        private func saveShares() {
+            LampStore.save(shares.compactMapValues { try? NSKeyedArchiver.archivedData(withRootObject: $0, requiringSecureCoding: true) }, to: "icloud.shares")
+        }
+
+        /// Tells a collection who's in it.
+        fileprivate func sharingChanged(_ name: String) {
+            guard let collection = collections[name] else { return }
+            let isJoined = joined[name] != nil
+            let share = shares[(isJoined ? Self.joinedPrefix : "") + name]
+            let me = share?.currentUserParticipant
+            let others = (share?.participants ?? []).filter { $0 != me && $0.acceptanceStatus != .removed && (isJoined || $0.role != .owner) }
+            collection.show(people: others.map(Self.displayName), sharedBy: isJoined ? share.map { Self.displayName($0.owner) } ?? "someone" : nil)
+        }
+
+        private static func displayName(_ participant: CKShare.Participant) -> String {
+            let identity = participant.userIdentity
+            if let components = identity.nameComponents {
+                let name = PersonNameComponentsFormatter.localizedString(from: components, style: .default)
+                if !name.isEmpty { return name }
+            }
+            return identity.lookupInfo?.emailAddress ?? identity.lookupInfo?.phoneNumber ?? "someone"
+        }
+
+        /// This person now sees `owner`'s list under this name: joined here, or on another of their devices.
+        private func join(_ name: String, owner: String, share: CKShare?) {
+            if joined[name] != owner {
+                if joined[name] != nil { forgetJoined(name) }
+                joined[name] = owner
+                LampStore.save(joined, to: "icloud.joined")
+                collections[name]?.reloadAll()
+            }
+            if let share { keep(share, inShared: true) } else { sharingChanged(name) }
+        }
+
+        /// The list someone shared is gone from this person (the owner stopped sharing it, or they left): its
+        /// copy here goes, and their own list of that name shows again.
+        private func leave(_ name: String) {
+            guard joined[name] != nil else { return }
+            forgetJoined(name)
+            joined[name] = nil
+            LampStore.save(joined, to: "icloud.joined")
+            collections[name]?.reloadAll()
+            sharingChanged(name)
+        }
+
+        private func forgetJoined(_ name: String) {
+            guard let owner = joined[name] else { return }
+            LampStore.execute("DELETE FROM forge_items WHERE collection = ?", Self.joinedPrefix + name)
+            let zone = "shared|" + owner + "|" + Self.zonePrefix + name + "|"
+            known = known.filter { !$0.key.hasPrefix(zone) }
+            LampStore.save(known, to: "icloud.records")
+            shares[Self.joinedPrefix + name] = nil
+            saveShares()
+            if let sharedEngine {
+                let zoneID = CKRecordZone.ID(zoneName: Self.zonePrefix + name, ownerName: owner)
+                sharedEngine.state.remove(pendingRecordZoneChanges: sharedEngine.state.pendingRecordZoneChanges.filter { change in
+                    switch change {
+                    case .saveRecord(let id), .deleteRecord(let id): id.zoneID == zoneID
+                    @unknown default: false
+                    }
+                })
+            }
+        }
+
+        private func accept(_ metadata: CKShare.Metadata) async {
+            let zone = metadata.share.recordID.zoneID
+            guard let container, metadata.containerIdentifier == container.containerIdentifier,
+                  let name = Self.collectionName(ofZone: zone.zoneName) else {
+                print("LampSync: an invitation to something this app doesn't keep; passed over.")
+                return
+            }
+            // The owner opening their own invitation: it's already theirs.
+            guard metadata.participantRole != .owner else { return }
+            do {
+                let share = try await container.accept(metadata)
+                join(name, owner: zone.ownerName, share: share)
+                try await sharedEngine?.fetchChanges()
+            } catch {
+                status = "Couldn't join what was shared: \(error.localizedDescription)"
+                print("LampSync: \(status)")
+            }
+        }
+
+        fileprivate func stopSharing(_ name: String) async {
+            guard let container else { return }
+            if let owner = joined[name] {
+                // Deleting the share from one's own shared database is how a participant leaves it.
+                let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: CKRecordZone.ID(zoneName: Self.zonePrefix + name, ownerName: owner))
+                guard await delete(shareID, from: container.sharedCloudDatabase) else { return }
+                leave(name)
+            } else {
+                let shareID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: ownZone(name))
+                guard await delete(shareID, from: container.privateCloudDatabase) else { return }
+                stopped(name)
+            }
+        }
+
+        /// Whether the record is gone, as it is when iCloud had it no longer.
+        private func delete(_ recordID: CKRecord.ID, from database: CKDatabase) async -> Bool {
+            do {
+                let result = try await database.modifyRecords(saving: [], deleting: [recordID])
+                try result.deleteResults[recordID]?.get()
+                return true
+            } catch let error as CKError where error.code == .unknownItem || error.code == .zoneNotFound {
+                return true
+            } catch {
+                print("LampSync: couldn't stop sharing: \(error.localizedDescription)")
+                return false
+            }
+        }
+
+        /// The sharing ended, from here or the sharing screen: the owner keeps the list, anyone else leaves it.
+        fileprivate func stopped(_ name: String) {
+            if joined[name] != nil { leave(name); return }
+            shares[name] = nil
+            saveShares()
+            sharingChanged(name)
+        }
+
+        /// The collection's share for the sharing screen, made when it has none yet. For a list this person
+        /// joined it's the owner's, where they see who's in it and can leave.
+        fileprivate func share(for name: String, title: String) async throws -> CKShare {
+            guard let container, isSyncing else { throw Problem(message: status) }
+            if let owner = joined[name] {
+                let id = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: CKRecordZone.ID(zoneName: Self.zonePrefix + name, ownerName: owner))
+                guard let share = try await container.sharedCloudDatabase.record(for: id) as? CKShare else { throw Problem(message: "iCloud didn't find what was shared.") }
+                keep(share, inShared: true)
+                return share
+            }
+            guard shareable.contains(name) else {
+                throw Problem(message: "\"\(name)\" can't be shared: make it with LampSync.collection(\"\(name)\", of: …, shared: true).")
+            }
+            let database = container.privateCloudDatabase
+            let id = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: ownZone(name))
+            do {
+                if let share = try await database.record(for: id) as? CKShare {
+                    keep(share, inShared: false)
+                    return share
+                }
+            } catch let error as CKError where error.code == .unknownItem || error.code == .zoneNotFound {
+                // Not shared yet.
+            }
+            // The zone may not be in iCloud yet (the engine makes it at its next send), and a share covers it.
+            _ = try await database.modifyRecordZones(saving: [CKRecordZone(zoneID: ownZone(name))], deleting: [])
+            let share = CKShare(recordZoneID: ownZone(name))
+            share[CKShare.SystemFieldKey.title] = title as CKRecordValue
+            share.publicPermission = .none
+            let result = try await database.modifyRecords(saving: [share], deleting: [])
+            guard let made = try result.saveResults[share.recordID]?.get() as? CKShare else { throw Problem(message: "iCloud didn't keep the share.") }
+            keep(made, inShared: false)
+            Task { try? await engine?.sendChanges() }
+            return made
+        }
+
+        /// Opens the system's sharing screen for a collection.
+        fileprivate func present(_ name: String, title: String) async throws {
+            guard let container else { throw Problem(message: status) }
+            let share = try await share(for: name, title: title)
+            let delegate = LampShareScreen(name: name, title: title)
+            #if os(iOS)
+            let controller = UICloudSharingController(share: share, container: container)
+            controller.availablePermissions = [.allowPrivate, .allowReadWrite]
+            controller.delegate = delegate
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            var top = (scenes.flatMap(\.windows).first { $0.isKeyWindow } ?? scenes.first?.windows.first)?.rootViewController
+            while let presented = top?.presentedViewController { top = presented }
+            guard let top else { throw Problem(message: "There's no window to show the sharing screen in.") }
+            if let popover = controller.popoverPresentationController {
+                popover.sourceView = top.view
+                popover.sourceRect = CGRect(x: top.view.bounds.midX, y: top.view.bounds.midY, width: 0, height: 0)
+                popover.permittedArrowDirections = []
+            }
+            screen = delegate
+            top.present(controller, animated: true)
+            #else
+            let provider = NSItemProvider()
+            provider.registerCKShare(share, container: container,
+                                     allowedSharingOptions: CKAllowedSharingOptions(allowedParticipantPermissionOptions: .readWrite, allowedParticipantAccessOptions: .specifiedRecipientsOnly))
+            guard let service = NSSharingService(named: .cloudSharing), service.canPerform(withItems: [provider]) else {
+                throw Problem(message: "This Mac can't show the sharing screen.")
+            }
+            service.delegate = delegate
+            screen = delegate
+            service.perform(withItems: [provider])
+            #endif
+        }
+
+        struct Problem: LocalizedError {
+            let message: String
+            var errorDescription: String? { message }
         }
 
         // MARK: CKSyncEngineDelegate
 
         func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
+            let inShared = syncEngine === sharedEngine
             switch event {
             case .stateUpdate(let update):
-                LampStore.save(update.stateSerialization, to: "icloud.state")
+                LampStore.save(update.stateSerialization, to: inShared ? "icloud.sharedState" : "icloud.state")
             case .accountChange(let change):
+                // Both engines hear it; the private one acts for both.
+                guard !inShared else { break }
                 switch change.changeType {
                 case .signIn: resendEverything()
                 case .signOut, .switchAccounts:
-                    // The data stays, as this device's; the next account gets it sent afresh.
+                    // The data stays, as this device's; the next account gets it sent afresh. Lists joined
+                    // were the last account's.
                     known = [:]
                     LampStore.save(known, to: "icloud.records")
+                    for name in Array(joined.keys) { leave(name) }
+                    shares = [:]
+                    saveShares()
+                    for name in collections.keys { sharingChanged(name) }
                 @unknown default: break
                 }
                 await checkAccount()
             case .fetchedDatabaseChanges(let changes):
-                // The zone deleted from iCloud (the person cleared the app's data there): what's here goes up again.
-                if changes.deletions.contains(where: { $0.zoneID == zoneID }) { resendEverything() }
+                if inShared {
+                    // A list joined on another of this person's devices, or one whose sharing ended.
+                    for modification in changes.modifications {
+                        let zone = modification.zoneID
+                        if let name = Self.collectionName(ofZone: zone.zoneName), joined[name] == nil { join(name, owner: zone.ownerName, share: nil) }
+                    }
+                    for deletion in changes.deletions {
+                        let zone = deletion.zoneID
+                        if let name = Self.collectionName(ofZone: zone.zoneName), joined[name] == zone.ownerName { leave(name) }
+                    }
+                } else if changes.deletions.contains(where: { $0.zoneID.zoneName == zoneID.zoneName || Self.collectionName(ofZone: $0.zoneID.zoneName) != nil }) {
+                    // A zone deleted from iCloud (the person cleared the app's data there): what's here goes up again.
+                    resendEverything()
+                }
             case .fetchedRecordZoneChanges(let changes):
-                for modification in changes.modifications { apply(modification.record) }
-                for deletion in changes.deletions { remove(deletion.recordID) }
+                for modification in changes.modifications { apply(modification.record, inShared: inShared) }
+                for deletion in changes.deletions { remove(deletion.recordID, type: deletion.recordType, inShared: inShared) }
                 LampStore.save(known, to: "icloud.records")
             case .sentDatabaseChanges(let sent):
                 for (zone, error) in sent.failedZoneSaves.map({ ($0.zone.zoneID.zoneName, $0.error) }) { print("LampSync: couldn't make the zone \(zone) in iCloud: \(error)") }
             case .sentRecordZoneChanges(let sent):
-                for record in sent.savedRecords { remember(record) }
+                for record in sent.savedRecords { remember(record, inShared: inShared) }
                 for failure in sent.failedRecordSaves {
                     let recordID = failure.record.recordID
                     if failure.error.code != .serverRecordChanged { print("LampSync: couldn't save \(recordID.recordName) to iCloud: \(failure.error)") }
@@ -3950,22 +4322,27 @@ enum Template {
                             server["json"] = failure.record["json"]
                             server["collection"] = failure.record["collection"]
                             server["modified"] = mine as CKRecordValue
-                            remember(server)
+                            remember(server, inShared: inShared)
                             syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
                         } else {
-                            apply(server)
+                            apply(server, inShared: inShared)
                         }
                     case .zoneNotFound:
-                        syncEngine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
-                        syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
+                        if inShared {
+                            // The owner stopped sharing it.
+                            if let name = Self.collectionName(ofZone: recordID.zoneID.zoneName), joined[name] == recordID.zoneID.ownerName { leave(name) }
+                        } else {
+                            syncEngine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: recordID.zoneID))])
+                            syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
+                        }
                     case .unknownItem:
                         // iCloud no longer has the record it was a change to: sent again as a new one.
-                        known[recordID.recordName] = nil
+                        known[knownKey(recordID, inShared: inShared)] = nil
                         syncEngine.state.add(pendingRecordZoneChanges: [.saveRecord(recordID)])
                     default: break
                     }
                 }
-                for recordID in sent.deletedRecordIDs { known[recordID.recordName] = nil }
+                for recordID in sent.deletedRecordIDs { known[knownKey(recordID, inShared: inShared)] = nil }
                 LampStore.save(known, to: "icloud.records")
             default:
                 break
@@ -3974,10 +4351,11 @@ enum Template {
 
         func nextRecordZoneChangeBatch(_ context: CKSyncEngine.SendChangesContext, syncEngine: CKSyncEngine) async -> CKSyncEngine.RecordZoneChangeBatch? {
             let scope = context.options.scope
+            let inShared = syncEngine === sharedEngine
             let changes = syncEngine.state.pendingRecordZoneChanges.filter { scope.contains($0) }
             guard !changes.isEmpty else { return nil }
             return await CKSyncEngine.RecordZoneChangeBatch(pendingChanges: changes) { recordID in
-                await self.record(for: recordID)
+                await self.record(for: recordID, inShared: inShared)
             }
         }
     }
@@ -3985,9 +4363,139 @@ enum Template {
     /// A collection as the engine sees it, whatever its items' type.
     @MainActor
     protocol LampSyncedCollection: AnyObject {
-        func reload(id: String)
-        func forget(id: String)
+        func reload(id: String, in store: String)
+        func forget(id: String, in store: String)
+        func reloadAll()
+        func show(people: [String], sharedBy: String?)
     }
+
+    /// Invites people to a collection made with `shared: true`; once it's shared, the same button shows who's
+    /// in it, where its owner can stop sharing and anyone else can leave. The system's own sharing screen.
+    /// Not signed in to iCloud, it says so instead.
+    ///
+    ///     LampShareButton(groceries)
+    ///     LampShareButton(chores, title: "Our chores")   // the name invitations give it
+    struct LampShareButton<T: Codable & Identifiable>: View {
+        @ObservedObject private var collection: LampSync.Collection<T>
+        @ObservedObject private var sync = LampSync.shared
+        private let title: String?
+        @State private var problem: String?
+        @State private var opening = false
+
+        init(_ collection: LampSync.Collection<T>, title: String? = nil) {
+            _collection = ObservedObject(wrappedValue: collection)
+            self.title = title
+        }
+
+        var body: some View {
+            Button {
+                Task { await open() }
+            } label: {
+                Label(collection.isShared ? "Shared" : "Share", systemImage: collection.isShared ? "person.2.fill" : "person.crop.circle.badge.plus")
+            }
+            .disabled(opening)
+            .alert("Can't Share", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(problem ?? "")
+            }
+        }
+
+        private func open() async {
+            guard sync.isSyncing else {
+                problem = sync.status
+                return
+            }
+            opening = true
+            defer { opening = false }
+            do {
+                try await sync.present(collection.name, title: title ?? collection.name.capitalized)
+            } catch {
+                problem = error.localizedDescription
+            }
+        }
+    }
+
+    /// Hears what the system's sharing screen did: a share saved, or stopped (by its owner, or by someone
+    /// leaving it).
+    #if os(iOS)
+    @MainActor
+    final class LampShareScreen: NSObject, UICloudSharingControllerDelegate {
+        let name: String
+        let title: String
+        init(name: String, title: String) { self.name = name; self.title = title }
+
+        func itemTitle(for csc: UICloudSharingController) -> String? { title }
+        func cloudSharingController(_ csc: UICloudSharingController, failedToSaveShareWithError error: Error) {
+            print("LampSync: couldn't save the share: \(error.localizedDescription)")
+        }
+        func cloudSharingControllerDidSaveShare(_ csc: UICloudSharingController) {
+            if let share = csc.share { LampSync.shared.sharingSaved(share) }
+        }
+        func cloudSharingControllerDidStopSharing(_ csc: UICloudSharingController) { LampSync.shared.stopped(name) }
+    }
+    #else
+    // AppKit tells its sharing service's delegate on the main thread, though the protocol doesn't say so.
+    final class LampShareScreen: NSObject, NSCloudSharingServiceDelegate {
+        let name: String
+        let title: String
+        init(name: String, title: String) { self.name = name; self.title = title }
+
+        func sharingService(_ sharingService: NSSharingService, didSave share: CKShare) {
+            MainActor.assumeIsolated { LampSync.shared.sharingSaved(share) }
+        }
+        func sharingService(_ sharingService: NSSharingService, didStopSharing share: CKShare) {
+            MainActor.assumeIsolated { LampSync.shared.stopped(name) }
+        }
+        func sharingService(_ sharingService: NSSharingService, didFailToShareItems items: [Any], error: Error) {
+            print("LampSync: couldn't share: \(error.localizedDescription)")
+        }
+    }
+    #endif
+
+    extension LampSync {
+        /// The share as the sharing screen left it: who was invited, and who's in it.
+        fileprivate func sharingSaved(_ share: CKShare) {
+            keep(share, inShared: share.recordID.zoneID.ownerName != CKCurrentUserDefaultName)
+        }
+    }
+
+    /// Lets the app take an invitation to something shared with `LampShareButton`: put
+    /// `@LampShareInvitations private var invitations` in the App. The system hands the invitation to the app
+    /// (its delegate, which this is), and LampSync joins it.
+    #if os(iOS)
+    typealias LampShareInvitations = UIApplicationDelegateAdaptor<LampAppDelegate>
+
+    final class LampAppDelegate: NSObject, UIApplicationDelegate {
+        // An invitation reaches a scene's delegate on iOS, so the app's scenes get one that passes it on;
+        // SwiftUI still makes their windows.
+        func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession,
+                         options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+            let configuration = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
+            configuration.delegateClass = LampSceneDelegate.self
+            return configuration
+        }
+    }
+
+    final class LampSceneDelegate: NSObject, UIWindowSceneDelegate {
+        // An invitation that opened the app.
+        func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+            if let metadata = connectionOptions.cloudKitShareMetadata { Task { await LampSync.accept(metadata) } }
+        }
+
+        func windowScene(_ windowScene: UIWindowScene, userDidAcceptCloudKitShareWith metadata: CKShare.Metadata) {
+            Task { await LampSync.accept(metadata) }
+        }
+    }
+    #else
+    typealias LampShareInvitations = NSApplicationDelegateAdaptor<LampAppDelegate>
+
+    final class LampAppDelegate: NSObject, NSApplicationDelegate {
+        func application(_ application: NSApplication, userDidAcceptCloudKitShareWith metadata: CKShare.Metadata) {
+            Task { await LampSync.accept(metadata) }
+        }
+    }
+    #endif
 
 
     // MARK: - Health
