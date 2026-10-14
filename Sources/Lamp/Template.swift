@@ -3745,8 +3745,9 @@ enum Template {
         /// The one object for a collection's name, so every view that asks sees the same items. `shared: true`
         /// lets it be shared with other people (`LampShareButton`); once made so, it stays so.
         static func collection<T: Codable & Identifiable>(_ name: String, of type: T.Type, shared isShareable: Bool = false) -> Collection<T> {
-            if let existing = shared.collections[name] as? Collection<T> { return existing }
+            // Before the cache: the first view to ask may not have said it's shared.
             if isShareable { shared.makeShareable(name) }
+            if let existing = shared.collections[name] as? Collection<T> { return existing }
             let collection = Collection<T>(name: name)
             shared.collections[name] = collection
             shared.sharingChanged(name)
@@ -3928,8 +3929,8 @@ enum Template {
             return (engine, shareable.contains(name) ? ownZone(name) : zoneID)
         }
 
-        /// The collection now has a zone of its own: what it holds goes there. The copies left in the app's
-        /// first zone are passed over from now on (`place`).
+        /// The collection now has a zone of its own: what it holds goes there. What's still in the app's first
+        /// zone moves over as it's fetched (`migrate`), so items this device never had aren't lost.
         private func makeShareable(_ name: String) {
             guard !shareable.contains(name) else { return }
             shareable.insert(name)
@@ -3957,8 +3958,8 @@ enum Template {
         }
 
         /// Which collection, item and store on this device a record is for, or nil when it's for none shown
-        /// here: a copy left in the app's first zone by a collection since made shareable, or a list from
-        /// someone other than the one this person joined.
+        /// here: one left in the app's first zone by a collection since made shareable (`migrate` takes those),
+        /// or a list from someone other than the one this person joined.
         private func place(_ recordID: CKRecord.ID, inShared: Bool) -> (collection: String, id: String, store: String)? {
             guard let (collection, id) = Self.parse(recordName: recordID.recordName) else { return nil }
             let zone = recordID.zoneID.zoneName
@@ -4023,6 +4024,11 @@ enum Template {
                 keep(share, inShared: inShared)
                 return
             }
+            if !inShared, record.recordID.zoneID.zoneName == zoneID.zoneName, let (collection, id) = Self.parse(recordName: record.recordID.recordName),
+               shareable.contains(collection) {
+                migrate(record, collection: collection, id: id)
+                return
+            }
             guard let (collection, id, store) = place(record.recordID, inShared: inShared),
                   let json = record["json"] as? String else { return }
             let theirs = record["modified"] as? Date ?? Date()
@@ -4036,6 +4042,26 @@ enum Template {
                               store, id, json, theirs.timeIntervalSince1970)
             collections[collection]?.reload(id: id, in: store)
             remember(record, inShared: inShared)
+        }
+
+        /// A record left in the app's first zone by a collection since made shareable: from a device that hadn't
+        /// moved it yet, or one this device never had. Taken in when it's newer than what's here, sent to the
+        /// collection's own zone and taken out of the first one, so nothing is lost and no stale copy stays to
+        /// come back. Its deletion from the first zone is passed over (`place`): the item lives on in the new one.
+        private func migrate(_ record: CKRecord, collection: String, id: String) {
+            guard let engine else { return }
+            let store = Self.prefix + collection
+            if let json = record["json"] as? String {
+                let theirs = record["modified"] as? Date ?? .distantPast
+                let mine = LampStore.query("SELECT updated FROM forge_items WHERE collection = ? AND id = ?", store, id).first?["updated"] as? Double
+                if mine.map({ Date(timeIntervalSince1970: $0) < theirs }) ?? true {
+                    LampStore.execute("INSERT OR REPLACE INTO forge_items (collection, id, json, updated) VALUES (?, ?, ?, ?)",
+                                      store, id, json, theirs.timeIntervalSince1970)
+                    collections[collection]?.reload(id: id, in: store)
+                }
+            }
+            engine.state.add(pendingRecordZoneChanges: [.saveRecord(CKRecord.ID(recordName: record.recordID.recordName, zoneID: ownZone(collection))),
+                                                        .deleteRecord(record.recordID)])
         }
 
         private func remove(_ recordID: CKRecord.ID, type: CKRecord.RecordType, inShared: Bool) {
@@ -4288,14 +4314,15 @@ enum Template {
                 await checkAccount()
             case .fetchedDatabaseChanges(let changes):
                 if inShared {
-                    // A list joined on another of this person's devices, or one whose sharing ended.
-                    for modification in changes.modifications {
-                        let zone = modification.zoneID
-                        if let name = Self.collectionName(ofZone: zone.zoneName), joined[name] == nil { join(name, owner: zone.ownerName, share: nil) }
-                    }
+                    // A list whose sharing ended, or one joined on another of this person's devices. Departures
+                    // first: leaving one list and joining another of the same name can arrive together.
                     for deletion in changes.deletions {
                         let zone = deletion.zoneID
                         if let name = Self.collectionName(ofZone: zone.zoneName), joined[name] == zone.ownerName { leave(name) }
+                    }
+                    for modification in changes.modifications {
+                        let zone = modification.zoneID
+                        if let name = Self.collectionName(ofZone: zone.zoneName), joined[name] == nil { join(name, owner: zone.ownerName, share: nil) }
                     }
                 } else if changes.deletions.contains(where: { $0.zoneID.zoneName == zoneID.zoneName || Self.collectionName(ofZone: $0.zoneID.zoneName) != nil }) {
                     // A zone deleted from iCloud (the person cleared the app's data there): what's here goes up again.

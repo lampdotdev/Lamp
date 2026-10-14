@@ -303,9 +303,9 @@ enum Agent {
         in LampStore. For a list several people keep together (a family's groceries, chores), add `shared: \
         true` to its collection, put `LampShareButton(groceries)` beside it (invites people; there the owner \
         stops sharing and others leave), and `@LampShareInvitations private var invitations` in the App; \
-        `groceries.people` and `.sharedBy` say who's in it. Each person needs the app on their own iPhone, \
-        installed by Lamp like this one, and their own iCloud account, so joining can't be tried in the \
-        simulator: say so. Apple's terms forbid keeping sensitive health information about a person in iCloud: what \
+        `groceries.people` and `.sharedBy` say who's in it. Each person needs this same app on their own iPhone, \
+        installed by Lamp from this Mac with the same Apple team (a copy built under another team can't \
+        join), and their own iCloud account, so joining can't be tried in the simulator: say so. Apple's terms forbid keeping sensitive health information about a person in iCloud: what \
         is medical (diagnoses, conditions, symptoms, medications, lab results, clinical records, reproductive or \
         mental-health entries) stays on the device, in LampStore, never in LampSync. Everyday activity and \
         fitness numbers (steps, distance, active calories, workouts, water) aren't that, and may sync. When \

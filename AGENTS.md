@@ -310,8 +310,8 @@ account goes on working there.
 **Sharing between people.** A collection made with `LampSync.collection(name, of:, shared: true)` can be shared
 with other people, each on their own iCloud account, with no server: CloudKit's zone-wide sharing. Such a
 collection lives in a zone of its own in the owner's private database (`Shared.<name>`), which is what a
-`CKShare` covers; the items it held in the app's first zone are sent to it once and the copies left behind are
-passed over. `LampShareButton` makes the share when there's none and opens the system's own screen
+`CKShare` covers; the items it held in the app's first zone move to it, those on the device at once and the rest as they're
+fetched (`migrate`), each taken out of the first zone as it goes. `LampShareButton` makes the share when there's none and opens the system's own screen
 (`UICloudSharingController` on iOS, `NSSharingService(.cloudSharing)` on the Mac), which also shows who's in it
 and is where the owner stops sharing and others leave (`stopSharing()` does the same from code). An invitation
 reaches the app through `@LampShareInvitations` in its App (an app delegate adaptor; on iOS its scene delegate,
@@ -319,9 +319,11 @@ since the invitation goes to a scene) and `LampSync.accept`, which accepts it. W
 second `CKSyncEngine` on the shared database and kept on the device apart from the person's own list of that
 name (`icloud~<name>` beside `icloud.<name>`): joined, the collection shows the shared list, and the person's own
 comes back when they leave or the owner stops; nothing of theirs goes into the other person's list. Another of
-their devices follows a join or a leave from the shared database's zones. Everyone in a share needs the app on
-their own device, so for an app Lamp builds that means a phone Lamp installed it on (signed for the person's
-team), and joining can't be tried in the simulator; the rule (`Agent.Rules.icloud`) tells the agent to say so.
+their devices follows a join or a leave from the shared database's zones. Everyone in a share needs the same app on
+their own device: the container is named after the bundle id with the team in it (`container(for:)`), and an
+invitation from another container is refused, so each participant's phone is one Lamp installed this project on,
+signed for the same team; a copy built under another team can't join. Joining can't be tried in the simulator;
+the rule (`Agent.Rules.icloud`) tells the agent both.
 
 ## Apple Health
 
