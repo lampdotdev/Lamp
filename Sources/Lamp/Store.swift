@@ -2410,6 +2410,7 @@ final class Store: ObservableObject {
             NSAlert(error: error).runModal()
             return
         }
+        Self.trashData(of: project)
         let index = projects.firstIndex { $0.id == project.id }
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil
@@ -2421,6 +2422,36 @@ final class Store: ObservableObject {
         tokens = tokens.filter { $0.value != project.id }
         if selection == project.id {
             selection = index.flatMap { projects.indices.contains($0) ? projects[$0] : projects.last }?.id
+        }
+    }
+
+    /// What the app kept on this Mac goes with it, so an app made later under the same name starts empty rather
+    /// than opening this one's data: its data folder (`LampStore.folder`, under the plain id), and anything under
+    /// an id it was signed as (the plain id and a team after it, also from before it was made for the Mac alone),
+    /// to the Trash like the rest. Its settings (UserDefaults) are written into the data folder first and cleared
+    /// only once that copy is written.
+    private static func trashData(of project: LampProject) {
+        let fm = FileManager.default
+        let library = fm.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        let support = library.appendingPathComponent("Application Support")
+        let plain = Edition.appBundlePrefix + project.id
+        let data = support.appendingPathComponent(plain)
+        let isThisApp = { (name: String) in name == plain || name.hasPrefix(plain + ".") }
+        let preferences = (try? fm.contentsOfDirectory(atPath: library.appendingPathComponent("Preferences").path)) ?? []
+        let domains = Set(preferences.filter { $0.hasSuffix(".plist") }.map { String($0.dropLast(6)) }.filter(isThisApp)
+                          + [plain, project.bundleID])
+        for id in domains.sorted() {
+            guard let settings = UserDefaults.standard.persistentDomain(forName: id), !settings.isEmpty else { continue }
+            let copy = data.appendingPathComponent("Settings \(id).plist")
+            guard (try? fm.createDirectory(at: data, withIntermediateDirectories: true)) != nil,
+                  (settings as NSDictionary).write(to: copy, atomically: true) else {
+                print("Delete \(project.name): couldn't keep a copy of its settings (\(id)), so they stay")
+                continue
+            }
+            UserDefaults.standard.removePersistentDomain(forName: id)
+        }
+        for name in ((try? fm.contentsOfDirectory(atPath: support.path)) ?? []).filter(isThisApp) {
+            try? fm.trashItem(at: support.appendingPathComponent(name), resultingItemURL: nil)
         }
     }
 
