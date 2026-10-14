@@ -4,7 +4,7 @@ import XCTest
 /// `LampFolders.synced` tells a generated app where the person's synced files are. Google Drive names its My Drive
 /// folder in the Mac's language ("Meine Ablage" in German), and an app that is handed the account's folder instead
 /// looks for "Invoices" one level too high. The helper is cut out of the template, compiled and run against a
-/// made-up home folder.
+/// made-up home folder. With mirrored files, My Drive is a link to the mirror, and the link is what the app keeps.
 final class SyncedFoldersTests: XCTestCase {
     func testGoogleDrivePointsAtMyDriveWhateverItIsCalled() throws {
         let support = Template.lampSupportSwift
@@ -28,12 +28,17 @@ final class SyncedFoldersTests: XCTestCase {
             storage + "GoogleDrive-kai@example.de/Geteilte Ablagen",
             storage + "GoogleDrive-ana@example.es/Mi unidad",
             storage + "GoogleDrive-new@example.com/Root of a language Lamp doesn't know",
+            storage + "GoogleDrive-mia@example.com/Shared drives",
+            "Google Drive mirror/My Drive",
             storage + "Dropbox",
             storage + "OneDrive-Personal",
             "Library/Mobile Documents/com~apple~CloudDocs"
         ] {
             try FileManager.default.createDirectory(at: home.appendingPathComponent(folder), withIntermediateDirectories: true)
         }
+        // Mirrored files: My Drive is a link to the folder they're mirrored into.
+        try FileManager.default.createSymbolicLink(at: home.appendingPathComponent(storage + "GoogleDrive-mia@example.com/My Drive"),
+                                                   withDestinationURL: home.appendingPathComponent("Google Drive mirror/My Drive"))
         try program.write(to: work.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
         let built = try run(Shell.compatibleSDK + "xcrun swiftc -o synced main.swift 2>&1", in: work)
         XCTAssertEqual(built.status, 0, built.output)
@@ -43,6 +48,7 @@ final class SyncedFoldersTests: XCTestCase {
         Dropbox - Library/CloudStorage/Dropbox
         Google Drive ana@example.es Library/CloudStorage/GoogleDrive-ana@example.es/Mi unidad
         Google Drive kai@example.de Library/CloudStorage/GoogleDrive-kai@example.de/Meine Ablage
+        Google Drive mia@example.com Library/CloudStorage/GoogleDrive-mia@example.com/My Drive
         Google Drive new@example.com Library/CloudStorage/GoogleDrive-new@example.com/Root of a language Lamp doesn't know
         Google Drive sam@example.com Library/CloudStorage/GoogleDrive-sam@example.com/My Drive
         OneDrive Personal Library/CloudStorage/OneDrive-Personal

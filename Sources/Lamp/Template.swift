@@ -7872,7 +7872,8 @@ enum Template {
             let folders = ((try? FileManager.default.contentsOfDirectory(atPath: account.path)) ?? [])
                 .filter { !$0.hasPrefix(".") }.sorted()
                 .map { account.appendingPathComponent($0) }
-                .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true }
+                // With mirrored files My Drive is a link to the mirror: follow it, but keep the link's own path.
+                .filter { var folder: ObjCBool = false; return FileManager.default.fileExists(atPath: $0.path, isDirectory: &folder) && folder.boolValue }
             if let named = folders.first(where: { known.contains($0.lastPathComponent.precomposedStringWithCanonicalMapping) }) {
                 return named
             }
