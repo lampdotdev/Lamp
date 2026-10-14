@@ -281,6 +281,7 @@ private struct IdeaStep: View {
     /// The dictated phrase the box last gave an Undo step to (`Dictation.phrase`).
     @State private var undoPhrase = 0
     @Environment(\.undoManager) private var undoManager
+    @State private var shiftReturn: Any?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -301,6 +302,9 @@ private struct IdeaStep: View {
                     .focused($focused)
                     .allowsHitTesting(arrival == nil)
                     .onChange(of: prompt) { if prompt != deck.ideas.first(where: { $0.id == chosen })?.prompt { chosen = nil } }
+                    // Return continues, as in the chat; Shift-Return (`newLineOnShiftReturn`) and Option-Return
+                    // start a new line.
+                    .onSubmit { if !prompt.trimmed.isEmpty { done() } }
                 Button(action: toggleDictation) {
                     Image(systemName: dictation.isListening ? "waveform" : "mic")
                         .font(.system(size: 15, weight: .medium))
@@ -376,12 +380,8 @@ private struct IdeaStep: View {
         .frame(maxWidth: .infinity)
         .overlay(alignment: .bottom) {
             Footer(back: back) {
-                BigButton(title: "Continue") {
-                    let source = chosen != nil ? "picked" : picked ? "edited" : wish != nil ? "site" : "typed"
-                    Analytics.capture(.welcomeIdeaDone, ["source": source, "dictated": dictated])
-                    next()
-                }
-                .disabled(prompt.trimmed.isEmpty)
+                BigButton(title: "Continue", action: done)
+                    .disabled(prompt.trimmed.isEmpty)
             } aside: {
                 if prompt.trimmed.isEmpty {
                     Button("Skip") {
@@ -393,17 +393,41 @@ private struct IdeaStep: View {
             }
         }
         .onAppear {
+            newLineOnShiftReturn()
             deck.prefetch()
             pasteOffered = Wish.offersPaste()
             // After the step has slid in: focus can't land while the old step still holds it.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { if !unwritten { focused = true } }
         }
-        .onDisappear { dictation.cancel() }
+        .onDisappear {
+            dictation.cancel()
+            shiftReturn.map(NSEvent.removeMonitor)
+            shiftReturn = nil
+        }
         // Back from the browser with something copied there.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             pasteOffered = Wish.offersPaste()
         }
         .task(id: unwritten) { await write() }
+    }
+
+    /// The text field reports Shift-Return as a plain Return, which would continue: the key is turned into a new
+    /// line before the field sees it, at the insertion point, unless an input method is composing.
+    private func newLineOnShiftReturn() {
+        guard shiftReturn == nil else { return }
+        shiftReturn = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 36 || event.keyCode == 76, event.modifierFlags.contains(.shift),
+                  let editor = event.window?.firstResponder as? NSTextView, editor.isFieldEditor, !editor.hasMarkedText()
+            else { return event }
+            editor.insertNewlineIgnoringFieldEditor(nil)
+            return nil
+        }
+    }
+
+    private func done() {
+        let source = chosen != nil ? "picked" : picked ? "edited" : wish != nil ? "site" : "typed"
+        Analytics.capture(.welcomeIdeaDone, ["source": source, "dictated": dictated])
+        next()
     }
 
     /// The box shows the wish as far as it has been written; typing is theirs from the first key.
