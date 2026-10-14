@@ -417,7 +417,7 @@
   {
     "name": "show_result",
     "label": "Show result",
-    "description": "Shows the person what this request came to, as a card in the chat once the app is built and open: its picture, one sentence, then rows. It is your whole ending: after calling it write nothing more. Two uses. After a change that gives them something new to find (a button, menu, page, shortcut or new way of doing something), whether or not you tried it: `news`, a row per new thing with where it is, plus `untried` if there's something you didn't try. After a new app, or a big change in which you chose things for them: `guesses`, each with a button for the other way, and maybe an `idea`. Not for a small change or a fix they'll see at once (bigger text, a color, a bug gone), and not for an answer: those get one sentence.",
+    "description": "Shows the person what this request came to, as a card in the chat once the app is built and open: its picture and one sentence. It is your whole ending: after calling it write nothing more. Two uses. After a change that gives them something new to find (a button, menu, page, shortcut or new way of doing something), whether or not you tried it: the `summary` alone, plus `untried` if there's something you didn't try. After a new app, or a big change in which you chose things for them: `guesses`, each with a button for the other way, and maybe an `idea`. Not for a small change or a fix they'll see at once (bigger text, a color, a bug gone), and not for an answer: those get one sentence.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -427,7 +427,7 @@
       "properties": {
         "summary": {
           "type": "string",
-          "description": "What they now have, 12 words at most, without the app's name or “is ready”: “A week of dinners and one shared grocery list.”"
+          "description": "What they now have, 12 words at most, without the app's name or “is ready”: “A week of dinners and one shared grocery list.” After a change, the new thing and where it is: “Star a meal beside its name to save it.”"
         },
         "guesses": {
           "type": "array",
@@ -476,28 +476,6 @@
             "request": {
               "type": "string",
               "description": "What clicking Add It sends you"
-            }
-          }
-        },
-        "news": {
-          "type": "array",
-          "description": "Up to 4 new things this change added, a row each: what they can now do and wouldn't find by themselves. Not how you built it.",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "what",
-              "where"
-            ],
-            "properties": {
-              "what": {
-                "type": "string",
-                "description": "The new thing, 5 words at most: “Save a meal”"
-              },
-              "where": {
-                "type": "string",
-                "description": "Where to find it, a few words: “The star beside its name”"
-              }
             }
           }
         },

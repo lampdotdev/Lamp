@@ -118,18 +118,10 @@ enum Talk {
         var request: String
     }
 
-    /// Something a change added that the person can now do, and where in the app it is.
-    struct News: Codable, Equatable {
-        var what: String
-        var place: String
-    }
-
     struct Result: Codable, Equatable {
         var summary: String
         var guesses: [Guess]
         var idea: Idea?
-        /// What an ordinary change added, a row each. Optional so that cards from before there were any still read.
-        var news: [News]?
         /// What the agent built and didn't try in the running app, offered back as something to try.
         var untried: String?
         /// The version this request made, for its picture.
@@ -138,8 +130,7 @@ enum Talk {
         var switched: [Int]?
 
         var text: String {
-            ([summary] + (news ?? []).map { "- \($0.what): \($0.place)" }
-                + guesses.map { "- \($0.guess) (or: \($0.instead))" } + (idea.map { ["- Idea: \($0.title)"] } ?? [])
+            ([summary] + guesses.map { "- \($0.guess) (or: \($0.instead))" } + (idea.map { ["- Idea: \($0.title)"] } ?? [])
                 + (untried.map { ["- Not tried: \($0)"] } ?? []))
                 .joined(separator: "\n")
         }
@@ -151,13 +142,12 @@ enum Talk {
     static let questionLimit = 4
     static let optionLimit = 4
     static let guessLimit = 3
-    static let newsLimit = 4
 
     /// The most words each piece of a card may have. A card is read at a glance and answered with a click: a
     /// long sentence in it is a paragraph again, set in bold. Too long goes back to the agent to say shorter, so
     /// every engine is held to the same; the tools' descriptions give the same numbers.
     enum Words {
-        static let question = 10, option = 4, summary = 12, guess = 6, instead = 4, news = 5
+        static let question = 10, option = 4, summary = 12, guess = 6, instead = 4
     }
 
     static func words(in text: String) -> Int { text.split(whereSeparator: \.isWhitespace).count }
@@ -231,18 +221,7 @@ enum Talk {
                   let request = (item["request"] as? String)?.trimmed.nilIfEmpty else { return nil }
             return Idea(title: title, detail: (item["detail"] as? String)?.trimmed.nilIfEmpty, request: request)
         }
-        let news: [News] = (arguments["news"] as? [[String: Any]] ?? []).compactMap { item in
-            guard let what = (item["what"] as? String)?.trimmed.nilIfEmpty,
-                  let place = (item["where"] as? String)?.trimmed.nilIfEmpty else { return nil }
-            return News(what: what, place: place)
-        }
-        guard news.count <= newsLimit else {
-            return .failure(.message("At most \(newsLimit) new things: the ones they wouldn't find by themselves."))
-        }
-        for item in news {
-            if let trouble = tooLong(item.what, Words.news, as: "a new thing's `what`") { return .failure(trouble) }
-        }
-        return .success(Result(summary: summary, guesses: guesses, idea: idea, news: news.isEmpty ? nil : news,
+        return .success(Result(summary: summary, guesses: guesses, idea: idea,
                                untried: (arguments["untried"] as? String)?.trimmed.nilIfEmpty))
     }
 
