@@ -411,9 +411,8 @@ stepper takes a number or a step, and what has no action of its own, or isn't li
 is clicked at a point, pixels in the picture. Lamp tells an app built before the list existed by a line of the
 heading in its binary (`Store.screenTextMarker`): such an app is told to be rebuilt when a target is used.
 
-A Mac app can be changed while it's in use (Settings → Building, on unless switched off, `MagicPanel.switchKey`; apps
-show the wand only while the file `MagicPanel.flag` beside their folders says it's on, checked each time a window
-comes forward): `LampMagic` in LampSupport.swift puts a wand in each of its windows'
+A Mac app can be changed while it's in use (apps show the wand while the file `MagicPanel.flag`, which Lamp writes
+at launch, is beside their folders, checked each time a window comes forward): `LampMagic` in LampSupport.swift puts a wand in each of its windows'
 title bars, which opens `<scheme>://magic?app=<slug>&frame=<its window>` without bringing Lamp forward. Lamp shows
 that app's chat (`ProjectView`, the same chat as in its window) in a non-activating floating panel beside the app's
 window (`MagicPanel`), which the app keeps placed by posting its window's frame as it moves. What's half done in one
@@ -433,7 +432,7 @@ accessibility tree (`LampDriver.elements`), and on a click leaves a cropped pict
 says what it is; Lamp attaches that picture to the message, named after the thing ("Save button.png",
 `MagicPanel.name`), and takes a picture only from that folder.
 
-With its own setting on (Settings → Building, "Update open apps without restarting them", on unless switched off, `LiveReload.switchKey`; it applies whether the change was asked for beside the app or in Lamp's window), a change goes into the open app without a restart when it can (`LiveReload`). The
+Whether the change was asked for beside the app or in Lamp's window, a change goes into the open app without a restart when it can (`LiveReload`). The
 Mac app, or the Mac half of an app for both while Try On points at this Mac, with no widget or share extension, is
 built live: build.sh with `LAMP_LIVE=1` copies Sources into `.lamp/live` with each `var body: some View` wrapped
 (`Template.liveCopySteps`: the body becomes `AnyView` and reads `LampLive.generation`, so its type never changes and

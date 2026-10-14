@@ -474,8 +474,6 @@ struct BuildingSettings: View {
         Binding(get: { CommandApproval(rawValue: approval)?.rawValue ?? CommandApproval.risky.rawValue }, set: { approval = $0 })
     }
     @AppStorage("askOutsideFolder") private var askOutsideFolder = true
-    @AppStorage(MagicPanel.switchKey) private var magic = true
-    @AppStorage(LiveReload.switchKey) private var live = true
     @AppStorage("shareAppLog") private var shareLog = true
     @AppStorage("shareAppPictures") private var sharePictures = true
     @State private var model = Builder.piModel
@@ -724,18 +722,9 @@ struct BuildingSettings: View {
                     }
                 }
             }
-            Section("Changing Open Apps") {
-                SettingsCheckboxes {
-                    Toggle("Show a wand in each app to change it while using it", isOn: $magic)
-                        .checkboxNote("It opens the app's chat beside its window.")
-                    Toggle("Update open apps without restarting them", isOn: $live)
-                        .checkboxNote("Most changes go straight into a Mac app that's open, keeping what's on screen.")
-                }
-            }
             PhoneSigningSection(phoneApps: hasPhoneApps)
         }
         .settingsPane()
-        .onChange(of: magic) { MagicPanel.syncSwitch() }
         .onChange(of: notify) { Notifier.shared.setBadge(store.unread.count) }
         .task { notificationsDenied = await Notifier.shared.isDenied() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in

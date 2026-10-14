@@ -55,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PhoneTools.restoreChoice()
         MainActor.assumeIsolated {
             Notifier.shared.start()
-            MagicPanel.syncSwitch()
+            MagicPanel.start()
         }
     }
 

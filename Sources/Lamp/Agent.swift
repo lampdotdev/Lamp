@@ -152,7 +152,7 @@ enum Agent {
     """
 
     /// With each request to an app that's updated in place (LiveReload): which changes keep it open. Here and
-    /// not in the system prompt, since it depends on Settings → Building and the app's kind.
+    /// not in the system prompt, since it depends on the app's kind.
     static let liveNote = """
 
 

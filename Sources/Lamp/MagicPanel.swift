@@ -12,11 +12,9 @@ import Combine
 final class MagicPanel: NSObject, NSWindowDelegate {
     static let shared = MagicPanel()
 
-    /// Settings → Building. Apps show the wand only while it's on: they look for `flag`, beside the apps'
-    /// folders, each time a window of theirs comes to the front, so turning it off takes the wand away too.
-    static let switchKey = "experimentMagic"
-    /// On unless switched off: someone who chose while it was an experiment keeps that choice.
-    static var isOn: Bool { UserDefaults.standard.object(forKey: switchKey) as? Bool ?? true }
+    /// Apps show the wand while this file is there, beside the apps' folders, looked for each time a window of
+    /// theirs comes to the front (`LampMagic`). Lamp writes it at launch. It was a switch in Settings while the
+    /// wand was an experiment; apps built since read it still.
     static var flag: URL { Store.shared.root.appendingPathComponent(".magic") }
 
     /// An app's wand, when Lamp is running, says so directly rather than by a link (`LampMagic`), so this Lamp
@@ -49,15 +47,10 @@ final class MagicPanel: NSObject, NSWindowDelegate {
         }
     }
 
-    /// The flag apps read, made to agree with the switch: when it changes, and at launch.
-    static func syncSwitch() {
+    /// At launch: listening for the wand, and the file apps read to show it.
+    static func start() {
         _ = listen
-        if isOn {
-            FileManager.default.createFile(atPath: flag.path, contents: nil)
-        } else {
-            try? FileManager.default.removeItem(at: flag)
-            shared.close()
-        }
+        FileManager.default.createFile(atPath: flag.path, contents: nil)
     }
 
     private var panel: NSPanel?
@@ -75,7 +68,7 @@ final class MagicPanel: NSObject, NSWindowDelegate {
     private static let gap: CGFloat = 8
 
     func show(_ id: String, beside frame: NSRect? = nil) {
-        guard Self.isOn, let project = Store.shared.projects.first(where: { $0.id == id }) else { return }
+        guard let project = Store.shared.projects.first(where: { $0.id == id }) else { return }
         if appID != project.id { close() }
         appID = project.id
         if let frame, frame.width > 0, frame.height > 0 { appFrame = frame }

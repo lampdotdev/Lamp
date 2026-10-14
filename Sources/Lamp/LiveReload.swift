@@ -1,25 +1,19 @@
 import Foundation
 import CryptoKit
 
-/// Putting a change into a Mac app while it's open, without a restart (Settings → Building, its own switch).
+/// Putting a change into a Mac app while it's open, without a restart.
 /// While the experiment is on, a Mac app is built live (build.sh with LAMP_LIVE: debug, -interposable, from the
 /// copy of its sources in `.lamp/live` with each view's body wrapped). After a change, the files it touched are
 /// compiled into a library, and the running app loads it (`LampLive` in LampSupport.swift), keeping its state.
 /// What can't go in that way (a stored property or an enum case added, removed or changed, a file removed, the
 /// App itself, Lamp's own file, the app's assets or settings) is installed as before, by reopening the app.
 enum LiveReload {
-    /// Whether the app is built live: an experiment, for a Mac app, or the Mac half of an app for both while
+    /// Whether the app is built live: a Mac app, or the Mac half of an app for both while
     /// Try On points at this Mac, with nothing built beside it (a widget or share extension, which share no
     /// code with the open app).
     @MainActor static func eligible(_ project: LampProject) -> Bool {
-        isOn && project.platform.hasMac && !project.onIOS && !Template.hasWidget(project) && !Template.hasShare(project)
+        project.platform.hasMac && !project.onIOS && !Template.hasWidget(project) && !Template.hasShare(project)
     }
-
-    /// Settings → Building: on unless switched off (someone who chose while it was an experiment keeps that
-    /// choice). Turning it on or off changes how apps are built from their next build on (a live build, or the
-    /// usual one).
-    static let switchKey = "experimentLiveReload"
-    static var isOn: Bool { UserDefaults.standard.object(forKey: switchKey) as? Bool ?? true }
 
     static func folder(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/live") }
     /// The sources the build last used, wrapped (build.sh writes them).
