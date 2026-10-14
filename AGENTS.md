@@ -460,7 +460,7 @@ On the person's own iPhone the wand is inside the app, and **the app carries the
 draws the chat, never the app". It was chosen over a separate Lamp app on the phone (a second app to install and pair,
 and one of a free team's three app slots) because a phone has no room beside the app and Lamp can't draw over it. What
 it costs: the app's own code can send Lamp a request for a change, as the person can. What keeps that narrow
-(`PhoneWand`): the same Experimental switch as the Mac's wand; only an iPhone app, or the iPhone half of an app for
+(`PhoneWand`): only an iPhone app, or the iPhone half of an app for
 both, whose Try On points at the person's phone (`PhoneWand.isAvailable`); only from another device on the network,
 never from this Mac, where the agent, the simulator's copy and the Mac half of an app for both can all read the
 secret (the network listener answers on every address, the Mac's own and `::1` among them, so `Gateway.isThisMac`

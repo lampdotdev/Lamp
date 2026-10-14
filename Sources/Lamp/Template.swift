@@ -3309,7 +3309,7 @@ enum Template {
 
     /// The wand in this app on the person's phone: a button over the app that opens a sheet with the app's chat in
     /// Lamp and a box to ask for a change, which Lamp makes on the Mac and installs here. It shows only while
-    /// Lamp, on the same Wi‑Fi, says the wand is on (Settings → Experimental) and this app opens on this phone.
+    /// Lamp, on the same Wi‑Fi, answers that this app opens on this phone.
     /// Every message to Lamp and back is sealed with the secret that came with the build, and each is sent with its
     /// own id, so sending again after a lost answer never asks for the change twice.
     @MainActor
