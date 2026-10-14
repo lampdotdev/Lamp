@@ -951,7 +951,10 @@ final class Store: ObservableObject {
         let name = devices.first(where: { $0.udid == udid })?.name
         let said = name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
             ?? "\(changed.name) will open on the \(simulatorName(changed)) simulator from now on."
-        guard udid == nil && (project.family != family || otherSimulator) else {
+        // A new place for the iPhone copy (another simulator, a phone, or back from a phone) retires the copy on
+        // the old one, so Play and Stop are about the one chosen; an app for both's Mac copy stays open.
+        let otherTarget = project.device != udid || (udid == nil && (project.family != family || otherSimulator))
+        guard otherTarget else {
             log(changed, .status, said)
             finish(changed)
             return
@@ -4159,10 +4162,12 @@ final class Store: ObservableObject {
         simulatorApps = simulatorApps.filter { Simulator.isRunning(pid: $0.value.pid) }
         deviceApps = deviceApps.filter { $0.value.isRunning }
         let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys)
+        // A build or icon held for a Mac copy goes in when that copy closes, even with its iPhone copy still open.
+        let closedOnMac = openOnMac.subtracting(onMac)
         if Set(onMac) != openOnMac { openOnMac = Set(onMac) }
         if Set(onIOS) != openOnIOS { openOnIOS = Set(onIOS) }
         let ids = onMac + onIOS
-        let closed = openApps.subtracting(ids)
+        let closed = openApps.subtracting(ids).union(closedOnMac)
         if Set(ids) != openApps { openApps = Set(ids) }
         if !closed.isEmpty { installHeldIcons(for: closed) }
     }
