@@ -2471,8 +2471,9 @@ final class Store: ObservableObject {
             // A command the sandbox confines can only change the app's own folder (Sandbox), so only one the
             // checks find risky asks: one they're merely unsure of, or that doesn't seem to match the request
             // (looking for the app's process while fixing it), runs. Asking about those was most of the cards,
-            // nearly all of them allowed.
-            if judgment.verdict == .run || (sandboxed && judgment.verdict == .unsure) {
+            // nearly all of them allowed. A check that couldn't be made at all still asks: the sandbox leaves the
+            // network open, so it isn't the only guard.
+            if judgment.verdict == .run || (sandboxed && judgment.verdict == .unsure && judgment.judged) {
                 log(project, .status, "Ran: \(command)")
                 return true
             }
