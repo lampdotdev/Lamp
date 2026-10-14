@@ -6447,12 +6447,14 @@ enum Template {
             timer?.tolerance = min(60, delay / 10)
         }
 
+        /// The run counts once it's finished: one iOS cut short is still due, and runs again at the next wake.
+        /// While it runs nothing starts another (`running`).
         @discardableResult private func fire() -> Task<Void, Never> {
             if let running { return running }
-            UserDefaults.standard.set(Date(), forKey: lastRunKey)
             let task = Task { @MainActor [weak self] in
                 guard let self else { return }
                 await work()
+                UserDefaults.standard.set(Date(), forKey: lastRunKey)
                 running = nil
                 arm()
             }
