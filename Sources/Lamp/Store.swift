@@ -151,7 +151,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// `widget` is the card of an app that has a widget (`WidgetCard`): how to add it, then that it's there.
     /// `noted` is the receipt for a save of Lamp's notes (`NoteCard`).
     /// `ask` and `result` are the agent's own cards (`Talk`): questions to click through, and what a request
-    /// made with its guesses as buttons. Their text is the same in plain words.
+    /// made. Their text is the same in plain words.
     /// `iphoneSetup` says a first request that read as an iPhone app was made for the Mac, since this Mac can't
     /// build one yet, and offers the setup (`IPhoneSetupLine`); its text is the kind that was wanted.
     enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup }
@@ -2956,16 +2956,6 @@ final class Store: ObservableObject {
         logs[project.id]?[index].ask = ask
         saveChat(project)
         send(Talk.message(for: ask, answers: answers), answering: line.id, to: project)
-    }
-
-    /// A guess on a result card turned the other way: noted on the card, which shows it, then sent as the
-    /// agent's own words for that request.
-    func switchGuess(_ index: Int, on line: LogLine, in project: LampProject) {
-        guard let result = line.result, result.guesses.indices.contains(index), result.switched == nil,
-              let at = logs[project.id]?.firstIndex(where: { $0.id == line.id }) else { return }
-        logs[project.id]?[at].result?.switched = [index]
-        saveChat(project)
-        send(result.guesses[index].request, answering: line.id, to: project)
     }
 
     /// After a restore, the app in Lamp's list is what the restored version was made for, as `Versions.restoreFiles`

@@ -435,11 +435,10 @@ struct ChipRow: View {
     }
 }
 
-/// What a request made: its picture and one sentence. A new app's card then has a row for each thing the agent
-/// chose for the person, with a button for the other way; an ordinary change's sentence says what's new and
-/// where, with no rows under it, since rows of new things beside the picture read as captions of it. What the
-/// agent didn't try is a row to try it. The rows with buttons are there while they'd still do what they say,
-/// until the person asks for something else.
+/// What a request made: its picture and one sentence, a new app's as much as a change's. Rows under the picture
+/// read as captions of it, and a new app's guesses and idea there made a form to go through when it's the app
+/// the person wants to try. What the agent didn't try is a row to try it, there while it would still do what it
+/// says, until the person asks for something else.
 struct ResultCard: View {
     let line: LogLine
     let dir: URL
@@ -471,13 +470,10 @@ struct ResultCard: View {
                     Spacer(minLength: 0)
                 }
                 .padding(14)
-                // What the agent chose is the chip that's on, and the other way is the chip beside it: one
-                // click turns it. A guess that was turned stays on the card as what the person chose.
+                // A card saved while guesses were buttons keeps the one the person turned, as what they chose:
+                // the chat doesn't show the message that click sent (`Talk.shows`).
                 ForEach(Array(result.guesses.enumerated()), id: \.offset) { index, guess in
-                    let turned = result.switched?.contains(index) == true
-                    if isCurrent && result.switched == nil {
-                        chosen(guess) { store.switchGuess(index, on: line, in: project) }
-                    } else if turned {
+                    if result.switched?.contains(index) == true {
                         Divider()
                         Label {
                             Text(guess.instead).fontWeight(.medium)
@@ -488,31 +484,15 @@ struct ResultCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                if isCurrent {
-                    if let idea = result.idea {
-                        row(idea.title, detail: idea.detail, button: "Add It") { store.send(idea.request, to: project) }
-                    }
-                    if let untried = result.untried {
-                        row(untried, detail: "Lamp hasn't tried this yet.", button: "Try It") {
-                            store.send(Talk.tryRequest(untried), to: project)
-                        }
+                if isCurrent, let untried = result.untried {
+                    row(untried, detail: "Lamp hasn't tried this yet.", button: "Try It") {
+                        store.send(Talk.tryRequest(untried), to: project)
                     }
                 }
             }
             .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
             .frame(maxWidth: 620, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func chosen(_ guess: Talk.Guess, turn: @escaping () -> Void) -> some View {
-        VStack(spacing: 0) {
-            Divider()
-            ChipRow(options: [Talk.Option(title: guess.guess), Talk.Option(title: guess.instead)], chosen: guess.guess) {
-                if $0 == guess.instead { turn() }
-            }
-            .padding(.horizontal, 14).padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

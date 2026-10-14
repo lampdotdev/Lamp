@@ -14,23 +14,19 @@ final class TalkTests: XCTestCase {
         // Where to find what it made stays on the card, through the chat being saved again.
         let saved = try JSONDecoder().decode(Talk.Result.self, from: JSONEncoder().encode(read))
         XCTAssertEqual(saved.text, "Save a meal\n- Save a meal: The star beside its name")
+        // A new app's card from while it had guesses as buttons and an idea, one guess turned.
+        let withGuesses = Data(#"{"summary":"A week of dinners.","guesses":[{"guess":"One list","instead":"A list each","request":"Give each person a list."}],"idea":{"title":"Read recipes","request":"Read recipes from a photo."},"switched":[0]}"#.utf8)
+        let first = try JSONDecoder().decode(Talk.Result.self, from: withGuesses)
+        XCTAssertEqual(first.guesses.first?.instead, "A list each")
+        XCTAssertEqual(first.switched, [0])
     }
 
     /// A result card as an agent really wrote one, for a wish to plan a family's dinners: its summary was shown as
-    /// a bold paragraph over long chips. It goes back to the agent to say shorter; the same card with short words
-    /// is shown.
+    /// a bold paragraph. It goes back to the agent to say shorter; the same card with short words is shown.
     func testALongCardIsTurnedBack() {
-        func card(_ summary: String, _ guess: String) -> [String: Any] {
-            ["summary": summary,
-             "guesses": [["guess": guess, "instead": "Group by store aisle", "request": "Group the grocery list by store aisle."]]]
-        }
-        let sent = card("A week of dinner nights to fill in, a set of family favorites to choose from, and a grocery list that builds itself from the plan.",
-                        "Plans dinner only, one per night")
+        let sent: [String: Any] = ["summary": "A week of dinner nights to fill in, a set of family favorites to choose from, and a grocery list that builds itself from the plan."]
         guard case .failure = Talk.result(from: sent) else { return XCTFail("a 27-word summary was shown") }
-        let longChip = card("A week of dinners and a grocery list.",
-                            "Grocery list combines all the week's ingredients alphabetically")
-        guard case .failure = Talk.result(from: longChip) else { return XCTFail("a 7-word guess was shown") }
-        guard case .success = Talk.result(from: card("A week of dinners and a grocery list.", "One A–Z grocery list")) else {
+        guard case .success = Talk.result(from: ["summary": "A week of dinners and a grocery list."]) else {
             return XCTFail("a short card was turned back")
         }
     }

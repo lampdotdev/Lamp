@@ -417,7 +417,7 @@
   {
     "name": "show_result",
     "label": "Show result",
-    "description": "Shows the person what this request came to, as a card in the chat once the app is built and open: its picture and one sentence. It is your whole ending: after calling it write nothing more. Two uses. After a change that gives them something new to find (a button, menu, page, shortcut or new way of doing something), whether or not you tried it: the `summary` alone, plus `untried` if there's something you didn't try. After a new app, or a big change in which you chose things for them: `guesses`, each with a button for the other way, and maybe an `idea`. Not for a small change or a fix they'll see at once (bigger text, a color, a bug gone), and not for an answer: those get one sentence.",
+    "description": "Shows the person what this request came to, as a card in the chat once the app is built and open: its picture and one sentence. It is your whole ending: after calling it write nothing more. For a new app, a big change, or a change that gives them something new to find (a button, menu, page, shortcut or new way of doing something), whether or not you tried it: the `summary`, plus `untried` if there's something you didn't try. Not for a small change or a fix they'll see at once (bigger text, a color, a bug gone), and not for an answer: those get one sentence.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -428,56 +428,6 @@
         "summary": {
           "type": "string",
           "description": "What they now have, 12 words at most, without the app's name or “is ready”: “A week of dinners and one shared grocery list.” After a change, the new thing and where it is: “Star a meal beside its name to save it.”"
-        },
-        "guesses": {
-          "type": "array",
-          "description": "Up to 3 choices you made that they're most likely to want the other way. Each is a real either/or; something to add goes in `idea`, not here.",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "guess",
-              "instead",
-              "request"
-            ],
-            "properties": {
-              "guess": {
-                "type": "string",
-                "description": "What you chose, 6 words at most: “One grocery list for everyone”"
-              },
-              "instead": {
-                "type": "string",
-                "description": "The button: the choice you didn't make, in four words at most. It replaces the guess, it never adds to it: “A list per person”, not “Add reminders too”."
-              },
-              "request": {
-                "type": "string",
-                "description": "What clicking sends you, as the person would say it: “Give each person their own grocery list.”"
-              }
-            }
-          }
-        },
-        "idea": {
-          "type": "object",
-          "description": "One thing worth adding that they haven't asked for or turned down, such as something their device can do on its own",
-          "additionalProperties": false,
-          "required": [
-            "title",
-            "request"
-          ],
-          "properties": {
-            "title": {
-              "type": "string",
-              "description": "The idea in a few words: “Read recipes from a photo”"
-            },
-            "detail": {
-              "type": "string",
-              "description": "One short line on why it's easy or useful"
-            },
-            "request": {
-              "type": "string",
-              "description": "What clicking Add It sends you"
-            }
-          }
         },
         "untried": {
           "type": "string",

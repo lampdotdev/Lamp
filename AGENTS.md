@@ -39,17 +39,19 @@ A capability given to one engine must be given to all of them that can take it, 
   tools' descriptions), and a call over it is turned away for the agent to say shorter, whichever engine it is. Its
   pieces are tools: `ask` puts questions in the chat as a card answered by clicking, laid out as the agent
   chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own), and `show_result` is
-  the card for what a request came to: for a new app or a big change the agent's guesses as buttons, for an
-  ordinary change that adds things to find its one sentence saying what's new and where (no rows: under the
-  picture they read as captions of it; a card saved while it had them keeps them as lines under its sentence, `Talk.News`) and what wasn't tried as a Try It button. The card takes the place of the reply and of the line saying the app is ready (`LogLine.visible`); a
+  the card for what a request came to: its picture and one sentence, for a new app or a big change what they
+  now have, for an ordinary change that adds things to find what's new and where, and what wasn't tried as a
+  Try It button. No rows: under the picture they read as captions of it, and a new app's guesses and idea there
+  made a form to go through when it's the app the person wants to try. Cards saved with them still read
+  (`Talk.News`, `Talk.Guess`, `Talk.Idea`): what's new as lines under the sentence, a guess the person turned as
+  what they chose, and nothing else. The card takes the place of the reply and of the line saying the app is ready (`LogLine.visible`); a
   small change or a fix keeps one sentence and that line. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
   tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the
   person's next message (`Store.answer`), so a click and a typed answer reach every engine the same way and
   the message box always answers a card (`Talk.open`). A click's message carries each question with its
   answer (`Talk.message`), for an engine that reads the conversation again later; the chat doesn't show it,
-  since the card does (`LogLine.fromCard`, `Talk.shows`). A guess on a result card is two chips, the one
-  chosen and the other way: a click turns it (`Store.switchGuess`) and the card keeps what was picked. An
+  since the card does (`LogLine.fromCard`, `Talk.shows`). An
   answer that has to wait in line, clicked or typed, folds its card at once and opens it again if it's taken
   back (`Talk.unqueue`); waiting for setup, it keeps its card across a relaunch (`QueuedMessage.saved`).
   `Talk.Ask` also reads the shape cards were first saved in (options as plain words, `chosen`, `dismissed`):

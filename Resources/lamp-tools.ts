@@ -21,7 +21,7 @@
  * - `make_app_for`: asks Lamp to make the app for the Mac, the iPhone and iPad, or both; the reply says how to
  *   adapt the code.
  * - `ask`, `show_result`: the agent's cards. `ask` puts questions in the chat as a card the person answers by
- *   clicking; `show_result` is the card for what a request made, with the agent's guesses as buttons. Lamp
+ *   clicking; `show_result` is the card for what a request made: its picture and one sentence. Lamp
  *   draws both and turns a click into the person's next message, so neither waits for an answer here.
  * - `web_fetch`: reads a web page (or any URL) as text. Reading needs no approval.
  * - pi's file tools (read, edit, write, grep, find, ls) are checked before they run: inside the app's folder
