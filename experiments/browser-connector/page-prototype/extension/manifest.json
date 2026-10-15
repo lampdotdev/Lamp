@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Lamp page-sidebar prototype",
+  "version": "0.0.1",
+  "description": "Prototype: the side panel shows a page Lamp serves on this Mac.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAie85T/zr5o9WJ1eksnZjBtFSkMECJsRuc2BnbPjsdmDQdPenxe+cZHqEhlDCyaWF51RoGqM2IXx3s3edmq+oPWezWN94IxObSKK6vstvGlIo3yN0O54FlIMw0VELad51KxavAk0+TU4S/CJ/kJ9zNQH65o43xvJ20Y21fG4AVtLOErlvK0oYHJQK4nbZ/J7gp/2N6InyU10CeSgICk1D2QSsUFThptLr9rYJxARMV5Y/0xm61tCsDtbYH4bnoGZshglL7JpA0EIjqH1OWBEO68a1bAPMr0ETFJk/4c1lgS8TnDsVC7i2bvQK4Kjr/ep4cslmLzYIzSebYE4KKQ2ifQIDAQAB",
+  "minimum_chrome_version": "116",
+  "permissions": ["activeTab", "scripting", "sidePanel"],
+  "action": {"default_title": "Lamp"},
+  "background": {"service_worker": "worker.js"}
+}
