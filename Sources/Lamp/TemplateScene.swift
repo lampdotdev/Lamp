@@ -194,6 +194,12 @@ extension Template {
             entity.name = name
             entity.position = position
             entity.orientation = simd_quatf(angle: heading, axis: [0, 1, 0])
+            // A prop that turns or slides as a whole measures that from where it's placed, not where it was made.
+            if var part = entity.components[LampPart.self] {
+                part.rest = entity.orientation
+                part.restPosition = entity.position
+                entity.components.set(part)
+            }
             (parent ?? root).addChild(entity)
             return entity
         }
@@ -216,7 +222,28 @@ extension Template {
                     let fresh = make()
                     for child in Array(old.children) { child.removeFromParent() }
                     for child in Array(fresh.children) { old.addChild(child, preservingWorldTransform: false) }
-                    if let model = fresh.components[ModelComponent.self] { old.components.set(model) }
+                    // What the prop's code sets on the entity itself goes over too: its look, its collision shape,
+                    // its physics and what it does when clicked or dragged. Where it is, how it's moving and how
+                    // far a part has been turned or slid stay the running app's.
+                    for kind in [ModelComponent.self, CollisionComponent.self] as [any Component.Type] {
+                        if let new = fresh.components[kind] { old.components.set(new) } else { old.components.remove(kind) }
+                    }
+                    if var body = fresh.components[PhysicsBodyComponent.self] {
+                        if let mode = old.components[PhysicsBodyComponent.self]?.mode, mode == .kinematic { body.mode = mode }
+                        old.components.set(body)
+                    } else {
+                        old.components.remove(PhysicsBodyComponent.self)
+                    }
+                    if var part = fresh.components[LampPart.self] {
+                        if let was = old.components[LampPart.self] {
+                            part.rest = was.rest
+                            part.restPosition = was.restPosition
+                            part.value = was.value
+                        }
+                        old.components.set(part)
+                    } else {
+                        old.components.remove(LampPart.self)
+                    }
                 }
             }
         }
@@ -332,7 +359,8 @@ extension Template {
         /// few milliseconds' worth each frame so the app never stalls, and taken away again once well out of
         /// reach. So the app opens at once however big the world is. `make` returns what's drawn on one tile (its
         /// buildings, roads, trees, signs), or nil for an empty one; what the game itself needs everywhere
-        /// (collisions, routes, the map's data) stays outside it, made once.
+        /// (collisions, routes, the map's data) stays outside it, made once. Have `make` call a named function, so a
+        /// live change to how tiles look reaches the open app.
         func stream(tile size: Float = 100, radius: Float = 400, around: (@MainActor () -> SIMD3<Float>)? = nil,
                     make: @escaping @MainActor (LampTile) -> Entity?) {
             for entity in streaming?.built.values ?? [:].values { entity.removeFromParent() }
@@ -381,7 +409,9 @@ extension Template {
             streaming = s
         }
 
-        /// Drops every built tile, so they're made again (by the new code, after a live change).
+        /// Drops every built tile, so they're made again as they come into reach. After a live change, the new code
+        /// is what makes them only if `make` calls a named function (`{ tile in World.tile(tile) }`): a live change
+        /// replaces functions, and a closure written out in place keeps running the code it was made with.
         func restream() {
             guard var s = streaming else { return }
             for entity in s.built.values { entity.removeFromParent() }
