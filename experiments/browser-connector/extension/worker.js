@@ -86,8 +86,16 @@ async function replaceRules(apps) {
   rulesKey = key;
   await chrome.storage.local.set({rulesKey});
 }
+// The list is kept for when Lamp is closed: an app that serves its own page works while it's open, Lamp or not.
 async function list() {
-  const state = await native({op: 'surface-list'});
+  let state;
+  try { state = await native({op: 'surface-list'}); }
+  catch (error) {
+    const saved = (await chrome.storage.local.get('apps')).apps;
+    if (!saved) throw error;
+    return {apps: saved, lampClosed: true};
+  }
+  await chrome.storage.local.set({apps: state.apps});
   await syncRules(state.apps).catch(() => {});
   return state;
 }
@@ -164,6 +172,14 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   (async () => {
     const tab = Number(message.tab);
     if (message.op === 'surface-list') return list();
+    // The name an app's page is told for this tab: opaque, the same for one tab in one run of this profile.
+    if (message.op === 'tab-key') {
+      const {profile, run} = await profileReady;
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${profile}:${run}:${tab}`)));
+      return {key: 't' + [...digest.slice(0, 6)].map(b => b.toString(16).padStart(2, '0')).join('')};
+    }
+    // An app's own page asks for the page the person is on; the sidebar passes that on only right after a click.
+    if (message.op === 'page-read') return capture(tab, message.scope === 'selection' ? 'selection' : 'page');
     if (message.op === 'surface-open') return native({op: 'surface-open', app: message.app});
     if (message.op === 'surface-view') return native({op: 'surface-view', app: message.app, tab});
     if (message.op !== 'surface-action') throw new Error('Unknown action.');

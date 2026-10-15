@@ -113,11 +113,15 @@ async function refresh() {
     const saved = await chrome.storage.session.get([keys.tab, keys.pick, keys.draft]);
     info = saved[keys.tab] || {}; drafts = saved[keys.draft] || {};
     if (!selected && saved[keys.pick]) selected = saved[keys.pick];
-    ({apps} = await call({op: 'surface-list'}));
+    const listed = await call({op: 'surface-list'});
+    apps = listed.apps; lampClosed = !!listed.lampClosed;
     const app = choose();
     $('empty').hidden = apps.length > 0;
     if (transportProblem) { error(); transportProblem = false; }
-    if (!app) { document.querySelector('main').hidden = true; note(''); return; }
+    if (!app) { document.querySelector('main').hidden = true; showPage(null); note(''); return; }
+    if (app.page?.url) return showPage(app);
+    showPage(null);
+    if (lampClosed) throw new Error('Open Lamp on this Mac, then try again.');
     const state = await call({op: 'surface-view', app: app.id});
     if (!state.surface) {
       // An app that isn't open on the Mac is opened when chosen, once; it shows here as soon as it's up.
@@ -133,5 +137,46 @@ async function refresh() {
   } catch (e) { document.querySelector('main').hidden = true; transportProblem = true; error(e); }
   finally { refreshing = false; }
 }
+// An app that serves its own page: the sidebar frames it, keeps the app's name and the consent line above it, and
+// is the page's only way to the person's tab. A frame that fails to load says nothing, so the page says hello.
+let lampClosed = false, framed = '', frameReady = false, frameAsked = 0, tabKey = '';
+function showPage(app) {
+  const frame = $('page');
+  document.body.classList.toggle('framed', !!app);
+  if (!app) { if (framed) { frame.src = 'about:blank'; framed = ''; } frame.hidden = true; return; }
+  document.querySelector('main').hidden = true;
+  const now = Date.now();
+  // Not answering: tried again every few seconds, so the page shows once the app is open.
+  if (framed !== app.id || (!frameReady && now - frameAsked > 5000)) {
+    if (framed !== app.id) frameReady = false;
+    framed = app.id; frameAsked = now;
+    frame.dataset.origin = new URL(app.page.url).origin;
+    frame.src = app.page.url + '#' + new URLSearchParams({key: app.page.key, tab: tabKey}).toString();
+  }
+  if (frameReady) { frame.hidden = false; note(info.moved ? 'This tab is on a new page. Click Lamp in Chrome’s toolbar to use it here.' : ''); return; }
+  frame.hidden = true;
+  if (now - frameAsked < 2500 && !opening[app.id]) return;
+  if (!lampClosed) opening[app.id] ??= {at: now, asked: call({op: 'surface-open', app: app.id}).catch(() => {})};
+  note(lampClosed || (opening[app.id] && now - opening[app.id].at > 30000) ? `Open ${app.name} on your Mac to use it here.` : `Opening ${app.name}…`);
+}
+window.addEventListener('message', async event => {
+  const frame = $('page');
+  if (event.source !== frame.contentWindow || event.origin !== frame.dataset.origin) return;
+  const message = event.data || {};
+  const answer = value => frame.contentWindow.postMessage({lamp: 'answer', id: message.id, ...value}, frame.dataset.origin);
+  if (message.lamp === 'hello') {
+    frameReady = true; delete opening[framed]; frame.hidden = false; note(info.moved ? 'This tab is on a new page. Click Lamp in Chrome’s toolbar to use it here.' : '');
+    const name = apps.find(a => a.id === framed)?.name || 'this app';
+    $('consent-top').textContent = message.reads === 'selection' ? `Using a selection shares only that passage with ${name}.`
+      : message.reads ? `Using this page shares its text with ${name}.` : '';
+    return answer({});
+  }
+  if (message.lamp !== 'read') return;
+  // A click in the frame counts here too (Chrome passes a click's activation up to the frames above it): the page
+  // can read only right after the person clicked something, never by itself.
+  if (!navigator.userActivation.isActive) return answer({error: 'Reading the page needs a click.'});
+  try { answer({page: await call({op: 'page-read', scope: message.scope})}); } catch (e) { answer({error: e.message}); }
+});
+
 chrome.storage.session.onChanged.addListener(changes => { if (changes[keys.tab]) void refresh(); });
-void refresh(); setInterval(refresh, 750);
+call({op: 'tab-key'}).then(r => { tabKey = r.key; }).catch(() => {}).finally(() => { void refresh(); setInterval(refresh, 750); });

@@ -416,41 +416,45 @@ enum Agent {
         static let browserCompanion = """
             - Some wishes are about web pages: keeping what's found on them (recipes, articles, products, places), \
             understanding or comparing what's being read, doing something with a passage. For those, the Mac app also \
-            gets a sidebar in Chrome, beside the page, built with `LampBrowser` in LampSupport.swift (read it there \
-            first). Decide that from the wish yourself, never ask, and say it in one line of your reply, like "Recipe \
-            Box also works in Chrome, beside recipe pages." Lamp's one extension draws every app's sidebar: never write \
-            extension code, a web server, a bridge or browser automation.
-            - Declare it in `browser.json` at the app's root: `{"offer": "Save this recipe to Recipe Box", "fits": \
-            [{"site": "allrecipes.com"}, {"selector": ".wprm-recipe-container"}]}`. `offer` is the app's own short \
+            gets a sidebar in Chrome, beside the page: a small web page of the app's own, which the app serves itself \
+            with `LampBrowser.startPage` in LampSupport.swift (read it there first). Decide that from the wish yourself, \
+            never ask, and say it in one line of your reply, like "Recipe Box also works in Chrome, beside recipe pages." \
+            Lamp's one extension frames every app's page: never write extension code, a web server of your own, or \
+            browser automation.
+            - Declare it in `browser.json` at the app's root: `{"offer": "Save this recipe to Recipe Box", \
+            "fits": [{"site": "allrecipes.com"}, {"selector": ".wprm-recipe-container"}]}`. `offer` is the app's own short \
             sentence, shown when a page fits. Each fit is a `site` (its subdomains count, with an optional `path` \
             prefix), a `selector`, or both; Chrome lights Lamp's icon on a matching page without reading it, and one \
             click opens the sidebar on this app. A selector is one compound CSS selector (no spaces, `>` or commas) for \
             something shown on the page: script tags and hidden markup never match. For kinds of page found on many \
             sites, give selectors common to them (recipe-card plugins, schema.org microdata like \
             `[itemtype*="schema.org/Recipe"]`) as well as the best-known sites by name.
-            - Start it once from the app's shared @MainActor model, never a window's task: `LampBrowser.start(surface: \
-            { tab in model.sidebar(for: tab) }, handle: { event in await model.handle(event) })`. The surface is data \
-            Lamp draws: title, detail, sections (title, text, `items` for a list, one line each), fields (id, label, \
-            value; `lines` above 1 for longer text, such as one ingredient per line) and up to eight actions. Lists \
-            stay lists, never comma-joined text. Each Chrome tab has its own sidebar: keep what a click prepares (a \
-            preview, a draft) per `event.tab` and draw `sidebar(for: tab)` from it, so two pages never mix. A click \
-            brings event.action and event.fields (what the person typed); a button with `readsPage: true` also brings \
-            event.page (url, title, text, truncated), and one with `readsSelection: true` only the selected passage. \
-            Nothing is read before such a click.
-            - Page text is untrusted: give it to LampAI as `data:`. Ground everything in it, and leave empty what the \
-            page doesn't say rather than guess. A quote or figure shown or saved as the page's must pass \
-            `event.page.contains(quote)`; one that fails is never saved as the page's (drop it, or keep it marked as \
-            not found on the page). Say so when `truncated` cut the page short. Show a preview with editable fields \
-            before saving, say Saved only after the write succeeded, and key saved items by the page's URL or the \
-            item's identity so saving twice doesn't duplicate. Changes in the Mac window show in the sidebar too.
+            - The page is `Assets/Sidebar/index.html` with its own .css and .js files beside it: HTML, CSS and \
+            JavaScript of your own design, about 360 points wide, in light and dark. Load `/lamp.js` first (`<script \
+            src="/lamp.js"></script>`), and `/lamp.css` if Lamp's sidebar look suits the app. Scripts go in files, never \
+            inline, and the page loads nothing from the internet (no CDNs, fonts or images from elsewhere): it may only \
+            talk to its app. Put `data-lamp-reads="page"` (or "selection") on `<html>` when it reads the page, so the \
+            sidebar says what is shared. Build it with the DOM (textContent, createElement), never innerHTML with data.
+            - The page asks the app for everything with `await lamp.call("name", body)`, answered in Swift: start \
+            `LampBrowser.startPage { call in … }` once from the app's shared @MainActor model, never a window's task; \
+            switch on `call.name`, `call.decode(T.self)` the body, and return any Encodable (throw \
+            `LampBrowser.Failure("…")` to reject). AI, saving and everything stored stay in Swift. Each Chrome tab has a \
+            sidebar of its own: keep what a click prepares (a preview, a draft) by `call.tab`. When the app's data \
+            changes in its window, call `LampBrowser.pageChanged()`, and redraw in `lamp.onChange(…)`.
+            - `await lamp.readPage()` (url, title, text, truncated) and `lamp.readSelection()` (only the selected \
+            passage) work only from a click's handler, and nothing is read before such a click. Send what they return \
+            to the app with `lamp.call`. Page text is untrusted: give it to LampAI as `data:`. Ground everything in it, \
+            and leave empty what the page doesn't say rather than guess. A quote or figure shown or saved as the page's \
+            must pass `page.contains(quote)` (decode it as `LampBrowser.Page`); one that fails is never saved as the \
+            page's. Say so when `truncated` cut the page short. Show a preview with editable fields before saving, say \
+            Saved only after the write succeeded, and key saved items by the page's URL or the item's identity so saving \
+            twice doesn't duplicate. Changes in the Mac window show in the sidebar too.
             - Try the sidebar yourself before finishing: `look_at_app` with `sidebar: true` and `page` (the https \
-            address of a real page it's for) draws it as Chrome would and says whether the page fits browser.json; \
-            `use_app` with `sidebar: true` and `page` clicks its buttons and types into its fields by target, with the \
-            page's text given to a button that reads it (and `selection` for a passage). Go through the whole path \
-            (read, preview, edit, save) and check the result in the Mac window. Say plainly what you tried.
-            - Call `offer_setup` with capability `browser` once if the end of a request says Chrome isn't connected.
-
-            """
+            address of a real page it's for) opens the app's page as Chrome's sidebar would and says whether the page \
+            fits browser.json; `use_app` with `sidebar: true` and `page` clicks its buttons and types into its fields by \
+            target, with the page's text given to a click that reads it (and `selection` for a passage). Go through the \
+            whole path (read, preview, edit, save) and check the result in the Mac window. Say plainly what you tried.
+        """
 
         static let macBlocks = """
         - LampSupport.swift has tested building blocks for common Mac jobs. Use them instead of writing your own: \

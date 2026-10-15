@@ -33,6 +33,11 @@ enum BrowserPreview {
             }
         }
         if let page = pages[project.id], let declaration { notes.append(fitNote(declaration, page)) }
+        if Template.hasSidebarPage(project) {
+            let preview = PagePreview.of(project)
+            if let trouble = await preview.load(project) { return (200, ["text": (notes + [trouble]).joined(separator: "\n\n")]) }
+            return await pageReport(project, notes: notes, what: "The sidebar, drawn as Chrome shows it")
+        }
         guard await waitForSidebar(project) else {
             return (200, ["text": (notes + ["The app is open but its sidebar hasn't started. Call LampBrowser.start(surface:handle:) once when the app launches, from its shared model, not from a window."]).joined(separator: "\n\n")])
         }
@@ -52,6 +57,7 @@ enum BrowserPreview {
             case .failure(let problem): return (200, ["text": problem.message])
             }
         }
+        if Template.hasSidebarPage(project) { return await usePage(project, actions: actions, selection: selection, happened: happened) }
         guard await waitForSidebar(project) else {
             return (200, ["text": "The app's sidebar isn't running. Call look_at_app with sidebar first: it builds the app and opens it."])
         }
@@ -112,6 +118,53 @@ enum BrowserPreview {
         if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { result["text"] = (result["text"] as! String) + "\n\nWhat the app printed meanwhile:\n\(lines)" }
         if !Privacy.sharesLog { result["text"] = (result["text"] as! String) + " " + Privacy.logOff }
         return (status, result)
+    }
+
+    /// `use_app` on a sidebar that is the app's own page: clicks and typing by target, each followed by the page's
+    /// calls to its app coming back.
+    private static func usePage(_ project: LampProject, actions: [[String: Any]], selection: String?, happened: [String]) async -> (Int, [String: Any]) {
+        var happened = happened
+        let preview = PagePreview.of(project)
+        preview.selection = selection
+        preview.page = { pages[project.id] }
+        if !preview.hasLoaded, let trouble = await preview.load(project) { return (200, ["text": trouble]) }
+        let printed = Runtime.logSize(project)
+        _ = await preview.text()   // ids for the controls as they are now
+        for (index, action) in actions.enumerated() {
+            let kind = action["action"] as? String ?? ""
+            let number = "\(index + 1). \(kind)"
+            if kind == "wait" {
+                try? await Task.sleep(for: .seconds(min(action["amount"] as? Double ?? 1, 10)))
+                happened.append("\(number): waited."); continue
+            }
+            guard kind == "click" || kind == "type" else { happened.append("\(number): the sidebar page only takes click, type and wait."); break }
+            guard let target = action["target"] as? String, !target.isEmpty else {
+                happened.append("\(number): name what to act on with `target` (an id or exact name from the sidebar page as text)."); break
+            }
+            let asked = Date()
+            if let trouble = await preview.act(kind, target: target, text: action["text"] as? String) { happened.append("\(number): \(trouble)"); break }
+            await preview.settle()
+            happened.append(kind == "type" ? "\(number): typed into \"\(target)\"." : "\(number): clicked \"\(target)\"; the page's calls to the app came back in \(Int(Date().timeIntervalSince(asked).rounded())) s.")
+        }
+        var (status, result) = await pageReport(project, notes: [], what: "The sidebar now")
+        result["text"] = "What happened:\n" + happened.joined(separator: "\n") + "\n\n" + (result["text"] as? String ?? "")
+        if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { result["text"] = (result["text"] as! String) + "\n\nWhat the app printed meanwhile:\n\(lines)" }
+        return (status, result)
+    }
+
+    private static func pageReport(_ project: LampProject, notes: [String], what: String) async -> (Int, [String: Any]) {
+        let preview = PagePreview.of(project)
+        preview.page = { pages[project.id] }
+        var text = notes.joined(separator: "\n\n")
+        guard Privacy.sharesPictures else { return (200, ["text": text + (text.isEmpty ? "" : "\n\n") + Privacy.picturesOff]) }
+        text += (text.isEmpty ? "" : "\n\n") + (await preview.text())
+        let picture = Runtime.folder(project).appendingPathComponent("sidebar.png")
+        var screenshots: [String] = []
+        if await preview.picture(to: picture) {
+            screenshots = Store.agentPictures([picture], in: project)
+            text += "\n\n\(what) follows as a picture, at the sidebar's width."
+        }
+        return (200, ["text": text, "screenshots": screenshots])
     }
 
     private struct State { var surface: BrowserCompanions.Surface; var revision: String; var busy: Bool }
@@ -374,4 +427,155 @@ final class PageReader: NSObject, WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finish(nil) }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finish(error) }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finish(error) }
+}
+
+/// The builder's view of a sidebar an app draws as a page of its own (`LampBrowser.startPage`): Lamp opens the page
+/// the app serves out of sight, at the sidebar's width, and is its frame, handing it the page beside the preview
+/// when it asks after a click. One per app, kept between looks, as a sidebar stays open in a tab.
+@MainActor
+final class PagePreview: NSObject, WKNavigationDelegate, WKScriptMessageHandlerWithReply {
+    private static var open: [String: PagePreview] = [:]
+    private let window: NSWindow
+    private let web: WKWebView
+    private var loaded: CheckedContinuation<Error?, Never>?
+    private var failure: Error?
+    var page: (() -> PageReader.Page?) = { nil }
+    var selection: String?
+    var hasLoaded: Bool { web.url != nil }
+
+    static func of(_ project: LampProject) -> PagePreview {
+        if let known = open[project.id] { return known }
+        let made = PagePreview()
+        open[project.id] = made
+        return made
+    }
+
+    private override init() {
+        window = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 360, height: 900), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        // Counts the page's calls to its app still waiting, and keeps what went wrong, for the builder to see.
+        configuration.userContentController.addUserScript(WKUserScript(source: """
+            window.__lampPending = 0; window.__lampErrors = [];
+            const __fetch = window.fetch;
+            window.fetch = (...args) => { window.__lampPending++; return __fetch(...args).finally(() => { window.__lampPending--; }); };
+            addEventListener('error', e => window.__lampErrors.push(String(e.message || e)));
+            addEventListener('unhandledrejection', e => window.__lampErrors.push(String(e.reason && e.reason.message || e.reason)));
+            const __error = console.error; console.error = (...a) => { window.__lampErrors.push(a.map(String).join(' ')); __error(...a); };
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        web = WKWebView(frame: window.contentLayoutRect, configuration: configuration)
+        super.init()
+        configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "lampPreview")
+        window.contentView = web
+        web.navigationDelegate = self
+    }
+
+    /// Loads the app's page afresh, as a sidebar opened again would.
+    func load(_ project: LampProject) async -> String? {
+        let url = "http://127.0.0.1:\(Template.sidebarPort(for: project))/#key=\(Template.sidebarKey(for: project))&tab=\(BrowserPreview.tab)"
+        failure = nil
+        web.load(URLRequest(url: URL(string: url)!, timeoutInterval: 10))
+        let error = await withCheckedContinuation { done in
+            loaded = done
+            Task { [weak self] in try? await Task.sleep(for: .seconds(12)); self?.finish(URLError(.timedOut)) }
+        }
+        if let error { return "The app's sidebar page didn't load from the app (\(error.localizedDescription)). Call LampBrowser.startPage once when the app launches, from its shared model, and put the page in Assets/Sidebar/index.html." }
+        await settle()
+        return nil
+    }
+
+    /// Until the page's calls to its app have come back (an AI answer can take a minute), then a beat for drawing.
+    func settle(limit: TimeInterval = 150) async {
+        let asked = Date()
+        try? await Task.sleep(for: .milliseconds(400))
+        while Date().timeIntervalSince(asked) < limit {
+            let pending = (try? await web.evaluateJavaScript("window.__lampPending || 0")) as? Int ?? 0
+            if pending == 0 { break }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        try? await Task.sleep(for: .milliseconds(600))
+    }
+
+    /// The page as text: what it says, then each control with an id to act on, and what went wrong in its script.
+    func text() async -> String {
+        let script = """
+            (() => {
+              const controls = [...document.querySelectorAll('button, a[href], input, textarea, select, [role=button]')].filter(e => e.checkVisibility());
+              const lines = controls.map((e, i) => {
+                e.dataset.lampId = 'e' + (i + 1);
+                const kind = e.localName === 'a' ? 'link' : e.localName === 'button' || e.getAttribute('role') === 'button' ? 'button' : 'field';
+                const name = (e.labels && e.labels[0] ? e.labels[0].innerText : '') || e.getAttribute('aria-label') || e.placeholder || e.innerText || e.name || e.id || '';
+                const value = 'value' in e && kind === 'field' ? ' value "' + String(e.value).slice(0, 300) + '"' : '';
+                return 'e' + (i + 1) + ' ' + kind + ' "' + name.trim().replace(/\\s+/g, ' ').slice(0, 120) + '"' + value + (e.disabled ? ' (disabled)' : '');
+              });
+              return JSON.stringify({text: document.body.innerText.slice(0, 6000), controls: lines, errors: window.__lampErrors.slice(-10), height: document.documentElement.scrollHeight});
+            })()
+            """
+        guard let json = (try? await web.evaluateJavaScript(script)) as? String,
+              let value = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return "The sidebar page couldn't be read." }
+        var out = "The sidebar page as text:\n" + (value["text"] as? String ?? "")
+        let controls = value["controls"] as? [String] ?? []
+        out += "\n\nIts controls. Act on one with `target` set to its id or exact name:\n" + (controls.isEmpty ? "(none)" : controls.joined(separator: "\n"))
+        if let errors = value["errors"] as? [String], !errors.isEmpty { out += "\n\nErrors in the page's script:\n" + errors.joined(separator: "\n") }
+        if let height = value["height"] as? Double { web.frame.size.height = min(max(height, 400), 2400) }
+        return out
+    }
+
+    func picture(to file: URL) async -> Bool {
+        let configuration = WKSnapshotConfiguration()
+        configuration.afterScreenUpdates = true
+        guard let image = try? await web.takeSnapshot(configuration: configuration), let tiff = image.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return false }
+        return (try? png.write(to: file)) != nil
+    }
+
+    /// One click or typing, by target: an id from the page as text, a control's exact name, or a CSS selector.
+    func act(_ kind: String, target: String, text: String?) async -> String? {
+        let find = """
+            const t = \(Self.js(target));
+            const all = [...document.querySelectorAll('button, a[href], input, textarea, select, [role=button]')];
+            const named = e => [(e.labels && e.labels[0] ? e.labels[0].innerText : ''), e.getAttribute('aria-label'), e.placeholder, e.innerText, e.name, e.id].some(n => n && n.trim() === t);
+            let e = document.querySelector('[data-lamp-id="' + t + '"]') || all.find(named);
+            if (!e) { try { e = document.querySelector(t); } catch {} }
+            """
+        let body = kind == "type"
+            ? find + "if (!e) return 'none'; e.focus(); e.value = \(Self.js(text ?? "")); e.dispatchEvent(new Event('input', {bubbles: true})); e.dispatchEvent(new Event('change', {bubbles: true})); return 'ok';"
+            : find + "if (!e) return 'none'; if (e.disabled) return 'disabled'; e.click(); return 'ok';"
+        let result = (try? await web.callAsyncJavaScript(body, contentWorld: .page)) as? String
+        switch result {
+        case "ok": return nil
+        case "disabled": return "\"\(target)\" is disabled."
+        default: return "There's no control \"\(target)\" on the sidebar page."
+        }
+    }
+
+    private static func js(_ text: String) -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: [text])) ?? Data("[\"\"]".utf8)
+        return String(String(decoding: data, as: UTF8.self).dropFirst().dropLast())
+    }
+
+    private func finish(_ error: Error?) { loaded?.resume(returning: error); loaded = nil }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finish(nil) }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finish(error) }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finish(error) }
+    /// Only the app's own page, nothing it links to.
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+        decisionHandler(navigationAction.request.url?.host == "127.0.0.1" || navigationAction.targetFrame?.isMainFrame == false ? .allow : .cancel)
+    }
+
+    /// What the page's `lamp.readPage` and `lamp.readSelection` get here: the page Lamp opened beside the preview.
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping @MainActor (Any?, String?) -> Void) {
+        guard let body = message.body as? [String: Any], body["lamp"] as? String == "read" else { return replyHandler([:], nil) }
+        guard let page = page() else { return replyHandler(["error": "No page is open beside the sidebar: give look_at_app or use_app a `page`."], nil) }
+        var text = page.text
+        if body["scope"] as? String == "selection" {
+            guard let chosen = selection?.trimmingCharacters(in: .whitespacesAndNewlines), !chosen.isEmpty else {
+                return replyHandler(["error": "Select a passage on the page first (give use_app a `selection`)."], nil)
+            }
+            text = String(chosen.prefix(24000))
+        }
+        replyHandler(["page": ["url": page.url, "title": page.title, "text": text, "scope": body["scope"] as? String ?? "page",
+                               "truncated": body["scope"] as? String == "selection" ? false : page.truncated]], nil)
+    }
 }

@@ -228,7 +228,13 @@ final class BrowserCompanions {
         let op = body["op"] as? String
         if op == "surface-list" {
             return ["apps": listed(projects).map { item in
-                ["id": item.project.id, "name": item.project.name, "offer": item.declaration.offer, "running": isLive(item.project),
+                var page: [String: Any] = [:]
+                // An app with a page of its own serves it; Chrome's sidebar frames it, and keeps where for when Lamp is closed.
+                if Template.hasSidebarPage(item.project) {
+                    page = ["url": "http://\(Template.sidebarHost(for: item.project)):\(Template.sidebarPort(for: item.project))/",
+                            "key": Template.sidebarKey(for: item.project)]
+                }
+                return ["id": item.project.id, "name": item.project.name, "offer": item.declaration.offer, "running": isLive(item.project), "page": page,
                  "fits": item.declaration.fits.map { fit in
                      var value: [String: String] = [:]
                      if let site = fit.site { value["site"] = site }

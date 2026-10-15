@@ -57,6 +57,25 @@ The extension never runs an app's HTML or JavaScript.
   Mac, the local network and other non-internet addresses, for the page, its
   redirects and everything it loads.
 
+## An app's own page (exploration)
+
+On this branch an app can draw its sidebar as a web page of its own instead of data: `Assets/Sidebar/index.html`
+with its CSS and JavaScript, served by the app itself (`LampBrowser.startPage` in LampSupport.swift) on this
+Mac's own address, at a name under `.localhost` and a port of its own (`Template.sidebarHost`, `sidebarPort`).
+Lamp lists the page's address and a key with the app (`surface-list`), and the extension keeps that list, so the
+sidebar opens on an open app whether Lamp is running or not.
+
+- The extension's sidebar frames the page (sandboxed: no popups, no navigating the sidebar) and keeps the app's
+  name, the offer and the consent line above it. The page has no extension APIs.
+- The page reaches the person's tab only through the sidebar: `lamp.readPage()` and `lamp.readSelection()` post to
+  it, and it reads only right after a click (a click inside the frame activates the sidebar too).
+- Everything else the page asks of its app with `lamp.call`, which carries the key. The app answers only its own
+  host name (a website pointing a name of its own at this Mac is refused), only calls with the key and not sent
+  by another site, and lets only the extension frame the page. The page's own policy keeps it talking to its app
+  alone (`connect-src 'self'`, scripts from its own files).
+- `look_at_app` and `use_app` with `sidebar` open the page out of sight at the sidebar's width and press its
+  controls by target, so the builder tries what the person will use.
+
 ## Not in this milestone
 
 The Chrome Web Store listing, a signed and notarized helper, the sidebar in
