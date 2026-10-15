@@ -4,8 +4,12 @@ import AppKit
 import FoundationModels
 #endif
 
-/// An app someone could ask Lamp for: shown as a tile, and choosing it fills in the request.
+/// Something someone could ask Lamp for: shown as a tile, and choosing it fills in the request.
 struct Idea: Identifiable, Equatable {
+    /// What part of life it's for. Each page of ideas has one of each, so it never reads as only work, or only
+    /// problems: making things easier and making them more fun.
+    enum Kind: CaseIterable { case health, money, play, home, work, everyday }
+    var kind: Kind
     var title: String
     var symbol: String
     /// The hue of its icon, 0–1.
@@ -17,7 +21,8 @@ struct Idea: Identifiable, Equatable {
 
     var id: String { title }
 
-    init(_ title: String, _ symbol: String, _ hue: Double, _ blurb: String, _ prompt: String) {
+    init(_ kind: Kind, _ title: String, _ symbol: String, _ hue: Double, _ blurb: String, _ prompt: String) {
+        self.kind = kind
         self.title = title
         self.symbol = symbol
         self.hue = hue
@@ -37,112 +42,122 @@ struct Idea: Identifiable, Equatable {
 /// person has an app of their own.
 enum Ideas {
     static let pool: [Idea] = [
-        Idea("Screenshot Pile", "camera.viewfinder", 0.75, "Tame the mess of screenshots on my desktop: named, filed and searchable.",
+        Idea(.everyday, "Screenshot Pile", "camera.viewfinder", 0.75, "Tame the mess of screenshots on my desktop: named, filed and searchable.",
              "Screenshot Pile: a menu bar app that keeps an eye on where my screenshots land. It reads the text in each new one and suggests a clear name and a folder (receipts, work, recipes, funny), and makes old ones searchable by what's in them. Nothing is renamed or moved until I approve it."),
-        Idea("School Emails", "backpack", 0.08, "Catch the school dates I keep missing, buried in all those school emails.",
+        Idea(.home, "School Emails", "backpack", 0.08, "Catch the school dates I keep missing, buried in all those school emails.",
              "School Emails: I tell it which senders are my kids' school and clubs, and it reads their emails in Mail for the things that matter: dates, trips, forms to sign, things to bring, money to pay. It lists them by child and by week, and adds the ones I tick to my calendar or Reminders."),
-        Idea("Next Meeting", "person.2.wave.2", 0.62, "See who I'm meeting next and what we last emailed about, right on my desktop.",
+        Idea(.work, "Next Meeting", "person.2.wave.2", 0.62, "See who I'm meeting next and what we last emailed about, right on my desktop.",
              "Next Meeting: a desktop widget for my next meeting today: the time, who's coming (with their role from my contacts) and the subject of our last email. The app sits in the menu bar and keeps it fresh from my calendar and Mail, and clicking a meeting there shows a one-paragraph brief."),
-        Idea("Invoice Day", "doc.richtext", 0.55, "Turn the client hours in my calendar into invoices, and know which are still unpaid.",
+        Idea(.money, "Invoice Day", "doc.richtext", 0.55, "Turn the client hours in my calendar into invoices, and know which are still unpaid.",
              "Invoice Day: I put the client's name in my calendar events, and at the end of the month it totals the hours per client from my calendar at each client's rate. I check the lines, and it makes a clean, numbered invoice PDF with my details for each one, and keeps track of which are paid and which are overdue."),
-        Idea("Shop Answers", "bubble.left.and.text.bubble.right", 0.4, "Answer “Do you ship abroad?” for the hundredth time with one keystroke.",
+        Idea(.work, "Shop Answers", "bubble.left.and.text.bubble.right", 0.4, "Answer “Do you ship abroad?” for the hundredth time with one keystroke.",
              "Shop Answers: I run a small online shop and answer the same customer questions all day (shipping, sizes, returns). I keep my answers here, and ⌃⌥A opens a small panel from any app; I type a few letters, pick one, and it's copied ready to paste. If I've copied the customer's message first, it adjusts the answer to fit it."),
-        Idea("Detective Case", "magnifyingglass", 0.66, "My own detective game, with a new mystery and new suspects every time.",
+        Idea(.play, "Detective Case", "magnifyingglass", 0.66, "My own detective game, with a new mystery and new suspects every time.",
              "Detective Case: a mystery game. Each case is a new crime with a handful of suspects, each with a picture. I question them in my own words and they answer in character, letting slip clues; I keep notes as I go, and when I'm ready I name the culprit and find out if I was right."),
 
-        Idea("Job Hunt", "briefcase", 0.58, "Keep track of every job I've applied for, and follow up when they go quiet.",
+        Idea(.work, "Job Hunt", "briefcase", 0.58, "Keep track of every job I've applied for, and follow up when they go quiet.",
              "Job Hunt: I add each job I apply for (company, role, date), and it watches my Mail for replies from those companies, moving each one along: applied, heard back, interview, offer, no. When a week goes by in silence it reminds me, and drafts a short, polite follow-up in Mail for me to check and send."),
-        Idea("Marking Pile", "pencil.and.list.clipboard", 0.3, "Get a first pass on thirty essays, marked against my own rubric.",
+        Idea(.work, "Marking Pile", "pencil.and.list.clipboard", 0.3, "Get a first pass on thirty essays, marked against my own rubric.",
              "Marking Pile: I'm a teacher. I drop in a folder of students' essays and my rubric, and it gives each essay a suggested mark per criterion with two kind, specific comments, quoting the student's own words. I adjust the marks and comments, and export them all as one document per student."),
-        Idea("Bin Day", "trash", 0.33, "Never miss bin day again: which bins go out tonight, right on my desktop.",
+        Idea(.home, "Bin Day", "trash", 0.33, "Never miss bin day again: which bins go out tonight, right on my desktop.",
              "Bin Day: a desktop widget that shows which bins go out tonight (it alternates weekly, and I set the pattern once), and the next household chore from a Reminders list I choose. The evening before bin day it sends me a notification so it never gets missed."),
-        Idea("Pickup Guard", "figure.and.child.holdinghands", 0.03, "Warn me the moment a meeting lands on school pickup.",
+        Idea(.home, "Pickup Guard", "figure.and.child.holdinghands", 0.03, "Warn me the moment a meeting lands on school pickup.",
              "Pickup Guard: runs quietly in the menu bar and watches my calendar for new events that clash with times I protect (school pickup, lunch, the gym), which I set once. When one lands on top of them it notifies me straight away and suggests the nearest free slot, which I can copy into a reply."),
-        Idea("Tax Folder", "tray.full", 0.45, "Gather the receipts scattered across my Mail and Downloads before tax time.",
+        Idea(.money, "Tax Folder", "tray.full", 0.45, "Gather the receipts scattered across my Mail and Downloads before tax time.",
              "Tax Folder: I'm self-employed. It keeps an eye on my Downloads folder for new receipts and invoices, and finds receipts in my Mail, reading the seller, date, amount and category of each into a table I can correct. It shows totals per category for the tax year and exports a spreadsheet for my accountant; it asks before copying any file into my tax folder."),
-        Idea("Tiny Town", "house.and.flag", 0.22, "A little town of my own, whose people live their lives while I build it.",
+        Idea(.play, "Tiny Town", "house.and.flag", 0.22, "A little town of my own, whose people live their lives while I build it.",
              "Tiny Town: a little town on a grid where I place houses, shops, a park and a farm. The townsfolk have names and personalities, go about their day and react to what I build. Each morning a one-page town newspaper tells me what happened."),
 
-        Idea("Waiting On You", "envelope.badge", 0.6, "Show me who's still waiting on an answer from me, and since when.",
+        Idea(.work, "Waiting On You", "envelope.badge", 0.6, "Show me who's still waiting on an answer from me, and since when.",
              "Waiting On You: reads the last two weeks of my inbox in Mail and picks out the emails where someone is asking me a question or waiting on a decision. It lists them oldest first with who's waiting and what they need in one line, lets me tick off the ones I've handled, and drafts a reply in Mail for me to check and send."),
-        Idea("Club Dues", "person.3", 0.9, "Know who's paid this season's club dues, and nudge the rest kindly.",
+        Idea(.money, "Club Dues", "person.3", 0.9, "Know who's paid this season's club dues, and nudge the rest kindly.",
              "Club Dues: I run a local club. I pick the members from a group in my contacts and tick who's paid this season's dues, with the amount and date. For the ones who haven't, it drafts a short, friendly reminder in Mail for each, which I check and send myself."),
-        Idea("Due Dates", "graduationcap", 0.7, "Every deadline this term, counting down on my desktop.",
+        Idea(.everyday, "Due Dates", "graduationcap", 0.7, "Every deadline this term, counting down on my desktop.",
              "Due Dates: I'm a student. I drop in each course's syllabus and it finds every assignment and exam with its date, and adds the ones I approve to my calendar. A desktop widget counts down the next three, and it nudges me a week and a day before each."),
-        Idea("One-on-Ones", "person.2", 0.5, "Remember what I meant to raise with each person on my team.",
+        Idea(.work, "One-on-Ones", "person.2", 0.5, "Remember what I meant to raise with each person on my team.",
              "One-on-Ones: I lead a small team. ⌃⌥1 from any app opens a box where I jot something to raise with someone, filed under their name from my contacts. An hour before each one-on-one in my calendar it shows me that person's list, and afterwards I tick off what we covered."),
-        Idea("Lost Thread", "doc.text.magnifyingglass", 0.38, "Find that file someone sent me just by describing it.",
+        Idea(.everyday, "Lost Thread", "doc.text.magnifyingglass", 0.38, "Find that file someone sent me just by describing it.",
              "Lost Thread: a shortcut (⌃⌥F) opens a search box where I describe what I'm looking for in my own words (\"the PDF Sam sent about the venue\"). It searches my Mail and Downloads folder and shows the likeliest matches with why, and opens the one I pick."),
-        Idea("Desk Pet", "pawprint", 0.1, "A little pet that lives in my menu bar and is happy to see me.",
+        Idea(.play, "Desk Pet", "pawprint", 0.1, "A little pet that lives in my menu bar and is happy to see me.",
              "Desk Pet: a little creature that lives in my menu bar. Clicking it opens its home, where I can feed it, play with it and give it a name. It gets hungry and sleepy through the day, says something funny now and then, and is happy to see me in the morning."),
 
-        Idea("Kids Today", "figure.2.and.child.holdinghands", 0.95, "See which kid needs to be where today, without opening three calendars.",
+        Idea(.home, "Kids Today", "figure.2.and.child.holdinghands", 0.95, "See which kid needs to be where today, without opening three calendars.",
              "Kids Today: I have three kids with their own calendars. A desktop widget shows today's drop-offs, pickups and activities, a color for each child, with who's driving if it's in the event. The app in the menu bar keeps it fresh and warns me if two things need me at once."),
-        Idea("Busywork", "cursorarrow.motionlines", 0.66, "Do the copy-this-into-that chore between my apps while I watch.",
+        Idea(.everyday, "Busywork", "cursorarrow.motionlines", 0.66, "Do the copy-this-into-that chore between my apps while I watch.",
              "Busywork: I describe a dull chore that moves information between apps on my Mac, like copying each row of a spreadsheet into a form. It does it step by step in the apps themselves while I watch, asks before anything is saved or submitted, and tells me what it did."),
-        Idea("Parent Emails", "pencil.line", 0.14, "Help me write the tricky email to a parent: kind, but clear.",
+        Idea(.work, "Parent Emails", "pencil.line", 0.14, "Help me write the tricky email to a parent: kind, but clear.",
              "Parent Emails: I'm a teacher. I describe what happened with a student and how I feel about it, and it drafts an email to the parents that's warm, clear and specific, with a next step. I can ask for it gentler or firmer, and it opens in Mail for me to check and send."),
-        Idea("Photo Dump", "photo.stack", 0.8, "Sort last weekend's 300 photos into folders by day and place.",
+        Idea(.everyday, "Photo Dump", "photo.stack", 0.8, "Sort last weekend's 300 photos into folders by day and place.",
              "Photo Dump: I drop in a folder of photos from a trip or a weekend, and it suggests names from when and where each was taken (\"2026-05-03 Lisbon 014\"), grouped into folders by day. It shows the old and new names side by side and changes nothing until I confirm, with undo."),
-        Idea("Where It Went", "chart.pie", 0.35, "Show me where my week's hours actually went, client by client.",
+        Idea(.work, "Where It Went", "chart.pie", 0.35, "Show me where my week's hours actually went, client by client.",
              "Where It Went: reads my calendar for the past week and groups my time by client and by kind (meetings, focus, admin), with a clear chart. It compares the week with the one before and gives me one honest, friendly observation."),
-        Idea("Habit Garden", "leaf", 0.25, "A little garden that grows as I keep my daily habits.",
+        Idea(.health, "Habit Garden", "leaf", 0.25, "A little garden that grows as I keep my daily habits.",
              "Habit Garden: I list a few daily habits and tick them off each day. Every streak grows a plant in a small illustrated garden, and missed days make it wilt a little. Remind me in the evening if something's left."),
 
-        Idea("Bills Due", "creditcard", 0.48, "Warn me about bills coming due before the late fees hit.",
+        Idea(.money, "Bills Due", "creditcard", 0.48, "Warn me about bills coming due before the late fees hit.",
              "Bills Due: reads the bill and statement emails in my Mail and lists what's due, how much and when. A desktop widget shows the next bill and how many days are left, and it adds a reminder three days before each due date once I approve it."),
-        Idea("Free Trials", "clock.badge.exclamationmark", 0.0, "Catch free trials before they quietly turn into charges.",
+        Idea(.money, "Free Trials", "clock.badge.exclamationmark", 0.0, "Catch free trials before they quietly turn into charges.",
              "Free Trials: keeps an eye on my Mail for sign-up emails for free trials and subscriptions, and works out when each one starts charging and how much. It lists them by date and notifies me two days before a charge, so I can decide in time."),
-        Idea("Friday Wrap-Up", "flag.checkered", 0.2, "Have my week's wins written up for the team by Friday at four.",
+        Idea(.work, "Friday Wrap-Up", "flag.checkered", 0.2, "Have my week's wins written up for the team by Friday at four.",
              "Friday Wrap-Up: through the week I jot quick wins with ⌃⌥W from any app. On Friday at four it notifies me with a short summary of my week from my calendar and those notes, written for my team's update, which I can edit and copy."),
-        Idea("Exam Cards", "rectangle.on.rectangle.angled", 0.78, "Turn my lecture slides into flashcards for Friday's exam.",
+        Idea(.everyday, "Exam Cards", "rectangle.on.rectangle.angled", 0.78, "Turn my lecture slides into flashcards for Friday's exam.",
              "Exam Cards: I drop in lecture slides and notes for a course and it makes question-and-answer cards from them. I study with spaced repetition, so cards I miss come back sooner, and it reads the exam date from my calendar to pace how many cards I see each day."),
-        Idea("Birthday Radar", "gift", 0.92, "Remind me of birthdays two weeks out, with the gift ideas I saved.",
+        Idea(.home, "Birthday Radar", "gift", 0.92, "Remind me of birthdays two weeks out, with the gift ideas I saved.",
              "Birthday Radar: reads the birthdays in my calendar, and whenever I think of a gift someone would like, I jot it under their name. Two weeks before each birthday it reminds me with my saved ideas, so I'm never stuck the night before."),
-        Idea("Kids' Stories", "moon.stars", 0.76, "A new bedtime story every night, starring my kid's favorite toy.",
+        Idea(.play, "Kids' Stories", "moon.stars", 0.76, "A new bedtime story every night, starring my kid's favorite toy.",
              "Kids' Stories: I give my child's name, their favorite toy and a place, and it writes a short bedtime story with a picture for each page. Read it aloud in a calm voice, and keep a library of our favorites."),
+        Idea(.health, "Stretch Break", "figure.cooldown", 0.3, "Get me off this chair every hour with a quick stretch I'll actually do.",
+             "Stretch Break: a menu bar app that notices when I've been at my Mac for an hour and suggests a different two-minute stretch, with a simple picture of each move and a timer. It stays quiet during meetings in my calendar, and keeps a little streak of the breaks I took."),
+        Idea(.health, "Week of Dinners", "fork.knife", 0.1, "Plan the week's dinners around what we like, with one shopping list.",
+             "Week of Dinners: I tell it what my family likes and doesn't, and how much time I have on weeknights. It plans seven dinners, shows each recipe, and puts everything I need into one shopping list grouped by aisle that I can send to Reminders. I can swap any night for another idea."),
+        Idea(.health, "Home Workouts", "figure.strengthtraining.traditional", 0.02, "A few weeks of workouts with just the gear I have at home.",
+             "Home Workouts: I tell it my goal, how many days a week I can train and the gear I have at home. It builds a plan that gets a little harder each week, shows today's session with each exercise, its sets and rest, and lets me tick sets off and note how heavy they felt."),
+        Idea(.money, "Spending Check", "chart.bar.xaxis", 0.42, "See where my money actually went this month, from my bank's export.",
+             "Spending Check: I drop in the spreadsheet export from my bank. It sorts each payment into a category it learns from my corrections, shows this month against last as a simple chart, and points out subscriptions and anything unusual. Nothing leaves my Mac."),
+        Idea(.money, "Savings Jar", "banknote", 0.36, "Watch my holiday fund fill up, a little jar on my desktop.",
+             "Savings Jar: I set a goal and a date for something I'm saving for, and log what I put aside. A desktop widget shows the jar filling up, how much is left, and what I need to put aside each week to make it in time."),
     ]
 
     /// The same for an iPhone or iPad app: a moment on the go that a phone handles and a Mac doesn't (the
     /// camera, where you are, the motion sensors, a quick tap with one hand), mixed the same way, six to a page.
     static let phonePool: [Idea] = [
-        Idea("Where I Parked", "car", 0.55, "Remember where I parked, with the level, the row and a photo, in one tap.",
+        Idea(.everyday, "Where I Parked", "car", 0.55, "Remember where I parked, with the level, the row and a photo, in one tap.",
              "Where I Parked: one big button saves where I parked, with a photo of the pillar and a note (level, row). Later it shows how far away the car is and which way to walk, and reminds me before the meter runs out."),
-        Idea("Droopy Plant", "leaf.circle", 0.32, "Work out what my droopy houseplant is missing from one photo.",
+        Idea(.home, "Droopy Plant", "leaf.circle", 0.32, "Work out what my droopy houseplant is missing from one photo.",
              "Droopy Plant: I take a photo of a houseplant that looks unhappy and it tells me what it is and what's probably wrong (too much water, too little light). It keeps my plants with their photos and reminds me when each one needs watering."),
-        Idea("Shelf Count", "shippingbox", 0.08, "Snap a shelf in my shop and see what I need to reorder.",
+        Idea(.work, "Shelf Count", "shippingbox", 0.08, "Snap a shelf in my shop and see what I need to reorder.",
              "Shelf Count: I run a small shop. I photograph a shelf and it counts what's there against the stock levels I set, then lists what's running low. Keep a reorder list I can share as a spreadsheet."),
-        Idea("Mileage Log", "road.lanes", 0.45, "Log every drive to a client, so tax time takes minutes.",
+        Idea(.money, "Mileage Log", "road.lanes", 0.45, "Log every drive to a client, so tax time takes minutes.",
              "Mileage Log: I tap Start when I drive to a client and Stop when I arrive, and it records the distance from where I am, with the date and a client I pick. It totals the miles by month and client and shares them as a spreadsheet."),
-        Idea("Hang It Straight", "level", 0.15, "Hang a picture frame straight on the first try.",
+        Idea(.home, "Hang It Straight", "level", 0.15, "Hang a picture frame straight on the first try.",
              "Hang It Straight: a level that uses the phone's motion sensors, with a bubble, the exact angle, and a click when it's perfectly level. Tap to hold the reading, and a second mode helps me space three frames evenly."),
-        Idea("Word Ladder", "textformat.abc", 0.76, "A new word puzzle every day, and a streak to keep going.",
+        Idea(.play, "Word Ladder", "textformat.abc", 0.76, "A new word puzzle every day, and a streak to keep going.",
              "Word Ladder: a daily puzzle where I change one letter at a time to get from one word to another. Hints when I'm stuck, a streak counter, and a gentle reminder each evening if I haven't played."),
 
-        Idea("Night Feeds", "moon.zzz", 0.7, "Track night feeds one-handed at 3am: which side, how long, and when.",
+        Idea(.home, "Night Feeds", "moon.zzz", 0.7, "Track night feeds one-handed at 3am: which side, how long, and when.",
              "Night Feeds: big, dim buttons I can tap one-handed at 3am: start and stop a feed (left or right), a nap, a change. It shows how long since the last feed at a glance, and the week's pattern so I can tell the doctor."),
-        Idea("Fridge Dinner", "refrigerator", 0.05, "Make tonight's dinner out of whatever's left in my fridge.",
+        Idea(.health, "Fridge Dinner", "refrigerator", 0.05, "Make tonight's dinner out of whatever's left in my fridge.",
              "Fridge Dinner: I take a photo of what's in my fridge and it suggests three dinners I could make with it tonight, with simple steps and how long each takes. Save the ones we liked."),
-        Idea("Bill by Dish", "fork.knife.circle", 0.4, "Split the restaurant bill by who actually had what.",
+        Idea(.money, "Bill by Dish", "fork.knife.circle", 0.4, "Split the restaurant bill by who actually had what.",
              "Bill by Dish: I photograph the restaurant bill, tap who had each dish, and it works out everyone's share with tip and splits the shared plates. Keep a running tab for a trip with friends."),
-        Idea("Head Count", "checklist", 0.62, "Count thirty kids onto the bus on a school trip, one tap each.",
+        Idea(.work, "Head Count", "checklist", 0.62, "Count thirty kids onto the bus on a school trip, one tap each.",
              "Head Count: I'm a teacher on a school trip. I keep my class list in it, and at each stop I tap each child as they get on; it shows who's missing in big letters and how long since the last count."),
-        Idea("Between Sets", "dumbbell", 0.0, "Log a set in two taps before my rest is up.",
+        Idea(.health, "Between Sets", "dumbbell", 0.0, "Log a set in two taps before my rest is up.",
              "Between Sets: I log the weight and reps for a set in two taps, and a rest timer starts. It shows what I lifted last time for each exercise and suggests what to try next."),
-        Idea("Step Quest", "figure.walk", 0.25, "Turn my daily walks into an adventure across made-up lands.",
+        Idea(.health, "Step Quest", "figure.walk", 0.25, "Turn my daily walks into an adventure across made-up lands.",
              "Step Quest: counts my steps through the day and turns them into a journey across a map of made-up lands, unlocking a new place every few thousand steps. Show today's steps, my best week, and what the next place is."),
 
-        Idea("Menu Abroad", "character.bubble", 0.58, "Point at a menu abroad and know exactly what I'm ordering.",
+        Idea(.everyday, "Menu Abroad", "character.bubble", 0.58, "Point at a menu abroad and know exactly what I'm ordering.",
              "Menu Abroad: I point the camera at a menu in another language and it tells me what each dish is in plain words, flags what I said I can't eat, and reads my order aloud in the local language."),
-        Idea("Trail Back", "location.north.line", 0.35, "Point me back to the car when the trail splits.",
+        Idea(.everyday, "Trail Back", "location.north.line", 0.35, "Point me back to the car when the trail splits.",
              "Trail Back: I tap once at the trailhead, and wherever I end up it shows an arrow pointing back and how far it is, using where I am and which way the phone faces. It also marks spots I tap along the way."),
-        Idea("House Viewings", "house", 0.9, "Keep ten flat viewings straight, with photos and notes for each.",
+        Idea(.home, "House Viewings", "house", 0.9, "Keep ten flat viewings straight, with photos and notes for each.",
              "House Viewings: at each viewing I tap New, and it saves where I am, the photos I take and a few quick ratings (light, noise, storage). Afterwards it lines them up side by side so we can compare."),
-        Idea("Club Check-In", "person.crop.circle.badge.checkmark", 0.5, "See who came to club tonight, and spot who's drifted away.",
+        Idea(.work, "Club Check-In", "person.crop.circle.badge.checkmark", 0.5, "See who came to club tonight, and spot who's drifted away.",
              "Club Check-In: I run a club's weekly session. I tap each member as they arrive, add newcomers in a few taps, and see who hasn't come for a month so I can check in with them."),
-        Idea("Walk Thoughts", "mic", 0.14, "Catch the ideas I have on walks: said once, sorted for me.",
+        Idea(.everyday, "Walk Thoughts", "mic", 0.14, "Catch the ideas I have on walks: said once, sorted for me.",
              "Walk Thoughts: I tap once and speak. It writes down what I said, tidies it into a short note with a title, and sorts it into ideas, to-dos and things to remember. Search everything I've said."),
-        Idea("Tilt Maze", "circle.grid.cross", 0.85, "A marble maze I play by tilting my phone.",
+        Idea(.play, "Tilt Maze", "circle.grid.cross", 0.85, "A marble maze I play by tilting my phone.",
              "Tilt Maze: a marble game where I tilt the phone to roll a ball through a maze to the hole, avoiding traps. A new maze each level, a little harder each time, with my best times."),
     ]
 
@@ -152,21 +167,23 @@ enum Ideas {
         [pool.indices.contains(index) ? pool[index] : nil, phonePool.indices.contains(index) ? phonePool[index] : nil].compactMap { $0 }
     }
 
-    /// Six at a time, in order and starting over at the end.
+    /// Six at a time, one of each kind, each kind's ideas in turn and starting over at its end.
     static func page(_ index: Int) -> [Idea] {
-        let pool = mixed
-        let start = (index * 6) % pool.count
-        return (0..<6).map { pool[(start + $0) % pool.count] }
+        Idea.Kind.allCases.compactMap { kind in
+            let ofKind = mixed.filter { $0.kind == kind }
+            return ofKind.isEmpty ? nil : ofKind[index % ofKind.count]
+        }
     }
 
-    /// Six for a new app's empty chat. Until the person has an app, the first six, chosen to be a good first
-    /// look; after that a random six, so the chat keeps turning up ones they haven't seen, leaving out any
-    /// they've already made (by name).
+    /// Six for a new app's empty chat, one of each kind. Until the person has an app, the first page, chosen to
+    /// be a good first look; after that a random one of each kind, so the chat keeps turning up ones they
+    /// haven't seen, leaving out any they've already made (by name).
     static func starters(made names: [String]) -> [Idea] {
-        let pool = mixed
-        guard !names.isEmpty else { return Array(pool.prefix(6)) }
+        guard !names.isEmpty else { return page(0) }
         let made = Set(names.map { $0.lowercased() })
-        return Array(pool.filter { !made.contains($0.title.lowercased()) }.shuffled().prefix(6))
+        return Idea.Kind.allCases.compactMap { kind in
+            mixed.filter { $0.kind == kind && !made.contains($0.title.lowercased()) }.randomElement()
+        }
     }
 
     /// Whether this Mac can make up new ideas with Apple's on-device model.
@@ -297,7 +314,7 @@ private enum Inventor {
             let wanted = (try? invented.value(String.self, forProperty: "symbol")) ?? ""
             let symbol = NSImage(systemSymbolName: wanted, accessibilityDescription: nil) == nil ? "sparkles" : wanted
             let hue = Double(abs(title.hashValue) % 100) / 100
-            return Idea(title, symbol, hue, blurb, request)
+            return Idea(.everyday, title, symbol, hue, blurb, request)
         }
         return ideas.count >= 4 ? Array(ideas.prefix(6)) : nil
     }

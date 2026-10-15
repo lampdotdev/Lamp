@@ -50,9 +50,9 @@ struct ContentView: View {
                     ContentUnavailableView {
                         Label("Nothing here yet", systemImage: "lightbulb")
                     } description: {
-                        Text("Tell Lamp what you wish was easier, and it makes something for it.")
+                        Text("Tell Lamp what would make your day easier, or more fun, and it makes it for you.")
                     } actions: {
-                        Button("New Wish") { store.create() }
+                        Button("New") { store.create() }
                     }
                 } else {
                     ContentUnavailableView("Select an app", systemImage: "sidebar.left")
@@ -168,7 +168,7 @@ struct AppSidebar: View {
             }
             Button { store.create() } label: {
                 Label {
-                    Text("New Wish")
+                    Text("New")
                 } icon: {
                     Image(systemName: "plus").frame(width: 24, height: 24)
                 }
@@ -213,7 +213,7 @@ struct AppSidebar: View {
                             .font(.title)
                             .frame(width: 56, height: 56)
                             .background(.quaternary, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-                        Text("New Wish").font(.callout)
+                        Text("New").font(.callout)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(6)
@@ -1414,9 +1414,9 @@ struct NewAppIntro: View {
             // Catches the light once the reveal has passed it.
             AppIcon(project: project, size: 112).shine(delay: 0.4)
             if project.untitled && !project.fromWish {
-                // Nothing to name yet: what's asked is what gets in the way, not what to make. Lamp names
-                // what it makes.
-                Text("What do you wish was easier?")
+                // Nothing to name yet: what's asked is what the person wants, a chore taken off their hands or
+                // something fun, not what to make. Lamp names what it makes.
+                Text("What would make your day easier, or more fun?")
                     .font(.title.weight(.semibold))
                     .multilineTextAlignment(.center)
             } else {
@@ -1443,7 +1443,7 @@ struct NewAppIntro: View {
             }
             Text(project.untitled && project.fromWish ? "Here's your wish. Change anything you like."
                  : project.untitled
-                 ? "Say what gets in your way, in your own words, and Lamp makes something that fixes it."
+                 ? "Say it in your own words: a chore to take off your hands, a habit to keep, a game to play. Lamp makes it for you."
                  : "Describe what \(project.name) should do. Lamp builds it and opens it for you.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -1866,8 +1866,8 @@ struct ApprovalCard: View {
     }
 }
 
-/// Wishes to start from, under a new wish's empty chat: what someone might say gets in their way, in their own
-/// words, never an app's name. Choosing one puts the wish in the message box (it isn't sent) so the person can
+/// Wishes to start from, under a new app's empty chat: what someone might want, in their own words, one from
+/// each part of life (`Idea.Kind`), never an app's name. Choosing one puts the wish in the message box (it isn't sent) so the person can
 /// make it theirs; what to make of it is the agent's to ask about. It opens on the six it's given; Show Me
 /// Others pages on from there.
 struct StarterIdeas: View {

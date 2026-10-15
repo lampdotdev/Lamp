@@ -28,7 +28,7 @@ enum Analytics {
         case welcomeModelDownload = "onboarding_local_model_download_started"
         case welcomeDone = "onboarding_completed"             // agent, kind, has_idea, seconds
 
-        // A new app, from New Wish to its first run.
+        // A new app, from New to its first run.
         case appCreated = "app_created"                       // source
         case appFirstRequest = "app_first_request_sent"       // kind, has_attachments
         case appFirstRun = "app_first_run"                    // kind, seconds

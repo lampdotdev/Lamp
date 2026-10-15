@@ -16,7 +16,7 @@ struct LampApp: App {
             CheckForUpdatesCommand()
             LampHelpCommands()
             CommandGroup(replacing: .newItem) {
-                Button("New Wish") { store.create() }
+                Button("New") { store.create() }
                     .keyboardShortcut("n")
             }
             CommandGroup(after: .newItem) {
