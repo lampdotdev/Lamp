@@ -163,7 +163,11 @@ enum LiveReload {
     /// macOS 14, named after the app, with SwiftUI's macros).
     private static func frontend(_ action: String, in folder: URL, primaries: [String], module: String) -> String {
         let all = swiftFiles(in: folder)
-        let others = all.filter { !primaries.contains($0.key) }.values.map(\.path).sorted()
+        // The widget's code the app shares (Widget/Shared, linked into Sources and not followed there) is read for
+        // context: a change to it reopens the app (`inputs`), but the app's code may use what it declares.
+        let shared = swiftFiles(in: folder.deletingLastPathComponent()
+            .appendingPathComponent(Template.widgetFolder).appendingPathComponent(Template.sharedWidgetFolder)).values.map(\.path)
+        let others = (all.filter { !primaries.contains($0.key) }.values.map(\.path) + shared).sorted()
         let firsts = primaries.compactMap { all[$0]?.path }.map { "-primary-file " + quoted($0) }.joined(separator: " ")
         return """
             SDK="$(xcrun --sdk macosx --show-sdk-path)"

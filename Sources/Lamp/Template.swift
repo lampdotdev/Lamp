@@ -10754,6 +10754,8 @@ enum Template {
       for d in Widget Share; do
         if [[ -d "$d" ]]; then mkdir -p "$LIVE/$d"; rsync -a --delete "$d/" "$LIVE/$d/"; else rm -rf "$LIVE/$d"; fi
       done
+      # The widget's code the app shares, linked into Sources as it is there (\(sharedWidgetLink)), onto the copy.
+      if [[ -L Sources/\(sharedWidgetLink) ]]; then ln -sfn ../Widget/\(sharedWidgetFolder) "$LIVE/Sources/\(sharedWidgetLink)"; else rm -f "$LIVE/Sources/\(sharedWidgetLink)"; fi
     """
 
     static let buildSh = """

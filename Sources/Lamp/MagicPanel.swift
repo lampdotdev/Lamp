@@ -187,7 +187,9 @@ final class MagicPanel: NSObject, NSWindowDelegate {
                 if Store.shared.busy.contains(id) { self.showCover(for: current); return }
                 // The person quit the app: the panel beside it goes with it.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                    if Store.shared.macCopies(of: current).isEmpty, !Store.shared.busy.contains(id) { self.close() }
+                    // Still this app's panel: another app's wand opened meanwhile has taken it over.
+                    guard self.appID == id, Store.shared.macCopies(of: current).isEmpty, !Store.shared.busy.contains(id) else { return }
+                    self.close()
                 }
             }
         })
