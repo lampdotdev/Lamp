@@ -7,7 +7,6 @@ import AVFoundation
 /// for, a right-click away.
 struct WishDesk: View {
     @EnvironmentObject private var store: Store
-    @State private var text = ""
     @StateObject private var dictation = Dictation()
     @State private var hasMicrophone = true
     @FocusState private var barFocused: Bool
@@ -128,13 +127,13 @@ struct WishDesk: View {
 
     private var bar: some View {
         HStack(alignment: .center, spacing: 10) {
-            TextField(dictation.isListening ? "Listening…" : "Type a wish…", text: $text, axis: .vertical)
+            TextField(dictation.isListening ? "Listening…" : "Type a wish…", text: $store.deskDraft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.title3)
                 .lineLimit(1...5)
                 .focused($barFocused)
                 .onSubmit { send() }
-            if !text.trimmed.isEmpty {
+            if !store.deskDraft.trimmed.isEmpty {
                 Button { send() } label: {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 26))
@@ -148,7 +147,7 @@ struct WishDesk: View {
                 .transition(.scale.combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: text.trimmed.isEmpty)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: store.deskDraft.trimmed.isEmpty)
         .padding(.leading, 20).padding(.trailing, 12).padding(.vertical, 14)
         .background(Color(nsColor: .textBackgroundColor).opacity(0.9), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
@@ -172,7 +171,7 @@ struct WishDesk: View {
 
     /// An idea goes in the bar to be made the person's own, and the ideas step aside for it.
     private func choose(_ wish: String) {
-        text = wish
+        store.deskDraft = wish
         withAnimation(Self.glide) { showingIdeas = false }
         barFocused = true
     }
@@ -184,19 +183,19 @@ struct WishDesk: View {
             barFocused = true
             return
         }
-        let typed = text
+        let typed = store.deskDraft
         let separator = typed.isEmpty || typed.last!.isWhitespace ? "" : " "
         Task {
-            await dictation.start { heard, _ in text = typed + separator + heard }
+            await dictation.start { heard, _ in store.deskDraft = typed + separator + heard }
         }
     }
 
     private func send() {
-        let wish = text.trimmed
+        let wish = store.deskDraft.trimmed
         guard !wish.isEmpty else { return }
         let spoken = dictation.isListening
         dictation.cancel()
-        text = ""
+        store.deskDraft = ""
         store.wish(wish, spoken: spoken)
     }
 }

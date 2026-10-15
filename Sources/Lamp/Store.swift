@@ -314,7 +314,9 @@ final class Store: ObservableObject {
     @Published var arrivedWish: String?
     /// The wishes being written into a message box right now, by app (`Wish.Arrival`). The drafts hold them whole.
     @Published private(set) var arrivals: [String: Wish.Arrival] = [:]
-    private var wishWriting: Task<Void, Never>?
+    /// What writes each arriving wish in, by app: wishes from the site and from the agent's `write_wish` can be
+    /// arriving in several chats at once, and one finishing or starting mustn't cut another short.
+    private var wishWriting: [String: Task<Void, Never>] = [:]
     /// The new app the last such wish went into.
     private var wishApp: String?
     @Published private(set) var pendingSubmissions = PendingSubmissions()
@@ -835,9 +837,10 @@ final class Store: ObservableObject {
     func take(wish: String) {
         NSApp.activate()
         guard Onboarding.isDone || welcomeFinished else { arrivedWish = wish; return }
-        wishWriting?.cancel()
         // A second link goes into the app the first one made, while nothing has been sent there: a page that
-        // keeps opening links can't fill Lamp with apps.
+        // keeps opening links can't fill Lamp with apps. Whatever was still being written in is there whole.
+        for writer in wishWriting.values { writer.cancel() }
+        wishWriting = [:]
         arrivals = [:]
         if let id = wishApp, let earlier = projects.first(where: { $0.id == id }), earlier.untitled, nothingAsked(of: id) {
             showChat(id)
@@ -853,13 +856,13 @@ final class Store: ObservableObject {
     /// with whatever else it already held (a file dropped there): only the box's showing of it is written in,
     /// so Send at any moment sends all of it.
     func writeIn(_ wish: String, for project: LampProject) {
-        wishWriting?.cancel()
+        wishWriting.removeValue(forKey: project.id)?.cancel()
         let whole = draft(for: project).taking(wish: wish)
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return updateDraft(whole, for: project) }
         arrivals[project.id] = Wish.Arrival(wish)
         updateDraft(whole, for: project)
         let id = project.id
-        wishWriting = Task {
+        wishWriting[id] = Task {
             let steps = Wish.steps(wish)
             let pace = Wish.pace(words: steps.count)
             for step in steps {
@@ -867,12 +870,15 @@ final class Store: ObservableObject {
                 arrivals[id]?.advance(to: step)
                 try? await Task.sleep(for: pace)
             }
-            if !Task.isCancelled { arrivals[id] = nil }
+            guard !Task.isCancelled else { return }
+            arrivals[id] = nil
+            wishWriting[id] = nil
         }
     }
 
     /// The box's text changed under an arriving wish, or it was sent: the writing is over.
     func endArrival(for id: String) {
+        wishWriting.removeValue(forKey: id)?.cancel()
         if arrivals[id] != nil { arrivals[id] = nil }
     }
 
@@ -945,6 +951,9 @@ final class Store: ObservableObject {
     func showDesk() {
         selection = nil
     }
+
+    /// What's typed in the desk's wish bar and not sent: kept here, so going to a wish's chat and back keeps it.
+    @Published var deskDraft = ""
 
     /// Goes up to put the cursor in the desk's wish bar (New Wish).
     @Published var deskFocusRequest = 0
@@ -1175,7 +1184,9 @@ final class Store: ObservableObject {
     /// executable and bundle ID match. After that only the display name changes: the bundle ID stays,
     /// so the app keeps its settings and data. Returns the app as it is now.
     func rename(_ project: LampProject, to name: String) async {
-        guard begin(project) != nil else { return }
+        // A wish still being found has no name to give: the wish it becomes names it (`startQueued`), and a
+        // rename now would end the finding before the wish is.
+        guard !project.finding, begin(project) != nil else { return }
         finish(await performRename(project, to: name))
     }
 

@@ -261,7 +261,8 @@ struct AppMenu: View {
         }
         Divider()
         Button("Rename…") { store.renaming = project }
-            .disabled(busy)
+            // Still being found: the wish it becomes names it.
+            .disabled(busy || project.finding)
         Button("Duplicate") { Task { await store.duplicate(project) } }
             .disabled(busy || !project.scaffolded || project.untitled)
         Button("New Icon") { Task { await store.newIcon(project) } }
@@ -659,7 +660,7 @@ struct ProjectView: View {
         .navigationSubtitle(usageSummary)
         .toolbarTitleMenu {
             Button("Rename…") { store.renaming = project }
-                .disabled(busy)
+                .disabled(busy || project.finding)
         }
         .toolbar { toolbar }
     }
