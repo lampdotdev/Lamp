@@ -153,13 +153,15 @@ struct StoreDialogs: ViewModifier {
         } message: {
             Text("The wish, its chat, its history and what it saved are moved to the Trash.")
         }
-        .dialogIcon(store.deleting.map { Image(nsImage: dialogIcon(for: $0)) })
+        .dialogIcon(store.deleting.map { Image(nsImage: store.iconImage(for: $0)) })
         .onChange(of: store.renaming) { newName = store.renaming.map { $0.untitled ? "" : $0.name } ?? "" }
     }
+}
 
+extension Store {
     /// The app's own icon, or its blueprint stand-in if it doesn't have one yet.
-    private func dialogIcon(for project: LampProject) -> NSImage {
-        if let icon = store.icons[project.id] { return icon }
+    func iconImage(for project: LampProject) -> NSImage {
+        if let icon = icons[project.id] { return icon }
         let renderer = ImageRenderer(content: StandInIcon(project: project, size: 128))
         renderer.scale = 2
         return renderer.nsImage ?? NSApp.applicationIconImage
