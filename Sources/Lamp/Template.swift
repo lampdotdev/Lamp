@@ -1459,7 +1459,7 @@ enum Template {
     static func iosUsagePlistLines(name: String) -> String { usagePlistLines(iosUsageDescriptions, name: name) }
 
     /// The same for a Mac app: macOS kills an app that asks for one of these without its reason (microphone,
-    /// speech, camera, photos, calendar, reminders, contacts, Bluetooth, Mail), and asks about the network
+    /// speech, camera, photos, calendar, reminders, contacts, Bluetooth, other apps), and asks about the network
     /// with no reason given. Location and music are asked about without one, so they have none here.
     /// One list for build.sh, the Mac half of an app for both, and what `Store.deploy` puts in every build.
     static let macUsageDescriptions: [(key: String, text: String)] = [
@@ -1472,7 +1472,7 @@ enum Template {
         ("NSRemindersFullAccessUsageDescription", "{{NAME}} reads and adds reminders."),
         ("NSContactsUsageDescription", "{{NAME}} looks up people in your contacts."),
         ("NSBluetoothAlwaysUsageDescription", "{{NAME}} connects to Bluetooth devices."),
-        ("NSAppleEventsUsageDescription", "{{NAME}} reads your email and drafts replies through Mail."),
+        ("NSAppleEventsUsageDescription", "{{NAME}} works with your other apps when you ask it to."),
         ("NSLocalNetworkUsageDescription", "{{NAME}} looks for printers and other devices on your network."),
         ("NSLocationUsageDescription", "{{NAME}} uses your location."),
         ("NSLocationWhenInUseUsageDescription", "{{NAME}} uses your location."),

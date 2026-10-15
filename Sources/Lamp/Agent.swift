@@ -245,7 +245,7 @@ enum Agent {
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks), half(onMac, BrowserBridge.enabled ? Rules.browserCompanion : ""),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
                      Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.services), half(onMac, Rules.computer),
-                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true),
+                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true, sidebar: BrowserBridge.enabled),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
                      Rules.universalTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
@@ -255,7 +255,7 @@ enum Agent {
             .replacingOccurrences(of: "{{IMAGE}}", with: "LampImage")
             .replacingOccurrences(of: "{{RELAUNCH}}", with: "builds it and opens it where Try On points")
             .replacingOccurrences(of: "{{TRANSLATION_OS}}", with: "macOS 15 and iOS 18")
-            .replacingOccurrences(of: "{{EXTRA_PERMISSIONS}}", with: "and calendars, reminders, contacts, photos, Bluetooth and Mail")
+            .replacingOccurrences(of: "{{EXTRA_PERMISSIONS}}", with: "and calendars, reminders, contacts, photos, Bluetooth and other apps such as Mail")
     }
 
     private static func prompt(platform: Platform, device: String, sidebar: Bool) -> String {
@@ -268,7 +268,7 @@ enum Agent {
         rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules += [Rules.services, Rules.computer] }
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.iPhoneShare, Rules.icloud] }
-        rules += [Rules.store, Rules.kinds(mac: mac), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
+        rules += [Rules.store, Rules.kinds(mac: mac, sidebar: sidebar), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
                   Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
         rules += [Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
@@ -278,7 +278,7 @@ enum Agent {
             .replacingOccurrences(of: "{{IMAGE}}", with: mac ? "NSImage" : "UIImage")
             .replacingOccurrences(of: "{{RELAUNCH}}", with: mac ? "builds and relaunches it" : "builds it and opens it in the simulator")
             .replacingOccurrences(of: "{{TRANSLATION_OS}}", with: mac ? "macOS 15" : "iOS 18")
-            .replacingOccurrences(of: "{{EXTRA_PERMISSIONS}}", with: mac ? "and calendars, reminders, contacts, photos, Bluetooth and Mail"
+            .replacingOccurrences(of: "{{EXTRA_PERMISSIONS}}", with: mac ? "and calendars, reminders, contacts, photos, Bluetooth and other apps such as Mail"
                                   : "and photos, calendars, reminders and contacts")
     }
 
@@ -407,17 +407,23 @@ enum Agent {
             - Some wishes are about web pages: keeping what's found on them (recipes, articles, products, places), \
             understanding or comparing what's being read, doing something with a passage. For those, the Mac app also \
             gets a sidebar in Chrome, beside the page, built with `LampBrowser` in LampSupport.swift (read it there \
-            first). Decide that from the wish yourself, never ask, and say it in one line of your reply, like "Recipe \
-            Box also works in Chrome, beside recipe pages." Lamp's one extension draws every app's sidebar: never write \
+            first). Decide that from the wish yourself, never ask, and say so where the person reads how the request \
+            ended: in `show_result`'s summary ("Your recipes in one place, saved from Chrome beside the page."), or in \
+            the sentence you end on. Lamp's one extension draws every app's sidebar: never write \
             extension code, a web server, a bridge or browser automation.
             - Declare it in `browser.json` at the app's root: `{"offer": "Save this recipe to Recipe Box", "fits": \
             [{"site": "allrecipes.com"}, {"selector": ".wprm-recipe-container"}]}`. `offer` is the app's own short \
             sentence, shown when a page fits. Each fit is a `site` (its subdomains count, with an optional `path` \
             prefix), a `selector`, or both; Chrome lights Lamp's icon on a matching page without reading it, and one \
             click opens the sidebar on this app. A selector is one compound CSS selector (no spaces, `>` or commas) for \
-            something shown on the page: script tags and hidden markup never match. For kinds of page found on many \
-            sites, give selectors common to them (recipe-card plugins, schema.org microdata like \
-            `[itemtype*="schema.org/Recipe"]`) as well as the best-known sites by name.
+            something shown on the page: script tags and hidden markup never match. Every page a fit matches gets the \
+            offer, so fit only pages that are what it says. Name a site alone only when nearly all its pages are that \
+            kind (allrecipes.com for recipes, a coffee-gear shop for espresso machines); a site with every kind of \
+            thing (a department store, a marketplace, a newspaper) only with a `path` or selector that just those pages \
+            have, else not at all. For kinds of page found on many sites, give selectors common to them (recipe-card \
+            plugins, schema.org microdata like `[itemtype*="schema.org/Recipe"]`), never one that marks more than the \
+            offer is for (every product, for an app about one kind of product). On a page that doesn't fit, the person can still click \
+            Lamp's icon and choose the app.
             - Start it once from the app's shared @MainActor model, never a window's task: `LampBrowser.start(surface: \
             { tab in model.sidebar(for: tab) }, handle: { event in await model.handle(event) })`. The surface is data \
             Lamp draws: title, detail, sections (title, text, `items` for a list, one line each), fields (id, label, \
@@ -432,12 +438,16 @@ enum Agent {
             `event.page.contains(quote)`; one that fails is never saved as the page's (drop it, or keep it marked as \
             not found on the page). Say so when `truncated` cut the page short. Show a preview with editable fields \
             before saving, say Saved only after the write succeeded, and key saved items by the page's URL or the \
-            item's identity so saving twice doesn't duplicate. Changes in the Mac window show in the sidebar too.
+            item's identity so saving twice doesn't duplicate. When the page read isn't the kind the app keeps (a novel \
+            in a shortlist of espresso machines), say so rather than make a preview of it. Changes in the Mac window \
+            show in the sidebar too.
             - Try the sidebar yourself before finishing: `look_at_app` with `sidebar: true` and `page` (the https \
             address of a real page it's for) draws it as Chrome would and says whether the page fits browser.json; \
             `use_app` with `sidebar: true` and `page` clicks its buttons and types into its fields by target, with the \
             page's text given to a button that reads it (and `selection` for a passage). Go through the whole path \
-            (read, preview, edit, save) and check the result in the Mac window. Say plainly what you tried.
+            (read, preview, edit, save) and check the result in the Mac window, then delete what you saved and check \
+            it's gone, so the person finds only their own things. This is Lamp's copy of the sidebar, not Chrome: say \
+            you tried it beside a page, never that you used Chrome.
             - Call `offer_setup` with capability `browser` once if the end of a request says Chrome isn't connected.
 
             """
@@ -708,11 +718,23 @@ enum Agent {
 
         /// Where an app works comes before what kind it is: a wish about something the user already has in front
         /// of them wants no window to bring it to, and one that waits for something wants no window at all. Without
-        /// this the agent makes a window for everything, and the person has one more app to open.
-        static let shapes = """
+        /// this the agent makes a window for everything, and the person has one more app to open. Where Apps in
+        /// Chrome is on, a web page is the sidebar's: a hotkey for it too gave the app a second way in, the one
+        /// nothing tries.
+        static func shapes(sidebar: Bool) -> String {
+            let page = sidebar ? "the file they're looking at; a web page gets the Chrome sidebar instead" : "the file or page they're looking at"
+            let collect = sidebar ? """
+                the Chrome sidebar from the rule on Chrome to save from the page they're on, besides dropping or \
+                pasting a link; no hotkey for pages.
+                """ : """
+                a way to save from where they are without coming to the window: a hotkey that takes the page or \
+                selection in front of them (the current tab's address from Safari, Chrome or Arc through AppleScript, \
+                or the selected text) and saves it with a brief floating confirmation, besides dropping or pasting a link.
+                """
+            return """
          Before the kind, decide where the app works. When the wish acts on something the user already has in \
-        front of them in another app (the text they selected, the post or message they're writing there, the file or \
-        page they're looking at), don't make a window to paste or drop it into: make a utility that works where \
+        front of them in another app (the text they selected, the post or message they're writing there, \(page)), \
+        don't make a window to paste or drop it into: make a utility that works where \
         they are. A `LampHotKey` \
         takes the selection: read it from the focused element through Accessibility (kAXFocusedUIElementAttribute, \
         then kAXSelectedTextAttribute; `LampPermissions` asks for Accessibility), and when that gives nothing, send \
@@ -727,16 +749,15 @@ enum Agent {
         so (don't explain it yourself; put Open at Login in its Settings so they can turn it off). What runs at a \
         time or every so often uses `LampSchedule`. A window is for what the user brings things to and \
         comes back to: writing, collecting, browsing, playing. Collecting from wherever the user finds things \
-        (recipes from any website, articles, quotes, products) is both: the window to keep and find them in, and a \
-        way to save from where they are without coming to the window: a hotkey that takes the page or selection in \
-        front of them (the current tab's address from Safari, Chrome or Arc through AppleScript, or the selected \
-        text) and saves it with a brief floating confirmation, besides dropping or pasting a link.
+        (recipes from any website, articles, quotes, products) is both: the window to keep and find them in, and \
+        \(collect)
         """
+        }
 
         /// What kind of app it is decides how it looks: Notes, Weather and Breathe are all Apple's and look
         /// nothing alike. The agent picks a kind once and keeps it in APP.md, so the look holds across requests.
         /// design/app-archetypes/README.md is the reasoning behind each.
-        static func kinds(mac: Bool) -> String {
+        static func kinds(mac: Bool, sidebar: Bool) -> String {
             let haptic = mac ? "" : " and a haptic (sensoryFeedback)"
             let companionPlace = mac
                 ? "; on a Mac it also shows its state in the menu bar (LampMenuBar with `dockIcon: true`, its label the time left or the count)"
@@ -771,7 +792,7 @@ enum Agent {
             user asks for a different feel or the app becomes something else. Never ask them which kind, and never \
             name kinds to them. A style they gave wins over the kind's look but keeps its structure: a "cozy" water \
             tracker is a companion app, made cozy. Every kind feels like Apple made it, following the \
-            \(mac ? "macOS" : "iOS") Human Interface Guidelines.\(mac ? shapes : "")
+            \(mac ? "macOS" : "iOS") Human Interface Guidelines.\(mac ? shapes(sidebar: sidebar) : "")
               • Tool (notes, inventory, lists, logs, a CRM: keeping and finding things): the base design below, exactly. \
             Dense and calm: system colors, the accent color, SF Symbols, no illustration. It's judged on how fast \
             things are found, added and changed.
