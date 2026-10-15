@@ -178,6 +178,12 @@ final class SidebarServer {
         watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange).sink { [weak self] _ in
             DispatchQueue.main.async { self?.scheduleUpdate() }
         }
+        // A key or a model chosen in Settings changes what an offer's card says.
+        for name in [KeyStore.changed, AppModels.changed] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.scheduleUpdate() }
+            }
+        }
     }
 
     fileprivate func accepted(_ socket: Int32) {
@@ -244,7 +250,8 @@ final class SidebarServer {
     /// spaced the same way. Cards and notes Lamp's window has and this doesn't yet are left out.
     static func lines(_ log: [LogLine], project: LampProject, busy: Bool, progressShown: Bool) -> [SidebarLine] {
         let dir = project.dir
-        let lines = LogLine.visible(log, details: false)
+        // Offers with nothing left to offer (an icon drawn, a widget gone) are left out, as in Lamp's window.
+        let lines = Transcript.withoutSpentOffers(LogLine.visible(log, details: false), dir: dir)
         let finalAnswers = Transcript.finalAnswers(in: lines, busy: busy)
         let openAsk = Talk.open(in: lines)?.id
         let currentResult = Talk.current(in: lines)?.id
@@ -301,6 +308,36 @@ final class SidebarServer {
                     card.result = result
                     card.resultCurrent = current
                     card.picture = result.version.flatMap { picture(Versions.pictureURL(in: project, for: $0)) }
+                    out.append(card)
+                case .needsKey, .offer:
+                    // The card's header: setting it up (a key, a download, a sign-in) happens in Lamp's window.
+                    guard let offer = line.setupOffer else { continue }
+                    let header = SetupCard.header(offer, reason: line.text, project: project)
+                    var card = SidebarLine(id: line.id, kind: .offer, text: header.title, gap: gap)
+                    card.symbol = SetupCard.symbol(offer)
+                    card.status = header.status
+                    card.done = header.done
+                    card.button = header.done || offer.declined(in: project) ? nil : "Set Up in Lamp…"
+                    out.append(card)
+                case .widget:
+                    let placed = Store.shared.placedWidgets.contains(project.id)
+                    var card = SidebarLine(id: line.id, kind: .offer, text: WidgetCard.title(project.name), gap: gap)
+                    card.symbol = "widget.small"
+                    card.status = project.platform.hasIOS ? WidgetCard.phoneStatus(project.name) : WidgetCard.status(project.name, placed: placed)
+                    card.done = placed
+                    out.append(card)
+                case .drawIcon:
+                    var card = SidebarLine(id: line.id, kind: .action, text: DrawIconLine.text(project.name), gap: gap)
+                    card.symbol = "paintbrush.pointed"
+                    card.button = "Draw Icon…"
+                    out.append(card)
+                case .iphoneSetup:
+                    let store = Store.shared
+                    var card = SidebarLine(id: line.id, kind: .action, text: IPhoneSetupLine.text(project.name), gap: gap)
+                    card.symbol = "iphone"
+                    card.button = "See What's Needed…"
+                    card.disabled = IPhoneSetupLine.Asked.shared.ids.contains(project.id) || store.busy.contains(project.id)
+                        || !(store.queued[project.id] ?? []).isEmpty
                     out.append(card)
                 case .noted:
                     guard let receipt = line.noted else { continue }
@@ -410,6 +447,15 @@ final class SidebarServer {
                 return url
             }
             store.attach(urls, to: project)
+        case .offer(let id):
+            guard let line = store.logs[project.id]?.first(where: { $0.id == id }) else { return }
+            if line.kind == .drawIcon {
+                store.iconFromPlayground(project)
+            } else {
+                // Set up in Lamp's window, where the card's keys, downloads and sign-ins are.
+                NSApp.activate(ignoringOtherApps: true)
+                store.showChat(project.id)
+            }
         case .undoNote(let id):
             Self.noteProblems[id] = store.undoNote(id, in: project)
             scheduleUpdate()
@@ -533,6 +579,7 @@ final class SidebarServer {
             if version < 2 { state.lines.removeAll { $0.kind == .summary } }
             // Nor one from before the notes receipt a receipt.
             if version < 3 { state.lines.removeAll { $0.kind == .note } }
+            if version < 4 { state.lines.removeAll { $0.kind == .offer || $0.kind == .action } }
             guard let data = SidebarWire.encode(state), force || data != last else { return }
             last = data
             outbox.send(data)
