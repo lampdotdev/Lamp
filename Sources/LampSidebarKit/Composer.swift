@@ -287,7 +287,7 @@ final class ComposerTextView: NSTextView {
     private static let hint = "⇥ to accept"
     private static let hintAttributes: [NSAttributedString.Key: Any] = [
         .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize - 1, weight: .medium),
-        .foregroundColor: NSColor.secondaryLabelColor,
+        .foregroundColor: NSColor.tertiaryLabelColor,
     ]
 
     private var lineHeight: CGFloat {
@@ -311,9 +311,8 @@ final class ComposerTextView: NSTextView {
         if suggestion != nil {
             let pill = hintRect
             let path = NSBezierPath(roundedRect: pill.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
-            NSColor.quaternaryLabelColor.setFill()
-            path.fill()
-            NSColor.tertiaryLabelColor.setStroke()
+            // Only an outline: a filled key cap drew the eye away from the suggestion itself.
+            NSColor.quaternaryLabelColor.setStroke()
             path.stroke()
             (Self.hint as NSString).draw(at: NSPoint(x: pill.minX + 5, y: pill.minY + 1), withAttributes: Self.hintAttributes)
             right = pill.minX - 8

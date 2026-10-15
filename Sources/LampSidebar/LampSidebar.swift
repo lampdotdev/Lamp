@@ -167,7 +167,6 @@ private struct Chat: View {
                 // Once the lines are laid out: scrolled before then, the chat opens partway up.
                 .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { follow(scroller, animated: false) } }
             }
-            Divider()
             ComposerRow(state: state)
         }
         .background(Color(nsColor: .textBackgroundColor))
@@ -258,7 +257,12 @@ private struct ComposerRow: View {
     @State private var focus = 0
 
     var body: some View {
-        VStack(spacing: 0) {
+        ChatLook.MessageBar(busy: state.busy, canSend: canSend, attachHelp: "Attach files. You can also paste images and files here.",
+                            attach: chooseFiles, send: submit, stop: { link.send(.stop) }, focus: { focus += 1 }) {
+            Composer(text: $text, height: $height, placeholder: ChatLook.placeholder(busy: state.busy, empty: state.empty),
+                     isEnabled: true, focusRequest: focus, onSubmit: submit, onFiles: attach)
+                .frame(height: height)
+        } above: {
             if !state.attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -274,27 +278,18 @@ private struct ComposerRow: View {
                                 }
                         }
                     }
-                    .padding(.horizontal, 12).padding(.top, 10)
+                    .padding(.top, 6).padding(.trailing, 6)
                 }
             }
-            HStack(alignment: .bottom, spacing: 8) {
-                Button(action: chooseFiles) { Image(systemName: "paperclip").font(.title3) }
-                    .buttonStyle(.borderless)
-                    .help("Attach files. You can also paste images and files here.")
-                    .accessibilityLabel("Attach files")
-                    .frame(height: Composer.lineHeight)
-                Composer(text: $text, height: $height, placeholder: ChatLook.placeholder(busy: state.busy, empty: state.empty),
-                         isEnabled: true, focusRequest: focus, onSubmit: submit, onFiles: attach)
-                    .frame(height: height)
-                if state.busy { ChatLook.StopButton { link.send(.stop) } }
-                ChatLook.SendButton(busy: state.busy, action: submit)
-                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && state.attachments.isEmpty)
-            }
-            .padding(12)
         }
+        .padding(.horizontal, 12).padding(.top, 4).padding(.bottom, 12)
         .onAppear { take(state) }
         .onChange(of: state.draftVersion) { take(state) }
         .onChange(of: text) { link.send(.draft(text)) }
+    }
+
+    private var canSend: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !state.attachments.isEmpty
     }
 
     /// Lamp's draft, when it was changed elsewhere.

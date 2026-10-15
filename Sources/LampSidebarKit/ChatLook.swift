@@ -160,34 +160,106 @@ public enum ChatLook {
         }
     }
 
-    /// The Stop and Send buttons beside the message box.
-    public struct StopButton: View {
-        let action: () -> Void
-        public init(action: @escaping () -> Void) { self.action = action }
+    /// The message box as one floating bar, in Lamp's window and beside an app alike: a round attach button,
+    /// the rounded field with the text (and what's attached above it), any other round buttons beside it (such
+    /// as dictation), and one round button that sends, or stops the turn while there's nothing to send.
+    public struct MessageBar<Field: View, Above: View, Beside: View>: View {
+        let busy: Bool
+        let canSend: Bool
+        let attachHelp: String
+        let attach: () -> Void
+        let send: () -> Void
+        let stop: () -> Void
+        let focus: () -> Void
+        let field: Field
+        let above: Above
+        let beside: Beside
+
+        public init(busy: Bool, canSend: Bool, attachHelp: String, attach: @escaping () -> Void,
+                    send: @escaping () -> Void, stop: @escaping () -> Void, focus: @escaping () -> Void,
+                    @ViewBuilder field: () -> Field,
+                    @ViewBuilder above: () -> Above = { EmptyView() }, @ViewBuilder beside: () -> Beside = { EmptyView() }) {
+            self.busy = busy
+            self.canSend = canSend
+            self.attachHelp = attachHelp
+            self.attach = attach
+            self.send = send
+            self.stop = stop
+            self.focus = focus
+            self.field = field()
+            self.above = above()
+            self.beside = beside()
+        }
+
+        /// A one-line field is as tall as the round buttons, so the three line up.
+        public static var height: CGFloat { Composer.lineHeight + 2 * padding }
+        static var padding: CGFloat { 6 }
 
         public var body: some View {
-            Button(action: action) { Image(systemName: "stop.circle.fill").font(.title2) }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Stop")
-                .accessibilityLabel("Stop")
-                .frame(height: Composer.lineHeight)
+            HStack(alignment: .bottom, spacing: 8) {
+                Button(action: attach) { Image(systemName: "plus") }
+                    .buttonStyle(Round(prominent: false))
+                    .help(attachHelp)
+                    .accessibilityLabel("Attach files")
+                VStack(alignment: .leading, spacing: 6) {
+                    above
+                    field
+                }
+                .padding(.vertical, Self.padding).padding(.leading, 10).padding(.trailing, 12)
+                .frame(minHeight: Self.height)
+                // Pressing anywhere in the field, not only on the text, is for typing: the field's padding hands
+                // focus to the text. Behind the text and what's attached, so clicks on those stay theirs.
+                .background {
+                    Self.fieldShape.fill(Color(nsColor: .textBackgroundColor))
+                        .onTapGesture(perform: focus)
+                }
+                .overlay(Self.fieldShape.strokeBorder(Color(nsColor: .separatorColor)))
+                .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+                beside
+                // Stop while there's nothing to send; with something written, it waits for the turn instead.
+                if busy && !canSend {
+                    Button(action: stop) { Image(systemName: "stop.fill") }
+                        .buttonStyle(Round(prominent: false))
+                        .help("Stop")
+                        .accessibilityLabel("Stop")
+                } else {
+                    Button(action: send) { Image(systemName: "arrow.up") }
+                        .buttonStyle(Round(prominent: true))
+                        .disabled(!canSend)
+                        .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
+                        .accessibilityLabel("Send")
+                }
+            }
         }
+
+        static var fieldShape: RoundedRectangle { RoundedRectangle(cornerRadius: height / 2, style: .continuous) }
     }
 
-    public struct SendButton: View {
-        let busy: Bool
-        let action: () -> Void
-        public init(busy: Bool, action: @escaping () -> Void) {
-            self.busy = busy
-            self.action = action
-        }
+    /// A round button beside the message box: the accent colour for Send, plain for the rest.
+    public struct Round: ButtonStyle {
+        let prominent: Bool
+        @Environment(\.isEnabled) private var isEnabled
 
-        public var body: some View {
-            Button(action: action) { Image(systemName: "arrow.up.circle.fill").font(.title2) }
-                .buttonStyle(.plain)
-                .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
-                .frame(height: Composer.lineHeight)
+        public init(prominent: Bool) { self.prominent = prominent }
+
+        public func makeBody(configuration: Configuration) -> some View {
+            let size = MessageBar<EmptyView, EmptyView, EmptyView>.height
+            configuration.label
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(prominent ? (isEnabled ? AnyShapeStyle(.white) : AnyShapeStyle(.tertiary))
+                                           : AnyShapeStyle(.secondary))
+                .frame(width: size, height: size)
+                .background {
+                    if prominent {
+                        Circle().fill(isEnabled ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary))
+                    } else {
+                        Circle().fill(Color(nsColor: .textBackgroundColor))
+                            .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor)))
+                            .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+                    }
+                }
+                .contentShape(Circle())
+                .opacity(configuration.isPressed ? 0.7 : 1)
         }
     }
 

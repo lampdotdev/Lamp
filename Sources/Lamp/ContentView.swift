@@ -377,9 +377,8 @@ struct ProjectView: View {
                     }
                 }
             }
-            .padding(.horizontal, 12)
         }
-        .padding(.top, 8)
+        .padding(.top, 2)
     }
 
     /// The chat itself, scrolled to its end. Kept out of `body`, like the rows and the message box, because
@@ -553,14 +552,14 @@ struct ProjectView: View {
         }
     }
 
-    /// The message box with the buttons around it.
+    /// The message box with the buttons around it, floating at the foot of the chat in the chat's own column.
     private func composerRow(_ lines: [LogLine]) -> some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            Button(action: chooseFiles) { Image(systemName: "paperclip").font(.title3) }
-                .buttonStyle(.borderless)
-                .help("Attach files. You can also paste or drop images and files here.")
-                .accessibilityLabel("Attach files")
-                .frame(height: Composer.lineHeight)
+        // A request sent again starts from the app as it was, so it can't wait behind other work.
+        let canSend = !(submissionPending || draft.trimmed.isEmpty && attachments.isEmpty || replacing != nil && busy)
+        return ChatLook.MessageBar(busy: busy, canSend: canSend,
+                                   attachHelp: "Attach files. You can also paste or drop images and files here.",
+                                   attach: chooseFiles, send: send, stop: { store.stop(project) },
+                                   focus: { focusRequest += 1 }) {
             Composer(text: shownDraft, height: $composerHeight,
                      placeholder: ChatLook.placeholder(busy: busy, empty: lines.isEmpty),
                      // No suggestion while a request from the chat is in the box: it would be about a turn
@@ -572,24 +571,25 @@ struct ProjectView: View {
                      onDictationUndo: { dictation.cancel() },
                      onSubmit: send, onFiles: attach)
                 .frame(height: composerHeight)
+        } above: {
+            if !attachments.isEmpty { pendingAttachments }
+        } beside: {
             if hasMicrophone {
                 Button(action: toggleDictation) {
-                    Image(systemName: dictation.isListening ? "mic.fill" : "mic").font(.title3)
+                    Image(systemName: dictation.isListening ? "mic.fill" : "mic")
+                        .foregroundStyle(dictation.isListening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
                         .symbolEffect(.pulse, isActive: dictation.isListening)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(dictation.isListening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                .buttonStyle(ChatLook.Round(prominent: false))
                 .disabled(submissionPending)
                 .help(dictation.isListening ? "Stop dictation" : "Dictate a change")
                 .accessibilityLabel(dictation.isListening ? "Stop dictation" : "Dictate a change")
-                .frame(height: Composer.lineHeight)
             }
-            if busy { ChatLook.StopButton { store.stop(project) } }
-            ChatLook.SendButton(busy: busy, action: send)
-                // A request sent again starts from the app as it was, so it can't wait behind other work.
-                .disabled(submissionPending || draft.trimmed.isEmpty && attachments.isEmpty || replacing != nil && busy)
         }
-        .padding(12)
+        // Lined up with the chat above it (see `chat`).
+        .frame(maxWidth: 640)
+        .padding(.horizontal, 20).padding(.top, 4).padding(.bottom, 16)
+        .frame(maxWidth: .infinity)
     }
 
     struct History: Equatable {
@@ -624,19 +624,24 @@ struct ProjectView: View {
     private func chrome(_ lines: [LogLine]) -> some View {
         VStack(spacing: 0) {
             chat(lines)
-            Divider()
+                // The chat fades out just above the message box rather than ending at a line, so the box floats.
+                .overlay(alignment: .bottom) {
+                    LinearGradient(colors: [Color(nsColor: .textBackgroundColor).opacity(0), Color(nsColor: .textBackgroundColor)],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: 16)
+                        .allowsHitTesting(false)
+                }
             if let approval = store.approvals[project.id] {
                 ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation,
                              onAllow: { store.answerApproval(for: project, allow: true) },
                              onAllowAll: { store.answerApproval(for: project, allow: true, allowAll: true) },
                              onDeny: { store.answerApproval(for: project, allow: false) })
-                    .padding(12)
                     // Each request starts with its command hidden, even when one follows another.
                     .id(approval.id)
-                // Part of the bottom panel, set off from the message box the way the chat is.
-                Divider()
+                    .frame(maxWidth: 640)
+                    .padding(.horizontal, 20).padding(.top, 8)
+                    .frame(maxWidth: .infinity)
             }
-            if !attachments.isEmpty { pendingAttachments }
             composerRow(lines)
         }
         .overlay {
