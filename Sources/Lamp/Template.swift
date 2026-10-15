@@ -4097,8 +4097,12 @@ enum Template {
                 MainActor.assumeIsolated { connections.removeValue(forKey: ObjectIdentifier(controller))?.invalidate() }
             }
 
+            /// Only for the window in front: the chat keeps one place for all its windows, and only the front one
+            /// has a caret, so a window moved or resized behind it mustn't take that place. Coming to the front
+            /// says it again (`LampMagic`).
             func place(_ controller: EXHostViewController) {
-                guard let connection = connections[ObjectIdentifier(controller)], let window = controller.view.window else { return }
+                guard let connection = connections[ObjectIdentifier(controller)], let window = controller.view.window,
+                      window.isKeyWindow else { return }
                 let origin = window.convertToScreen(controller.view.convert(controller.view.bounds, to: nil)).origin
                 (connection.remoteObjectProxy as? LampSidebarPlacement)?.place(x: origin.x, y: origin.y)
             }
