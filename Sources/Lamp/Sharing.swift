@@ -196,6 +196,11 @@ enum Sharing {
             plain.outputFormatting = [.prettyPrinted, .sortedKeys]
             try plain.encode(capabilities).write(to: stage.appendingPathComponent(Template.Capabilities.file))
         }
+        // Where its sidebar in Chrome fits, the same way: Lamp writes what passed the checks. A Lamp from before the
+        // sidebar ignores the file, and has no sidebar to lose.
+        if let browser = BrowserCompanions.Declaration.load(project) {
+            try BrowserCompanions.Declaration.encoded(browser).write(to: stage.appendingPathComponent(BrowserCompanions.Declaration.file))
+        }
         if let spec = Icons.load(project), fm.fileExists(atPath: Icons.artURL(project, spec: spec).path) {
             try fm.copyItem(at: Icons.artURL(project, spec: spec), to: stage.appendingPathComponent("icon-art.png"))
         }
@@ -254,6 +259,8 @@ enum Sharing {
         var description: String? = nil   // Manifest.description, the sender's words; shown as text, never trusted
         /// What the sender's capabilities.json declares, through the checks the agent's own goes through.
         var capabilities = Template.Capabilities()
+        /// Where the sender's sidebar in Chrome fits, when it has one that passes the checks.
+        var browser: BrowserCompanions.Declaration? = nil
         var platform = Platform.mac
         var family = DeviceFamily.iphone
         let folder: URL          // unpacked, temporary
@@ -329,6 +336,7 @@ enum Sharing {
         return Package(name: name(from: manifest.name), identity: identity(from: manifest.app),
                        description: manifest.description.flatMap(AppDescription.valid),
                        capabilities: Template.Capabilities.load(folder.appendingPathComponent(Template.Capabilities.file)).checked,
+                       browser: BrowserCompanions.Declaration.load(folder.appendingPathComponent(BrowserCompanions.Declaration.file)),
                        platform: manifest.platform ?? .mac, family: manifest.family ?? .iphone,
                        folder: folder, sources: sources,
                        attachments: attachments, fileCount: all)
@@ -394,6 +402,13 @@ enum Sharing {
         // Its capabilities too, written by Lamp from what passed the checks; a file that declares none takes
         // away what an app being updated declared.
         try package.capabilities.save(for: project)
+        // And where its sidebar fits; an app being updated loses a declaration the file doesn't carry.
+        let browserFile = BrowserCompanions.Declaration.url(project)
+        if let browser = package.browser {
+            try BrowserCompanions.Declaration.encoded(browser).write(to: browserFile, options: .atomic)
+        } else if fm.fileExists(atPath: browserFile.path) {
+            try fm.removeItem(at: browserFile)
+        }
         if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
            let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
             Icons.save(spec, for: project)
@@ -829,6 +844,10 @@ extension Sharing {
         // sees it as a file, and a background app is listed as starting at login whether or not its code says so.
         if !package.capabilities.isEmpty, let json = try? capabilitiesJSON(package.capabilities) {
             found.files.append((Template.Capabilities.file, json))
+        }
+        // Which pages its sidebar in Chrome offers itself on, read with the code.
+        if let browser = package.browser, let data = try? BrowserCompanions.Declaration.encoded(browser) {
+            found.files.append((BrowserCompanions.Declaration.file, String(decoding: data, as: UTF8.self)))
         }
         found.detected = checklist.filter { item in item.patterns.contains { everything.contains($0) } }
         if package.capabilities.background == true, !found.detected.contains(where: { $0.label == startsAtLogin.label }) {

@@ -2,17 +2,26 @@
   {
     "name": "look_at_app",
     "label": "Look at the app",
-    "description": "Builds the app with your changes, opens it, and shows you the result: a picture of its windows, what it printed, and any build errors or crash. For an iPhone app it also lists the screen as text: each control and piece of text with its name, what it holds and the point to tap it. Takes up to a minute. Use it after a change to the interface, or to check a fix you can't verify by reading the code. Each look that has to rebuild takes a while, so make your edits first and don't use it for small changes you're sure of.",
+    "description": "Builds the app with your changes, opens it, and shows you the result: a picture of its windows, what it printed, and any build errors or crash. For an iPhone app it also lists the screen as text: each control and piece of text with its name, what it holds and the point to tap it. Takes up to a minute. Use it after a change to the interface, or to check a fix you can't verify by reading the code. Each look that has to rebuild takes a while, so make your edits first and don't use it for small changes you're sure of. With `sidebar`, it shows a Mac app's sidebar in Chrome instead of its windows, drawn by Lamp as Chrome draws it, as text and a picture, and says whether `page` fits the app's browser.json.",
     "inputSchema": {
       "additionalProperties": false,
-      "properties": {},
+      "properties": {
+        "sidebar": {
+          "description": "Show the app's sidebar in Chrome instead of its windows (an app with browser.json)",
+          "type": "boolean"
+        },
+        "page": {
+          "description": "With sidebar: the https address of a real page to open beside it. Lamp reads it as Chrome's sidebar would for a button that reads the page",
+          "type": "string"
+        }
+      },
       "type": "object"
     }
   },
   {
     "name": "use_app",
     "label": "Use the app",
-    "description": "Uses the open app the way a person would: clicks, types, presses keys, scrolls and picks from menus in its front window, then shows you what each action did, whether anything changed, a fresh picture with the screen as text, and what the app printed meanwhile. The screen as text (from look_at_app or use_app) lists every control and piece of text in the front window with an id (b2, f1, s3…), its name, what it holds and where it is. Say what to act on with `target`: an id or the exact name from that list. A click presses a button, switch, link or choice itself, so it can't miss; `type` with a target puts the text into that field in place of what it held, or sets a slider; `key` with a target goes to that thing (up and down step a slider or stepper). Prefer targets. Use x and y (pixels in the latest picture of the front window; aim at the middle) only for what the list doesn't have: a drawing, a canvas, a chart, a game board. Use it to check that something works, not just how it looks: click a column header and see whether the list re-sorts, fill in a form and submit it. Clicking a row of a list, table or sidebar selects it; double-clicking opens it. Keys and typing without a target go to whatever has keyboard focus. Menus are read out to you, never opened: click a pop-up or pull-down button, or right_click something, and you get its items; repeat the same action with `item` set to pick one (\"Sub > Deep\" for a submenu). `menu` does the same for the menu bar: without `item` it lists every command, with `item` like \"File > Export…\" it picks one. `bar_icon` is for an app that lives in the menu bar: it opens the panel behind the app's icon there, which becomes the first picture and takes clicks and keys like a window (escape closes it); if the icon shows a menu instead, it lists it, and `item` picks from it; if a click on the icon switches something on and off, it says so and lists the right-click menu, and `item` set to \"click\" clicks the icon. When a dialog or sheet opens it becomes the first picture and takes the clicks and keys: click one of its buttons, or press escape to cancel. The system's save panel can only be answered with return (save where it says) or escape. It can't drag. It uses the app as last built: after editing code, call look_at_app first so your changes are built and open. If it says nothing changed, a click by point most likely missed: use a target from the screen as text, or look at the picture and aim again, before changing any code. In an iPhone app the actions tap, type, scroll and swipe on the simulator's screen, by target or at x and y in the picture; `type` replaces what the tapped field holds; a swipe on a row uncovers its actions, which `item` then taps; `right_click` is a long press; there are no menus, and the keys are return, escape, home and lock (to see widgets and Live Activities).",
+    "description": "Uses the open app the way a person would: clicks, types, presses keys, scrolls and picks from menus in its front window, then shows you what each action did, whether anything changed, a fresh picture with the screen as text, and what the app printed meanwhile. The screen as text (from look_at_app or use_app) lists every control and piece of text in the front window with an id (b2, f1, s3…), its name, what it holds and where it is. Say what to act on with `target`: an id or the exact name from that list. A click presses a button, switch, link or choice itself, so it can't miss; `type` with a target puts the text into that field in place of what it held, or sets a slider; `key` with a target goes to that thing (up and down step a slider or stepper). Prefer targets. Use x and y (pixels in the latest picture of the front window; aim at the middle) only for what the list doesn't have: a drawing, a canvas, a chart, a game board. Use it to check that something works, not just how it looks: click a column header and see whether the list re-sorts, fill in a form and submit it. Clicking a row of a list, table or sidebar selects it; double-clicking opens it. Keys and typing without a target go to whatever has keyboard focus. Menus are read out to you, never opened: click a pop-up or pull-down button, or right_click something, and you get its items; repeat the same action with `item` set to pick one (\"Sub > Deep\" for a submenu). `menu` does the same for the menu bar: without `item` it lists every command, with `item` like \"File > Export…\" it picks one. `bar_icon` is for an app that lives in the menu bar: it opens the panel behind the app's icon there, which becomes the first picture and takes clicks and keys like a window (escape closes it); if the icon shows a menu instead, it lists it, and `item` picks from it; if a click on the icon switches something on and off, it says so and lists the right-click menu, and `item` set to \"click\" clicks the icon. When a dialog or sheet opens it becomes the first picture and takes the clicks and keys: click one of its buttons, or press escape to cancel. The system's save panel can only be answered with return (save where it says) or escape. It can't drag. It uses the app as last built: after editing code, call look_at_app first so your changes are built and open. If it says nothing changed, a click by point most likely missed: use a target from the screen as text, or look at the picture and aim again, before changing any code. In an iPhone app the actions tap, type, scroll and swipe on the simulator's screen, by target or at x and y in the picture; `type` replaces what the tapped field holds; a swipe on a row uncovers its actions, which `item` then taps; `right_click` is a long press; there are no menus, and the keys are return, escape, home and lock (to see widgets and Live Activities). With `sidebar`, the actions are on the app's sidebar in Chrome as Lamp draws it (see look_at_app): click a button or type into a field by target, or wait; a button that reads the page gets the text of `page`, and one that reads a selection gets `selection`.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -82,6 +91,18 @@
           "maxItems": 30,
           "minItems": 1,
           "type": "array"
+        },
+        "sidebar": {
+          "description": "Act on the app's sidebar in Chrome instead of its window",
+          "type": "boolean"
+        },
+        "page": {
+          "description": "With sidebar: the https address of the page beside it, whose text a button that reads the page gets",
+          "type": "string"
+        },
+        "selection": {
+          "description": "With sidebar: the passage selected on that page, for a button that reads a selection",
+          "type": "string"
         }
       },
       "required": [
@@ -292,7 +313,7 @@
   {
     "name": "offer_setup",
     "label": "Offer setup",
-    "description": "Shows the person a card in the chat offering to set up a kind of AI this app can't use yet, or can use only a slower way: a key, a download, or a sign-in, which they choose. The end of a request says what the app has. Call it once, when a feature you're building needs it or would be clearly better with it, instead of mentioning keys or settings in your reply; build the feature anyway, so it works once it's set up. Not when it's already set up, or the person said Not Now.",
+    "description": "Shows the person a card in the chat offering to set up a kind of AI this app can't use yet, or can use only a slower way: a key, a download, or a sign-in, which they choose. The end of a request says what the app has. Call it once, when a feature you're building needs it or would be clearly better with it, instead of mentioning keys or settings in your reply; build the feature anyway, so it works once it's set up. Not when it's already set up, or the person said Not Now. Capability browser offers connecting Lamp to Chrome, for a Mac app with a sidebar there.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -301,7 +322,8 @@
           "enum": [
             "text",
             "decisions",
-            "pictures"
+            "pictures",
+            "browser"
           ],
           "type": "string"
         },

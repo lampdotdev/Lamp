@@ -456,6 +456,15 @@ from its Assets folder rather than its bundle (`LampAssets`), so a new picture g
 app's settings and its icon still reopen it. Each request to a live app ends with `Agent.liveNote`, which asks for
 new state in new views rather than new stored properties in existing types, when that's as clear.
 
+A Mac app can also open beside a web page, in Chrome's sidebar (Lamp Dev only, an experiment: Settings →
+Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments/browser-connector/README.md`).
+One extension draws every app's sidebar from data the app publishes (`LampBrowser` in LampSupport.swift), and the
+app declares where it fits in `browser.json` (`BrowserCompanions.Declaration`), which Chrome matches without the
+extension reading the page. The builder decides from the wish (`Agent.Rules.browserCompanion`) and tries the
+sidebar with `look_at_app` and `use_app` given `sidebar` and `page`: Lamp draws it itself (`BrowserPreview`) and is
+one more tab of it, so every engine tries it the same way. Each Chrome tab has its own sidebar and its own surface
+from the app, so what one page prepared never shows on another; keep that when changing either side.
+
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
 "cancelled" when the person keeps the app open and doesn't come while the question is still up. Until then Lamp
@@ -744,7 +753,7 @@ card), check:
 
 Each tab has one job: **Building**, how Lamp builds apps; **Apps**, what apps use while they run; **AI
 Providers**, what's on this Mac, then cloud providers, with keys, sign-ins and downloads (other tabs' menus
-end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (none now: bring `ExperimentalSettings` back with the next one).
+end in "Configure providers…", which leads here); **Memory**, what Lamp remembers and whether it does; **Experimental**, what the Lamp team is still working on, a tab that is there only while there is an experiment to show (`ExperimentalSettings.hasAny`; now Apps in Chrome, in Lamp Dev only).
 Lay out with the shared pieces in `Setup.swift`, and extend one rather than lay out by hand:
 `SettingsCheckboxes` (on/off is a checkbox, box first, never a switch), `.underCheckbox()`,
 `.checkboxNote(…)`, `NotReadyBadge`, `NotReadyRow`, `CapabilityNote` (the gray why-and-fix under Not Ready),

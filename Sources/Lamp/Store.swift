@@ -2658,6 +2658,23 @@ final class Store: ObservableObject {
         refreshOpenApps()
     }
 
+    /// The sidebar in Chrome chose an app that isn't open: it opens as last built, behind the page the person is on.
+    /// Not while Lamp is building it, and only one try at a time while the app comes up.
+    func openForSidebar(_ project: LampProject) {
+        guard !busy.contains(project.id), macCopies(of: project).isEmpty,
+              FileManager.default.fileExists(atPath: project.installedURL.path),
+              openingForSidebar.insert(project.id).inserted else { return }
+        Task {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = false
+            _ = try? await NSWorkspace.shared.openApplication(at: project.installedURL, configuration: config)
+            refreshOpenApps()
+            try? await Task.sleep(for: .seconds(15))
+            openingForSidebar.remove(project.id)
+        }
+    }
+    private var openingForSidebar: Set<String> = []
+
     /// The agent's `use_app` tool: hands its clicks, typing and keys to the open app, which performs them on its
     /// own front window (LampDriver in LampSupport), then reports what happened with a fresh picture.
     private func use(_ project: LampProject, request body: Data) async -> (Int, [String: Any]) {
@@ -2666,6 +2683,13 @@ final class Store: ObservableObject {
               let actions = request["actions"] as? [[String: Any]], !actions.isEmpty,
               let json = (try? JSONSerialization.data(withJSONObject: actions)).map({ String(decoding: $0, as: UTF8.self) }) else {
             return (400, ["error": "use_app needs a list of actions."])
+        }
+        if request["sidebar"] as? Bool == true {
+            guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
+            guard !macCopies(of: project).isEmpty else {
+                return (200, ["text": "The app isn't open. Call look_at_app with sidebar first: it builds the app and opens it."])
+            }
+            return await BrowserPreview.use(project, actions: actions, page: request["page"] as? String, selection: request["selection"] as? String)
         }
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         // Not in the copy the person kept open: what it holds is theirs, and it isn't the agent's change.
@@ -2713,6 +2737,16 @@ final class Store: ObservableObject {
         if Privacy.sharesLog, let lines = Runtime.log(of: project, from: printed) { text += "\n\nWhat it printed meanwhile:\n\(lines)" }
         return (200, ["text": text, "screenshots": Self.agentPictures(Runtime.pictures(of: project), in: project)])
     }
+
+    /// `look_at_app` with `sidebar`: the app is built and opened as for any look, then its sidebar in Chrome is
+    /// drawn by Lamp (BrowserPreview) in place of its windows, beside the page the agent names.
+    private func lookAtSidebar(_ project: LampProject, page: String?) async -> (Int, [String: Any]) {
+        guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
+        let window = await look(at: project)
+        guard window.0 == 200, !macCopies(of: project).isEmpty else { return window }
+        return await BrowserPreview.look(project, page: page)
+    }
+    private static let noSidebar = "Only a Mac app has a sidebar in Chrome, and only while Apps in Chrome is on in Lamp's Settings → Experimental."
 
     /// A line every app that writes its screen as text (`LampScreen` in LampSupport.swift) has in its binary.
     private static let screenTextMarker = "The screen as text, in reading order"
@@ -2808,7 +2842,9 @@ final class Store: ObservableObject {
             if FileTools.names.contains(name) { return reply(await file(name, arguments, for: project)) }
             let (status, answer): (Int, [String: Any])
             switch name {
-            case "look_at_app": (status, answer) = await look(at: project)
+            case "look_at_app":
+                (status, answer) = arguments["sidebar"] as? Bool == true
+                    ? await lookAtSidebar(project, page: arguments["page"] as? String) : await look(at: project)
             case "use_app":
                 let actions = (try? JSONSerialization.data(withJSONObject: arguments)) ?? Data("{}".utf8)
                 (status, answer) = await use(project, request: actions)
@@ -3064,10 +3100,13 @@ final class Store: ObservableObject {
     /// `offer_setup`: the agent asks Lamp to offer the person a way to set up a capability, with its reason.
     private func agentOffer(_ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
         guard let capability = (arguments["capability"] as? String).flatMap(Capability.init(rawValue:)) else {
-            return (400, ["error": "`capability` must be text, decisions or pictures."])
+            return (400, ["error": "`capability` must be text, decisions, pictures or browser."])
+        }
+        if capability == .browser && (!BrowserBridge.enabled || !project.platform.hasMac) {
+            return (400, ["error": "A sidebar in Chrome is only for a Mac app, while Apps in Chrome is on in Lamp's Settings → Experimental."])
         }
         let away = arguments["away"] as? Bool == true
-        guard !away || project.platform.hasIOS else {
+        guard !away || (project.platform.hasIOS && capability != .browser) else {
             return (400, ["error": "`away` is only for iPhone apps."])
         }
         let why = (arguments["why"] as? String)?.trimmed ?? ""
@@ -4354,6 +4393,7 @@ final class Store: ObservableObject {
         switch capability {
         case .text: "\(project.name) just tried to use AI, but nothing on this Mac can answer yet. Set up one of the ways below and it will work the next time."
         case .decisions: "\(project.name) uses AI to make quick judgments, like yes or no, or which of a few options fits, but nothing on this Mac can make them yet. Set up one of the ways below and they will work the next time."
+        case .browser: "\(project.name) also works in Chrome. Connect Lamp to Chrome to use it beside a page."
         case .pictures: "\(project.name) just tried to make a picture, but nothing on this Mac can draw yet. Set up one of the ways below and it will work the next time."
         }
     }
@@ -4708,6 +4748,9 @@ final class Store: ObservableObject {
     }
 
     func handleAI(_ request: Gateway.Request) async -> (Int, [String: Any]) {
+        if BrowserBridge.enabled, request.path.hasPrefix("/browser/") {
+            return BrowserBridge.shared.handle(request, projects: projects)
+        }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
                      "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/setup", "/agent/kind", "/agent/art", "/agent/talk", "/mcp", "/pi/key"]
@@ -4797,7 +4840,11 @@ final class Store: ObservableObject {
     /// The routes the agent uses mid-turn: build and try the app, approvals, versions, and the MCP tools.
     private func agentRequest(_ request: Gateway.Request, route: String, for project: LampProject) async -> (Int, [String: Any]) {
         if route == "/mcp" { return await mcp(request.body, for: project, fileTools: request.path.contains("files=1")) }
-        if request.path == "/agent/look" { return await look(at: project) }
+        if request.path == "/agent/look" {
+            let arguments = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+            return arguments["sidebar"] as? Bool == true
+                ? await lookAtSidebar(project, page: arguments["page"] as? String) : await look(at: project)
+        }
         if request.path == "/agent/use" { return await use(project, request: request.body) }
         if request.path.hasPrefix("/agent/versions") {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]

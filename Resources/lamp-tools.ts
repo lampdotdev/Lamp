@@ -59,13 +59,13 @@ function spec(name: string) {
 
 const lookAtApp = defineTool({
 	...spec("look_at_app"),
-	async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
+	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 		const url = process.env.LAMP_LOOK_URL;
 		if (!url) throw new Error("Lamp isn't available to look at the app.");
 		const response = await fetch(url, {
 			method: "POST",
 			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
-			body: "{}",
+			body: JSON.stringify(params ?? {}),
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(600_000)]) : AbortSignal.timeout(600_000),
 		});
 		return pictureReply(response, ctx.model, "Lamp couldn't look at the app.");
@@ -187,8 +187,8 @@ const useApp = defineTool({
 		const response = await fetch(url, {
 			method: "POST",
 			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
-			body: JSON.stringify({ actions: params.actions }),
-			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(600_000)]) : AbortSignal.timeout(600_000),
 		});
 		return pictureReply(response, ctx.model, "Lamp couldn't use the app.");
 	},
