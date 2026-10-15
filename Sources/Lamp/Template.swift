@@ -3524,6 +3524,8 @@ enum Template {
                 center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { note in
                     MainActor.assumeIsolated {
                         guard let window = note.object as? NSWindow, isAppWindow(window) else { return }
+                        // The chat in the window now in front is the one that will be typed in.
+                        LampSidebar.Placing.shared.place(in: window)
                         guard isOn else { return detach(from: window) }
                         putBack(window)
                         attach(to: window)
@@ -3562,7 +3564,9 @@ enum Template {
                              NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
                     center.addObserver(forName: name, object: nil, queue: .main) { note in
                         MainActor.assumeIsolated {
-                            guard let window = note.object as? NSWindow, isAppWindow(window), window.isKeyWindow || window.isMainWindow else { return }
+                            guard let window = note.object as? NSWindow, isAppWindow(window) else { return }
+                            LampSidebar.Placing.shared.place(in: window)
+                            guard window.isKeyWindow || window.isMainWindow else { return }
                             report(window)
                         }
                     }
@@ -3880,6 +3884,11 @@ enum Template {
     /// The app's chat inside its window, beside its content: Lamp's own extension in the app
     /// (Contents/Extensions/LampSidebar.appex), shown here and drawn by a process of its own that only Lamp
     /// talks to. The app shows it and can do nothing else with it: what's typed there goes to Lamp, not here.
+    /// The one thing the app says to its chat: where it is on screen (the extension declares the same).
+    @objc(LampSidebarPlacement) protocol LampSidebarPlacement {
+        func place(x: Double, y: Double)
+    }
+
     enum LampSidebar {
         private static let width: CGFloat = 360
         private static let openKey = "LampSidebarOpen"
@@ -3934,6 +3943,7 @@ enum Template {
                 }
                 guard let identity else { return fallback() }
                 let host = EXHostViewController()
+                host.delegate = Placing.shared
                 host.configuration = .init(appExtension: identity, sceneID: "chat")
                 embed(host, in: window, grow: grow)
             }
@@ -4017,7 +4027,11 @@ enum Template {
             keep(content: grow ? frame.width : nil, in: window)
             NotificationCenter.default.addObserver(forName: NSSplitView.didResizeSubviewsNotification, object: split.splitView,
                                                    queue: .main) { [weak window] _ in
-                MainActor.assumeIsolated { if let window { LampMagic.refit(window) } }
+                MainActor.assumeIsolated {
+                    guard let window else { return }
+                    LampMagic.refit(window)
+                    LampSidebar.Placing.shared.place(in: window)
+                }
             }
             LampMagic.refit(window)
             fadeIn(host.view)
@@ -4060,6 +4074,48 @@ enum Template {
                 frame.size.width = min(frame.width, screen.width)
             }
             window.setFrame(frame, display: true, animate: false)
+        }
+
+        /// Where the chat is on screen, told to it over the app's own connection to it: its message box lives in a
+        /// process whose window macOS keeps out of sight, and would put the typing indicator and the emoji picker
+        /// at the screen's edge. Told again as the window moves or the chat is resized.
+        @MainActor final class Placing: NSObject, EXHostViewControllerDelegate {
+            static let shared = Placing()
+            private var connections: [ObjectIdentifier: NSXPCConnection] = [:]
+
+            nonisolated func hostViewControllerDidActivate(_ controller: EXHostViewController) {
+                MainActor.assumeIsolated {
+                    guard let connection = try? controller.makeXPCConnection() else { return }
+                    connection.remoteObjectInterface = NSXPCInterface(with: LampSidebarPlacement.self)
+                    connection.resume()
+                    connections[ObjectIdentifier(controller)] = connection
+                    place(controller)
+                }
+            }
+
+            nonisolated func hostViewControllerWillDeactivate(_ controller: EXHostViewController, error: (any Error)?) {
+                MainActor.assumeIsolated { connections.removeValue(forKey: ObjectIdentifier(controller))?.invalidate() }
+            }
+
+            /// Only for the window in front: the chat keeps one place for all its windows, and only the front one
+            /// has a caret, so a window moved or resized behind it mustn't take that place. Coming to the front
+            /// says it again (`LampMagic`).
+            func place(_ controller: EXHostViewController) {
+                guard let connection = connections[ObjectIdentifier(controller)], let window = controller.view.window,
+                      window.isKeyWindow else { return }
+                let origin = window.convertToScreen(controller.view.convert(controller.view.bounds, to: nil)).origin
+                (connection.remoteObjectProxy as? LampSidebarPlacement)?.place(x: origin.x, y: origin.y)
+            }
+
+            /// Every chat in this window, after it moved or changed size.
+            func place(in window: NSWindow) {
+                guard let split = window.contentViewController as? NSSplitViewController else { return }
+                for item in split.splitViewItems {
+                    for child in item.viewController.children {
+                        if let host = child as? EXHostViewController { place(host) }
+                    }
+                }
+            }
         }
 
         /// Lamp listens for the chat: told directly when it's running (so this Lamp answers, not another copy),
