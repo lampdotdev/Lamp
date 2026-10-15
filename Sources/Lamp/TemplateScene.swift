@@ -197,7 +197,7 @@ extension Template {
         }
 
         func start(_ content: inout RealityViewCameraContent, sky: LampSky, rig: LampCameraRig,
-                   build: (LampScene) async -> Void, update: ((LampScene, Float) -> Void)?) async {
+                   build: @escaping (LampScene) async -> Void, update: ((LampScene, Float) -> Void)?) async {
             self.rig = rig
             self.update = update
             self.build = build
@@ -230,6 +230,16 @@ extension Template {
                     if let content = self.content(), !content.bounds.contains(content.convert(event.locationInWindow, from: nil)) {
                         self.hasFocus = false
                         self.keys.removeAll()
+                        // RealityKit's view keeps the window's keyboard focus through a click elsewhere, so the keys
+                        // would still go to it: they go to what was clicked instead, once the click has landed.
+                        let point = event.locationInWindow
+                        DispatchQueue.main.async {
+                            guard let responder = window.firstResponder as? NSView, responder.isDescendant(of: content),
+                                  let frame = window.contentView?.superview,
+                                  let hit = frame.hitTest(frame.convert(point, from: nil)) else { return }
+                            let target = sequence(first: hit, next: \.superview).first { $0.acceptsFirstResponder }
+                            window.makeFirstResponder(target)
+                        }
                     }
                     return event
                 }
