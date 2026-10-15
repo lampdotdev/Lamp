@@ -64,6 +64,8 @@ public struct SidebarState: Codable, Equatable {
     public var dictationProblem: SidebarProblem?
     /// A message is on its way in (Lamp's window or this one sent it): nothing else is sent meanwhile.
     public var submitting: Bool?
+    /// The version the latest change made, when Undo Last Change is offered under it (`SidebarCommand.undoChange`).
+    public var undoChange: String?
 
     public init(app: String, lines: [SidebarLine], working: String?, workingSince: Date?, empty: Bool, busy: Bool,
                 draft: String, draftVersion: Int, attachments: [SidebarAttachment]) {
@@ -94,8 +96,6 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var growing: Bool
     /// An open question card's questions.
     public var questions: [SidebarQuestion]?
-    /// A result's step that wasn't tried, offered as Have Lamp Test It.
-    public var untried: String?
     /// The agent's questions as Lamp's window draws them, whether they still wait for an answer, and how far
     /// they've been answered (in either chat).
     public var ask: TalkCard.Ask?
@@ -104,10 +104,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     /// Goes up when the progress changed in Lamp's window, so the sidebar takes it up; its own edits come back
     /// with the same number and are left alone, so an echo of an older one never undoes a newer one.
     public var progressVersion: Int?
-    /// What a request made as Lamp's window draws it, whether its Try It still applies, and its picture.
+    /// What a request made as Lamp's window draws it.
     public var result: TalkCard.Result?
-    public var resultCurrent: Bool?
-    public var picture: Data?
     /// A receipt for a save of Lamp's notes (its title is `text`): the lines added and removed, whether it was
     /// taken back, and what went wrong taking it back.
     public var added: [String]?
@@ -128,7 +126,7 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var isLatest: Bool?
 
     public init(id: UUID, kind: Kind, text: String, gap: Double = 0, running: Bool = false, attachments: [SidebarAttachment]? = nil,
-                growing: Bool = false, questions: [SidebarQuestion]? = nil, untried: String? = nil) {
+                growing: Bool = false, questions: [SidebarQuestion]? = nil) {
         self.id = id
         self.kind = kind
         self.text = text
@@ -137,7 +135,6 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
         self.attachments = attachments
         self.growing = growing
         self.questions = questions
-        self.untried = untried
     }
 }
 
@@ -200,13 +197,14 @@ public enum SidebarCommand: Codable, Equatable {
     case hello(Int)
     case send(String)
     case answer(UUID, [String])
-    case tryIt(UUID)
     case draft(String)
     case removeAttachment(Int)
     /// How far an open card has been answered, as it changes, so the other chat carries on from there.
     case askProgress(UUID, AskProgress)
     /// Takes back the save of Lamp's notes this receipt is for.
     case undoNote(UUID)
+    /// Undo Last Change, under the change that made this version.
+    case undoChange(String)
     /// The button on an offer's card or line: what it does is Lamp's to know, by the line.
     case offer(UUID)
     /// Back to how the app was after the request with this id, or before it.

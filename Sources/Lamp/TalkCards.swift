@@ -42,23 +42,12 @@ struct AskCard: View {
     }
 }
 
-/// What a request made: its picture and one sentence, a new app's as much as a change's. Rows under the picture
-/// read as captions of it, and a new app's guesses and idea there made a form to go through when it's the app
-/// the person wants to try. What the agent didn't try is a row to try it, there while it would still do what it
-/// says, until the person asks for something else.
+/// What a request made, in one sentence, a new app's as much as a change's (`ResultCardView`).
 struct ResultCard: View {
     let line: LogLine
-    let dir: URL
-    let isCurrent: Bool
-    @ObservedObject private var store = Store.shared
 
     var body: some View {
-        if let result = line.result, let project = store.projects.first(where: { $0.dir == dir }) {
-            ResultCardView(result: result, isCurrent: isCurrent,
-                           picture: result.version.flatMap { NSImage(contentsOf: Versions.pictureURL(in: project, for: $0)) }) {
-                store.send(Talk.tryRequest($0), to: project)
-            }
-        }
+        if let result = line.result { ResultCardView(result: result) }
     }
 }
 

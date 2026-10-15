@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = askEntries + resultEntries
+    static let entries: [Entry] = askEntries + resultEntries + buildEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -67,39 +67,53 @@ enum Gallery {
     // MARK: Result
 
     private static let resultEntries: [Entry] = [
-        result("New app", Talk.Result(summary: "Your habit tracker is ready to try.", guesses: []), picture: true),
+        result("New app", Talk.Result(summary: "Your habit tracker is ready to try.", guesses: [])),
+        result("Change", Talk.Result(summary: "Reminders now come at the time you pick.", guesses: [])),
         result("Change, not tested", Talk.Result(summary: "Added a weekly chart under your habits.", guesses: [],
-                                                 untried: "Swiping a habit away to delete it"), picture: true),
-        result("Change, not tested, no longer current", Talk.Result(summary: "Added a weekly chart under your habits.", guesses: [],
-                                                                    untried: "Swiping a habit away to delete it"),
-               picture: true, isCurrent: false),
-        result("No picture", Talk.Result(summary: "Reminders now come at the time you pick.", guesses: [])),
+                                                 untried: "Swiping a habit away to delete it")),
+        result("Latest change, with Undo", Talk.Result(summary: "Watering entries can now include an amount.", guesses: []), undo: true),
         result("Saved with what's new", Talk.Result(summary: "Added streaks and a dark look.", guesses: [], news: [
             Talk.News(what: "Streaks", place: "beside each habit"), Talk.News(what: "Dark look", place: "View menu"),
-        ]), picture: true),
+        ])),
         result("Saved with a guess turned", Talk.Result(summary: "Your habit tracker is ready to try.", guesses: [
             Talk.Guess(guess: "Habits reset at midnight", instead: "Reset at 4 am instead", request: "Reset habits at 4 am"),
-        ], switched: [0]), picture: true),
+        ], switched: [0])),
     ]
 
-    private static func result(_ name: String, _ result: Talk.Result, picture: Bool = false, isCurrent: Bool = true) -> Entry {
+    private static func result(_ name: String, _ result: Talk.Result, undo: Bool = false) -> Entry {
         Entry(group: "Result card", name: name) {
-            AnyView(ResultCardView(result: result, isCurrent: isCurrent, picture: picture ? screenshot : nil) { _ in })
+            AnyView(VStack(spacing: 0) {
+                ResultCardView(result: result)
+                // Undo Last Change goes under the latest change, as the chat puts it (`UndoOffer`).
+                if undo { ChatLook.UndoChange {}.padding(.top, 12) }
+            })
         }
     }
 
-    /// A stand-in for the app's picture: a window with a sidebar, in the proportions of a real one.
-    private static let screenshot = NSImage(size: NSSize(width: 600, height: 400), flipped: true) { rect in
-        NSColor.windowBackgroundColor.setFill()
-        rect.fill()
-        NSColor.controlBackgroundColor.setFill()
-        NSRect(x: 0, y: 0, width: 160, height: rect.height).fill()
-        NSColor.controlAccentColor.withAlphaComponent(0.8).setFill()
-        for row in 0..<5 {
-            NSBezierPath(roundedRect: NSRect(x: 190, y: 40 + CGFloat(row) * 60, width: 380 - CGFloat(row % 3) * 70, height: 34),
-                         xRadius: 8, yRadius: 8).fill()
+    // MARK: Build
+
+    private static let buildEntries: [Entry] = [
+        build("Working on its plan") {
+            $0.activity = "Working on the interface"
+            $0.plan = [PlanPart(id: 0, title: "Type in the bill", done: true, files: ["BillField.swift"]),
+                       PlanPart(id: 1, title: "Pick a tip percent", done: false, files: ["TipPicker.swift"]),
+                       PlanPart(id: 2, title: "See the tip and the total", done: false, files: ["Totals.swift"])]
+            $0.files = ["BillField.swift"]
+            $0.currentFile = "TipPicker.swift"
+        },
+        build("Ready") { $0.finish(worked: true) },
+        build("Didn't finish") { $0.finish(worked: false) },
+        build("Asking first") { $0.wait() },
+    ]
+
+    private static func build(_ name: String, _ change: @escaping (inout TurnProgress) -> Void) -> Entry {
+        Entry(group: "Build card", name: name) {
+            var progress = TurnProgress(newApp: true)
+            change(&progress)
+            return AnyView(BuildCardView(title: "Tip Calculator", name: "Tip Calculator", iconReady: false, progress: progress) {
+                BlueprintIcon(letter: "T", size: 44)
+            })
         }
-        return true
     }
 }
 

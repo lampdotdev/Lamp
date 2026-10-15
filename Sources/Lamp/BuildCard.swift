@@ -37,13 +37,16 @@ struct TurnProgress {
     /// What the agent has worked on so far, as the user was told ("Working on the interface"), newest last.
     /// Shown when the agent gave no plan.
     var steps: [String] = []
-    /// The app's window once it has opened: the card's last frame.
-    var screenshot: NSImage?
     /// Lamp is naming the app from the request right now.
     var naming = false
     /// Lamp's own guess at the app's parts, made with its name: shown, unticked, while the agent thinks
     /// (which can take minutes) and replaced by the agent's plan when it gives one.
     var sketch: [String] = []
+
+    /// A part's mark on the build card. A part being worked on gets a spinner instead.
+    static let symbols: [PartState: String] = [
+        .open: "circle", .started: "circle.dotted", .done: "checkmark.circle.fill",
+    ]
 
     /// How long the agent may think before the card says that's expected.
     static let patience: TimeInterval = 20
@@ -202,18 +205,37 @@ struct TurnProgress {
 }
 
 /// Shown while a new app's first version is built: an outline of the app that fills in with its name,
-/// its icon, the agent's plan and what it's doing now, and ends on a picture of the real window.
+/// its icon, the agent's plan and what it's doing now (`BuildCardView`).
 struct BuildCard: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
     let progress: TurnProgress
 
     var body: some View {
+        BuildCardView(title: project.title, name: project.untitled ? nil : project.name,
+                      iconReady: store.icons[project.id] != nil, progress: progress) {
+            AppIcon(project: project, size: 44)
+        }
+    }
+}
+
+/// The build card drawn from plain values: by Lamp's window and its gallery. Once the turn is over it folds to its
+/// first line, the app's name and how it ended. It used to end on a big picture of the app's window, which said
+/// again what the app beside it and the result card under it say, and left people unsure what the block was for.
+struct BuildCardView<Icon: View>: View {
+    let title: String
+    /// The app's name once Lamp has given it one.
+    let name: String?
+    let iconReady: Bool
+    let progress: TurnProgress
+    @ViewBuilder let icon: () -> Icon
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
-                AppIcon(project: project, size: 44)
+                icon()
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(project.title).font(.headline)
+                    Text(title).font(.headline)
                     status.font(.body).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
@@ -223,20 +245,11 @@ struct BuildCard: View {
                 }
             }
             .padding(14)
-            // Nothing is being built while the agent waits for an answer: the card is just the app.
-            if !progress.asking {
-            Divider()
-            Group {
-                if let screenshot = progress.screenshot {
-                    Image(nsImage: screenshot).resizable().interpolation(.high).scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: 300)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .transition(.opacity)
-                } else {
-                    outline.transition(.opacity)
-                }
-            }
-            .padding(14)
+            // Nothing is being built while the agent waits for an answer, and nothing more once it's over:
+            // the card is just the app.
+            if !progress.asking && progress.finished == nil {
+                Divider()
+                outline.transition(.opacity).padding(14)
             }
         }
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
@@ -245,8 +258,8 @@ struct BuildCard: View {
         .animation(.easeInOut(duration: 0.35), value: progress.sketch)
         .animation(.easeInOut(duration: 0.35), value: progress.naming)
         .animation(.easeInOut(duration: 0.35), value: progress.showsFinishing)
-        .animation(.easeInOut(duration: 0.35), value: store.icons[project.id] != nil)
-        .animation(.easeInOut(duration: 0.5), value: progress.screenshot != nil)
+        .animation(.easeInOut(duration: 0.35), value: iconReady)
+        .animation(.easeInOut(duration: 0.35), value: progress.finished != nil)
     }
 
     /// What's happening right now, under the app's name; once it's over, how it ended.
@@ -272,11 +285,6 @@ struct BuildCard: View {
         }
     }
 
-    /// A part being worked on gets a spinner instead.
-    private static let symbols: [TurnProgress.PartState: String] = [
-        .open: "circle", .started: "circle.dotted", .done: "checkmark.circle.fill",
-    ]
-
     /// The agent's plan with ticks, what it has worked on when there's no plan, or what Lamp is doing before either.
     @ViewBuilder
     private var outline: some View {
@@ -285,7 +293,7 @@ struct BuildCard: View {
                 ForEach(progress.plan) { part in
                     let state = progress.state(of: part)
                     HStack(alignment: .firstTextBaseline, spacing: 9) {
-                        Mark(symbol: Self.symbols[state])
+                        Mark(symbol: TurnProgress.symbols[state])
                             .foregroundStyle(state == .done ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
                         Text(part.title).foregroundStyle(state == .open ? .secondary : .primary)
                     }
@@ -313,12 +321,11 @@ struct BuildCard: View {
     /// of it timed), then its sketch of the app or blank bars that show it's still going.
     private var gettingStarted: some View {
         let working = progress.finished == nil
-        let iconReady = store.icons[project.id] != nil
         return VStack(alignment: .leading, spacing: 7) {
             if progress.naming {
                 Self.step("Naming your app", done: false, working: working)
             } else {
-                if !project.untitled { Self.step("Called it \(project.name)", done: true, working: working) }
+                if let name { Self.step("Called it \(name)", done: true, working: working) }
                 Self.step(iconReady ? "Designed an icon" : "Designing an icon", done: iconReady, working: working)
                 Self.step("Working out the details", done: false, working: working)
             }

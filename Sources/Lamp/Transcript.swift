@@ -267,7 +267,6 @@ struct Transcript: View {
         let finalAnswers = Self.finalAnswers(in: lines, busy: busy)
         let latestRequest = lines.last { $0.kind == .user }?.id
         let openAsk = Talk.open(in: lines)?.id
-        let currentResult = Talk.current(in: lines)?.id
         // Answers clicked on a card are shown by the card, folded where it was: not again as a message.
         let shown = lines.filter { $0.fromCard != true }
         let items = ChatItem.items(progressShown ? Self.withoutStepInProgress(shown) : shown)
@@ -280,7 +279,7 @@ struct Transcript: View {
                 // The agent's cards depend on what came after them, so they're outside the row that's
                 // redrawn only when its own line changes.
                 case .line(let line) where line.kind == .ask: AskCard(line: line, dir: dir, isOpen: line.id == openAsk)
-                case .line(let line) where line.kind == .result: ResultCard(line: line, dir: dir, isCurrent: line.id == currentResult && !busy)
+                case .line(let line) where line.kind == .result: ResultCard(line: line)
                 case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack, sendAgain: sendAgain,
                                              retryPhone: retryPhone, isLatestRequest: line.id == latestRequest).equatable()
                 case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && !progressShown).equatable()

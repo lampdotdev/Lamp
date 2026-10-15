@@ -23,7 +23,7 @@ struct BuildStamp: Equatable {
     /// What this Lamp stamps on the apps it builds.
     static let current = BuildStamp(
         lamp: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1",
-        support: SHA256.hash(data: Data((Template.lampSupportSwift + Template.macUsagePlistLines(name: "") + Template.appIntentsSetup(ios: false) + Template.appIntentsSetup(ios: true)
+        support: SHA256.hash(data: Data((Template.lampSupportSwift + Template.lampSceneSwift + Template.macUsagePlistLines(name: "") + Template.appIntentsSetup(ios: false) + Template.appIntentsSetup(ios: true)
                                          + Template.buildSh + Template.universalBuildSh).utf8)
                              + (Bundle.main.url(forResource: "LampSidebar", withExtension: nil).flatMap { try? Data(contentsOf: $0) } ?? Data()))
             .prefix(6).map { String(format: "%02x", $0) }.joined())

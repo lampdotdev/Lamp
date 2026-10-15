@@ -6,9 +6,6 @@ public enum TalkCard {
     /// What a question left unanswered is given as, for Lamp to decide.
     public static let youDecide = "You decide"
 
-    /// What the card's Have Lamp Test It button sends: the agent's own words for what it didn't try, as a request.
-    public static func tryRequest(_ untried: String) -> String { "Please try this out: \(untried)" }
-
     /// How a set of questions is laid out. The agent picks; the person can always type instead.
     public enum Layout: String, Codable, CaseIterable {
         case steps      // one question at a time, on a card in the chat
@@ -160,9 +157,9 @@ public enum TalkCard {
         public var idea: Idea?
         /// Only on cards saved while there were rows of what's new (see `News`).
         public var news: [News]?
-        /// What the agent built and didn't try in the running app, offered back as something to try.
+        /// What the agent built and didn't try in the running app, for the person to look at.
         public var untried: String?
-        /// The version this request made, for its picture.
+        /// The version this request made.
         public var version: String?
         /// The guesses the person turned the other way on the card, by their place in `guesses`.
         public var switched: [Int]?

@@ -137,6 +137,17 @@ final class BrowserCompanionTests: XCTestCase {
     }
 
     // Chrome takes one compound selector per fit; any whitespace in CSS is a descendant combinator.
+    /// Chrome lights the icon for a fit with path /en-US/ on https://developer.mozilla.org/en-US/, comparing the path
+    /// with its last slash and still percent-encoded; the builder's look has to say the same.
+    func testAPathIsComparedAsChromeComparesIt() throws {
+        let fit = BrowserCompanions.Declaration.Fit(site: "mozilla.org", path: "/en-US/", selector: nil)
+        XCTAssertTrue(fit.fitsAddress(try XCTUnwrap(URL(string: "https://developer.mozilla.org/en-US/"))))
+        XCTAssertTrue(fit.fitsAddress(try XCTUnwrap(URL(string: "https://developer.mozilla.org/en-US/docs/Web"))))
+        XCTAssertFalse(fit.fitsAddress(try XCTUnwrap(URL(string: "https://developer.mozilla.org/en-US"))))
+        let encoded = BrowserCompanions.Declaration.Fit(site: nil, path: "/caf%C3%A9/", selector: ".menu")
+        XCTAssertTrue(encoded.fitsAddress(try XCTUnwrap(URL(string: "https://example.com/caf%C3%A9/menu"))))
+    }
+
     func testSelectorsWithAnyCombinatorAreRefused() {
         for selector in ["div a", "div\ta", "div\na", "div>a", "a,b", ":not(div a)"] {
             XCTAssertNotNil(BrowserCompanions.Declaration.selectorProblem(selector), selector)
