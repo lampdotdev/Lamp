@@ -35,11 +35,12 @@ final class BrowserCompanions {
     struct Declaration: Codable, Equatable {
         struct Fit: Codable, Equatable {
             var site: String?; var path: String?; var selector: String?
-            /// Whether a page at this address can fit, before its selector (if any) is looked for.
+            /// Whether a page at this address can fit, before its selector (if any) is looked for. The path is
+            /// compared as Chrome compares it, still percent-encoded and with its last slash.
             func fitsAddress(_ url: URL) -> Bool {
                 guard url.scheme == "https", let host = url.host?.lowercased() else { return false }
                 if let site, host != site && !host.hasSuffix("." + site) { return false }
-                if let path, !url.path.hasPrefix(path) { return false }
+                if let path, !url.path(percentEncoded: true).hasPrefix(path) { return false }
                 return true
             }
         }
