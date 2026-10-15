@@ -658,6 +658,8 @@ enum Agent {
         Mac's own accounts above, before LampComputer. Put `LampServiceButton(service: .linear)` where the app needs \
         the account: the person clicks it, approves on the service's own page, and the app registers itself with the \
         service as they do, so never ask for a key, a token or a developer app, and don't ask them to set anything up. \
+        Connected, the same button is Disconnect: keep one where it can always be reached, in the toolbar or Settings, \
+        not only on the screen shown before connecting. \
         Then `try await LampService.linear.call("tool_name", ["argument": value])` gives `.text`, `.json` and \
         `.decode(T.self)`, and `tools()` lists the tools with their arguments. The names and arguments are the \
         service's own: take them from its documentation or, once the person has connected, from \

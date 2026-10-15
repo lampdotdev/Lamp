@@ -7626,7 +7626,7 @@ enum Template {
 
         /// The service's sign-in addresses, found the way MCP describes: the server names where its
         /// authorization server's description is; older servers keep that at their own address.
-        private struct Discovered {
+        fileprivate struct Discovered {
             var authorizationEndpoint: URL
             var tokenEndpoint: URL
             var registrationEndpoint: URL?
@@ -7634,7 +7634,7 @@ enum Template {
             var scope: String?
         }
 
-        private func discover() async throws -> Discovered {
+        fileprivate func discover() async throws -> Discovered {
             var probe = URLRequest(url: url)
             probe.httpMethod = "POST"
             probe.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -7646,15 +7646,30 @@ enum Template {
                 let rest = challenge[range.upperBound...]
                 return rest.firstIndex(of: "\"").map { String(rest[..<$0]) }
             }
-            let origin = url.scheme! + "://" + url.host! + (url.port.map { ":\($0)" } ?? "")
+            // Every address comes from a description, and each description is trusted only as far as the one before it
+            // vouches for it: the server's own description sits on the server's own address and names the server; it
+            // names the authorization server, whose description names itself; and the sign-in addresses are that
+            // server's, over https. Anything else stops here, before the browser opens or a code is sent anywhere.
+            func refuse(_ why: String) -> Failure {
+                fputs("LampService: \(name)'s sign-in description doesn't hold together: \(why)\n", stderr)
+                return Failure(message: "\(name) can't be reached right now.")
+            }
+            func origin(of address: URL) -> String? {
+                guard address.scheme?.lowercased() == "https", let host = address.host?.lowercased(), !host.isEmpty else { return nil }
+                return "https://" + host + (address.port.map { ":\($0)" } ?? "")
+            }
+            func same(_ a: String, _ b: String) -> Bool { a.trimmingCharacters(in: ["/"]) == b.trimmingCharacters(in: ["/"]) }
+            guard let home = origin(of: url) else { throw refuse("the service's address isn't https") }
             let path = url.path == "/" ? "" : url.path
             var resource: [String: Any]?
-            for candidate in [parameter("resource_metadata"), origin + "/.well-known/oauth-protected-resource" + path, origin + "/.well-known/oauth-protected-resource"].compactMap({ $0 }) {
+            for candidate in [parameter("resource_metadata"), home + "/.well-known/oauth-protected-resource" + path, home + "/.well-known/oauth-protected-resource"].compactMap({ $0 }) {
+                guard let address = URL(string: candidate), origin(of: address) == home else { continue }
                 if let found = try? await Self.getJSON(candidate) { resource = found; break }
             }
-            let server = (resource?["authorization_servers"] as? [String])?.first ?? origin
-            guard let serverURL = URL(string: server), let host = serverURL.host else { throw Failure(message: "\(name) can't be reached right now.") }
-            let serverOrigin = (serverURL.scheme ?? "https") + "://" + host + (serverURL.port.map { ":\($0)" } ?? "")
+            guard let resource else { throw refuse("no description on the service's own address") }
+            guard let named = resource["resource"] as? String, same(named, url.absoluteString) else { throw refuse("the description is for another server") }
+            guard let server = (resource["authorization_servers"] as? [String])?.first, let serverURL = URL(string: server),
+                  let serverOrigin = origin(of: serverURL) else { throw refuse("no https authorization server") }
             let serverPath = serverURL.path == "/" ? "" : serverURL.path
             var metadata: [String: Any]?
             for candidate in [serverOrigin + "/.well-known/oauth-authorization-server" + serverPath,
@@ -7663,14 +7678,20 @@ enum Template {
                               serverOrigin + serverPath + "/.well-known/openid-configuration"] {
                 if let found = try? await Self.getJSON(candidate), found["authorization_endpoint"] != nil { metadata = found; break }
             }
-            guard let metadata, let authorize = (metadata["authorization_endpoint"] as? String).flatMap(URL.init(string:)),
-                  let token = (metadata["token_endpoint"] as? String).flatMap(URL.init(string:)) else {
-                throw Failure(message: "\(name) can't be reached right now.")
+            guard let metadata else { throw refuse("no authorization server description") }
+            guard let issuer = metadata["issuer"] as? String, same(issuer, server) else { throw refuse("the authorization server's description names another issuer") }
+            func endpoint(_ key: String) throws -> URL? {
+                guard let value = metadata[key] as? String else { return nil }
+                guard let address = URL(string: value), origin(of: address) == serverOrigin else { throw refuse("\(key) isn't on the authorization server") }
+                return address
             }
-            let scope = fixedScope ?? parameter("scope") ?? (resource?["scopes_supported"] as? [String])?.joined(separator: " ")
+            guard let authorize = try endpoint("authorization_endpoint"), let token = try endpoint("token_endpoint") else {
+                throw refuse("no sign-in addresses")
+            }
+            let scope = fixedScope ?? parameter("scope") ?? (resource["scopes_supported"] as? [String])?.joined(separator: " ")
             return Discovered(authorizationEndpoint: authorize, tokenEndpoint: token,
-                              registrationEndpoint: (metadata["registration_endpoint"] as? String).flatMap(URL.init(string:)),
-                              revocationEndpoint: (metadata["revocation_endpoint"] as? String).flatMap(URL.init(string:)),
+                              registrationEndpoint: try endpoint("registration_endpoint"),
+                              revocationEndpoint: try endpoint("revocation_endpoint"),
                               scope: scope?.isEmpty == true ? nil : scope)
         }
 
@@ -7745,11 +7766,11 @@ enum Template {
             request.httpBody = try JSONSerialization.data(withJSONObject: [
                 "client_name": appName, "redirect_uris": [redirect], "grant_types": ["authorization_code", "refresh_token"],
                 "response_types": ["code"], "token_endpoint_auth_method": "none"])
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request, delegate: Self.stayPut)
             let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
             guard (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? 0), let client = body["client_id"] as? String else {
                 fputs("LampService: \(name) refused the app's registration: \(String(decoding: data.prefix(500), as: UTF8.self))\n", stderr)
-                throw Failure(message: (body["error_description"] as? String) ?? "\(name) didn't accept this app.")
+                throw Failure(message: (body["error_description"] as? String).map(Self.brief) ?? "\(name) didn't accept this app.")
             }
             return Saved(clientID: client, clientSecret: body["client_secret"] as? String, redirectURI: redirect,
                          authorizationEndpoint: found.authorizationEndpoint.absoluteString, tokenEndpoint: found.tokenEndpoint.absoluteString)
@@ -7761,7 +7782,7 @@ enum Template {
             let mine = generation
             if let refreshing, refreshing.generation == mine { return try await refreshing.task.value }
             let task = Task { @MainActor in
-                guard var saved = Saved.read(self.id), let refresh = saved.refreshToken else {
+                guard var saved = Saved.read(self.id), let refresh = saved.refreshToken, saved.tokenEndpoint.lowercased().hasPrefix("https://") else {
                     throw Failure(message: "Connect \(self.name) again.", needsConnection: true)
                 }
                 var form = ["grant_type": "refresh_token", "refresh_token": refresh, "client_id": saved.clientID, "resource": self.url.absoluteString]
@@ -7833,7 +7854,7 @@ enum Template {
             if method != "initialize" { request.setValue("2025-06-18", forHTTPHeaderField: "MCP-Protocol-Version") }
             if let session { request.setValue(session, forHTTPHeaderField: "Mcp-Session-Id") }
             request.httpBody = try JSONSerialization.data(withJSONObject: message)
-            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            let (bytes, response) = try await URLSession.shared.bytes(for: request, delegate: Self.stayPut)
             let http = response as? HTTPURLResponse
             let status = http?.statusCode ?? 0
             if status == 401 {
@@ -7867,11 +7888,11 @@ enum Template {
                 for try await byte in bytes { data.append(byte) }
                 answer = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 if answer == nil, !(200..<300).contains(status) {
-                    throw Failure(message: "\(name) answered \(status): \(String(decoding: data.prefix(300), as: UTF8.self))")
+                    throw Failure(message: Self.brief("\(name) answered \(status): \(String(decoding: data.prefix(300), as: UTF8.self))"))
                 }
             }
             if let error = answer?["error"] as? [String: Any] {
-                throw Failure(message: error["message"] as? String ?? "\(name) refused that.")
+                throw Failure(message: (error["message"] as? String).map(Self.brief) ?? "\(name) refused that.")
             }
             guard let result = answer?["result"] as? [String: Any] else { throw Failure(message: "\(name) didn't answer.") }
             return result
@@ -7918,16 +7939,30 @@ enum Template {
             var allowed = CharacterSet.alphanumerics
             allowed.insert(charactersIn: "-._~")
             request.httpBody = Data(form.map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")" }.joined(separator: "&").utf8)
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request, delegate: stayPut)
             let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard (200..<300).contains(status) else {
                 let error = body["error"] as? String
-                throw Failure(message: (body["error_description"] as? String) ?? "The service refused the sign-in.",
+                throw Failure(message: (body["error_description"] as? String).map(brief) ?? "The service refused the sign-in.",
                               needsConnection: error == "invalid_grant" || error == "invalid_client" || error == "unauthorized_client")
             }
             return body
         }
+
+        /// The service's own words, made one short line before they become the app's: they are shown in its button.
+        fileprivate static func brief(_ text: String) -> String {
+            let line = text.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+            return line.count > 160 ? String(line.prefix(159)) + "…" : line
+        }
+
+        /// The sign-in's posts go to the address they were made for and nowhere a redirect points: following one
+        /// would send the form, the code and its proof with it.
+        private final class StayPut: NSObject, URLSessionTaskDelegate {
+            func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                            newRequest request: URLRequest) async -> URLRequest? { nil }
+        }
+        fileprivate static let stayPut: URLSessionTaskDelegate = StayPut()
 
         fileprivate static func randomText() -> String {
             var bytes = [UInt8](repeating: 0, count: 32)
@@ -8133,6 +8168,7 @@ enum Template {
             base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
         }
     }
+    // end LampService
 
     #endif
 

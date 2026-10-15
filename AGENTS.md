@@ -738,14 +738,21 @@ MCP server (`LampService` in LampSupport.swift, one `static let` per service, an
 registers anything beforehand: Connect finds the service's sign-in addresses the way MCP
 describes them (the server's 401 names its resource description, which names the authorization server), registers
 the app with the service under its own name (dynamic client registration, no secret), and opens the service's page
-in the browser with PKCE. The service sends the person back to this Mac's own address (`127.0.0.1`, a listener open
+in the browser with PKCE. Each address is trusted only as far as the document before it vouches for it (`discover`):
+the resource description must be on the service's own https origin and name that server, its authorization server
+must be https and its description must name itself as `issuer`, and every sign-in address must be on that server's
+origin; anything else stops the sign-in before the browser opens, and the sign-in's posts never follow a redirect.
+`ServiceSignInTests` runs this against the five services' recorded answers and against changed copies of them.
+The service sends the person back to this Mac's own address (`127.0.0.1`, a listener open
 only while that sign-in waits, which ignores anything that isn't the answer to it), and the app trades the code for
 its sign-in. The registration and the sign-in are one Keychain item of the app's, this device only: never in the
 app's folder, so a shared copy arrives disconnected and is flagged in the review (`Sharing.checklist`). A service is
 added only when its server lets an app register itself this way; one that needs a developer app or a pasted token
-doesn't belong here. Calls are the service's own MCP tools (`call`, `tools`); after a sign-in the app writes the tool
+doesn't belong here. What a service says when it refuses is cut to one short line before the app shows it (`brief`). Calls are the
+service's own MCP tools (`call`, `tools`); after a sign-in the app writes the tool
 list, with no account data, to `.lamp/runtime/services/` for the builder. The builder's rule is `Agent.Rules.services`,
-after the Mac's own accounts and before `LampComputer`. Not on iPhone yet: a phone can't keep the listener open while
+after the Mac's own accounts and before `LampComputer`; it asks for the button to stay reachable once connected, since
+connected it is Disconnect. Not on iPhone yet: a phone can't keep the listener open while
 the browser is in front.
 
 ## Naming: Lamp and Lamp
