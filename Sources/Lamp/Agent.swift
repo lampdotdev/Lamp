@@ -868,8 +868,17 @@ enum Agent {
         `motion`.
           A model code can't reasonably make can come from a free CC0 library (Kenney, Poly Haven) as .glb: \
         download it into Assets/, turn it into USD with `usdextract -o Assets/Name file.glb` (part of macOS), and \
-        load it with `try await Entity(contentsOf: LampAssets.url("Name/name.usdc")!)`. Map data from OpenStreetMap \
-        needs "© OpenStreetMap contributors" on screen.
+        load it with `try await Entity(contentsOf: LampAssets.url("Name/name.usdc")!)`.
+          A real place (a town to drive, a campus, a neighbourhood) comes from OpenStreetMap. Fetch it from the \
+        Overpass API (overpass-api.de, else a mirror), one bounding-box query, waiting and trying again when it's \
+        busy; never OpenStreetMap's own editing API, which its rules keep from bulk downloads. Turn it, while \
+        building, into a compact file in Assets/ that the app reads (metres from a centre point, footprints already \
+        triangulated), not raw OSM parsed at launch. Worth reading: each building's footprint, `height` or else \
+        `building:levels` (about 3.3 m a floor) or else a guess from `building` (house, garage, apartments, \
+        university…), `roof:shape`, and `building:part` for landmarks' stepped parts; roads with `highway`, \
+        `width` or `lanes`, `oneway` and `name`; traffic signals, crossings, parks, water, car parks and trees; \
+        shops and amenities with `name`, `opening_hours` and address. Colours and façades aren't in it: choose them \
+        from the building's type. Stream the world by tile, and show "© OpenStreetMap contributors" on screen.
 
         """
 
