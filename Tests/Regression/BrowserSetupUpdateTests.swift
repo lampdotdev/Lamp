@@ -17,6 +17,8 @@ final class BrowserSetupUpdateTests: XCTestCase {
     private func layout(manifestPath: String? = nil, extensionChanged: Bool = false, manifest: Bool = true) throws -> BrowserSetup.Layout {
         let fm = FileManager.default
         let id = String(repeating: "a", count: 32)
+        // A folder of its own for each case, so building one never rewrites another's files.
+        let root = self.root.appendingPathComponent(UUID().uuidString)
         let layout = BrowserSetup.Layout(
             hostManifest: root.appendingPathComponent("NativeMessagingHosts/\(BrowserSetup.hostName).json"),
             helper: root.appendingPathComponent("support/BrowserNativeHost"),
