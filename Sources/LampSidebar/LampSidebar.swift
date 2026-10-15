@@ -16,10 +16,18 @@ struct SidebarExtension: AppExtension {
             PrimitiveAppExtensionScene(id: "chat") {
                 SidebarView().environmentObject(Link.shared)
             } onConnection: { connection in
-                // The app asks for nothing: it only shows the scene.
-                connection.invalidate()
+                // The app only says where the sidebar is on screen.
+                connection.exportedInterface = NSXPCInterface(with: SidebarPlacement.self)
+                connection.exportedObject = Placement()
+                connection.resume()
                 return true
             })
+    }
+}
+
+private final class Placement: NSObject, SidebarPlacement {
+    func place(x: Double, y: Double) {
+        DispatchQueue.main.async { Composer.hostOrigin = CGPoint(x: x, y: y) }
     }
 }
 

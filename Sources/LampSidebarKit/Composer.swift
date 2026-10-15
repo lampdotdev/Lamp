@@ -44,6 +44,11 @@ public struct Composer: NSViewRepresentable {
     }
 
     public static let maxLines: CGFloat = 6
+    /// Where the box's window really is on screen, when that isn't where its own window says: inside an app's
+    /// sidebar, the box lives in a process of its own whose window macOS keeps out of sight, so the caret it
+    /// reports (for the typing indicator, the emoji picker, an input method's candidates) would land at the edge
+    /// of the screen. The app hosting it says where it is (`SidebarPlacement`).
+    nonisolated(unsafe) public static var hostOrigin: CGPoint?
     public static let inset: CGFloat = 4
     /// Height of a one-line composer; buttons beside it use this so they line up with the text.
     public static let lineHeight = NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: NSFont.systemFontSize)) + inset * 2
@@ -176,6 +181,12 @@ final class ComposerTextView: NSTextView {
     var onWidthChange: (() -> Void)?
 
     private var showsSuggestion: Bool { string.isEmpty && suggestion != nil }
+
+    override func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        let rect = super.firstRect(forCharacterRange: range, actualRange: actualRange)
+        guard let host = Composer.hostOrigin, let window else { return rect }
+        return rect.offsetBy(dx: host.x - window.frame.minX, dy: host.y - window.frame.minY)
+    }
 
     override func keyDown(with event: NSEvent) {
         // Left alone while an input method is composing, where Escape belongs to it.
