@@ -558,7 +558,8 @@ struct ProjectView: View {
         let canSend = !(submissionPending || draft.trimmed.isEmpty && attachments.isEmpty || replacing != nil && busy)
         return ChatLook.MessageBar(busy: busy, canSend: canSend,
                                    attachHelp: "Attach files. You can also paste or drop images and files here.",
-                                   attach: chooseFiles, send: send, stop: { store.stop(project) }) {
+                                   attach: chooseFiles, send: send, stop: { store.stop(project) },
+                                   focus: { focusRequest += 1 }) {
             Composer(text: shownDraft, height: $composerHeight,
                      placeholder: ChatLook.placeholder(busy: busy, empty: lines.isEmpty),
                      // No suggestion while a request from the chat is in the box: it would be about a turn

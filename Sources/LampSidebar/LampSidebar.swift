@@ -258,7 +258,7 @@ private struct ComposerRow: View {
 
     var body: some View {
         ChatLook.MessageBar(busy: state.busy, canSend: canSend, attachHelp: "Attach files. You can also paste images and files here.",
-                            attach: chooseFiles, send: submit, stop: { link.send(.stop) }) {
+                            attach: chooseFiles, send: submit, stop: { link.send(.stop) }, focus: { focus += 1 }) {
             Composer(text: $text, height: $height, placeholder: ChatLook.placeholder(busy: state.busy, empty: state.empty),
                      isEnabled: true, focusRequest: focus, onSubmit: submit, onFiles: attach)
                 .frame(height: height)

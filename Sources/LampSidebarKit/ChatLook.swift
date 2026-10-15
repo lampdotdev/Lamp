@@ -170,12 +170,14 @@ public enum ChatLook {
         let attach: () -> Void
         let send: () -> Void
         let stop: () -> Void
+        let focus: () -> Void
         let field: Field
         let above: Above
         let beside: Beside
 
         public init(busy: Bool, canSend: Bool, attachHelp: String, attach: @escaping () -> Void,
-                    send: @escaping () -> Void, stop: @escaping () -> Void, @ViewBuilder field: () -> Field,
+                    send: @escaping () -> Void, stop: @escaping () -> Void, focus: @escaping () -> Void,
+                    @ViewBuilder field: () -> Field,
                     @ViewBuilder above: () -> Above = { EmptyView() }, @ViewBuilder beside: () -> Beside = { EmptyView() }) {
             self.busy = busy
             self.canSend = canSend
@@ -183,6 +185,7 @@ public enum ChatLook {
             self.attach = attach
             self.send = send
             self.stop = stop
+            self.focus = focus
             self.field = field()
             self.above = above()
             self.beside = beside()
@@ -204,11 +207,14 @@ public enum ChatLook {
                 }
                 .padding(.vertical, Self.padding).padding(.leading, 10).padding(.trailing, 12)
                 .frame(minHeight: Self.height)
-                .background(Color(nsColor: .textBackgroundColor), in: Self.fieldShape)
+                // Pressing anywhere in the field, not only on the text, is for typing: the field's padding hands
+                // focus to the text. Behind the text and what's attached, so clicks on those stay theirs.
+                .background {
+                    Self.fieldShape.fill(Color(nsColor: .textBackgroundColor))
+                        .onTapGesture(perform: focus)
+                }
                 .overlay(Self.fieldShape.strokeBorder(Color(nsColor: .separatorColor)))
                 .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
-                // Pressing anywhere in the field, not only on the text, is for typing.
-                .contentShape(Self.fieldShape)
                 beside
                 // Stop while there's nothing to send; with something written, it waits for the turn instead.
                 if busy && !canSend {
