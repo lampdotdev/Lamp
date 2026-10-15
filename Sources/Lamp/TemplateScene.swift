@@ -239,6 +239,13 @@ extension Template {
                             part.rest = was.rest
                             part.restPosition = was.restPosition
                             part.value = was.value
+                            // The new code's handlers were made for the new entity, which is never shown, and may act
+                            // on it: the visible one keeps its own, and takes the new axis and range.
+                            part.changed = was.changed
+                            switch (part.kind, was.kind) {
+                            case (.press, .press(let action)): part.kind = .press(action)
+                            default: break
+                            }
                         }
                         old.components.set(part)
                     } else {
