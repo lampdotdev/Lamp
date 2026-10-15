@@ -113,9 +113,10 @@ extension Template {
                     focused = true
                 }
                 #if LAMP_LIVE
-                // A change Lamp put into the open app replaces functions, but the scene was built by the old ones:
-                // it's built again, so a changed prop or layout shows. The camera stays where it was.
-                .onChange(of: LampLive.generation) { _, _ in Task { await scene.rebuild() } }
+                // A change Lamp put into the open app replaces functions, but the scene was built, and is updated every
+                // frame, by the closures it was first given, which still run the old code: it takes this view's (the
+                // new code's) and builds again, so a changed prop, layout or game rule shows. The camera stays.
+                .onChange(of: LampLive.generation) { _, _ in Task { await scene.rebuild(build: build, update: update) } }
                 #endif
                 .onChange(of: geometry.size) { _, size in scene.viewSize = size }
             }
@@ -177,9 +178,10 @@ extension Template {
 
         func add(_ entity: Entity) { root.addChild(entity) }
 
-        /// Builds the scene again from scratch (see LampSceneView's live reload).
-        func rebuild() async {
-            guard let build else { return }
+        /// Builds the scene again from scratch with the given code (see LampSceneView's live reload).
+        func rebuild(build: @escaping (LampScene) async -> Void, update: ((LampScene, Float) -> Void)?) async {
+            self.build = build
+            self.update = update
             for child in Array(root.children) { child.removeFromParent() }
             keys.removeAll()
             chaseHeading = nil
