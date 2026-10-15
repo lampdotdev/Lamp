@@ -226,7 +226,9 @@ extension Template {
             guard let responder = window.firstResponder as? NSView else { return true }
             guard let marker else { return false }
             if marker.isDescendant(of: responder) { return true }
-            let hosting = sequence(first: marker, next: \.superview).first { String(describing: type(of: $0)).contains("NSHostingView") }
+            // SwiftUI's view for the window's content (its class names vary: NSHostingView, AppKitWindowHostingView), in
+            // which RealityKit's own view takes focus when the scene has it. Lamp's chat is outside it.
+            let hosting = sequence(first: marker, next: \.superview).first { String(describing: type(of: $0)).contains("HostingView") }
             return hosting.map { responder.isDescendant(of: $0) } ?? false
         }
 
