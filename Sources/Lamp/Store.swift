@@ -394,6 +394,8 @@ final class Store: ObservableObject {
         /// The person kept the app open when this turn's build asked it to quit: it isn't asked a second time
         /// in the turn, and the agent isn't shown the copy on screen as its work.
         var keptOpen = false
+        /// The chat has said this turn closed the open app and opened it again (`ChatLook.reloaded`).
+        var saidReloaded = false
         /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
         var phoneReady: Bool?
         var allowAll = false                // "Allow all for this turn"
@@ -3863,6 +3865,9 @@ final class Store: ObservableObject {
             log(project, .error, problem)
             return problem
         }
+        // A request's change that closes the open app and opens it again says so in the chat, once in the turn:
+        // otherwise the window just goes away and comes back. Not for Open App or Undo, which ask for that.
+        let reloading = owner?.request != nil && owner?.saidReloaded == false && isRunning(project)
         // Asked once in a turn: a second build in it leaves the app the person kept open alone.
         let asked = owner?.keptOpen == true && isRunning(project)
         guard !asked, await quit(project, for: owner, only: .mac) else {
@@ -3918,6 +3923,10 @@ final class Store: ObservableObject {
                 log(project, .detail, crash!)
             } else {
                 noteOpened(true, for: project)
+                if reloading, let owner {
+                    owner.saidReloaded = true
+                    log(project, .status, ChatLook.reloaded)
+                }
                 if inFront { log(project, .status, "\(project.name) is ready") }
             }
         } catch {
