@@ -15,6 +15,12 @@ struct WishDesk: View {
     @State private var ideas: [Idea] = []
     /// The ideas under the bar, opened by "Not sure?", and open from the start on an empty desk.
     @State private var showingIdeas = false
+    @State private var notSureHovered = false
+    /// The room a scroll bar takes: none where scroll bars only show over the content while scrolling.
+    @State private var scrollerWidth = WishDesk.scrollerWidth()
+    /// How the desk moves when the ideas open or close and wishes come and go: everything on it together,
+    /// as one change, so nothing jumps ahead of the rest.
+    private static let glide = Animation.spring(response: 0.45, dampingFraction: 0.86)
 
     /// A wish not yet told is thrown away as the desk comes back (`discardIfUnused`): the rest are on the desk.
     private var wishes: [LampProject] { store.projects }
@@ -32,17 +38,18 @@ struct WishDesk: View {
                             DeskIdeas(ideas: ideas, choose: choose, find: store.findWish)
                                 .padding(.top, 28)
                                 .padding(.horizontal, 32)
-                                .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)),
-                                                        removal: .opacity))
+                                .transition(.modifier(active: MiddleOut(shown: 0), identity: MiddleOut(shown: 1)))
                         }
                         if !wishes.isEmpty {
                             grid.padding(.top, 44)
                         }
                     }
                     .padding(.vertical, 40)
-                    .frame(maxWidth: .infinity, minHeight: area.size.height)
-                    .animation(.spring(response: 0.45, dampingFraction: 0.86), value: showingIdeas)
-                    .animation(.spring(response: 0.45, dampingFraction: 0.86), value: wishes.map(\.id))
+                    // Laid out as if the scroll bar were always there: when one comes and goes as the ideas
+                    // open, the desk would otherwise move sideways by its width.
+                    .frame(width: max(0, area.size.width - scrollerWidth))
+                    .frame(maxWidth: .infinity, minHeight: area.size.height, alignment: .leading)
+                    .animation(Self.glide, value: wishes.map(\.id))
                 }
                 .scrollContentBackground(.hidden)
             }
@@ -55,6 +62,8 @@ struct WishDesk: View {
             }
         }
         .modifier(ClearToolbar())
+        // The lamp is drawn on its light page, as in the welcome, whatever the Mac's appearance.
+        .environment(\.colorScheme, .light)
         .onAppear {
             hasMicrophone = Dictation.hasMicrophone
             if ideas.isEmpty { ideas = Ideas.starters(made: store.projects.filter { !$0.untitled }.map(\.name)) }
@@ -62,6 +71,10 @@ struct WishDesk: View {
             barFocused = true
         }
         .onChange(of: store.deskFocusRequest) { barFocused = true }
+        // Plugging in a mouse, or changing Show Scroll Bars, changes it.
+        .onReceive(NotificationCenter.default.publisher(for: NSScroller.preferredScrollerStyleDidChangeNotification)) { _ in
+            scrollerWidth = Self.scrollerWidth()
+        }
         .onDisappear { dictation.cancel() }
         .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasConnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
         .onReceive(NotificationCenter.default.publisher(for: .AVCaptureDeviceWasDisconnected)) { _ in hasMicrophone = Dictation.hasMicrophone }
@@ -92,18 +105,23 @@ struct WishDesk: View {
             }
             .frame(maxWidth: 600)
             .padding(.horizontal, 32)
-            Button { showingIdeas.toggle() } label: {
-                HStack(spacing: 5) {
+            Button { withAnimation(Self.glide) { showingIdeas.toggle() } } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "lightbulb")
                     Text("Not sure what to wish for?")
                     Image(systemName: "chevron.down")
-                        .font(.caption.weight(.semibold))
+                        .font(.callout.weight(.semibold))
                         .rotationEffect(.degrees(showingIdeas ? 180 : 0))
                 }
-                .font(.callout.weight(.medium))
-                .contentShape(Rectangle())
+                .font(.title3.weight(.medium))
+                .padding(.horizontal, 20).padding(.vertical, 11)
+                .background(Color.white.opacity(notSureHovered ? 0.95 : 0.72), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(notSureHovered ? 0.2 : 0.1), lineWidth: 1))
+                .contentShape(Capsule())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.primary.opacity(0.8))
+            .onHover { notSureHovered = $0 }
             .help(showingIdeas ? "Hide the ideas" : "Show some ideas, or have Lamp help you find your wish")
         }
     }
@@ -148,10 +166,14 @@ struct WishDesk: View {
         .padding(.horizontal, 32)
     }
 
+    static func scrollerWidth() -> CGFloat {
+        NSScroller.preferredScrollerStyle == .legacy ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
+    }
+
     /// An idea goes in the bar to be made the person's own, and the ideas step aside for it.
     private func choose(_ wish: String) {
         text = wish
-        showingIdeas = false
+        withAnimation(Self.glide) { showingIdeas = false }
         barFocused = true
     }
 
@@ -222,6 +244,33 @@ struct DeskRows: Layout {
     }
 }
 
+/// The ideas open from their middle outward, their edges feathered as they go, rather than sliding in from
+/// somewhere: a band across the middle that widens until it holds them all, and narrows again as they close.
+private struct MiddleOut: ViewModifier, Animatable {
+    var shown: Double
+    var animatableData: Double {
+        get { shown }
+        set { shown = newValue }
+    }
+
+    /// How soft the band's edges are, as a share of the ideas' height.
+    private static let feather = 0.22
+
+    func body(content: Content) -> some View {
+        // Half the band, reaching past the edges once fully shown so that no feather is left on them.
+        let half = shown * (0.5 + Self.feather)
+        let solid = max(0, half - Self.feather)
+        content
+            .mask {
+                LinearGradient(stops: [.init(color: .clear, location: 0.5 - half), .init(color: .black, location: 0.5 - solid),
+                                       .init(color: .black, location: 0.5 + solid), .init(color: .clear, location: 0.5 + half)],
+                               startPoint: .top, endPoint: .bottom)
+            }
+            .scaleEffect(0.96 + 0.04 * shown)
+            .opacity(min(1, shown * 1.6))
+    }
+}
+
 /// The ideas "Not sure?" opens: a few wishes someone might have, each put in the bar when chosen, and last
 /// the way to find one's own with Lamp, in a new wish's chat (`Store.findWish`).
 struct DeskIdeas: View {
@@ -256,7 +305,7 @@ struct DeskIdeas: View {
                 ForEach(Array(deck.ideas.prefix(Self.shown).enumerated()), id: \.element.id) { index, idea in
                     Button { choose(idea.blurb) } label: {
                         card(lit: hovered == idea.title) {
-                            IdeaIcon(symbol: idea.symbol, hue: idea.hue, size: 26, lit: hovered == idea.title)
+                            IdeaIcon(symbol: idea.symbol, hue: idea.hue, size: 26)
                             Text(idea.blurb).font(.subheadline)
                                 .lineLimit(4, reservesSpace: true)
                                 .multilineTextAlignment(.leading)
@@ -293,12 +342,11 @@ struct DeskIdeas: View {
         VStack(alignment: .leading, spacing: 10) { content() }
             .padding(12)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(accent ? Color.accentColor.opacity(lit ? 0.16 : 0.1) : Color(nsColor: .textBackgroundColor).opacity(lit ? 0.95 : 0.7),
+            .background(accent ? Color.accentColor.opacity(0.1) : Color(nsColor: .textBackgroundColor).opacity(0.7),
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            // On hover only the outline darkens, as the ideas under a new wish's chat do.
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(accent ? Color.accentColor.opacity(0.35) : Color.primary.opacity(lit ? 0.18 : 0.08), lineWidth: 1))
-            .scaleEffect(lit ? 1.02 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: lit)
+                .strokeBorder(accent ? Color.accentColor.opacity(lit ? 0.6 : 0.35) : Color.primary.opacity(lit ? 0.2 : 0.1), lineWidth: 1))
             .contentShape(Rectangle())
     }
 }
@@ -487,20 +535,20 @@ enum WishPlace: Equatable {
     }
 }
 
-/// The desk's backdrop: the window's own color, lit from above by the lamp.
+/// The desk's backdrop: the welcome's first picture, the lamp at rest on Lamp's page.
 struct DeskBackground: View {
-    @Environment(\.colorScheme) private var scheme
+    private static let lamp: NSImage? = Bundle.main.url(forResource: "step0", withExtension: "png", subdirectory: "Onboarding")
+        .flatMap(NSImage.init(contentsOf:))
 
     var body: some View {
-        GeometryReader { area in
-            ZStack {
-                Color(nsColor: .windowBackgroundColor)
-                RadialGradient(colors: [Color(red: 1.0, green: 0.78, blue: 0.45).opacity(scheme == .dark ? 0.22 : 0.35), .clear],
-                               center: UnitPoint(x: 0.5, y: -0.05), startRadius: 0, endRadius: max(area.size.width, area.size.height) * 0.7)
-                RadialGradient(colors: [Color(red: 0.55, green: 0.42, blue: 0.85).opacity(scheme == .dark ? 0.18 : 0.12), .clear],
-                               center: UnitPoint(x: 0.9, y: 1.05), startRadius: 0, endRadius: max(area.size.width, area.size.height) * 0.6)
+        // Filling the window as the welcome's does, and never asking for more room than the window has.
+        Color(nsColor: LampBackdrop.page)
+            .overlay {
+                if let lamp = Self.lamp {
+                    Image(nsImage: lamp).resizable().interpolation(.high).aspectRatio(contentMode: .fill)
+                }
             }
-        }
+            .clipped()
     }
 }
 
