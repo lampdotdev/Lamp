@@ -5070,7 +5070,7 @@ enum Template {
             var text: String?
             var key: String?            // "return", "escape", "cmd+a", "down"…
             var item: String?           // the menu item to pick: "Export…", "View > Zoom In"
-            var amount: Double?         // scroll: points, positive is down; wait: seconds
+            var amount: Double?         // scroll: points, positive is down; wait: seconds; key: seconds to hold it
             var to_x: Double?           // drag: where it ends, in the picture's pixels
             var to_y: Double?
         }
@@ -5113,7 +5113,8 @@ enum Template {
                     return
                 }
                 let action = actions[index]
-                let pause = action.action == "wait" ? min(action.amount ?? 1, 10) : action.action == "bar_icon" ? 1 : 0.35
+                let held = action.action == "key" ? min(action.amount ?? 0, 10) : 0
+                let pause = action.action == "wait" ? min(action.amount ?? 1, 10) : action.action == "bar_icon" ? 1 : held > 0 ? held + 0.2 : 0.35
                 // The next step is set up first: a click that opens a save panel or an alert doesn't return until
                 // that closes, and the steps after it are how it gets answered.
                 after(pause) { step(index + 1) }
@@ -5272,6 +5273,16 @@ enum Template {
             case "key":
                 let name = action.key ?? ""
                 guard let (characters, code, flags) = key(name) else { return "key \(name): not a key I know" }
+                // Held down, as a game's controls are: pressed now and let go after `amount` seconds, through the
+                // app's own event queue, where key monitors (a game's, LampScene's) see it. The app runs meanwhile.
+                if let seconds = action.amount, seconds > 0, named == nil {
+                    let hold = min(seconds, 10)
+                    guard let down = event(.keyDown, characters, code, flags, window),
+                          let up = event(.keyUp, characters, code, flags, window) else { return "key \(name): couldn't press it" }
+                    NSApp.postEvent(down, atStart: false)
+                    after(hold) { NSApp.postEvent(up, atStart: false) }
+                    return "held \(name) for \(LampScreen.number(hold)) s, sent to \(focus(of: window))"
+                }
                 if let named, let what {
                     // Up and down step a slider or stepper; anything else goes to the thing once it has focus.
                     if named.item.role == "slider" || named.item.role == "stepper", name == "up" || name == "down" {

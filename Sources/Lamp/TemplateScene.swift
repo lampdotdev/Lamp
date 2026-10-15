@@ -164,7 +164,8 @@ extension Template {
         /// The first entity with this name anywhere in the scene.
         func find(_ name: String) -> Entity? { root.findEntity(named: name) }
 
-        /// Whether a key is held: letters, digits, .up, .down, .left, .right, .space, .shift, .tab, .escape, .enter.
+        /// Whether a key is held: letters, digits, .up, .down, .left, .right, .space, .shift, .escape, .enter. (Tab
+        /// moves keyboard focus, so it's never the scene's.)
         func isDown(_ key: LampKey) -> Bool {
             key == .shift ? NSEvent.modifierFlags.contains(.shift) : keys.contains(key.code)
         }
@@ -200,8 +201,10 @@ extension Template {
                     return event
                 }
                 // Keys only while the scene has focus: when a field, a button or anything else in the window has it
-                // (by a click or Tab), its typing, Space, Return and Tab are its own, as menu shortcuts always are.
-                guard self.hasFocus, !event.modifierFlags.contains(.command), !(window.firstResponder is NSText) else { return event }
+                // (by a click or Tab), its typing, Space and Return are its own, as menu shortcuts always are. Tab is
+                // never the scene's: it's how the keyboard moves focus out of it.
+                guard self.hasFocus, event.keyCode != 48, !event.modifierFlags.contains(.command),
+                      !(window.firstResponder is NSText) else { return event }
                 self.keys.insert(event.keyCode)
                 return nil
             }
@@ -456,7 +459,7 @@ extension Template {
         static let y = LampKey(code: 16), t = LampKey(code: 17), o = LampKey(code: 31), u = LampKey(code: 32), i = LampKey(code: 34)
         static let p = LampKey(code: 35), l = LampKey(code: 37), j = LampKey(code: 38), k = LampKey(code: 40), n = LampKey(code: 45), m = LampKey(code: 46)
         static let one = LampKey(code: 18), two = LampKey(code: 19), three = LampKey(code: 20), four = LampKey(code: 21), five = LampKey(code: 23)
-        static let space = LampKey(code: 49), tab = LampKey(code: 48), escape = LampKey(code: 53), enter = LampKey(code: 36)
+        static let space = LampKey(code: 49), escape = LampKey(code: 53), enter = LampKey(code: 36)
         static let left = LampKey(code: 123), right = LampKey(code: 124), down = LampKey(code: 125), up = LampKey(code: 126)
         static let shift = LampKey(code: 56)
     }
