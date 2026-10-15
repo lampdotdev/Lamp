@@ -170,8 +170,12 @@ enum LiveReload {
             .appendingPathComponent(Template.widgetFolder).appendingPathComponent(Template.sharedWidgetFolder)).values.map(\.path)
         let others = (all.filter { !primaries.contains($0.key) }.values.map(\.path) + shared).sorted()
         let firsts = primaries.compactMap { all[$0]?.path }.map { "-primary-file " + quoted($0) }.joined(separator: " ")
+        // On a Mac with only the Command Line Tools, the SDK the app's own build uses (`Shell.compatibleSDK`): the
+        // newest one's `@State` is a macro whose plugin comes only with Xcode, and nothing would type-check.
+        let sdk = ios ? #"SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)""#
+            : Shell.compatibleSDK + #"SDK="${SDKROOT:-$(xcrun --sdk macosx --show-sdk-path)}""#
         return """
-            SDK="$(xcrun --sdk \(ios ? "iphonesimulator" : "macosx") --show-sdk-path)"
+            \(sdk)
             PLUGINS="$(dirname "$(dirname "$(xcrun -f swiftc)")")/lib/swift/host/plugins"
             xcrun swiftc -frontend \(action) \(firsts) \(others.map(quoted).joined(separator: " ")) -module-name \(quoted(module)) \\
               -parse-as-library -Onone -enable-testing -D DEBUG -D LAMP_LIVE -target \(ios ? "arm64-apple-ios17.0-simulator" : "arm64-apple-macosx14.0") -sdk "$SDK" \\
