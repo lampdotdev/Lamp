@@ -8537,6 +8537,8 @@ enum Template {
         private let check: String
         @Published private(set) var isConnected = false
         private var generation = 0
+        /// Counts Connects, so one the person walked away from keeps nothing it hears back.
+        private var attempt = 0
 
         fileprivate init(id: String, name: String, base: String, page: String, steps: String, fields: [Field],
                          headers: [String: String], check: String) {
@@ -8554,8 +8556,8 @@ enum Template {
         /// Checks what the person pasted with the service and keeps it when the service takes it. Throws the reason
         /// when it doesn't, for the sheet to show.
         func connect(_ values: [String: String]) async throws {
-            generation += 1
-            let mine = generation
+            attempt += 1
+            let mine = (attempt, generation)
             var cleaned: [String: String] = [:]
             for field in fields {
                 let value = (values[field.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -8567,10 +8569,13 @@ enum Template {
             } catch let failure as Failure where failure.status == 401 || failure.status == 403 {
                 throw Failure(message: "\(name) didn't accept that. Check it and paste it again.", status: failure.status)
             }
-            guard mine == generation else { throw CancellationError() }
+            guard mine == (attempt, generation), !Task.isCancelled else { throw CancellationError() }
             guard Saved.save(cleaned, for: id) else { throw Failure(message: "Couldn't keep the connection to \(name) on this device.") }
             isConnected = true
         }
+
+        /// Stops a Connect still waiting on the service: whatever it hears back, the token isn't kept.
+        func cancelConnecting() { attempt += 1 }
 
         /// Forgets the token on this device. It still works on the service until the person deletes it there.
         func disconnect() {
@@ -8739,6 +8744,7 @@ enum Template {
         @State private var values: [String: String] = [:]
         @State private var checking = false
         @State private var problem: String?
+        @State private var attempt: Task<Void, Never>?
 
         var body: some View {
             VStack(alignment: .leading, spacing: 12) {
@@ -8767,12 +8773,17 @@ enum Template {
             #if os(macOS)
             .frame(width: 400)
             #endif
+            // Cancel, Escape or a swipe down: a check still on its way mustn't keep the token afterwards.
+            .onDisappear {
+                if checking { api.cancelConnecting() }
+                attempt?.cancel()
+            }
         }
 
         private func check() {
             checking = true
             problem = nil
-            Task {
+            attempt = Task {
                 do {
                     try await api.connect(values)
                     dismiss()

@@ -47,6 +47,13 @@ final class TokenServiceTests: XCTestCase {
         XCTAssertTrue(printed.contains("permission-403: needsConnection false, kept true, status 403"), printed)
     }
 
+    /// A Connect the person cancelled while the service was still answering keeps nothing, even when the answer
+    /// says the token works.
+    func testACancelledConnectKeepsNothing() throws {
+        let printed = try runProgram(scenarios: ["cancelled-connect"])
+        XCTAssertTrue(printed.contains("cancelled-connect: kept false, connected false"), printed)
+    }
+
     // MARK: - The program
 
     private func runProgram(scenarios: [String]) throws -> String {
@@ -75,6 +82,8 @@ final class TokenServiceTests: XCTestCase {
     final class Answers: URLProtocol {
         nonisolated(unsafe) static var table: [String: (Int, [String: String], Data)] = [:]
         nonisolated(unsafe) static var seen: [String] = []
+        /// Seconds to wait before answering an address.
+        nonisolated(unsafe) static var delays: [String: Double] = [:]
         override class func canInit(with request: URLRequest) -> Bool { true }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
         override func startLoading() {
@@ -82,6 +91,10 @@ final class TokenServiceTests: XCTestCase {
             Answers.seen.append(address)
             print("sent \(address) with \(request.value(forHTTPHeaderField: "Authorization") ?? "no key")")
             let answer = Answers.table[address] ?? (404, [:], Data())
+            guard let delay = Answers.delays[address] else { return respond(answer) }
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay) { self.respond(answer) }
+        }
+        private func respond(_ answer: (Int, [String: String], Data)) {
             let response = HTTPURLResponse(url: request.url!, statusCode: answer.0, httpVersion: "HTTP/1.1", headerFields: answer.1)!
             // A redirect is offered to the session, which follows it unless the request said not to.
             if (300..<400).contains(answer.0), let location = answer.1["Location"].flatMap(URL.init(string:)) {
@@ -150,6 +163,17 @@ final class TokenServiceTests: XCTestCase {
                     catch let failure as LampAPI.Failure {
                         print("\(scenario): needsConnection \(failure.needsConnection), kept \(LampAPI.Saved.read(api.id) != nil), status \(failure.status ?? 0)")
                     } catch { print("\(scenario): \(error)") }
+                    LampAPI.Saved.delete(api.id)
+                case "cancelled-connect":
+                    let api = example()
+                    LampAPI.Saved.delete(api.id)
+                    Answers.table["https://api.example.test/v1/me"] = json(200)
+                    Answers.delays["https://api.example.test/v1/me"] = 1
+                    let connecting = Task { @MainActor in try await api.connect(["token": "made-up-token"]) }
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    api.cancelConnecting()
+                    _ = await connecting.result
+                    print("cancelled-connect: kept \(LampAPI.Saved.read(api.id) != nil), connected \(api.isConnected)")
                     LampAPI.Saved.delete(api.id)
                 default: print("unknown scenario \(scenario)")
                 }

@@ -161,7 +161,7 @@ enum Connectors {
                     "description, projectId} starts one; patch workspaces/{wid}/user/{uid}/time-entries {end} stops it."),
         Connector(id: "figma", name: "Figma", holds: "design files and their comments",
                   kind: .token(Token(base: "https://api.figma.com/v1/", page: "https://www.figma.com/settings",
-                                     steps: "Under Security, generate a personal access token that can read files and comments, then paste it here.",
+                                     steps: "Under Security, generate a personal access token that can read your profile, files and comments, then paste it here.",
                                      headers: ["X-Figma-Token": "{token}"], check: "me", example: "get(\"files/\\(key)\", query: [\"depth\": \"2\"])")),
                   docs: "https://developers.figma.com/docs/rest-api/",
                   notes: "There's no list of the person's files: the app asks for a file's link, and the key is the part " +
