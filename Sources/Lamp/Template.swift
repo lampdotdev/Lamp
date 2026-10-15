@@ -3418,7 +3418,10 @@ enum Template {
             }
             guard let image = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == path }),
                   let header = _dyld_get_image_header(image) else { return }
-            for (name, address) in Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image)) where Self.isCode(name) {
+            let defined = Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image))
+            // A stored global's or static's own accessors would read a second copy of it, empty, in the new code.
+            let stored = Set(defined.map(\.0).filter { $0.hasSuffix("vau") }.map { String($0.dropLast(3)) })
+            for (name, address) in defined where Self.isCode(name) && !Self.accesses(name, oneOf: stored) {
                 latest[name] = address
             }
             images.append(path)
@@ -3436,9 +3439,18 @@ enum Template {
         /// and state.
         private static func isCode(_ name: String) -> Bool {
             guard name.hasPrefix("_$s") else { return false }
+            // A type's own (static) functions and properties are named as an instance's, with a Z after.
+            let name = name.hasSuffix("Z") ? String(name.dropLast()) : name
             for kept in ["Mn", "Mf", "MV", "Ma", "Mm", "MF", "Mc", "Ml", "MXX", "Ms", "Wp", "WP", "Wl", "WL", "lau", "vau", "Wz", "Qo", "QO", "So", "WV", "Wvd", "MQ"]
             where name.hasSuffix(kept) { return false }
             return name.hasSuffix("F") || name.hasSuffix("g") || name.hasSuffix("s") || name.hasSuffix("M") || name.hasSuffix("fC") || name.hasSuffix("fc")
+        }
+
+        /// Whether this is the getter, setter or modify of a property kept in storage (one with an addressor).
+        private static func accesses(_ name: String, oneOf stored: Set<String>) -> Bool {
+            let name = name.hasSuffix("Z") ? String(name.dropLast()) : name
+            guard ["vg", "vs", "vM"].contains(where: { name.hasSuffix($0) }) else { return false }
+            return stored.contains(String(name.dropLast(2)))
         }
 
         private static func commands(_ header: UnsafePointer<mach_header>) -> [UnsafeRawPointer] {
