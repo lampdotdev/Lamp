@@ -1,6 +1,7 @@
 import ExtensionKit
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import LampSidebarKit
 
 /// The chat inside an app's own window: an extension Lamp puts in every Mac app it builds, which the app shows
@@ -149,6 +150,11 @@ struct SidebarView: View {
         }
         .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
         .background(ChatLook.paper)
+        // Files and pictures dropped on the chat go with the next message, as in Lamp's window.
+        .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
+            Dropped.load(providers) { files in if !files.isEmpty { link.send(.attach(files)) } }
+            return true
+        }
     }
 }
 
@@ -162,8 +168,12 @@ private struct Chat: View {
             ScrollViewReader { scroller in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
+                        // Scrolled to the top of a long chat: more of it, as Lamp's window loads it.
+                        if state.hasEarlier == true {
+                            Color.clear.frame(height: 1).onAppear { link.send(.earlier) }
+                        }
                         ForEach(state.lines) { line in
-                            LineView(line: line).padding(.top, line.gap).id(line.id)
+                            LineView(line: line, busy: state.busy).padding(.top, line.gap).id(line.id)
                         }
                         if let working = state.working, let since = state.workingSince {
                             ChatLook.ActivityLine(working, started: since).padding(.top, 12)
@@ -218,26 +228,28 @@ private struct Chat: View {
 private struct LineView: View {
     @EnvironmentObject private var link: Link
     let line: SidebarLine
+    let busy: Bool
 
     var body: some View {
         switch line.kind {
         case .user:
-            VStack(alignment: .trailing, spacing: 6) {
-                if let attachments = line.attachments, !attachments.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(attachments.indices, id: \.self) { index in
-                            if attachments[index].isImage ?? (attachments[index].thumbnail != nil) {
-                                Thumbnail(attachment: attachments[index], size: 72)
-                            } else {
-                                AttachmentChip(attachment: attachments[index])
-                            }
+            ChatLook.UserRow(text: line.text, busy: busy,
+                             goBack: line.canGoBack == true ? { before in link.send(.goBack(line.id, before: before)) } : nil,
+                             sendAgain: line.canSendAgain == true ? { link.send(.takeBack(line.id)) } : nil,
+                             isLatest: line.isLatest ?? false) {
+                let attachments = line.attachments ?? []
+                ForEach(attachments.indices, id: \.self) { index in
+                    // A click shows it in Quick Look, as in Lamp's window.
+                    Button { link.send(.preview(line.id, index)) } label: {
+                        if attachments[index].isImage ?? (attachments[index].thumbnail != nil) {
+                            Thumbnail(attachment: attachments[index], size: 72)
+                        } else {
+                            AttachmentChip(attachment: attachments[index])
                         }
                     }
+                    .buttonStyle(.plain)
                 }
-                if !line.text.isEmpty { ChatLook.UserBubble(line.text) }
             }
-            .frame(maxWidth: 480, alignment: .trailing)
-            .frame(maxWidth: .infinity, alignment: .trailing)
         case .agent:
             ChatLook.AgentText(line.text, keep: !line.growing)
         case .status:
@@ -337,12 +349,51 @@ private struct Thumbnail: View {
 /// An attachment as Lamp's window shows it in a chip.
 private struct AttachmentChip: View {
     let attachment: SidebarAttachment
+    var preview: (() -> Void)?
     var onRemove: (() -> Void)?
 
     var body: some View {
         ChatLook.Chip(onRemove: onRemove) {
-            ChatLook.ChipLabel(name: attachment.name) { Thumbnail(attachment: attachment, size: 28) }
+            if let preview {
+                Button(action: preview) {
+                    ChatLook.ChipLabel(name: attachment.name) { Thumbnail(attachment: attachment, size: 28) }.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else {
+                ChatLook.ChipLabel(name: attachment.name) { Thumbnail(attachment: attachment, size: 28) }
+            }
         }
+    }
+}
+
+/// What's dropped on the chat, as files only this process can read: a file as it is, a picture (from a browser,
+/// Photos, a screenshot's thumbnail) as a PNG.
+private enum Dropped {
+    static func load(_ providers: [NSItemProvider], completion: @escaping @MainActor ([SidebarFile]) -> Void) {
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var files: [SidebarFile] = []
+        func add(_ file: SidebarFile) { lock.lock(); files.append(file); lock.unlock() }
+        for provider in providers {
+            group.enter()
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    if let url, let data = try? Data(contentsOf: url), data.count < 50_000_000 {
+                        add(SidebarFile(name: url.lastPathComponent, data: data))
+                    }
+                    group.leave()
+                }
+            } else {
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                    if let data, let image = NSImage(data: data), let tiff = image.tiffRepresentation,
+                       let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                        add(SidebarFile(name: "Dropped image.png", data: png))
+                    }
+                    group.leave()
+                }
+            }
+        }
+        group.notify(queue: .main) { MainActor.assumeIsolated { completion(files) } }
     }
 }
 
@@ -359,6 +410,10 @@ private struct ComposerRow: View {
         ChatLook.MessageBar(busy: state.busy, canSend: canSend, attachHelp: "Attach files. You can also paste images and files here.",
                             attach: chooseFiles, send: submit, stop: { link.send(.stop) }, focus: { focus += 1 }) {
             Composer(text: $text, height: $height, placeholder: ChatLook.placeholder(busy: state.busy, empty: state.empty),
+                     // No suggestion while a request from the chat is in the box, as in Lamp's window.
+                     suggestion: state.replacing == true ? nil : state.suggestion,
+                     onDismissSuggestion: { link.send(.dismissSuggestion) },
+                     onEscape: state.replacing == true ? { link.send(.putBack) } : nil,
                      isEnabled: true, focusRequest: focus, onSubmit: submit, onFiles: attach)
                 .frame(height: height)
         } above: {
@@ -366,11 +421,27 @@ private struct ComposerRow: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(state.attachments.indices, id: \.self) { index in
-                            AttachmentChip(attachment: state.attachments[index]) { link.send(.removeAttachment(index)) }
+                            AttachmentChip(attachment: state.attachments[index], preview: { link.send(.preview(nil, index)) }) {
+                                link.send(.removeAttachment(index))
+                            }
                         }
                     }
                 }
                 .padding(.top, 2)
+            }
+        } beside: {
+            // Dictation runs in Lamp, which has the microphone, and writes into the box as Lamp's window does.
+            if state.canDictate == true {
+                let listening = state.listening ?? false
+                Button { link.send(.dictate(!listening)) } label: {
+                    Image(systemName: listening ? "mic.fill" : "mic")
+                        .foregroundStyle(listening ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                        .symbolEffect(.pulse, isActive: listening)
+                }
+                .buttonStyle(ChatLook.Round(prominent: false))
+                .disabled(state.submitting == true)
+                .help(listening ? "Stop dictation" : "Dictate a change")
+                .accessibilityLabel(listening ? "Stop dictation" : "Dictate a change")
             }
         }
         // Lined up with the chat above it, as in Lamp's window.
@@ -382,8 +453,10 @@ private struct ComposerRow: View {
         .onChange(of: text) { link.send(.draft(text)) }
     }
 
+    /// As in Lamp's window: not while a message is on its way in, and a request sent again can't wait behind a turn.
     private var canSend: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !state.attachments.isEmpty
+        (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !state.attachments.isEmpty)
+            && state.submitting != true && !(state.replacing == true && state.busy)
     }
 
     /// Lamp's draft, when it was changed elsewhere.
@@ -394,10 +467,10 @@ private struct ComposerRow: View {
         focus += 1
     }
 
+    /// Lamp sends it and empties the box as its window does, keeping whatever came after (`afterSubmission`).
     private func submit() {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !state.attachments.isEmpty else { return }
+        guard canSend else { return }
         link.send(.send(text))
-        text = ""
     }
 
     /// Only this process can read what was pasted or chosen here: the files go to Lamp whole.

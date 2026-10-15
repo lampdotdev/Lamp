@@ -342,7 +342,6 @@ struct LogRow: View, Equatable {
     /// The latest request shows its Send Again button all the time, so there's one to find; earlier ones
     /// show it when pointed at.
     var isLatestRequest = false
-    @State private var hovered = false
     @State private var expandedDetail = false
     @State private var shownDetailHeight: CGFloat = 0
     @State private var fullDetailHeight: CGFloat = 0
@@ -355,51 +354,18 @@ struct LogRow: View, Equatable {
     var body: some View {
         switch line.kind {
         case .user:
-            VStack(alignment: .trailing, spacing: 6) {
-                if let names = line.attachments, !names.isEmpty {
-                    let urls = names.map { dir.appendingPathComponent(Attachments.folder).appendingPathComponent($0) }
-                    HStack(spacing: 6) {
-                        ForEach(urls, id: \.self) { url in
-                            if Attachments.isImage(url) {
-                                AttachmentPreview(url: url, siblings: urls) { AttachmentThumbnail(url: url, size: 72) }
-                            } else {
-                                AttachmentChip(url: url, siblings: urls)
-                            }
-                        }
+            let urls = (line.attachments ?? []).map { dir.appendingPathComponent(Attachments.folder).appendingPathComponent($0) }
+            ChatLook.UserRow(text: line.text, busy: busy, goBack: line.version != nil ? goBack.map { goBack in { goBack(line, $0) } } : nil,
+                             sendAgain: line.canSendAgain ? sendAgain.map { sendAgain in { sendAgain(line) } } : nil,
+                             isLatest: isLatestRequest) {
+                ForEach(urls, id: \.self) { url in
+                    if Attachments.isImage(url) {
+                        AttachmentPreview(url: url, siblings: urls) { AttachmentThumbnail(url: url, size: 72) }
+                    } else {
+                        AttachmentChip(url: url, siblings: urls)
                     }
                 }
-                HStack(alignment: .center, spacing: 6) {
-                    if line.version != nil, let goBack {
-                        Menu {
-                            Button("Go Back to After This Change") { goBack(line, false) }
-                            Button("Go Back to Before This Change") { goBack(line, true) }
-                        } label: {
-                            Image(systemName: "clock.arrow.circlepath")
-                        }
-                        .menuStyle(.borderlessButton)
-                        .menuIndicator(.hidden)
-                        .fixedSize()
-                        .foregroundStyle(.secondary)
-                        .disabled(busy)
-                        .opacity(hovered ? 1 : 0)
-                        .help("Go back to how the app was around this request")
-                    }
-                    if let sendAgain, line.canSendAgain {
-                        Button { sendAgain(line) } label: { Image(systemName: "pencil") }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.secondary)
-                            .opacity(hovered || isLatestRequest ? 1 : 0)
-                            .help("Change this message and send it again")
-                            .accessibilityLabel("Edit and Send Again")
-                    }
-                    // A message that's only attachments shows just them.
-                    if !line.text.isEmpty { ChatLook.UserBubble(line.text) }
-                }
-                // The width limit goes around the buttons too, so they stay next to a short message.
-                .frame(maxWidth: 480 + 50, alignment: .trailing)
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .onHover { hovered = $0 }
         case .agent:
             // While a turn is going this may be a message still being written, a little longer every time.
             ChatLook.AgentText(line.text, keep: !busy)
