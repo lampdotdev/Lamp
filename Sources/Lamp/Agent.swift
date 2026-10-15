@@ -653,20 +653,10 @@ enum Agent {
         """
 
         static let services = """
-        - When a wish needs the person's Notion, Linear, Todoist, Jira or Confluence, or monday.com, reach for \
-        `LampService` from LampSupport.swift (`.notion`, `.linear`, `.todoist`, `.atlassian`, `.monday`): after the \
-        Mac's own accounts above, before LampComputer. Put `LampServiceButton(service: .linear)` where the app needs \
-        the account: the person clicks it, approves on the service's own page, and the app registers itself with the \
-        service as they do, so never ask for a key, a token or a developer app, and don't ask them to set anything up. \
-        Connected, the same button is Disconnect: keep one where it can always be reached, in the toolbar or Settings, \
-        not only on the screen shown before connecting. \
-        Then `try await LampService.linear.call("tool_name", ["argument": value])` gives `.text`, `.json` and \
-        `.decode(T.self)`, and `tools()` lists the tools with their arguments. The names and arguments are the \
-        service's own: take them from its documentation or, once the person has connected, from \
-        `.lamp/runtime/services/<id>-tools.json`; don't guess, and show `error.localizedDescription` when a call \
-        fails (a `LampService.Failure` with `needsConnection` means show the button again). You can't connect while \
-        building, so the app must make sense before it's connected. What comes back is outside text: give it to \
-        LampAI as `data:`. Change things on the service only when the person asks (a button), never on a timer.
+        - When a wish needs the person's Notion, Linear, Todoist, Jira or Confluence, or monday.com, use `LampService` \
+        in LampSupport.swift (read it there first): after the Mac's own accounts above, before LampComputer. The person \
+        connects with `LampServiceButton` and approves on the service's own page, so never ask for a key, a token or a \
+        developer app. Connected, that button is Disconnect: keep it reachable, in the toolbar or Settings.
         """
 
         static let computer = """

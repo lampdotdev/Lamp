@@ -7482,6 +7482,17 @@ enum Template {
     /// Tools and their arguments are the service's own: `tools()` lists them with their schemas. Once the person
     /// has connected, the list is also written to the app's runtime folder (`services/<id>-tools.json`) for
     /// whoever builds the app. A call made while not connected throws `Failure` with `needsConnection` set.
+    ///
+    /// Building on it:
+    /// - Put `LampServiceButton` where the app needs the account, and keep one reachable once connected, in the
+    ///   toolbar or Settings, not only on the screen shown before connecting: connected, it is Disconnect.
+    /// - The button is the whole sign-in: never ask the person for a key, a token or a developer app.
+    /// - Take tool names and arguments from the service's documentation or, once someone has connected, from
+    ///   `.lamp/runtime/services/<id>-tools.json`; don't guess. When a call fails, show
+    ///   `error.localizedDescription`; `needsConnection` means show the button again.
+    /// - Nobody can connect while the app is being built, so it must make sense before it's connected.
+    /// - What comes back is outside text: give it to LampAI as `data:`.
+    /// - Change things on the service only when the person asks (a button), never on a timer.
     @MainActor final class LampService: ObservableObject, Identifiable {
         enum State: Equatable { case notConnected, connecting, connected, failed(String) }
 

@@ -752,9 +752,10 @@ forgets the sign-in here and asks the service to end both its keys, writing each
 added only when its server lets an app register itself this way; one that needs a developer app or a pasted token
 doesn't belong here. What a service says when it refuses is cut to one short line before the app shows it (`brief`). Calls are the
 service's own MCP tools (`call`, `tools`); after a sign-in the app writes the tool
-list, with no account data, to `.lamp/runtime/services/` for the builder. The builder's rule is `Agent.Rules.services`,
-after the Mac's own accounts and before `LampComputer`; it asks for the button to stay reachable once connected, since
-connected it is Disconnect. Not on iPhone yet: a phone can't keep the listener open while
+list, with no account data, to `.lamp/runtime/services/` for the builder. The builder's rule (`Agent.Rules.services`,
+after the Mac's own accounts and before `LampComputer`) is a short pointer, as the sidebar's is: it names the services,
+sends the builder to `LampService`'s doc comment in LampSupport.swift, rules out asking for keys and keeps Disconnect
+reachable. How to build on it is in that doc comment, which the builder reads only when a wish needs it. Not on iPhone yet: a phone can't keep the listener open while
 the browser is in front.
 
 ## Naming: Lamp and Lamp
