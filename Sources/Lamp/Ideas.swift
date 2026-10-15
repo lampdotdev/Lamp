@@ -14,8 +14,10 @@ struct Idea: Identifiable, Equatable {
     var symbol: String
     /// The hue of its icon, 0–1.
     var hue: Double
-    /// The wish in the person's own words, shown alone on its tile: something they want done ("Tame the
-    /// mess of screenshots on my desktop") or the thing they want ("My own detective game").
+    /// The person's answer to "What would make your day easier, or more fun?", in their own words, shown alone
+    /// on its tile and put in the message box when chosen: the help they'd want ("Help me figure out what to
+    /// make for dinner from what's in my fridge") or the thing itself ("A detective game of my own…"), never a
+    /// command to software ("Make tonight's dinner…") or an app's name.
     var blurb: String
 
     var id: String { title }
@@ -40,69 +42,69 @@ struct Idea: Identifiable, Equatable {
 /// person has an app of their own.
 enum Ideas {
     static let pool: [Idea] = [
-        Idea(.everyday, "Screenshot Pile", "camera.viewfinder", 0.75, "Tame the mess of screenshots on my desktop: named, filed and searchable."),
-        Idea(.home, "School Emails", "backpack", 0.08, "Catch the school dates I keep missing, buried in all those school emails."),
-        Idea(.work, "Next Meeting", "person.2.wave.2", 0.62, "See who I'm meeting next and what we last emailed about, right on my desktop."),
-        Idea(.money, "Invoice Day", "doc.richtext", 0.55, "Turn the client hours in my calendar into invoices, and know which are still unpaid."),
-        Idea(.work, "Shop Answers", "bubble.left.and.text.bubble.right", 0.4, "Answer “Do you ship abroad?” for the hundredth time with one keystroke."),
-        Idea(.play, "Detective Case", "magnifyingglass", 0.66, "My own detective game, with a new mystery and new suspects every time."),
+        Idea(.everyday, "Screenshot Pile", "camera.viewfinder", 0.75, "Help me tame the screenshots piling up on my desktop: named, filed and easy to find."),
+        Idea(.home, "School Emails", "backpack", 0.08, "Something that catches the school dates buried in all those school emails."),
+        Idea(.work, "Next Meeting", "person.2.wave.2", 0.62, "A quick look at who I'm meeting next and what we last emailed about."),
+        Idea(.money, "Invoice Day", "doc.richtext", 0.55, "Help me turn the client hours in my calendar into invoices, and see which are unpaid."),
+        Idea(.work, "Shop Answers", "bubble.left.and.text.bubble.right", 0.4, "A faster way to answer “Do you ship abroad?” for the hundredth time."),
+        Idea(.play, "Detective Case", "magnifyingglass", 0.66, "A detective game of my own, with a new mystery and new suspects every time."),
 
-        Idea(.work, "Job Hunt", "briefcase", 0.58, "Keep track of every job I've applied for, and follow up when they go quiet."),
-        Idea(.work, "Marking Pile", "pencil.and.list.clipboard", 0.3, "Get a first pass on thirty essays, marked against my own rubric."),
-        Idea(.home, "Bin Day", "trash", 0.33, "Never miss bin day again: which bins go out tonight, right on my desktop."),
-        Idea(.home, "Pickup Guard", "figure.and.child.holdinghands", 0.03, "Warn me the moment a meeting lands on school pickup."),
-        Idea(.money, "Tax Folder", "tray.full", 0.45, "Gather the receipts scattered across my Mail and Downloads before tax time."),
-        Idea(.play, "Tiny Town", "house.and.flag", 0.22, "A little town of my own, whose people live their lives while I build it."),
+        Idea(.work, "Job Hunt", "briefcase", 0.58, "Help me keep track of every job I've applied for, and follow up when they go quiet."),
+        Idea(.work, "Marking Pile", "pencil.and.list.clipboard", 0.3, "Help with a first pass on thirty essays, marked against my own rubric."),
+        Idea(.home, "Bin Day", "trash", 0.33, "Something that tells me which bins go out tonight, so I never miss bin day."),
+        Idea(.home, "Pickup Guard", "figure.and.child.holdinghands", 0.03, "A heads-up the moment a meeting lands on school pickup."),
+        Idea(.money, "Tax Folder", "tray.full", 0.45, "Help me gather the receipts scattered across my Mail and Downloads before tax time."),
+        Idea(.play, "Tiny Town", "house.and.flag", 0.22, "A little town of my own to build, whose people live their lives as I do."),
 
-        Idea(.work, "Waiting On You", "envelope.badge", 0.6, "Show me who's still waiting on an answer from me, and since when."),
-        Idea(.money, "Club Dues", "person.3", 0.9, "Know who's paid this season's club dues, and nudge the rest kindly."),
-        Idea(.everyday, "Due Dates", "graduationcap", 0.7, "Every deadline this term, counting down on my desktop."),
-        Idea(.work, "One-on-Ones", "person.2", 0.5, "Remember what I meant to raise with each person on my team."),
-        Idea(.everyday, "Lost Thread", "doc.text.magnifyingglass", 0.38, "Find that file someone sent me just by describing it."),
+        Idea(.work, "Waiting On You", "envelope.badge", 0.6, "Help me see who's still waiting on an answer from me, and since when."),
+        Idea(.money, "Club Dues", "person.3", 0.9, "An easy way to see who's paid this season's club dues, and nudge the rest kindly."),
+        Idea(.everyday, "Due Dates", "graduationcap", 0.7, "Something that counts down every deadline this term, right on my desktop."),
+        Idea(.work, "One-on-Ones", "person.2", 0.5, "Help me remember what I meant to raise with each person on my team."),
+        Idea(.everyday, "Lost Thread", "doc.text.magnifyingglass", 0.38, "A way to find the file someone sent me just by describing it."),
         Idea(.play, "Desk Pet", "pawprint", 0.1, "A little pet that lives in my menu bar and is happy to see me."),
 
-        Idea(.home, "Kids Today", "figure.2.and.child.holdinghands", 0.95, "See which kid needs to be where today, without opening three calendars."),
-        Idea(.everyday, "Busywork", "cursorarrow.motionlines", 0.66, "Do the copy-this-into-that chore between my apps while I watch."),
+        Idea(.home, "Kids Today", "figure.2.and.child.holdinghands", 0.95, "One place to see which kid needs to be where today, without three calendars."),
+        Idea(.everyday, "Busywork", "cursorarrow.motionlines", 0.66, "Help with the copy-this-into-that chore between my apps, while I watch."),
         Idea(.work, "Parent Emails", "pencil.line", 0.14, "Help me write the tricky email to a parent: kind, but clear."),
-        Idea(.everyday, "Photo Dump", "photo.stack", 0.8, "Sort last weekend's 300 photos into folders by day and place."),
-        Idea(.work, "Where It Went", "chart.pie", 0.35, "Show me where my week's hours actually went, client by client."),
+        Idea(.everyday, "Photo Dump", "photo.stack", 0.8, "Help me sort last weekend's 300 photos into folders by day and place."),
+        Idea(.work, "Where It Went", "chart.pie", 0.35, "A clear look at where my week's hours actually went, client by client."),
         Idea(.health, "Habit Garden", "leaf", 0.25, "A little garden that grows as I keep my daily habits."),
 
-        Idea(.money, "Bills Due", "creditcard", 0.48, "Warn me about bills coming due before the late fees hit."),
-        Idea(.money, "Free Trials", "clock.badge.exclamationmark", 0.0, "Catch free trials before they quietly turn into charges."),
-        Idea(.work, "Friday Wrap-Up", "flag.checkered", 0.2, "Have my week's wins written up for the team by Friday at four."),
-        Idea(.everyday, "Exam Cards", "rectangle.on.rectangle.angled", 0.78, "Turn my lecture slides into flashcards for Friday's exam."),
-        Idea(.home, "Birthday Radar", "gift", 0.92, "Remind me of birthdays two weeks out, with the gift ideas I saved."),
+        Idea(.money, "Bills Due", "creditcard", 0.48, "A heads-up about bills coming due, before the late fees hit."),
+        Idea(.money, "Free Trials", "clock.badge.exclamationmark", 0.0, "Something that catches free trials before they quietly turn into charges."),
+        Idea(.work, "Friday Wrap-Up", "flag.checkered", 0.2, "Help me write up my week's wins for the team by Friday at four."),
+        Idea(.everyday, "Exam Cards", "rectangle.on.rectangle.angled", 0.78, "Help me turn my lecture slides into flashcards for Friday's exam."),
+        Idea(.home, "Birthday Radar", "gift", 0.92, "A reminder of birthdays two weeks out, with the gift ideas I saved."),
         Idea(.play, "Kids' Stories", "moon.stars", 0.76, "A new bedtime story every night, starring my kid's favorite toy."),
-        Idea(.health, "Stretch Break", "figure.cooldown", 0.3, "Get me off this chair every hour with a quick stretch I'll actually do."),
-        Idea(.health, "Week of Dinners", "fork.knife", 0.1, "Plan the week's dinners around what we like, with one shopping list."),
-        Idea(.health, "Home Workouts", "figure.strengthtraining.traditional", 0.02, "A few weeks of workouts with just the gear I have at home."),
-        Idea(.money, "Spending Check", "chart.bar.xaxis", 0.42, "See where my money actually went this month, from my bank's export."),
-        Idea(.money, "Savings Jar", "banknote", 0.36, "Watch my holiday fund fill up, a little jar on my desktop."),
+        Idea(.health, "Stretch Break", "figure.cooldown", 0.3, "Something that gets me off this chair every hour for a quick stretch."),
+        Idea(.health, "Week of Dinners", "fork.knife", 0.1, "Help me plan the week's dinners around what we like, with one shopping list."),
+        Idea(.health, "Home Workouts", "figure.strengthtraining.traditional", 0.02, "A few weeks of workouts that need only the gear I have at home."),
+        Idea(.money, "Spending Check", "chart.bar.xaxis", 0.42, "Help me see where my money actually went this month."),
+        Idea(.money, "Savings Jar", "banknote", 0.36, "A little jar on my desktop that fills up as I save for my holiday."),
     ]
 
     /// The same for an iPhone or iPad app: a moment on the go that a phone handles and a Mac doesn't (the
     /// camera, where you are, the motion sensors, a quick tap with one hand), mixed the same way, six to a page.
     static let phonePool: [Idea] = [
-        Idea(.everyday, "Where I Parked", "car", 0.55, "Remember where I parked, with the level, the row and a photo, in one tap."),
-        Idea(.home, "Droopy Plant", "leaf.circle", 0.32, "Work out what my droopy houseplant is missing from one photo."),
-        Idea(.work, "Shelf Count", "shippingbox", 0.08, "Snap a shelf in my shop and see what I need to reorder."),
-        Idea(.money, "Mileage Log", "road.lanes", 0.45, "Log every drive to a client, so tax time takes minutes."),
-        Idea(.home, "Hang It Straight", "level", 0.15, "Hang a picture frame straight on the first try."),
+        Idea(.everyday, "Where I Parked", "car", 0.55, "A one-tap way to remember where I parked: the level, the row and a photo."),
+        Idea(.home, "Droopy Plant", "leaf.circle", 0.32, "Help me work out what my droopy houseplant is missing, from one photo."),
+        Idea(.work, "Shelf Count", "shippingbox", 0.08, "Help me see what my shop needs to reorder, from a photo of the shelf."),
+        Idea(.money, "Mileage Log", "road.lanes", 0.45, "An easy log of every drive to a client, so tax time takes minutes."),
+        Idea(.home, "Hang It Straight", "level", 0.15, "Help me hang a picture frame straight on the first try."),
         Idea(.play, "Word Ladder", "textformat.abc", 0.76, "A new word puzzle every day, and a streak to keep going."),
 
-        Idea(.home, "Night Feeds", "moon.zzz", 0.7, "Track night feeds one-handed at 3am: which side, how long, and when."),
-        Idea(.health, "Fridge Dinner", "refrigerator", 0.05, "Make tonight's dinner out of whatever's left in my fridge."),
-        Idea(.money, "Bill by Dish", "fork.knife.circle", 0.4, "Split the restaurant bill by who actually had what."),
-        Idea(.work, "Head Count", "checklist", 0.62, "Count thirty kids onto the bus on a school trip, one tap each."),
-        Idea(.health, "Between Sets", "dumbbell", 0.0, "Log a set in two taps before my rest is up."),
-        Idea(.health, "Step Quest", "figure.walk", 0.25, "Turn my daily walks into an adventure across made-up lands."),
+        Idea(.home, "Night Feeds", "moon.zzz", 0.7, "A one-handed way to track night feeds at 3am: which side, how long, and when."),
+        Idea(.health, "Fridge Dinner", "refrigerator", 0.05, "Help me figure out what to make for dinner from what's in my fridge."),
+        Idea(.money, "Bill by Dish", "fork.knife.circle", 0.4, "Help me split the restaurant bill by who actually had what."),
+        Idea(.work, "Head Count", "checklist", 0.62, "A quick way to count thirty kids onto the bus on a school trip."),
+        Idea(.health, "Between Sets", "dumbbell", 0.0, "A way to log a set in two taps, before my rest is up."),
+        Idea(.health, "Step Quest", "figure.walk", 0.25, "Something that turns my daily walks into an adventure across made-up lands."),
 
-        Idea(.everyday, "Menu Abroad", "character.bubble", 0.58, "Point at a menu abroad and know exactly what I'm ordering."),
-        Idea(.everyday, "Trail Back", "location.north.line", 0.35, "Point me back to the car when the trail splits."),
-        Idea(.home, "House Viewings", "house", 0.9, "Keep ten flat viewings straight, with photos and notes for each."),
-        Idea(.work, "Club Check-In", "person.crop.circle.badge.checkmark", 0.5, "See who came to club tonight, and spot who's drifted away."),
-        Idea(.everyday, "Walk Thoughts", "mic", 0.14, "Catch the ideas I have on walks: said once, sorted for me."),
+        Idea(.everyday, "Menu Abroad", "character.bubble", 0.58, "Help me read a menu abroad and know exactly what I'm ordering."),
+        Idea(.everyday, "Trail Back", "location.north.line", 0.35, "Something that points me back to the car when the trail splits."),
+        Idea(.home, "House Viewings", "house", 0.9, "Help me keep ten flat viewings straight, with photos and notes for each."),
+        Idea(.work, "Club Check-In", "person.crop.circle.badge.checkmark", 0.5, "An easy way to see who came to club tonight, and who's drifted away."),
+        Idea(.everyday, "Walk Thoughts", "mic", 0.14, "A way to catch the ideas I have on walks: said once, sorted for me."),
         Idea(.play, "Tilt Maze", "circle.grid.cross", 0.85, "A marble maze I play by tilting my phone."),
     ]
 
@@ -209,7 +211,7 @@ private enum Inventor {
         let text = DynamicGenerationSchema(type: String.self)
         let idea = DynamicGenerationSchema(name: "Invented", properties: [
             .init(name: "title", description: "One to three words naming the situation, such as Waiting On You or Bin Day", schema: text),
-            .init(name: "blurb", description: "The wish in the person's own words, eight to fourteen words: what they want done, such as Tame the mess of screenshots on my desktop, or the thing they want, such as My own detective game, with a new mystery every time", schema: text),
+            .init(name: "blurb", description: "The person's answer to What would make your day easier, or more fun?, in their own words, eight to sixteen words: the help they'd want, such as Help me figure out what to make for dinner from what's in my fridge, or the thing itself, such as A detective game of my own, with a new mystery every time. Never a command and never an app's name", schema: text),
             .init(name: "symbol", description: "An SF Symbols name that fits the app, such as calendar, leaf or music.note", schema: text),
         ])
         let batch = DynamicGenerationSchema(name: "Batch", properties: [
