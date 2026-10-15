@@ -4396,21 +4396,33 @@ enum Template {
         /// which leaves those out.
         @MainActor
         static func picture(of window: NSWindow) -> Data? {
+            if let shown = shown(window) { return png(shown, at: window) }
+            guard let view = window.contentView?.superview ?? window.contentView,
+                  let bitmap = bitmap(for: window) else { return nil }
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            return bitmap.representation(using: .png, properties: [:])
+        }
+
+        /// A picture the window server took of the window, at the size every picture of it is sent at.
+        @MainActor
+        static func png(_ image: CGImage, at window: NSWindow) -> Data? {
+            guard let bitmap = bitmap(for: window), let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+            context.cgContext.interpolationQuality = .high
+            context.cgContext.draw(image, in: CGRect(origin: .zero, size: bitmap.size))
+            return bitmap.representation(using: .png, properties: [:])
+        }
+
+        @MainActor
+        private static func bitmap(for window: NSWindow) -> NSBitmapImageRep? {
             guard let view = window.contentView?.superview ?? window.contentView else { return nil }
             let size = view.bounds.size
             let scale = scale(of: window)
-            guard let bitmap = NSBitmapImageRep(
+            let bitmap = NSBitmapImageRep(
                 bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
                 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
-            bitmap.size = size
-            if let shown = shown(window), let context = NSGraphicsContext(bitmapImageRep: bitmap) {
-                context.cgContext.interpolationQuality = .high
-                context.cgContext.draw(shown, in: CGRect(origin: .zero, size: size))
-            } else {
-                view.cacheDisplay(in: view.bounds, to: bitmap)
-            }
-            return bitmap.representation(using: .png, properties: [:])
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+            bitmap?.size = size
+            return bitmap
         }
 
         /// The window as the window server has it, without its shadow. The call is looked up by name: the SDK
@@ -4440,8 +4452,8 @@ enum Template {
                 try? #"{"error":"no window"}"#.write(to: folder.appendingPathComponent("motion.json"), atomically: true, encoding: .utf8)
                 return
             }
-            var frames: [CGImage] = []
-            let started = Date()
+            // Each frame is compared as it comes, as a small grey picture, so only those and the two full frames
+            // that differ most so far are kept: a window's full frames would add up to gigabytes.
             func small(_ image: CGImage) -> [UInt8] {
                 let w = 160, h = max(1, Int(160 * Double(image.height) / Double(max(image.width, 1))))
                 var gray = [UInt8](repeating: 0, count: w * h)
@@ -4452,39 +4464,47 @@ enum Template {
                 }
                 return gray
             }
+            // The share of the picture that changed between two frames.
+            func changed(_ a: [UInt8], _ b: [UInt8]) -> Double {
+                guard a.count == b.count, !a.isEmpty else { return 0 }
+                var n = 0
+                for i in a.indices where abs(Int(a[i]) - Int(b[i])) > 24 { n += 1 }
+                return Double(n) / Double(a.count)
+            }
+            var thumbs: [[UInt8]] = [], changes: [Double] = []
+            var last: CGImage?, worst: (index: Int, before: CGImage, after: CGImage)?
+            let started = Date()
             func finish() {
-                let seconds = Date().timeIntervalSince(started)
-                let thumbs = frames.map(small)
-                // The share of the picture that changed between one frame and the next.
-                func changed(_ a: [UInt8], _ b: [UInt8]) -> Double {
-                    guard a.count == b.count, !a.isEmpty else { return 0 }
-                    var n = 0
-                    for i in a.indices where abs(Int(a[i]) - Int(b[i])) > 24 { n += 1 }
-                    return Double(n) / Double(a.count)
-                }
-                let changes = thumbs.indices.dropFirst().map { changed(thumbs[$0 - 1], thumbs[$0]) }
                 // A frame that differs a lot from the one before while the one after is back like the one before.
                 var flickers = 0
                 for i in 1..<max(1, thumbs.count - 1) where changes[i - 1] > 0.01 && changed(thumbs[i - 1], thumbs[i + 1]) < changes[i - 1] / 3 {
                     flickers += 1
                 }
-                var worst = 0
-                for i in changes.indices where changes[i] > changes[worst] { worst = i }
-                if !changes.isEmpty {
-                    for (index, image) in [frames[worst], frames[worst + 1]].enumerated() {
-                        let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
-                        try? png?.write(to: folder.appendingPathComponent("motion-\(index + 1).png"), options: .atomic)
+                if let worst {
+                    // At the size of every other picture of the window, so x and y in it mean what use_app expects.
+                    for (index, image) in [worst.before, worst.after].enumerated() {
+                        try? png(image, at: window)?.write(to: folder.appendingPathComponent("motion-\(index + 1).png"), options: .atomic)
                     }
                 }
-                let report: [String: Any] = ["frames": frames.count, "seconds": seconds, "changes": changes, "flickers": flickers, "worst": worst]
+                let report: [String: Any] = ["frames": thumbs.count, "seconds": Date().timeIntervalSince(started), "changes": changes,
+                                             "flickers": flickers, "worst": worst?.index ?? 0]
                 if let data = try? JSONSerialization.data(withJSONObject: report) {
                     try? data.write(to: folder.appendingPathComponent("motion.json"), options: .atomic)
                 }
             }
             Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { timer in
                 MainActor.assumeIsolated {
-                    if let image = shown(window) { frames.append(image) }
-                    if Date().timeIntervalSince(started) > 2.5 || frames.count >= 90 {
+                    if let image = shown(window) {
+                        let thumb = small(image)
+                        if let before = thumbs.last, let last {
+                            let change = changed(before, thumb)
+                            changes.append(change)
+                            if worst == nil || change > changes[worst!.index] { worst = (changes.count - 1, last, image) }
+                        }
+                        thumbs.append(thumb)
+                        last = image
+                    }
+                    if Date().timeIntervalSince(started) > 2.5 || thumbs.count >= 90 {
                         timer.invalidate()
                         finish()
                     }

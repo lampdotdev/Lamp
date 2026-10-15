@@ -89,6 +89,7 @@ extension Template {
                 .gesture(DragGesture(minimumDistance: 0)
                     .onChanged { scene.dragChanged(from: $0.startLocation, to: $0.location) }
                     .onEnded { scene.dragEnded(from: $0.startLocation, to: $0.location) })
+                .background(LampSceneWindow { scene.window = $0 })
                 .onAppear { scene.viewSize = geometry.size }
                 .onChange(of: geometry.size) { _, size in scene.viewSize = size }
             }
@@ -130,6 +131,8 @@ extension Template {
         var viewSize = CGSize(width: 800, height: 600)
 
         private var keys = Set<UInt16>()
+        /// The window the scene is drawn in: only its keys are the scene's.
+        weak var window: NSWindow?
         private var subscription: EventSubscription?
         private var monitor: Any?
         private var update: ((LampScene, Float) -> Void)?
@@ -171,19 +174,21 @@ extension Template {
                 MainActor.assumeIsolated { self?.tick(min(Float(event.deltaTime), 1 / 20)) }
             }
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .scrollWheel]) { [weak self] event in
-                guard let self, event.window?.isKeyWindow == true else { return event }
-                switch event.type {
-                case .keyDown:
-                    if event.modifierFlags.contains(.command) { return event }
-                    self.keys.insert(event.keyCode)
-                    return nil
-                case .keyUp:
+                guard let self else { return event }
+                if event.type == .keyUp {
                     self.keys.remove(event.keyCode)
                     return event
-                default:
+                }
+                // Only what's aimed at this scene's own window, and never while something in it takes typing (a text
+                // field, a search box): those keys are theirs, as are other windows', sheets' and menu shortcuts.
+                guard let window = self.window, event.window === window else { return event }
+                if event.type == .scrollWheel {
                     self.orbitDistance = max(0.3, self.orbitDistance * (1 - Float(event.scrollingDeltaY) * 0.01))
                     return event
                 }
+                if event.modifierFlags.contains(.command) || window.firstResponder is NSText { return event }
+                self.keys.insert(event.keyCode)
+                return nil
             }
         }
 
@@ -411,6 +416,19 @@ extension Template {
         /// Tells Lamp the prop is on screen (or why it isn't), beside the pictures in the runtime folder.
         static func answerProp(_ text: String) {
             try? text.write(to: LampRuntime.folder.appendingPathComponent("prop.txt"), atomically: true, encoding: .utf8)
+        }
+    }
+
+    /// Finds the window a view is drawn in.
+    private struct LampSceneWindow: NSViewRepresentable {
+        let found: (NSWindow?) -> Void
+        func makeNSView(context: Context) -> NSView {
+            let view = NSView()
+            DispatchQueue.main.async { [weak view] in found(view?.window) }
+            return view
+        }
+        func updateNSView(_ view: NSView, context: Context) {
+            DispatchQueue.main.async { [weak view] in found(view?.window) }
         }
     }
 
