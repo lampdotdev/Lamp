@@ -188,6 +188,9 @@ private struct Chat: View {
                         ForEach(state.lines) { line in
                             LineView(line: line, busy: state.busy).padding(.top, line.gap).id(line.id)
                         }
+                        if let change = state.undoChange {
+                            ChatLook.UndoChange { link.send(.undoChange(change)) }.padding(.top, 12)
+                        }
                         if let working = state.working, let since = state.workingSince {
                             ChatLook.ActivityLine(working, started: since).padding(.top, 12)
                         }
@@ -225,6 +228,7 @@ private struct Chat: View {
                 .onChange(of: state.lines.last?.text) { follow(scroller) }
                 .onChange(of: state.working) { follow(scroller) }
                 .onChange(of: state.queued?.count) { follow(scroller) }
+                .onChange(of: state.undoChange) { follow(scroller) }
                 // Once the lines are laid out: scrolled before then, the chat opens partway up.
                 .onAppear {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {

@@ -108,6 +108,12 @@ A capability given to one engine must be given to all of them that can take it, 
   refused, and the agent may use git on it as it likes. On Lamp's own runs signing, hooks and the
   file-watcher command are off (`Versions.environment`): the sandbox closes the person's keys, and a hook
   could only stall a save.
+  Undo Last Change also sits under the latest change in both chats (`UndoOffer`, `ChatLook.UndoChange`): it is
+  `Store.undo`, given the version it was shown for and refusing when the app has moved on. It shows only when that
+  Undo would take back just this change, and when the older code can still read what the newer saves: the compiler's
+  layout of each type with coding keys (`LiveReload.layout` with raw values) is compared by the keys and values
+  actually written: a removed, renamed or retyped required field, a retyped optional one, or an enum value the older
+  code doesn't know hides it. Undo puts back code, never data.
 - **Pictures the agent is shown** (`look_at_app`, `use_app`, `make_art`): the conversation is sent whole with
   every request, so its pictures add up until the provider refuses the request (Anthropic takes 30 MB of images
   in one; OpenRouter drops the connection at about 5 MB of body). Every engine is handed a JPEG copy
@@ -549,6 +555,27 @@ With one, that command works, and `look_at_app` gives the agent the exact line (
 installed copy's path, since the copy in build/ or the bundle id starts a second copy beside the one Lamp
 opened. `Agent.sandboxNote` says which failures are the sandbox's and not the app's; keep it true when the
 profile changes.
+
+### 3D scenes and games
+
+Games have two recipes in the prompt: `Agent.Rules.game2D` (SpriteKit, every kind of app) and `Agent.Rules.scene3D`
+(RealityKit, Mac apps, given only on a Mac with macOS 15, where RealityView begins). A Mac app whose own code
+imports RealityKit gets `Sources/LampScene.swift` (`Template.lampSceneSwift`, written by `writeSceneSupport`
+beside LampSupport.swift and taken away with the last such import), and its Package.swift and build.sh ask for
+macOS 15 (`Template.withScene`). It's Lamp's like LampSupport.swift: protected, left out of versions' diffs and of
+shared `.lampapp` files, and part of `BuildStamp`. It holds `LampSceneView` (sky, camera rig, keys, the frame
+loop), `LampMesh` (lathe, extrude, sweep, tube and boxes with textures laid on in metres), `LampMaterial`
+(materials with their detail drawn in code, no image files), parts that press, turn, slide and are grabbed, and
+`LampScene.copies` (instancing), `scene.place` (a prop by name, so a live change to it shows) and `scene.stream` (a big world built a tile at a time around the player, a few milliseconds a frame, so it opens at once). It carries what cost time to find: no sun shadows (with them RealityKit drops
+the sunlight on some frames and the whole picture flickers), a camera near plane of 10 cm, and instance batches
+split below a few million vertices (a bigger batch isn't drawn, silently).
+
+Props are made in code and checked by eye: `LampSceneView(props:)` names them, and `look_at_app` with `prop`
+asks the running app to show one from four sides (`LampPropStudio`, answered in `.lamp/runtime/prop.txt`) for the
+agent to compare with a reference picture. `look_at_app` with `motion` works for every Mac app: `LampRuntime`
+watches the front window for about two seconds and writes what changed frame to frame (`motion.json`, the two
+most different frames beside it), and `Runtime.motion` puts that in words; it's how flicker is caught, which a
+single picture hides.
 
 ### Widgets
 

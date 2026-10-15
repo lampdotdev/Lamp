@@ -419,7 +419,9 @@ struct ProjectView: View {
 
     /// How the chat keeps to its end, or to a request just sent, as things are added.
     private func following(_ content: some View, _ lines: [LogLine], pin: UUID?, proxy: ScrollViewProxy) -> some View {
-        content
+        // Undo Last Change comes a moment after the turn ends, once Lamp knows it can be offered. (Apart from the
+        // rest: as one expression it's more than the type checker will take on in reasonable time.)
+        content.onChange(of: undoChange) { followEnd(proxy, lines, pin: pin) }
         // A chat opens on its latest messages: the scroll view starts at the bottom, with
         // no scrolling to get there.
         // It stays at its end as the chat grows, except while a request just sent glides to the top
@@ -514,6 +516,9 @@ struct ProjectView: View {
             transcript(lines, busy: busy, progressShown: progress != nil, pin: pin)
             if let progress { ActivityRow(progress: progress).padding(.top, 12) }
         }
+        if let change = undoChange {
+            ChatLook.UndoChange { Task { await store.undo(project, change: change) } }.padding(.top, 12)
+        }
         if store.notResponding[project.id] != nil {
             ChatLook.UnresponsiveNotice(text: ErrorMessages.notResponding(project.name)) { store.forceQuit(project) }.padding(.top, 12)
         }
@@ -588,6 +593,8 @@ struct ProjectView: View {
                            saved: made || versions.count > 1)
         }
     }
+    /// The change Undo Last Change is offered under, at the end of the chat: not while anything waits to go after it.
+    private var undoChange: String? { busy || !queued.isEmpty ? nil : store.undoOffers[project.id] }
     /// The history is read again whenever a turn starts or ends and whenever the chat changes (a rename, an Undo).
     private var historyKey: String { "\(project.id) \(busy) \(store.logs[project.id]?.count ?? 0)" }
     private var undoable: Bool { history?.undoable ?? true }
@@ -684,6 +691,7 @@ struct ProjectView: View {
         .task(id: historyKey) {
             // A read can outlast the change that started it (the git commands it runs finish even when it's
             // cancelled), so one started before a turn ended mustn't land after the read that followed.
+            store.refreshUndoOffer(project)
             let read = await History.read(project)
             guard !Task.isCancelled else { return }
             history = read
