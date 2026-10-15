@@ -707,20 +707,57 @@ private struct WishDrag: NSViewRepresentable {
             }
             let tile = CGFloat(dock?.double(forKey: "tilesize") ?? 0)
             let icons = tile > 0 ? tile : 48
-            // Along the edge the Dock is centred and only as long as what it holds: past its ends is the desktop.
-            let along = side(of: dock) == "bottom" ? point.x - frame.midX : point.y - frame.midY
-            guard abs(along) <= length(of: dock, icons: icons) / 2 else { return false }
+            // Far from the edge it's the window there, without asking anything more.
+            guard inset <= (depth > 4 ? depth : icons + 24) else { return false }
+            // Along the edge the Dock is only as long as what it holds: past its ends is the desktop. Where Lamp may
+            // ask the Dock (Accessibility, which trying iPhone apps asks for) it says where its icons are, hidden or
+            // not; else it's centred, as long as an estimate from what it holds.
+            let bottom = side(of: dock) == "bottom"
+            let along = bottom ? point.x : point.y
+            if let span = span(bottom: bottom) {
+                guard along >= span.lowerBound - icons, along <= span.upperBound + icons else { return false }
+            } else {
+                guard abs(along - (bottom ? frame.midX : frame.midY)) <= length(of: dock, icons: icons) / 2 else { return false }
+            }
             if depth > 4 { return inset <= depth }
             // A Dock that hides comes out when the pointer reaches the edge, about as deep as its icons, and only while
             // it's out is the strip beside the edge the Dock rather than the window behind it.
             return inset <= 1 || inset <= icons + 24 && dockIsOut()
         }
 
+        /// Where the Dock's icons run along its edge, as the Dock itself says.
+        private static func span(bottom: Bool) -> ClosedRange<CGFloat>? {
+            guard AXIsProcessTrusted(),
+                  let pid = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first?.processIdentifier
+            else { return nil }
+            let app = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(app, 0.1)
+            var children: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(app, kAXChildrenAttribute as CFString, &children) == .success,
+                  let list = (children as? [AXUIElement])?.first(where: { element in
+                      var role: CFTypeRef?
+                      AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+                      return role as? String == kAXListRole
+                  }) else { return nil }
+            var position: CFTypeRef?, size: CFTypeRef?
+            var origin = CGPoint.zero, extent = CGSize.zero
+            guard AXUIElementCopyAttributeValue(list, kAXPositionAttribute as CFString, &position) == .success,
+                  AXUIElementCopyAttributeValue(list, kAXSizeAttribute as CFString, &size) == .success,
+                  let position, let size,
+                  AXValueGetValue(position as! AXValue, .cgPoint, &origin),
+                  AXValueGetValue(size as! AXValue, .cgSize, &extent),
+                  extent.width > 0, extent.height > 0 else { return nil }
+            if bottom { return origin.x...(origin.x + extent.width) }
+            // Accessibility measures from the top of the main screen; the screen from its bottom.
+            let top = NSScreen.screens.first?.frame.maxY ?? 0
+            return (top - origin.y - extent.height)...(top - origin.y)
+        }
+
         private static func side(of dock: UserDefaults?) -> String {
             dock?.string(forKey: "orientation").flatMap { ["left", "right"].contains($0) ? $0 : nil } ?? "bottom"
         }
 
-        /// About how long the Dock is: its icons (Finder, the apps kept in it and the others open, recent ones when
+        /// Without Accessibility, about how long the Dock is: its icons (Finder, the apps kept in it and the others open, recent ones when
         /// it shows them, its files and folders, the Trash) and the space between its sections, with an icon's room
         /// at each end for the pointer's sake and for magnified icons. Over rather than under: past the ends is only a
         /// strip of desktop a hand's width from the edge.
