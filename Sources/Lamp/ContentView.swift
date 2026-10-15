@@ -431,7 +431,6 @@ struct ProjectView: View {
         .onChange(of: written(lines)) { followEnd(proxy, lines, pin: pin) }
         .onChange(of: queued.count) { followEnd(proxy, lines, pin: pin) }
         .onChange(of: store.progress[project.id]?.plan.count) { followEnd(proxy, lines, pin: pin) }
-        .onChange(of: store.progress[project.id]?.screenshot != nil) { followEnd(proxy, lines, pin: pin) }
         .onChange(of: sends) {
             follow.atEnd = true
             followEnd(proxy, lines, pin: pin)

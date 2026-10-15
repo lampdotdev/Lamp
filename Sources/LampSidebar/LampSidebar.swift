@@ -322,8 +322,7 @@ private struct LineView: View {
             AskLine(line: line)
         case .result:
             if let result = line.result {
-                ResultCardView(result: result, isCurrent: line.resultCurrent ?? false,
-                               picture: line.picture.flatMap(NSImage.init(data:))) { _ in link.send(.tryIt(line.id)) }
+                ResultCardView(result: result)
             } else {
                 ChatLook.AgentText(line.text)
             }

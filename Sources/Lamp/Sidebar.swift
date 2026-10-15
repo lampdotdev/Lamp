@@ -250,7 +250,6 @@ final class SidebarServer {
         let lines = Transcript.withoutSpentOffers(LogLine.visible(log, details: false), dir: dir)
         let finalAnswers = Transcript.finalAnswers(in: lines, busy: busy)
         let openAsk = Talk.open(in: lines)?.id
-        let currentResult = Talk.current(in: lines)?.id
         // Only the end of a long chat, as Lamp's window opens on it; the rest is a click away in Lamp.
         let start = LogLine.recentStart(in: lines, atLeast: reach)
         let latestRequest = lines.last { $0.kind == .user }?.id
@@ -302,13 +301,8 @@ final class SidebarServer {
                     out.append(card)
                 case .result:
                     guard let result = line.result else { continue }
-                    let current = line.id == currentResult && !busy
-                    // `untried` for a sidebar from before the shared card, which offers it as Try It.
-                    var card = SidebarLine(id: line.id, kind: .result, text: result.summary, gap: gap,
-                                           untried: current ? result.untried : nil)
+                    var card = SidebarLine(id: line.id, kind: .result, text: result.summary, gap: gap)
                     card.result = result
-                    card.resultCurrent = current
-                    card.picture = result.version.flatMap { picture(Versions.pictureURL(in: project, for: $0)) }
                     out.append(card)
                 case .needsKey, .offer:
                     // The card's header: setting it up (a key, a download, a sign-in) happens in Lamp's window.
@@ -459,20 +453,6 @@ final class SidebarServer {
     /// under the receipt.
     fileprivate static var noteProblems: [UUID: String] = [:]
 
-    /// A result's picture, small enough to send every time the chat changes.
-    private static var pictures: [URL: Data] = [:]
-    fileprivate static func picture(_ url: URL) -> Data? {
-        if let data = pictures[url] { return data }
-        guard let image = NSImage(contentsOf: url) else { return nil }
-        let scale = min(300 / max(image.size.width, 1), 200 / max(image.size.height, 1), 1)
-        let size = NSSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
-        let small = NSImage(size: size, flipped: false) { rect in image.draw(in: rect); return true }
-        guard let tiff = small.tiffRepresentation,
-              let data = NSBitmapImageRep(data: tiff)?.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return nil }
-        pictures[url] = data
-        return data
-    }
-
     private static var thumbnails: [URL: Data] = [:]
     fileprivate static func thumbnail(_ url: URL) -> Data? {
         if let data = thumbnails[url] { return data }
@@ -555,9 +535,6 @@ final class SidebarServer {
         case .answer(let id, let answers):
             guard let line = store.logs[project.id]?.first(where: { $0.id == id }) else { return }
             store.answer(line, with: answers, in: project)
-        case .tryIt(let id):
-            guard let untried = store.logs[project.id]?.first(where: { $0.id == id })?.result?.untried else { return }
-            store.send(Talk.tryRequest(untried), to: project)
         case .draft(let text):
             var draft = store.draft(for: project)
             guard draft.text != text else { return }
