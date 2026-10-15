@@ -245,7 +245,7 @@ enum Agent {
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks), half(onMac, BrowserBridge.enabled ? Rules.browserCompanion : ""),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
                      Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.services), half(onMac, Rules.computer),
-                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true),
+                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true), Rules.game2D,
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
                      Rules.universalTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
@@ -268,7 +268,8 @@ enum Agent {
         rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules += [Rules.services, Rules.computer] }
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.iPhoneShare, Rules.icloud] }
-        rules += [Rules.store, Rules.kinds(mac: mac), mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
+        rules += [Rules.store, Rules.kinds(mac: mac, threeD: mac && Rules.scenes), Rules.game2D] + (mac && Rules.scenes ? [Rules.scene3D] : [])
+        rules += [mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
                   Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
         rules += [Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
@@ -736,7 +737,8 @@ enum Agent {
         /// What kind of app it is decides how it looks: Notes, Weather and Breathe are all Apple's and look
         /// nothing alike. The agent picks a kind once and keeps it in APP.md, so the look holds across requests.
         /// design/app-archetypes/README.md is the reasoning behind each.
-        static func kinds(mac: Bool) -> String {
+        /// `threeD`: whether the 3D rule is in this prompt too (Mac apps, on a Mac that can run them).
+        static func kinds(mac: Bool, threeD: Bool = false) -> String {
             let haptic = mac ? "" : " and a haptic (sensoryFeedback)"
             let companionPlace = mac
                 ? "; on a Mac it also shows its state in the menu bar (LampMenuBar with `dockIcon: true`, its label the time left or the count)"
@@ -804,12 +806,59 @@ enum Agent {
               • Utility (a clipboard history, automations, a folder watcher: works while you do other things): \
             \(utility) Quiet: a notification only when something needs the user.
               • Game or toy (played rather than used): fully custom, with no standard chrome while playing; pause, \
-            settings and scores are standard SwiftUI. SpriteKit for physics or many moving pieces, SwiftUI animation \
-            for the simplest. Sprites, characters and backgrounds are art from `make_art`, all in one style, with \
+            settings and scores are standard SwiftUI. 2D games as the 2D rule says\(threeD ? ", 3D ones as the 3D rule says" : ""), \
+            SwiftUI animation for the simplest. Sprites, characters and backgrounds are art from `make_art`, all in one style, with \
             sound\(mac ? "" : " and haptics"). Scores are kept on the device.
 
             """
         }
+
+        static let game2D = """
+        - 2D games: SpriteKit, in a SpriteView, one SKScene subclass for each screen with `scaleMode = .resizeFill`. \
+        Movement in `update(_:)` scaled by the time since the last frame; collisions with SKPhysicsBody, its category \
+        and contact masks, and an SKPhysicsContactDelegate. Sprites are `make_art` pictures on a transparent \
+        background, loaded as SKTexture; an SKCameraNode follows the player through a world bigger than the screen. \
+        Keys come from `NSEvent.addLocalMonitorForEvents` on the Mac, touches on iPhone. Score, pause and menus are \
+        SwiftUI over the SpriteView. After changing anything that moves, look_at_app with `motion` shows what \
+        changes frame to frame and catches flicker that a single picture hides.
+
+        """
+
+        /// Whether this Mac can run a 3D scene an app makes (RealityView needs macOS 15): the 3D rule is only
+        /// given when it can.
+        static let scenes = ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0))
+
+        static let scene3D = """
+        - 3D scenes (a world to move through, a room, a thing to turn over and handle): RealityKit through \
+        LampSceneView, from Sources/LampScene.swift, which Lamp adds to an app whose code imports RealityKit (the \
+        app then needs macOS 15). `LampSceneView(sky:camera:props:build:update:)`: sky `.day`, `.sunset`, \
+        `.overcast`, `.night`, `.studio`; camera `.orbit(target:distance:)`, `.chase("entity name")`, \
+        `.firstPerson()`, `.fixed(position:lookAt:)` or `.manual`; `build` adds entities to `scene.root`; \
+        `update(scene, dt)` runs every frame, with `scene.isDown(.w)` for keys. In a file that imports RealityKit, \
+        SwiftUI's `Scene` must be written `SwiftUI.Scene`.
+          Things are made in code, in metres, from LampMesh (`box(size, corner:)`, `sphere`, `cylinder`, `cone`, \
+        `lathe([[radius, height], …])` for anything round, `extrude(path, depth:, chamfer:)`, \
+        `sweep(path, along:)`, `tube(along:radius:)`, `plane(width:depth:tile:)`, `text`) and LampMaterial \
+        (`metal`, `chrome`, `brushed`, `plastic`, `rubber`, `glass`, `paint`, `wood`, `fabric`, `ceramic`, \
+        `concrete`, `asphalt`, `brick`, `tiles`, `grass`, `glow`). A prop is a function returning one Entity of named \
+        parts at real size; the parts that move are `lampPress { }`, `lampTurn(axis:range:)`, \
+        `lampSlide(axis:range:)` and `lampGrab()`; `lampPhysics(.dynamic)` or `.static` for falling and \
+        knocking; `lampShadow()` under anything standing on the ground. Many copies of one thing go in one \
+        `LampScene.copies(of:at:)`.
+          Each prop that matters goes in `props` by name, and look_at_app with `prop` shows it on its own from four \
+        sides. Compare that with a reference (the person's photo from the chat, or `make_art` of the object alone on \
+        a plain background): shape, proportions, colours, parts. Fix and look again, up to three rounds for the main \
+        props; background things get one look.
+          LampSceneView already avoids RealityKit's flicker; keep it that way: no sun shadows (they make the whole \
+        picture flicker; `lampShadow` instead), and flat things laid on others (roads, markings, decals, a sign's \
+        writing) a few centimetres above them, never at the same height. After big changes, look_at_app with \
+        `motion`.
+          A model code can't reasonably make can come from a free CC0 library (Kenney, Poly Haven) as .glb: \
+        download it into Assets/, turn it into USD with `usdextract -o Assets/Name file.glb` (part of macOS), and \
+        load it with `try await Entity(contentsOf: LampAssets.url("Name/name.usdc")!)`. Map data from OpenStreetMap \
+        needs "© OpenStreetMap contributors" on screen.
+
+        """
 
         static let macDesign = """
         - Base design, for every kind of app where its kind doesn't say otherwise: content first, little chrome. Collections go in a NavigationSplitView with a \

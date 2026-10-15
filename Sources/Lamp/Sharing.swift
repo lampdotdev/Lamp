@@ -152,7 +152,7 @@ enum Sharing {
         try fm.createDirectory(at: stage, withIntermediateDirectories: true)
 
         for file in swiftSources(in: project.dir.appendingPathComponent("Sources"))
-        where file.lastPathComponent != "LampSupport.swift" {
+        where file.lastPathComponent != "LampSupport.swift" && file.lastPathComponent != Template.sceneSupportFile {
             let relative = relativePath(of: file, in: project.dir)
             let target = stage.appendingPathComponent(relative)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -370,7 +370,7 @@ enum Sharing {
         try? fm.removeItem(at: project.dir.appendingPathComponent(Template.shareFolder))
         // Code comes from the one list the review read (`Package.sources`), and lands only in the code folders.
         let codeFolders = ["Sources/", Template.widgetFolder + "/", Template.watchFolder + "/", Template.shareFolder + "/"]
-        let lampsOwn = ["LampSupport.swift", Template.widgetSupportFile, Template.shareSupportFile]
+        let lampsOwn = ["LampSupport.swift", Template.sceneSupportFile, Template.widgetSupportFile, Template.shareSupportFile]
         for file in package.sources where !lampsOwn.contains(file.lastPathComponent) {
             let relative = package.path(of: file)
             guard !relative.contains(".."), codeFolders.contains(where: { relative.hasPrefix($0) }),

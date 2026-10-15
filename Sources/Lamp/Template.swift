@@ -120,8 +120,8 @@ enum Template {
         }
         switch project.platform {
         case .mac:
-            try write(buildSh(widget: widget, share: share, widgetOnly: isWidgetOnly(project)), to: "build.sh", for: project, executable: true)
-            try write(packageSwift(widget: widget, share: share), to: "Package.swift", for: project)
+            try write(withScene(buildSh(widget: widget, share: share, widgetOnly: isWidgetOnly(project)), for: project), to: "build.sh", for: project, executable: true)
+            try write(withScene(packageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
         case .iphone:
             try write(withWatch(iPhoneBuildSh(widget: widget, share: share), for: project), to: "build.sh", for: project, executable: true)
             try write(withWatch(iPhonePackageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
@@ -194,6 +194,7 @@ enum Template {
         try writeWidgetSupport(for: project)
         try writeShareSupport(for: project)
         try writeWatchSupport(for: project)
+        try writeSceneSupport(for: project)
     }
 
     // MARK: - App Intents
@@ -4308,6 +4309,11 @@ enum Template {
                 forName: Notification.Name("{{NOTE}}snapshot.{{SLUG}}"), object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { snapshot() }
             }
+            // ...and a few seconds of its front window, frame after frame, when the builder wants to see what moves.
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("{{NOTE}}motion.{{SLUG}}"), object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { recordMotion() }
+            }
             // ...and clicks, types and presses keys in it when the builder wants to try something (LampDriver).
             DistributedNotificationCenter.default().addObserver(
                 forName: Notification.Name("{{NOTE}}useApp.{{SLUG}}"), object: nil, queue: .main) { note in
@@ -4422,6 +4428,68 @@ enum Template {
                 .takeRetainedValue()
             guard let image, image.width > 1, image.height > 1 else { return nil }
             return image
+        }
+
+        /// Watches the front window for about two and a half seconds, as fast as the system hands out pictures of
+        /// it, and writes what changed from frame to frame to motion.json, with the two frames that differ most
+        /// (motion-1.png, motion-2.png). Something that changes and changes straight back is flicker, which a
+        /// single picture never shows.
+        @MainActor
+        static func recordMotion() {
+            guard let window = windowsOnScreen.first else {
+                try? #"{"error":"no window"}"#.write(to: folder.appendingPathComponent("motion.json"), atomically: true, encoding: .utf8)
+                return
+            }
+            var frames: [CGImage] = []
+            let started = Date()
+            func small(_ image: CGImage) -> [UInt8] {
+                let w = 160, h = max(1, Int(160 * Double(image.height) / Double(max(image.width, 1))))
+                var gray = [UInt8](repeating: 0, count: w * h)
+                gray.withUnsafeMutableBytes { raw in
+                    CGContext(data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                              space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)?
+                        .draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+                }
+                return gray
+            }
+            func finish() {
+                let seconds = Date().timeIntervalSince(started)
+                let thumbs = frames.map(small)
+                // The share of the picture that changed between one frame and the next.
+                func changed(_ a: [UInt8], _ b: [UInt8]) -> Double {
+                    guard a.count == b.count, !a.isEmpty else { return 0 }
+                    var n = 0
+                    for i in a.indices where abs(Int(a[i]) - Int(b[i])) > 24 { n += 1 }
+                    return Double(n) / Double(a.count)
+                }
+                let changes = thumbs.indices.dropFirst().map { changed(thumbs[$0 - 1], thumbs[$0]) }
+                // A frame that differs a lot from the one before while the one after is back like the one before.
+                var flickers = 0
+                for i in 1..<max(1, thumbs.count - 1) where changes[i - 1] > 0.01 && changed(thumbs[i - 1], thumbs[i + 1]) < changes[i - 1] / 3 {
+                    flickers += 1
+                }
+                var worst = 0
+                for i in changes.indices where changes[i] > changes[worst] { worst = i }
+                if !changes.isEmpty {
+                    for (index, image) in [frames[worst], frames[worst + 1]].enumerated() {
+                        let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
+                        try? png?.write(to: folder.appendingPathComponent("motion-\(index + 1).png"), options: .atomic)
+                    }
+                }
+                let report: [String: Any] = ["frames": frames.count, "seconds": seconds, "changes": changes, "flickers": flickers, "worst": worst]
+                if let data = try? JSONSerialization.data(withJSONObject: report) {
+                    try? data.write(to: folder.appendingPathComponent("motion.json"), options: .atomic)
+                }
+            }
+            Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { timer in
+                MainActor.assumeIsolated {
+                    if let image = shown(window) { frames.append(image) }
+                    if Date().timeIntervalSince(started) > 2.5 || frames.count >= 90 {
+                        timer.invalidate()
+                        finish()
+                    }
+                }
+            }
         }
 
         /// Keeps a chatty app from filling the disk: past 1 MB, the log starts over.
@@ -4983,6 +5051,8 @@ enum Template {
             var key: String?            // "return", "escape", "cmd+a", "down"…
             var item: String?           // the menu item to pick: "Export…", "View > Zoom In"
             var amount: Double?         // scroll: points, positive is down; wait: seconds
+            var to_x: Double?           // drag: where it ends, in the picture's pixels
+            var to_y: Double?
         }
 
         /// Only Lamp knows this app's token, so only Lamp can sign a request (the "lampUseAppSignature" key marks
@@ -5208,6 +5278,17 @@ enum Template {
                       let event = NSEvent(cgEvent: cg) else { return "scroll: nothing to scroll there" }
                 (view.enclosingScrollView ?? view).scrollWheel(with: event)
                 return "scrolled \(Int(action.amount ?? 200)) points" + (what.map { " in \($0)" } ?? "")
+            case "drag":
+                guard let x = action.x, let y = action.y, let toX = action.to_x, let toY = action.to_y else {
+                    return "drag: needs where it starts (a target, or x and y) and where it ends (to_x and to_y)"
+                }
+                let end = NSPoint(x: toX / scale, y: frame.bounds.height - toY / scale)
+                guard frame.bounds.contains(point), frame.bounds.contains(end) else {
+                    return "drag: outside the window, whose picture is \(size) pixels"
+                }
+                guard let view = frame.hitTest(point) else { return "drag: nothing there" }
+                drag(view, from: point, to: end, in: window)
+                return "dragged from \(Int(x)), \(Int(y)) to \(Int(toX)), \(Int(toY))" + (what.map { ", starting on \($0)" } ?? "")
             case "wait":
                 return "waited \(action.amount ?? 1) s"
             default:
@@ -5605,6 +5686,33 @@ enum Template {
         }
 
         // MARK: Clicks and keys
+
+        /// Presses at one point, moves in steps to another and lets go. The moves and the release are queued before
+        /// the press, so a control that follows the mouse in a loop of its own (a slider, a split view's divider)
+        /// reads them as they come; whatever is left is handed to the view, which is how SwiftUI's drag gestures
+        /// (a canvas, a game, a 3D scene) take them.
+        private static func drag(_ view: NSView, from start: NSPoint, to end: NSPoint, in window: NSWindow) {
+            let begun = ProcessInfo.processInfo.systemUptime
+            func event(_ type: NSEvent.EventType, _ point: NSPoint, _ step: Int) -> NSEvent? {
+                NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: begun + Double(step) * 0.016,
+                                   windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+                                   pressure: type == .leftMouseUp ? 0 : 1)
+            }
+            guard let down = event(.leftMouseDown, start, 0) else { return }
+            let steps = 16
+            for i in 1...steps {
+                let t = CGFloat(i) / CGFloat(steps)
+                if let moved = event(.leftMouseDragged, NSPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t), i) {
+                    NSApp.postEvent(moved, atStart: false)
+                }
+            }
+            if let up = event(.leftMouseUp, end, steps + 1) { NSApp.postEvent(up, atStart: false) }
+            view.mouseDown(with: down)
+            while let next = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp], until: .distantPast, inMode: .default, dequeue: true) {
+                if next.type == .leftMouseUp { view.mouseUp(with: next); break }
+                view.mouseDragged(with: next)
+            }
+        }
 
         private static func click(_ view: NSView, at point: NSPoint, in window: NSWindow, count: Int) -> String {
             for n in 1...count {
