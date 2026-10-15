@@ -158,19 +158,32 @@ struct SidebarView: View {
     }
 }
 
+/// Where the top of the chat lies in its scroll view, while there's more of it to load.
+private struct EarlierTop: PreferenceKey {
+    static let defaultValue: CGFloat = -.infinity
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 /// The chat as Lamp's window draws it (`Transcript`, the composer row), from the same pieces (`ChatLook`).
 private struct Chat: View {
     @EnvironmentObject private var link: Link
     let state: SidebarState
+    /// The first line when more was last asked for: the next page is asked for once that page has come.
+    @State private var askedEarlierAt: UUID?
+    /// Off until the chat has opened at its end, so the top of the chat seen while laying out asks for nothing.
+    @State private var settled = false
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { scroller in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        // Scrolled to the top of a long chat: more of it, as Lamp's window loads it.
+                        // Scrolled near the top of a long chat: more of it, as Lamp's window loads it. Told by where
+                        // this lies in the scroll view, since the stack draws every line whether or not it's seen.
                         if state.hasEarlier == true {
-                            Color.clear.frame(height: 1).onAppear { link.send(.earlier) }
+                            Color.clear.frame(height: 1).background(GeometryReader { geometry in
+                                Color.clear.preference(key: EarlierTop.self, value: geometry.frame(in: .named("chat")).minY)
+                            })
                         }
                         ForEach(state.lines) { line in
                             LineView(line: line, busy: state.busy).padding(.top, line.gap).id(line.id)
@@ -197,12 +210,41 @@ private struct Chat: View {
                     .padding(.horizontal, 20).padding(.top, 16)
                     .frame(maxWidth: .infinity)
                 }
+                .coordinateSpace(name: "chat")
+                .onPreferenceChange(EarlierTop.self) { top in
+                    guard settled, top > -200, state.hasEarlier == true, askedEarlierAt != state.lines.first?.id else { return }
+                    askedEarlierAt = state.lines.first?.id
+                    link.send(.earlier)
+                }
+                // The earlier page goes in above what was being read, which stays where it was.
+                .onChange(of: state.lines.first?.id) { old, _ in
+                    if let old, old == askedEarlierAt { scroller.scrollTo(old, anchor: .top) }
+                }
                 .onChange(of: state.lines.last?.id) { follow(scroller) }
                 .onChange(of: state.lines.last?.text) { follow(scroller) }
                 .onChange(of: state.working) { follow(scroller) }
                 .onChange(of: state.queued?.count) { follow(scroller) }
                 // Once the lines are laid out: scrolled before then, the chat opens partway up.
-                .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { follow(scroller, animated: false) } }
+                .onAppear {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        follow(scroller, animated: false)
+                        DispatchQueue.main.async { settled = true }
+                    }
+                }
+            }
+            // As Lamp's window shows it: why dictation didn't start, and the way to System Settings to fix it.
+            .alert(state.dictationProblem?.title ?? "Dictation",
+                   isPresented: Binding(get: { state.dictationProblem != nil },
+                                        set: { if !$0 { link.send(.dictationProblem(openSettings: false)) } }),
+                   presenting: state.dictationProblem) { problem in
+                if let button = problem.settingsButton {
+                    Button(button) { link.send(.dictationProblem(openSettings: true)) }
+                    Button("Not Now", role: .cancel) {}
+                } else {
+                    Button("OK") {}
+                }
+            } message: { problem in
+                Text(problem.message)
             }
             if let approval = state.approval {
                 ChatLook.ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation,

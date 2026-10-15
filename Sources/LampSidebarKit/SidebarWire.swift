@@ -60,6 +60,8 @@ public struct SidebarState: Codable, Equatable {
     /// Lamp is listening to dictation for this chat, and whether this Mac can dictate at all.
     public var listening: Bool?
     public var canDictate: Bool?
+    /// Why dictation didn't start or stopped, and the button to the System Settings page that fixes it, if any.
+    public var dictationProblem: SidebarProblem?
     /// A message is on its way in (Lamp's window or this one sent it): nothing else is sent meanwhile.
     public var submitting: Bool?
 
@@ -219,6 +221,8 @@ public enum SidebarCommand: Codable, Equatable {
     case dismissSuggestion
     /// Starts or stops dictating into the message box, in Lamp.
     case dictate(Bool)
+    /// The dictation problem was seen: closed, or (true) its System Settings page asked for.
+    case dictationProblem(openSettings: Bool)
     /// Files pasted, dropped or chosen in the sidebar, which only it can read: their names and contents.
     case attach([SidebarFile])
     case stop
@@ -297,4 +301,18 @@ public final class SidebarOutbox {
 /// can say to it, and nothing that reaches Lamp. LampSupport.swift declares the same.
 @objc(LampSidebarPlacement) public protocol SidebarPlacement {
     func place(x: Double, y: Double)
+}
+
+/// Something the person needs to know before a thing can work, as an alert: its title, what to do, and the
+/// button that opens the fix, when there is one.
+public struct SidebarProblem: Codable, Equatable {
+    public var title: String
+    public var message: String
+    public var settingsButton: String?
+
+    public init(title: String, message: String, settingsButton: String?) {
+        self.title = title
+        self.message = message
+        self.settingsButton = settingsButton
+    }
 }

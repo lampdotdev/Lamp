@@ -200,6 +200,12 @@ final class SidebarServer {
 
     fileprivate func closed(_ connection: Connection) {
         connections[ObjectIdentifier(connection)] = nil
+        // With no sidebar left for it, nothing shows the microphone or can stop it: dictation ends with the last.
+        let id = connection.projectID
+        if !connections.values.contains(where: { $0.projectID == id }) {
+            dictations.removeValue(forKey: id)?.cancel()
+            listening[id] = nil
+        }
     }
 
     private func scheduleUpdate() {
@@ -250,6 +256,9 @@ final class SidebarServer {
         state.suggestion = suggestion(for: project, log: log, busy: busy)
         state.listening = dictations[project.id]?.isListening ?? false
         state.canDictate = Dictation.hasMicrophone
+        state.dictationProblem = dictations[project.id]?.problem.map {
+            SidebarProblem(title: $0.title, message: $0.message, settingsButton: $0.settingsURL == nil ? nil : $0.settingsButton)
+        }
         state.submitting = store.pendingSubmissions.contains(project.id)
         return state
     }
@@ -530,6 +539,8 @@ final class SidebarServer {
                 draft.setAsideAttachments = draft.attachments
             }
             dictations[project.id]?.cancel()
+            // Lamp's change, not the sidebar's, even when the box held these words before: the sidebar takes it up.
+            draftsFromSidebar[project.id] = nil
             draft.text = line.text
             draft.attachments = Attachments.urls(line.attachments ?? [], in: project)
             draft.replacing = line.id
@@ -538,6 +549,7 @@ final class SidebarServer {
             var draft = store.draft(for: project)
             guard draft.replacing != nil, !store.pendingSubmissions.contains(project.id) else { return }
             draft = Store.Draft(text: draft.setAsideText, attachments: draft.setAsideAttachments)
+            draftsFromSidebar[project.id] = nil
             store.updateDraft(draft, for: project)
         case .preview(let id, let index):
             let files = id.flatMap { id in store.logs[project.id]?.first(where: { $0.id == id }) }
@@ -558,6 +570,10 @@ final class SidebarServer {
             scheduleUpdate()
         case .dictate(let on):
             dictate(on, in: project)
+        case .dictationProblem(let openSettings):
+            guard let dictation = dictations[project.id] else { return }
+            if openSettings, let url = dictation.problem?.settingsURL { NSWorkspace.shared.open(url) }
+            dictation.problem = nil
         case .answer(let id, let answers):
             guard let line = store.logs[project.id]?.first(where: { $0.id == id }) else { return }
             store.answer(line, with: answers, in: project)
