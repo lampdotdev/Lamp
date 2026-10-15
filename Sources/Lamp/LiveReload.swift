@@ -212,6 +212,9 @@ enum LiveReload {
         for raw in dump.split(separator: "\n") {
             let line = String(raw), range = NSRange(line.startIndex..., in: line)
             let indent = line.prefix { $0 == " " }.count
+            // Only a line that opens a node says where it sits; the closing brackets of a deep node sometimes
+            // come on a line of their own at the left edge, which would otherwise end every scope.
+            guard line.dropFirst(indent).first == "(" else { continue }
             while let last = scopes.last, last.indent >= indent { scopes.removeLast() }
             // What a member line belongs to is the nearest scope around it: a type's member when that's the type,
             // nothing when it's a function, an accessor or a closure (a local).
