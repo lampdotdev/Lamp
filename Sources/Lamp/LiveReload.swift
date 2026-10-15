@@ -106,7 +106,9 @@ enum LiveReload {
                 continue
             }
             guard new != old else { continue }
-            if (path as NSString).lastPathComponent == "LampSupport.swift" { return .reopen("Lamp's own building blocks changed") }
+            if ["LampSupport.swift", Template.sceneSupportFile].contains((path as NSString).lastPathComponent) {
+                return .reopen("Lamp's own building blocks changed")
+            }
             if declaresApp(new) { return .reopen("\(path) is the app's entry point") }
             changed.append(path)
         }
