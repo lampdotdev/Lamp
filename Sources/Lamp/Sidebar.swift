@@ -118,7 +118,9 @@ enum Sidebar {
         var peer = sockaddr_in()
         var length = socklen_t(MemoryLayout<sockaddr_in>.size)
         guard withUnsafeMutablePointer(to: &peer, { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getpeername(socket, $0, &length) } }) == 0,
-              peer.sin_addr.s_addr == inet_addr("127.0.0.1"), let pid = process(connectedFrom: peer.sin_port) else { return nil }
+              peer.sin_addr.s_addr == inet_addr("127.0.0.1"),
+              let pid = PeerProcess.find(connectedFrom: UInt16(bigEndian: peer.sin_port), to: Edition.sidebarPort,
+                                         path: { $0.hasSuffix("/LampSidebar.appex/Contents/MacOS/LampSidebar") }) else { return nil }
         var code: SecCode?
         guard SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid: pid] as CFDictionary, [], &code) == errSecSuccess, let code else { return nil }
         return Store.shared.projects.first { project in
@@ -128,33 +130,6 @@ enum Sidebar {
                     && SecCodeCheckValidity(code, [], requirement) == errSecSuccess
             }
         }
-    }
-
-    /// The sidebar process whose connection to Lamp's port goes out from `port` (both in network order).
-    private static func process(connectedFrom port: in_port_t) -> pid_t? {
-        let count = proc_listallpids(nil, 0)
-        guard count > 0 else { return nil }
-        var pids = [pid_t](repeating: 0, count: Int(count) * 2)
-        let found = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
-        for pid in pids.prefix(Int(max(found, 0))) where pid > 0 {
-            var path = [CChar](repeating: 0, count: 4096)
-            guard proc_pidpath(pid, &path, UInt32(path.count)) > 0,
-                  String(cString: path).hasSuffix("/LampSidebar.appex/Contents/MacOS/LampSidebar") else { continue }
-            let size = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
-            guard size > 0 else { continue }
-            var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(size) / MemoryLayout<proc_fdinfo>.size)
-            let filled = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, &fds, size)
-            for fd in fds.prefix(Int(filled) / MemoryLayout<proc_fdinfo>.size) where fd.proc_fdtype == PROX_FDTYPE_SOCKET {
-                var info = socket_fdinfo()
-                guard proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDSOCKETINFO, &info, Int32(MemoryLayout<socket_fdinfo>.size)) > 0,
-                      info.psi.soi_kind == SOCKINFO_TCP else { continue }
-                let tcp = info.psi.soi_proto.pri_tcp.tcpsi_ini
-                if in_port_t(truncatingIfNeeded: tcp.insi_lport) == port, in_port_t(truncatingIfNeeded: tcp.insi_fport) == Edition.sidebarPort.bigEndian {
-                    return pid
-                }
-            }
-        }
-        return nil
     }
 }
 

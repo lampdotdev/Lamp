@@ -78,6 +78,9 @@ final class ServiceSignInTests: XCTestCase {
         let support = Template.lampSupportSwift
         let start = try XCTUnwrap(support.range(of: "@MainActor final class LampService"))
         let end = try XCTUnwrap(support.range(of: "// end LampService", range: start.upperBound..<support.endIndex))
+        // Where the sign-in is kept: in this harness the Keychain, since there is no Lamp to ask.
+        let secretsStart = try XCTUnwrap(support.range(of: "// LampSecrets\n"))
+        let secretsEnd = try XCTUnwrap(support.range(of: "// end LampSecrets", range: secretsStart.upperBound..<support.endIndex))
         let program = """
         import Foundation
         import SwiftUI
@@ -86,6 +89,8 @@ final class ServiceSignInTests: XCTestCase {
         import CryptoKit
         import Security
         enum LampRuntime { static let folder = URL(fileURLWithPath: "/nonexistent-lamp-runtime") }
+        let lampGateway = "http://127.0.0.1:1"
+        \(support[secretsStart.upperBound..<secretsEnd.lowerBound])
         \(support[start.lowerBound..<end.lowerBound])
         \(Self.harness)
         """
@@ -151,6 +156,7 @@ final class ServiceSignInTests: XCTestCase {
     @main struct Harness {
         @MainActor static func main() async {
             URLProtocol.registerClass(Answers.self)
+            LampSecrets.store = .keychain
             let recorded = try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))) as! [String: Any]
             let real = recorded["answers"] as! [String: [String: Any]]
             func load(_ answers: [String: [String: Any]]) {
