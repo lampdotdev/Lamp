@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = askEntries + resultEntries
+    static let entries: [Entry] = askEntries + resultEntries + buildEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -81,6 +81,32 @@ enum Gallery {
 
     private static func result(_ name: String, _ result: Talk.Result) -> Entry {
         Entry(group: "Result card", name: name) { AnyView(ResultCardView(result: result)) }
+    }
+
+    // MARK: Build
+
+    private static let buildEntries: [Entry] = [
+        build("Working on its plan") {
+            $0.activity = "Working on the interface"
+            $0.plan = [PlanPart(id: 0, title: "Type in the bill", done: true, files: ["BillField.swift"]),
+                       PlanPart(id: 1, title: "Pick a tip percent", done: false, files: ["TipPicker.swift"]),
+                       PlanPart(id: 2, title: "See the tip and the total", done: false, files: ["Totals.swift"])]
+            $0.files = ["BillField.swift"]
+            $0.currentFile = "TipPicker.swift"
+        },
+        build("Ready") { $0.finish(worked: true) },
+        build("Didn't finish") { $0.finish(worked: false) },
+        build("Asking first") { $0.wait() },
+    ]
+
+    private static func build(_ name: String, _ change: @escaping (inout TurnProgress) -> Void) -> Entry {
+        Entry(group: "Build card", name: name) {
+            var progress = TurnProgress(newApp: true)
+            change(&progress)
+            return AnyView(BuildCardView(title: "Tip Calculator", name: "Tip Calculator", iconReady: false, progress: progress) {
+                BlueprintIcon(letter: "T", size: 44)
+            })
+        }
     }
 }
 
