@@ -67,39 +67,20 @@ enum Gallery {
     // MARK: Result
 
     private static let resultEntries: [Entry] = [
-        result("New app", Talk.Result(summary: "Your habit tracker is ready to try.", guesses: []), picture: true),
+        result("New app", Talk.Result(summary: "Your habit tracker is ready to try.", guesses: [])),
+        result("Change", Talk.Result(summary: "Reminders now come at the time you pick.", guesses: [])),
         result("Change, not tested", Talk.Result(summary: "Added a weekly chart under your habits.", guesses: [],
-                                                 untried: "Swiping a habit away to delete it"), picture: true),
-        result("Change, not tested, no longer current", Talk.Result(summary: "Added a weekly chart under your habits.", guesses: [],
-                                                                    untried: "Swiping a habit away to delete it"),
-               picture: true, isCurrent: false),
-        result("No picture", Talk.Result(summary: "Reminders now come at the time you pick.", guesses: [])),
+                                                 untried: "Swiping a habit away to delete it")),
         result("Saved with what's new", Talk.Result(summary: "Added streaks and a dark look.", guesses: [], news: [
             Talk.News(what: "Streaks", place: "beside each habit"), Talk.News(what: "Dark look", place: "View menu"),
-        ]), picture: true),
+        ])),
         result("Saved with a guess turned", Talk.Result(summary: "Your habit tracker is ready to try.", guesses: [
             Talk.Guess(guess: "Habits reset at midnight", instead: "Reset at 4 am instead", request: "Reset habits at 4 am"),
-        ], switched: [0]), picture: true),
+        ], switched: [0])),
     ]
 
-    private static func result(_ name: String, _ result: Talk.Result, picture: Bool = false, isCurrent: Bool = true) -> Entry {
-        Entry(group: "Result card", name: name) {
-            AnyView(ResultCardView(result: result, isCurrent: isCurrent, picture: picture ? screenshot : nil) { _ in })
-        }
-    }
-
-    /// A stand-in for the app's picture: a window with a sidebar, in the proportions of a real one.
-    private static let screenshot = NSImage(size: NSSize(width: 600, height: 400), flipped: true) { rect in
-        NSColor.windowBackgroundColor.setFill()
-        rect.fill()
-        NSColor.controlBackgroundColor.setFill()
-        NSRect(x: 0, y: 0, width: 160, height: rect.height).fill()
-        NSColor.controlAccentColor.withAlphaComponent(0.8).setFill()
-        for row in 0..<5 {
-            NSBezierPath(roundedRect: NSRect(x: 190, y: 40 + CGFloat(row) * 60, width: 380 - CGFloat(row % 3) * 70, height: 34),
-                         xRadius: 8, yRadius: 8).fill()
-        }
-        return true
+    private static func result(_ name: String, _ result: Talk.Result) -> Entry {
+        Entry(group: "Result card", name: name) { AnyView(ResultCardView(result: result)) }
     }
 }
 
