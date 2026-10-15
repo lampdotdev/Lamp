@@ -3936,6 +3936,9 @@ enum Template {
             side.minimumThickness = 300
             side.maximumThickness = 640
             side.canCollapse = true
+            // Always the line under the title bar, as over the app's content: macOS shows it only when it sees
+            // something scrolled beneath, and the chat's scrolling, in a process of its own, is out of its sight.
+            side.titlebarSeparatorStyle = .line
             host.view.alphaValue = 0
             split.addSplitViewItem(side)
             window.contentViewController = split
