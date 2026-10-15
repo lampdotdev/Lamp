@@ -447,8 +447,9 @@ enum Agent {
             address of a real page it's for) draws it as Chrome would and says whether the page fits browser.json; \
             `use_app` with `sidebar: true` and `page` clicks its buttons and types into its fields by target, with the \
             page's text given to a button that reads it (and `selection` for a passage). Go through the whole path \
-            (read, preview, edit, save) and check the result in the Mac window, then delete what you saved and check \
-            it's gone, so the person finds only their own things. This is Lamp's copy of the sidebar, not Chrome: say \
+            (read, preview, edit, save) on a page the app doesn't have yet, and check the result in the Mac window; \
+            then delete what you saved and check it's gone, so the person finds only their own things. Saving a page \
+            they already kept changes their item: never delete that one. This is Lamp's copy of the sidebar, not Chrome: say \
             you tried it beside a page, never that you used Chrome.
             - Call `offer_setup` with capability `browser` once if the end of a request says Chrome isn't connected.
 
