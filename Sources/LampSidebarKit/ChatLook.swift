@@ -160,7 +160,7 @@ public enum ChatLook {
         }
     }
 
-    /// The message box as one floating bar, in Lamp's window and beside an app alike: a round attach button,
+    /// The message box as a row of controls with nothing behind them, in Lamp's window and beside an app alike: a round attach button,
     /// the rounded field with the text (and what's attached above it), any other round buttons beside it (such
     /// as dictation), and one round button that sends, or stops the turn while there's nothing to send.
     public struct MessageBar<Field: View, Above: View, Beside: View>: View {
@@ -214,7 +214,6 @@ public enum ChatLook {
                         .onTapGesture(perform: focus)
                 }
                 .overlay(Self.fieldShape.strokeBorder(Color(nsColor: .separatorColor)))
-                .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
                 beside
                 // Stop while there's nothing to send; with something written, it waits for the turn instead.
                 if busy && !canSend {
@@ -255,7 +254,6 @@ public enum ChatLook {
                     } else {
                         Circle().fill(Color(nsColor: .textBackgroundColor))
                             .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor)))
-                            .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
                     }
                 }
                 .contentShape(Circle())

@@ -579,13 +579,6 @@ struct ProjectView: View {
     private func chrome(_ lines: [LogLine]) -> some View {
         VStack(spacing: 0) {
             chat(lines)
-                // The chat fades out just above the message box rather than ending at a line, so the box floats.
-                .overlay(alignment: .bottom) {
-                    LinearGradient(colors: [Color(nsColor: .textBackgroundColor).opacity(0), Color(nsColor: .textBackgroundColor)],
-                                   startPoint: .top, endPoint: .bottom)
-                        .frame(height: 16)
-                        .allowsHitTesting(false)
-                }
             if let approval = store.approvals[project.id] {
                 ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation,
                              onAllow: { store.answerApproval(for: project, allow: true) },
