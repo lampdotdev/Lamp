@@ -3595,8 +3595,9 @@ enum Template {
             window.setFrame(frame, display: true)
         }
 
-        /// Pointing at part of the window for Lamp's chat: what's under the pointer is outlined, a click
-        /// sends what it is and a picture of it to Lamp, and Escape (or a click outside anything named) ends it.
+        /// Pointing at part of the window for Lamp's chat: the named thing under the pointer is outlined, or
+        /// where nothing is named (a game's ball, a drawing) the area around it; a click sends what it is and a
+        /// picture of it to Lamp, a drag sends the box drawn, and Escape ends it.
         /// Lamp is told when it ends either way: its chat may have stepped aside meanwhile.
         @MainActor private final class Picker: NSView {
             private static var current: Picker?
@@ -3669,24 +3670,74 @@ enum Template {
                     .min { rect(items[$0]).width * rect(items[$0]).height < rect(items[$1]).width * rect(items[$1]).height }
             }
 
+            /// Where nothing named is under the pointer (a game's ball, a drawing), the area around it, or the box
+            /// being dragged: anything on the screen can be pointed at.
+            private var hoverPoint: NSPoint?
+            private var dragStart: NSPoint?
+            private var dragged: NSRect?
+            private static let areaSide: CGFloat = 96
+
+            private func area(around point: NSPoint) -> NSRect {
+                NSRect(x: point.x - Self.areaSide / 2, y: point.y - Self.areaSide / 2, width: Self.areaSide, height: Self.areaSide)
+                    .intersection(bounds)
+            }
+
             override func mouseMoved(with event: NSEvent) {
                 NSCursor.crosshair.set()
-                let found = item(at: convert(event.locationInWindow, from: nil))
-                if found != hovered { hovered = found; needsDisplay = true }
+                let point = convert(event.locationInWindow, from: nil)
+                hovered = item(at: point)
+                hoverPoint = hovered == nil ? point : nil
+                needsDisplay = true
             }
 
             override func mouseDown(with event: NSEvent) {
-                guard let index = item(at: convert(event.locationInWindow, from: nil)), let window = target else { return stop() }
-                let item = items[index]
+                dragStart = convert(event.locationInWindow, from: nil)
+                dragged = nil
+            }
+
+            override func mouseDragged(with event: NSEvent) {
+                guard let dragStart else { return }
+                let point = convert(event.locationInWindow, from: nil)
+                let box = NSRect(x: min(dragStart.x, point.x), y: min(dragStart.y, point.y),
+                                 width: abs(point.x - dragStart.x), height: abs(point.y - dragStart.y)).intersection(bounds)
+                dragged = box.width > 6 || box.height > 6 ? box : nil
+                needsDisplay = true
+            }
+
+            /// A box dragged is what's meant; else the named thing under the click; else the area around it.
+            override func mouseUp(with event: NSEvent) {
+                let point = convert(event.locationInWindow, from: nil)
+                defer { dragStart = nil; dragged = nil }
+                if let dragged { return pick(dragged, role: "area", label: Self.place(of: dragged, in: bounds)) }
+                if let index = item(at: point) {
+                    let item = items[index]
+                    return pick(rect(item), role: item.role, label: item.label.isEmpty ? item.value : item.label)
+                }
+                let box = area(around: point)
+                pick(box, role: "area", label: Self.place(of: box, in: bounds))
+            }
+
+            /// Where a box is in the window, in words: "top left", "middle", "bottom".
+            private static func place(of box: NSRect, in bounds: NSRect) -> String {
+                let x = box.midX / max(bounds.width, 1), y = box.midY / max(bounds.height, 1)
+                let row = y < 1.0 / 3 ? "top" : y > 2.0 / 3 ? "bottom" : "middle"
+                let column = x < 1.0 / 3 ? "left" : x > 2.0 / 3 ? "right" : ""
+                return row == "middle" && !column.isEmpty ? column : [row, column].filter { !$0.isEmpty }.joined(separator: " ")
+            }
+
+            /// Leaves a picture of `box` (this view's points) in the runtime folder and tells Lamp what it is.
+            private func pick(_ box: NSRect, role: String, label: String) {
+                guard let window = target else { return stop() }
                 let scale = scale
                 stop(tell: false)
                 // The picture is taken once the outline is off the screen, a little wider than the thing itself.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { MainActor.assumeIsolated {
                     // What it is and what it says; Lamp names the picture with them.
-                    var info: [String: String] = ["role": item.role, "label": item.label.isEmpty ? item.value : item.label]
+                    var info: [String: String] = ["role": role, "label": label]
                     if let png = LampRuntime.picture(of: window), let image = NSBitmapImageRep(data: png)?.cgImage {
                         let margin = 12 * scale
-                        let crop = item.frame.insetBy(dx: -margin, dy: -margin)
+                        let crop = CGRect(x: box.minX * scale, y: box.minY * scale, width: box.width * scale, height: box.height * scale)
+                            .insetBy(dx: -margin, dy: -margin)
                             .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
                         if let part = image.cropping(to: crop),
                            let data = NSBitmapImageRep(cgImage: part).representation(using: .png, properties: [:]) {
@@ -3704,7 +3755,7 @@ enum Template {
             /// Says what the mode is for, at the top of the window under its title bar: the pointer can only
             /// change for the app in front, so this is what tells the person they're pointing.
             private func drawHint() {
-                let text = NSAttributedString(string: "Click what you want to change  ·  Esc to cancel", attributes: [
+                let text = NSAttributedString(string: "Click or drag over what you want to change  ·  Esc to cancel", attributes: [
                     .font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.white])
                 let size = text.size()
                 let titlebar = (target.map { $0.frame.height - $0.contentLayoutRect.height } ?? 28)
@@ -3718,13 +3769,18 @@ enum Template {
                 NSColor.black.withAlphaComponent(0.08).setFill()
                 bounds.fill()
                 drawHint()
-                guard let hovered else { return }
-                let box = rect(items[hovered]).insetBy(dx: -3, dy: -3)
+                // A named thing is outlined; an area, dashed, since it's only where the pointer is.
+                let box: NSRect, dashed: Bool
+                if let dragged { box = dragged; dashed = true }
+                else if let hovered { box = rect(items[hovered]).insetBy(dx: -3, dy: -3); dashed = false }
+                else if let hoverPoint { box = area(around: hoverPoint); dashed = true }
+                else { return }
                 let path = NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6)
                 NSColor.controlAccentColor.withAlphaComponent(0.15).setFill()
                 path.fill()
                 NSColor.controlAccentColor.setStroke()
                 path.lineWidth = 2
+                if dashed { path.setLineDash([6, 4], count: 2, phase: 0) }
                 path.stroke()
             }
         }
@@ -3750,27 +3806,9 @@ enum Template {
             if let holder = window.titlebarAccessoryViewControllers.first(where: { $0.view.identifier == identifier })?.view {
                 return fit(holder, in: window)
             }
-            func button(_ symbol: String, _ name: String, _ tip: String, _ action: Selector) -> NSButton {
-                let image = NSImage(systemSymbolName: symbol, accessibilityDescription: name)!
-                    .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))!
-                let button = NSButton(image: image, target: Opener.shared, action: action)
-                button.toolTip = tip
-                if #available(macOS 26, *) {
-                    button.bezelStyle = .glass
-                    button.borderShape = .circle
-                } else {
-                    button.bezelStyle = .accessoryBarAction
-                    button.isBordered = false
-                }
-                return button
-            }
             let holder = NSView()
             holder.identifier = identifier
             holder.addSubview(button("wand.and.sparkles", "Change This App", "Change this app with Lamp", #selector(Opener.open(_:))))
-            // Above the chat while it's open, as an inspector's own buttons sit in the title bar above it. They
-            // do only what the app could do anyway (point at itself, open Lamp), so they needn't be the chat's.
-            holder.addSubview(button("scope", "Point at Something", "Point at what you want to change", #selector(Opener.point(_:))))
-            holder.addSubview(button("arrow.up.left.and.arrow.down.right", "Open in Lamp", "Open this chat in Lamp", #selector(Opener.openInLamp(_:))))
             let accessory = NSTitlebarAccessoryViewController()
             accessory.view = holder
             accessory.layoutAttribute = .trailing
@@ -3783,19 +3821,30 @@ enum Template {
         /// the middle of the title bar's height. It stays at the right of the app's own content: with the chat
         /// open beside it, it's kept clear of the chat by the chat's width.
         @MainActor private static func fit(_ holder: NSView, in window: NSWindow) {
-            guard holder.subviews.count == 3 else { return }
+            guard let button = holder.subviews.first else { return }
             let titlebar = max(window.frame.height - window.contentLayoutRect.height, 28)
-            let side: CGFloat = titlebar > 40 ? 34 : 22
-            let chat = LampSidebar.openWidth(in: window)
-            holder.frame.size = NSSize(width: side + 14 + chat, height: titlebar)
-            let y = ((titlebar - side) / 2).rounded()
-            holder.subviews[0].frame = NSRect(x: 4, y: y, width: side, height: side)
-            // The chat's buttons in the title bar above it: pointing at its left, opening in Lamp at its right.
-            let point = holder.subviews[1], expand = holder.subviews[2]
-            point.isHidden = chat == 0
-            expand.isHidden = chat == 0
-            point.frame = NSRect(x: side + 14 + 10, y: y, width: side, height: side)
-            expand.frame = NSRect(x: holder.frame.width - 10 - side, y: y, width: side, height: side)
+            let side = buttonSide(titlebar)
+            holder.frame.size = NSSize(width: side + 14 + LampSidebar.openWidth(in: window), height: titlebar)
+            button.frame = NSRect(x: 4, y: ((titlebar - side) / 2).rounded(), width: side, height: side)
+        }
+
+        /// As tall as the toolbar's buttons when there's a toolbar, smaller in a plain title bar.
+        static func buttonSide(_ titlebar: CGFloat) -> CGFloat { titlebar > 40 ? 34 : 22 }
+
+        /// A round button like the toolbar's own: the wand, and the chat's own buttons above it.
+        @MainActor static func button(_ symbol: String, _ name: String, _ tip: String, _ action: Selector) -> NSButton {
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: name)!
+                .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))!
+            let button = NSButton(image: image, target: Opener.shared, action: action)
+            button.toolTip = tip
+            if #available(macOS 26, *) {
+                button.bezelStyle = .glass
+                button.borderShape = .circle
+            } else {
+                button.bezelStyle = .accessoryBarAction
+                button.isBordered = false
+            }
+            return button
         }
 
         private static let identifier = NSUserInterfaceItemIdentifier("lampMagic")
@@ -3818,7 +3867,7 @@ enum Template {
                 userInfo: ["frame": shown ? NSStringFromRect(window.frame) : ""], deliverImmediately: true)
         }
 
-        @MainActor private final class Opener: NSObject {
+        @MainActor final class Opener: NSObject {
             static let shared = Opener()
             @objc func open(_ sender: NSButton) {
                 guard let window = sender.window ?? NSApp.keyWindow ?? NSApp.mainWindow, isAppWindow(window) else { return }
@@ -3927,12 +3976,34 @@ enum Template {
             column.addChild(host)
             host.view.translatesAutoresizingMaskIntoConstraints = false
             column.view.addSubview(host.view)
-            NSLayoutConstraint.activate([
+            // The chat's own buttons in the strip above it, where the title bar is: pointing at the left, opening
+            // in Lamp at the right. They're the column's, not the title bar's, which the window's split view
+            // covers above the chat. They do only what the app could do anyway (point at itself, open Lamp), so
+            // they needn't be the chat's.
+            let titlebar = max(window.frame.height - window.contentLayoutRect.height, 28)
+            let size = LampMagic.buttonSide(titlebar)
+            let point = LampMagic.button("scope", "Point at Something", "Point at what you want to change", #selector(LampMagic.Opener.point(_:)))
+            let expand = LampMagic.button("arrow.up.left.and.arrow.down.right", "Open in Lamp", "Open this chat in Lamp",
+                                          #selector(LampMagic.Opener.openInLamp(_:)))
+            let strip = NSLayoutGuide()
+            column.view.addLayoutGuide(strip)
+            var constraints = [
                 host.view.topAnchor.constraint(equalTo: column.view.safeAreaLayoutGuide.topAnchor),
                 host.view.bottomAnchor.constraint(equalTo: column.view.bottomAnchor),
                 host.view.leadingAnchor.constraint(equalTo: column.view.leadingAnchor),
                 host.view.trailingAnchor.constraint(equalTo: column.view.trailingAnchor),
-            ])
+                strip.topAnchor.constraint(equalTo: column.view.topAnchor),
+                strip.bottomAnchor.constraint(equalTo: column.view.safeAreaLayoutGuide.topAnchor),
+            ]
+            for button in [point, expand] {
+                button.translatesAutoresizingMaskIntoConstraints = false
+                column.view.addSubview(button)
+                constraints += [button.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
+                                button.widthAnchor.constraint(equalToConstant: size), button.heightAnchor.constraint(equalToConstant: size)]
+            }
+            constraints += [point.leadingAnchor.constraint(equalTo: column.view.leadingAnchor, constant: 10),
+                            expand.trailingAnchor.constraint(equalTo: column.view.trailingAnchor, constant: -10)]
+            NSLayoutConstraint.activate(constraints)
             let side = NSSplitViewItem(inspectorWithViewController: column)
             side.minimumThickness = 300
             side.maximumThickness = 640
@@ -3967,6 +4038,12 @@ enum Template {
         private final class Backing: NSView {
             override var wantsUpdateLayer: Bool { true }
             override func updateLayer() { layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor }
+            // It only paints behind the title bar: a click there is the title bar's, for its buttons above the
+            // chat and for moving the window.
+            override func hitTest(_ point: NSPoint) -> NSView? {
+                let hit = super.hitTest(point)
+                return hit === self ? nil : hit
+            }
         }
 
         @MainActor private static func fadeIn(_ view: NSView) {

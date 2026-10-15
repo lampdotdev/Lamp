@@ -464,12 +464,15 @@ the app; the rule (`Agent.Rules.macGenerated`) asks the agent to keep what the p
 quits it leaves a picture of its front window and where it was in its runtime folder (`LampMagic.leaveCover`); while
 the app's turn is going, Lamp shows that picture where the window was (`MagicPanel.showCover`, a borderless window
 marked "Updating…"), the new copy opens its first window in the same place (`putBack`), and the picture fades out
-once the new copy reports its window (or goes when the turn ends without it). The title bar above the chat has its
-two buttons, drawn by the app (`LampMagic.fit`), since they do only what the app could do anyway: open the chat in
-Lamp's window, and point. The chat sits below the title bar, on a solid background that runs up behind them. The
-crosshair lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
-thing under the pointer from its own accessibility tree (`LampDriver.elements`), and on a click leaves a cropped
-picture of it in its runtime folder and says what it is; Lamp attaches that picture to the message, named after the
+once the new copy reports its window (or goes when the turn ends without it). The chat's two buttons sit in
+the strip above it where the title bar is, as the column's own (`LampSidebar.embed`), drawn by the app since they do
+only what the app could do anyway: open the chat in Lamp's window, and point. They can't be title bar accessories:
+with the chat a full-height inspector, the window's split view lies over the title bar there and takes the clicks.
+The chat sits below the strip, on a solid background that runs up behind them. The crosshair lets the person point
+at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
+thing under the pointer from its own accessibility tree (`LampDriver.elements`), or where nothing is named (a game's
+ball, a drawing) a box around the pointer, and a drag draws a box of the person's own; it then leaves a cropped
+picture in its runtime folder and says what it is (an area is named by where it is, "Top left area"); Lamp attaches that picture to the message, named after the
 thing ("Save button.png", `MagicPanel.name`), and takes a picture only from that folder.
 
 Whether the change was asked for beside the app or in Lamp's window, a change goes into the open app without a restart when it can (`LiveReload`). The

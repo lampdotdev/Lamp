@@ -83,7 +83,9 @@ enum Agent {
     `target` to an id or exact name from that list (click a button or switch, type into a field, press a key \
     in it), and read the list for exact words and values rather than the picture. Use x and y only for what \
     the list doesn't have: a drawing, a canvas, a chart, a game board. A control the list shows with no name \
-    has no accessibility label: give it one. It tells you what each action did and whether the window \
+    has no accessibility label: give it one. Name what's drawn too: in a game or anything drawn in a Canvas or \
+    SpriteKit, make each thing the person would point at (the ball, a piece, a character) an accessibility element \
+    with its name, so it's in the list and the person can point at it from the chat. It tells you what each action did and whether the window \
     changed: when nothing changed, a click by point probably missed, so aim again before deciding the app is \
     broken. It uses the app as last built, so call `look_at_app` again after editing code.
     - Never open the print panel while trying an app (a Print button, File > Print, ⌘P): it makes macOS ask \
