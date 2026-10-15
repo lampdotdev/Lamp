@@ -786,8 +786,9 @@ struct ProjectView: View {
     private var undoable: Bool { history?.undoable ?? true }
     private var made: Bool { history?.made ?? true }
     private var saved: Bool { history?.saved ?? true }
+    /// Not for a wish not yet told, whose toolbar has no toggle to close it: the choice is kept for the next app.
     private var inspectorShown: Binding<Bool> {
-        Binding(get: { showInfo || (showVersions && saved) }, set: { if !$0 { showInfo = false; showVersions = false } })
+        Binding(get: { !untold && (showInfo || (showVersions && saved)) }, set: { if !$0 { showInfo = false; showVersions = false } })
     }
 
     private func chrome(_ lines: [LogLine]) -> some View {
