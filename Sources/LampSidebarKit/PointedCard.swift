@@ -40,18 +40,21 @@ extension ChatLook {
                 }
                 HStack(spacing: 10) {
                     thumbnail
+                    // The name may take a second line beside a narrow chat rather than be cut short.
                     VStack(alignment: .leading, spacing: 1) {
                         Text(title)
                             .font(.callout.weight(.semibold))
                             .foregroundStyle(.primary)
+                            .lineLimit(2)
                         if let detail, !detail.isEmpty {
                             Text(detail)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .lineLimit(1)
                         }
                     }
-                    .lineLimit(1)
                     .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
                     .layoutPriority(1)
                     if !inDraft { Spacer(minLength: 0) }
                 }
@@ -83,17 +86,20 @@ extension ChatLook {
             RoundedRectangle(cornerRadius: inDraft ? 11 : 10, style: .continuous)
         }
 
-        /// The thing as it looked when pointed at, on the page's own white so a light control keeps its edge.
+        /// The thing as it looked when pointed at, near its own size: a button is wider than it's tall, so its tile
+        /// is too, up to nearly twice its height. On the page's own white, so a light control keeps its edge.
         private var thumbnail: some View {
-            let side: CGFloat = inDraft ? 44 : 36
+            let height: CGFloat = inDraft ? 44 : 36
+            let aspect = picture.map { $0.size.width / max($0.size.height, 1) } ?? 1
+            let width = min(max(height * aspect, height), height * 1.75)
             let picture = Group {
                 if let picture {
-                    Image(nsImage: picture).resizable().interpolation(.high).scaledToFit().padding(3)
+                    Image(nsImage: picture).resizable().interpolation(.high).scaledToFit().padding(4)
                 } else {
                     Image(systemName: "scope").foregroundStyle(.secondary)
                 }
             }
-            .frame(width: side, height: side)
+            .frame(width: width, height: height)
             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color(nsColor: .separatorColor)))
             return Group {

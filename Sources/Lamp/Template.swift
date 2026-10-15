@@ -3770,7 +3770,7 @@ enum Template {
 
             /// What a named thing is part of, to tell it from others like it: the "Kitchen basil" of one of several
             /// "Watered" buttons. The nearest named thing around it (a row says what's in it), else short words on
-            /// its own line to its left, else the most prominent short words just above it, in its column.
+            /// its own line to its left, else the heading just above it, in its column.
             private func context(of index: Int) -> String {
                 let own = rect(items[index])
                 let label = items[index].label.isEmpty ? items[index].value : items[index].label
@@ -3786,17 +3786,17 @@ enum Template {
                 let left = words.filter { rect(items[$0]).maxX <= own.minX + 2 && abs(rect(items[$0]).midY - own.midY) < own.height / 2 + 4 }
                     .max { rect(items[$0]).maxX < rect(items[$1]).maxX }
                 if let left { return items[left].label }
-                func prominence(_ word: Int) -> (Int, CGFloat, CGFloat) {
-                    (items[word].role == "heading" ? 1 : 0, rect(items[word]).height.rounded(), rect(items[word]).maxY)
-                }
+                // Going up from it, the first words larger than the line just above it: a plant's name over the
+                // line about it, not the page's title further up. With none larger, that nearest line.
                 let above = words.filter {
                     let text = rect(items[$0])
                     return text.maxY <= own.minY + 2 && own.minY - text.maxY < 120
                         && text.minX < own.maxX && text.maxX > own.minX - 24
                 }
-                // A heading is one, or taller than the lines under it; of two alike, the nearer.
-                .max { prominence($0) < prominence($1) }
-                return above.map { items[$0].label } ?? ""
+                .sorted { rect(items[$0]).maxY > rect(items[$1]).maxY }
+                guard let nearest = above.first else { return "" }
+                let heading = above.first { items[$0].role == "heading" || rect(items[$0]).height > rect(items[nearest]).height + 2 }
+                return items[heading ?? nearest].label
             }
 
             /// Leaves a picture of `box` (this view's points) in the runtime folder and tells Lamp what it is.
@@ -3804,12 +3804,13 @@ enum Template {
                 guard let window = target else { return stop() }
                 let scale = scale
                 stop(tell: false)
-                // The picture is taken once the outline is off the screen, a little wider than the thing itself.
+                // The picture is taken once the outline is off the screen, a little wider than the thing itself:
+                // enough to show its edge, not so much that its neighbours crowd its card in the chat.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { MainActor.assumeIsolated {
                     // What it is and what it says; Lamp names the picture with them.
                     var info: [String: String] = ["role": role, "label": label, "context": context]
                     if let png = LampRuntime.picture(of: window), let image = NSBitmapImageRep(data: png)?.cgImage {
-                        let margin = 12 * scale
+                        let margin = 6 * scale
                         let crop = CGRect(x: box.minX * scale, y: box.minY * scale, width: box.width * scale, height: box.height * scale)
                             .insetBy(dx: -margin, dy: -margin)
                             .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
