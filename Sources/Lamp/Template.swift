@@ -3398,6 +3398,15 @@ enum Template {
         /// a library's calls to functions it doesn't hold were bound to the app's first copies.
         private var latest: [String: UnsafeRawPointer] = [:]
         private var images: [String] = []
+        /// The accessors of each stored global and static, by name, from the image that first had it.
+        private var kept: [String: UnsafeRawPointer] = [:]
+
+        private func keep(_ symbols: [(String, UnsafeRawPointer)]) {
+            let stored = Self.stored(in: symbols)
+            for (name, address) in symbols where kept[name] == nil && (name.hasSuffix("vau") || Self.accesses(name, oneOf: stored)) {
+                kept[name] = address
+            }
+        }
 
         private func load(_ path: String?, signature: String?) {
             let folder = "{{APPS}}/{{SLUG}}/.lamp/live/"
@@ -3418,14 +3427,23 @@ enum Template {
             }
             guard let image = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == path }),
                   let header = _dyld_get_image_header(image) else { return }
-            for (name, address) in Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image)) where Self.isCode(name) {
+            let defined = Self.definedSymbols(header, slide: _dyld_get_image_vmaddr_slide(image))
+            for (name, address) in defined where Self.isCode(name) && !Self.accesses(name, oneOf: Self.stored(in: defined)) {
                 latest[name] = address
             }
+            // Stored globals and statics stay where they were first made: the new code's own accessors for them
+            // would reach a second copy, made afresh. So its calls to them go to the app's, or to the earlier
+            // change's that first added one, and only one that's new keeps its own.
+            if kept.isEmpty, let app = _dyld_get_image_header(0) {
+                keep(Self.definedSymbols(app, slide: _dyld_get_image_vmaddr_slide(0)))
+            }
+            keep(defined)
+            let bindings = latest.merging(kept) { new, _ in new }
             images.append(path)
             var rebound = Self.rebind(image: 0, to: latest)
             for earlier in images {
                 guard let index = (0..<_dyld_image_count()).first(where: { String(cString: _dyld_get_image_name($0)) == earlier }) else { continue }
-                rebound += Self.rebind(image: index, to: latest)
+                rebound += Self.rebind(image: index, to: bindings)
             }
             generation += 1
             result = "ok \(rebound)"
@@ -3436,9 +3454,23 @@ enum Template {
         /// and state.
         private static func isCode(_ name: String) -> Bool {
             guard name.hasPrefix("_$s") else { return false }
+            // A type's own (static) functions and properties are named as an instance's, with a Z after.
+            let name = name.hasSuffix("Z") ? String(name.dropLast()) : name
             for kept in ["Mn", "Mf", "MV", "Ma", "Mm", "MF", "Mc", "Ml", "MXX", "Ms", "Wp", "WP", "Wl", "WL", "lau", "vau", "Wz", "Qo", "QO", "So", "WV", "Wvd", "MQ"]
             where name.hasSuffix(kept) { return false }
             return name.hasSuffix("F") || name.hasSuffix("g") || name.hasSuffix("s") || name.hasSuffix("M") || name.hasSuffix("fC") || name.hasSuffix("fc")
+        }
+
+        /// The properties kept in storage among these symbols: those with an addressor, by the name before it.
+        private static func stored(in symbols: [(String, UnsafeRawPointer)]) -> Set<String> {
+            Set(symbols.map(\.0).filter { $0.hasSuffix("vau") }.map { String($0.dropLast(3)) })
+        }
+
+        /// Whether this is the getter, setter or modify of a property kept in storage (one with an addressor).
+        private static func accesses(_ name: String, oneOf stored: Set<String>) -> Bool {
+            let name = name.hasSuffix("Z") ? String(name.dropLast()) : name
+            guard ["vg", "vs", "vM"].contains(where: { name.hasSuffix($0) }) else { return false }
+            return stored.contains(String(name.dropLast(2)))
         }
 
         private static func commands(_ header: UnsafePointer<mach_header>) -> [UnsafeRawPointer] {
