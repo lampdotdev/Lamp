@@ -847,7 +847,8 @@ enum Agent {
         `LampScene.copies(of:at:)`. A world bigger than a few hundred metres (a town, a map, a landscape) is \
         streamed, never built whole at launch: `scene.stream(tile: 100, radius: 400, around: { car.position }) { tile in … }` \
         returns what's drawn on one tile (share things out with `tile.contains`), made as it comes into reach, by \
-        a named function (`{ tile in World.tile(tile) }`) so a change to it shows in the open app; what \
+        a named function (`{ tile in World.tile(tile) }`) so a change to it shows in the open app (anything else the \
+        app draws itself and should redraw after a change goes in LampSceneView's `onLiveChange`); what \
         the game needs everywhere (collisions, routes, the map's data) is made once, outside it. Make each kind of \
         mesh once and reuse it (`copies`, or one text mesh per distinct word): never rebuild the same thing per \
         place.

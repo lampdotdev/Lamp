@@ -80,6 +80,10 @@ extension Template {
         var props: [String: @MainActor () -> Entity] = [:]
         var build: @MainActor (LampScene) async -> Void
         var update: (@MainActor (LampScene, Float) -> Void)? = nil
+        /// Runs after Lamp puts a code change into the open app: redraw here what the app built itself and wants to
+        /// show the new code (its own tiles, a level's scenery), keeping the game's state. Call named functions, as
+        /// a closure written out in place keeps the code it was made with.
+        var onLiveChange: (@MainActor (LampScene) -> Void)? = nil
 
         @State private var scene = LampScene()
         @State private var studio: String?
@@ -117,7 +121,10 @@ extension Template {
                 // closure it was first given, which still runs the old code: it takes this view's, so a changed game
                 // rule shows at once, and remakes each prop in place. Building the whole scene again would cost a big
                 // world seconds of a stalled app and reset it, so a change to the rest shows at the next launch.
-                .onChange(of: LampLive.generation) { _, _ in scene.refresh(update: update, props: props) }
+                .onChange(of: LampLive.generation) { _, _ in
+                    scene.refresh(update: update, props: props)
+                    onLiveChange?(scene)
+                }
                 #endif
                 .onChange(of: geometry.size) { _, size in scene.viewSize = size }
             }
