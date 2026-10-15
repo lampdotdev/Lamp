@@ -407,9 +407,9 @@ enum Agent {
             - Some wishes are about web pages: keeping what's found on them (recipes, articles, products, places), \
             understanding or comparing what's being read, doing something with a passage. For those, the Mac app also \
             gets a sidebar in Chrome, beside the page, built with `LampBrowser` in LampSupport.swift (read it there \
-            first). Decide that from the wish yourself, never ask, and say so where the person reads how the request \
-            ended: in `show_result`'s summary ("Your recipes in one place, saved from Chrome beside the page."), or in \
-            the sentence you end on. Lamp's one extension draws every app's sidebar: never write \
+            first). Decide that from the wish yourself, never ask, and name Chrome where the person reads how the \
+            request ended: in `show_result`'s summary, even when that leaves out something else ("Your recipes in one \
+            place, saved from Chrome beside the page."), or in the sentence you end on. Lamp's one extension draws every app's sidebar: never write \
             extension code, a web server, a bridge or browser automation.
             - Declare it in `browser.json` at the app's root: `{"offer": "Save this recipe to Recipe Box", "fits": \
             [{"site": "allrecipes.com"}, {"selector": ".wprm-recipe-container"}]}`. `offer` is the app's own short \
@@ -422,7 +422,9 @@ enum Agent {
             thing (a department store, a marketplace, a newspaper) only with a `path` or selector that just those pages \
             have, else not at all. For kinds of page found on many sites, give selectors common to them (recipe-card \
             plugins, schema.org microdata like `[itemtype*="schema.org/Recipe"]`), never one that marks more than the \
-            offer is for (every product, for an app about one kind of product). On a page that doesn't fit, the person can still click \
+            offer is for. One kind of product (espresso machines, running shoes) has no selector of its own: \
+            `schema.org/Product` is on every product page, a book's too, so name the shops and makers that sell only \
+            that kind instead. On a page that doesn't fit, the person can still click \
             Lamp's icon and choose the app.
             - Start it once from the app's shared @MainActor model, never a window's task: `LampBrowser.start(surface: \
             { tab in model.sidebar(for: tab) }, handle: { event in await model.handle(event) })`. The surface is data \
