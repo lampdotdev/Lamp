@@ -80,6 +80,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     /// sidebar takes up those changes and leaves alone the ones it sent itself.
     public var progress: AskProgress?
     public var progressVersion: Int?
+    /// That version is this sidebar's own change coming back: it already shows it, and maybe more since.
+    public var progressMine: Bool?
     public var setup: SetupContent?
     public var note: NoteContent?
     /// A widget's card: whether it's placed (its title is `text`, what to do `detail`).

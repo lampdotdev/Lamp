@@ -30,6 +30,11 @@ final class Link: ObservableObject {
     static let shared = Link()
 
     @Published var state: SidebarState?
+    /// How far each open question card has been answered. Kept here rather than in a card's view: every chat
+    /// this app has open (one per window) is drawn by this one process and shares this one line to Lamp, so
+    /// they must show the same answers.
+    @Published var progress: [UUID: AskProgress] = [:]
+    private var progressVersions: [UUID: Int] = [:]
     @Published var connected = false
     /// Lamp hasn't answered for a while: it isn't open.
     @Published var lampAway = false
@@ -82,8 +87,25 @@ final class Link: ObservableObject {
         guard count > 0 else { return drop() }
         buffer.append(contentsOf: chunk[0..<count])
         for line in SidebarWire.lines(from: &buffer) {
-            if let state = try? JSONDecoder().decode(SidebarState.self, from: line) { self.state = state }
+            if let state = try? JSONDecoder().decode(SidebarState.self, from: line) { take(state) }
         }
+    }
+
+    /// Lamp's chat, and the answers on its question card when they were changed anywhere else: in Lamp's
+    /// window, or in another app's chat beside its windows. This process's own come back marked as such and
+    /// are left alone, since the person may have gone on since.
+    private func take(_ state: SidebarState) {
+        for line in state.lines {
+            guard let version = line.progressVersion, progressVersions[line.id] != version else { continue }
+            progressVersions[line.id] = version
+            if line.progressMine != true { progress[line.id] = line.progress ?? AskProgress() }
+        }
+        self.state = state
+    }
+
+    func setProgress(_ value: AskProgress, for line: UUID) {
+        progress[line] = value
+        send(.progress(line, value))
     }
 
     private func drop() {
@@ -348,28 +370,17 @@ private struct ComposerRow: View {
     }
 }
 
-/// The agent's questions, on the same card Lamp's window draws (`QuestionCard`). How far the person has got is
-/// kept here and sent to Lamp as it changes, so Lamp's window carries on from it; a change made there comes
-/// back with a new `progressVersion` and is taken up.
+/// The agent's questions, on the same card Lamp's window draws (`QuestionCard`), answered where `Link` keeps
+/// them, which passes each change to Lamp so Lamp's window carries on from it.
 private struct OpenQuestions: View {
     @EnvironmentObject private var link: Link
     let line: SidebarLine
     let questions: [SidebarQuestion]
-    @State private var progress = AskProgress()
-    @State private var version = -1
 
     var body: some View {
         QuestionCard(questions: questions.map(\.card), together: line.together == true,
-                     progress: Binding(get: { progress }, set: { progress = $0; link.send(.progress(line.id, $0)) })) { answers in
+                     progress: Binding(get: { link.progress[line.id] ?? AskProgress() }, set: { link.setProgress($0, for: line.id) })) { answers in
             link.send(.answer(line.id, answers))
         }
-        .onAppear(perform: take)
-        .onChange(of: line.progressVersion) { take() }
-    }
-
-    private func take() {
-        guard let given = line.progressVersion, given != version else { return }
-        version = given
-        progress = line.progress ?? AskProgress()
     }
 }

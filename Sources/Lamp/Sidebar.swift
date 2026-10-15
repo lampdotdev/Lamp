@@ -342,7 +342,7 @@ final class SidebarServer {
 
     // MARK: What the person did
 
-    fileprivate func handle(_ command: SidebarCommand, from projectID: String) {
+    fileprivate func handle(_ command: SidebarCommand, from projectID: String, on connection: Connection) {
         let store = Store.shared
         guard let project = store.projects.first(where: { $0.id == projectID }) else { return }
         switch command {
@@ -360,7 +360,7 @@ final class SidebarServer {
             store.answer(line, with: answers, in: project)
         case .progress(let id, let progress):
             guard Talk.open(in: store.logs[project.id] ?? [])?.id == id else { return }
-            AskProgresses.shared.set(progress, for: id)
+            connection.ownProgress[id] = AskProgresses.shared.set(progress, for: id)
         case .setup(let id, let action):
             guard let line = store.logs[project.id]?.first(where: { $0.id == id }), let offer = line.setupOffer else { return }
             // Only what the card shows now: a button it doesn't have, or one on a card that's done or put away,
@@ -490,6 +490,9 @@ final class SidebarServer {
         private var waiting = false
         /// Which shape of the chat the sidebar reads (`SidebarCommand.hello`); 1 until it says.
         fileprivate var version = 1
+        /// The progress on each question card as this sidebar last set it, by the count it was given: that one
+        /// comes back marked as its own, so it isn't taken up again over what the person has done since.
+        fileprivate var ownProgress: [UUID: Int] = [:]
 
         init(socket: Int32, projectID: String, server: SidebarServer) {
             fd = socket
@@ -524,7 +527,7 @@ final class SidebarServer {
                     self.version = version
                     push(force: true)
                 } else {
-                    server?.handle(command, from: projectID)
+                    server?.handle(command, from: projectID, on: self)
                 }
             }
         }
@@ -537,6 +540,9 @@ final class SidebarServer {
             // one from before the cards.
             if version < 2 { state.lines.removeAll { $0.kind == .summary } }
             if version < 3 { state.lines.removeAll { [.setup, .note, .widget, .action].contains($0.kind) } }
+            for index in state.lines.indices where state.lines[index].progressVersion != nil {
+                state.lines[index].progressMine = ownProgress[state.lines[index].id] == state.lines[index].progressVersion
+            }
             guard let data = SidebarWire.encode(state), force || data != last else { return }
             last = data
             outbox.send(data)

@@ -6,8 +6,9 @@ import LampSidebarKit
 
 /// How far each open card has been answered, by its line. Kept apart from the card's view because the same
 /// card is drawn in Lamp's window and in the chat inside the app's (`SidebarServer`): an answer begun in one
-/// is carried on in the other, not started over. `changed` counts the changes made in Lamp's window, which
-/// the chat beside the app takes up; its own come back with the count they were sent against.
+/// is carried on in the other, not started over. `changed` counts every change, wherever it was made, so each
+/// chat beside the app takes up the ones made elsewhere (in Lamp's window, or beside another of the app's
+/// windows) and knows its own when they come back (`set` returns the count it gave).
 @MainActor
 final class AskProgresses: ObservableObject {
     static let shared = AskProgresses()
@@ -21,7 +22,12 @@ final class AskProgresses: ObservableObject {
     }
 
     /// From the chat beside the app, which already shows it.
-    func set(_ value: AskProgress, for line: UUID) { progress[line] = value }
+    @discardableResult
+    func set(_ value: AskProgress, for line: UUID) -> Int {
+        progress[line] = value
+        changed[line, default: 0] += 1
+        return changed[line] ?? 0
+    }
 }
 
 /// A set of questions in the chat. Open, it's answered by clicking (`QuestionCard`, the same card the chat
