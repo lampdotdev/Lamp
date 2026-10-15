@@ -19,9 +19,6 @@ enum Talk {
     typealias News = TalkCard.News
     typealias Result = TalkCard.Result
 
-    /// What the card's Have Lamp Test It button sends: the agent's own words for what it didn't try, as a request.
-    static func tryRequest(_ untried: String) -> String { TalkCard.tryRequest(untried) }
-
     static let questionLimit = 4
     static let optionLimit = 4
 

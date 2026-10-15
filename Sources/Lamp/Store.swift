@@ -1914,17 +1914,7 @@ final class Store: ObservableObject {
             if let head = await Versions.head(project) { mark(asked, sentFrom: head, in: project) }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
             worked = result.end != .failed
-            if newApp && result.end == .changed { await showResult(of: project) }
         }
-    }
-
-    /// Puts the app's real window on its build card, once it has opened and saved a picture of itself.
-    private func showResult(of project: LampProject) async {
-        guard let started = progress[project.id]?.started,
-              macCopies(of: project).first != nil,
-              let picture = await Runtime.screenshots(of: project, since: started, waiting: 4).first,
-              let image = NSImage(contentsOf: picture) else { return }
-        progress[project.id]?.screenshot = image
     }
 
     /// Posts a notification for a turn that ended while the user was looking elsewhere.
