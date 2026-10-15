@@ -11,6 +11,13 @@ struct LampApp: App {
             ContentView()
                 .environmentObject(store)
         }
+        // Each wish's chat in a window of its own, listed in the Window menu like a document's.
+        WindowGroup("Wish", id: "wish", for: String.self) { $id in
+            WishWindow(id: $id)
+                .environmentObject(store)
+        }
+        .defaultSize(width: 980, height: 720)
+        .commandsRemoved()
         .commands {
             AboutCommands()
             CheckForUpdatesCommand()

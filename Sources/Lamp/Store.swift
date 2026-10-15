@@ -274,11 +274,9 @@ final class Store: ObservableObject {
     static let shared = Store()
 
     @Published var projects: [LampProject] = [] { didSet { syncLocalNetwork() } }   // the network listener follows which apps open on a phone
+    /// The wish whose chat window is in front; nil while the desk is (`LampWindows`).
     @Published var selection: String? {
-        didSet {
-            markRead()
-            if let oldValue, oldValue != selection { discardIfUnused(oldValue) }
-        }
+        didSet { if selection != oldValue { markRead() } }
     }
     /// Apps whose chat finished a turn while you were looking elsewhere.
     @Published var unread: Set<String> = [] {
@@ -893,14 +891,23 @@ final class Store: ObservableObject {
         lines == 0 && !busy && !pending && !queued
     }
 
-    /// Brings Lamp to the front on an app's chat, ready to type.
+    /// Brings Lamp to the front on an app's chat, in its own window, ready to type.
     func showChat(_ id: String) {
         reload()
         selection = id
         chatFocusRequest += 1
         NSApp.activate()
-        // Lamp's window may have been put away for an app's chat panel (started by its wand): back it comes.
-        if let main = MagicPanel.mainWindow, !main.isVisible { main.makeKeyAndOrderFront(nil) }
+        LampWindows.showChat(id)
+    }
+
+    /// The wish an open chat window shows, following it to wherever its first request moved it.
+    func project(following id: String) -> LampProject? {
+        projects.first { $0.id == moved[id] ?? id }
+    }
+
+    /// A wish's chat window closed: a new wish nothing was asked of goes with it.
+    func closedChat(_ id: String) {
+        discardIfUnused(moved[id] ?? id)
     }
 
     // MARK: - Actions
@@ -918,8 +925,7 @@ final class Store: ObservableObject {
             return
         }
         reload()
-        selection = project.id
-        chatFocusRequest += 1
+        showChat(project.id)
         Analytics.capture(.appCreated, ["source": fromSite ? "site" : fromWelcome ? "welcome" : desk?.rawValue ?? "new_app"])
     }
 
@@ -947,9 +953,10 @@ final class Store: ObservableObject {
         sendWhenShown = project.id
     }
 
-    /// Back to the desk from a wish's chat.
+    /// The desk's window in front.
     func showDesk() {
-        selection = nil
+        NSApp.activate()
+        LampWindows.showDesk()
     }
 
     /// What's typed in the desk's wish bar and not sent: kept here, so going to a wish's chat and back keeps it.
@@ -962,8 +969,6 @@ final class Store: ObservableObject {
     func newWish() {
         showDesk()
         deskFocusRequest += 1
-        NSApp.activate()
-        if let main = MagicPanel.mainWindow, !main.isVisible { main.makeKeyAndOrderFront(nil) }
     }
 
     /// Writes a draft's scaffold and makes its first version, before anything builds it. Nil, after saying so,
@@ -1291,7 +1296,7 @@ final class Store: ObservableObject {
                                env: ["LAMP_MESSAGE": "Copy of \(project.name)"]) { _ in }
         if let spec = Icons.load(copy) { await renderIcon(copy, spec: spec) }
         finish(copy)
-        selection = copy.id
+        showChat(copy.id)
         log(copy, .status, "A copy of \(project.name). Building it now…")
         await run(copy)
     }
@@ -1581,7 +1586,7 @@ final class Store: ObservableObject {
         }
         importRequest = nil
         pendingImport = nil
-        selection = project.id
+        showChat(project.id)
         Task {
             defer { finish(project) }
             let package = pending.package
@@ -1680,7 +1685,7 @@ final class Store: ObservableObject {
         }
 
         reload()
-        selection = project.id
+        showChat(project.id)
         log(project, .status, "Imported from a shared file. Building it now…")
         Task {
             _ = await Versions.git("git init -q && git add -A && \(Self.commit) -qm 'Imported from a shared file'",

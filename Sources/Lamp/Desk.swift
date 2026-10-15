@@ -404,7 +404,8 @@ struct TalkButton: View {
 }
 
 /// One wish on the desk: its icon, its name, and under it where it lives or what it's waiting for. A click
-/// uses it (`Store.use`); a wish still coming true, or one with a question for the person, opens its chat.
+/// opens its chat in a window of its own, to change it; a double click uses it (`Store.use`), as a document's
+/// icon in Finder opens it.
 struct DeskIcon: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
@@ -424,46 +425,51 @@ struct DeskIcon: View {
     }
 
     var body: some View {
-        Button { store.use(project) } label: {
-            VStack(spacing: 6) {
-                AppIcon(project: project, size: 76)
-                    .overlay(alignment: .topTrailing) {
-                        if busy {
-                            ProgressView().controlSize(.small)
-                                .padding(3)
-                                .background(.regularMaterial, in: Circle())
-                                .offset(x: 2, y: -2)
-                        } else if store.unread.contains(project.id) {
-                            ReadyDot(size: 12)
-                                .overlay(Circle().strokeBorder(.background, lineWidth: 2))
-                                .offset(x: -2, y: 2)
-                        }
+        VStack(spacing: 6) {
+            AppIcon(project: project, size: 76)
+                .overlay(alignment: .topTrailing) {
+                    if busy {
+                        ProgressView().controlSize(.small)
+                            .padding(3)
+                            .background(.regularMaterial, in: Circle())
+                            .offset(x: 2, y: -2)
+                    } else if store.unread.contains(project.id) {
+                        ReadyDot(size: 12)
+                            .overlay(Circle().strokeBorder(.background, lineWidth: 2))
+                            .offset(x: -2, y: 2)
                     }
-                    .scaleEffect(hovered ? 1.06 : 1)
-                    .offset(y: hovered ? -2 : 0)
-                Text(project.title)
-                    .font(.callout.weight(.medium))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .truncationMode(.tail)
-                if let caption {
-                    Text(caption)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
                 }
+                .scaleEffect(hovered ? 1.06 : 1)
+                .offset(y: hovered ? -2 : 0)
+            Text(project.title)
+                .font(.callout.weight(.medium))
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .truncationMode(.tail)
+            if let caption {
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8).padding(.horizontal, 4)
-            .background(Color.primary.opacity(hovered ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8).padding(.horizontal, 4)
+        .background(Color.primary.opacity(hovered ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .contentShape(Rectangle())
+        // The double click first, so a single one waits to be sure it isn't one.
+        .onTapGesture(count: 2) { store.use(project) }
+        .onTapGesture { store.showChat(project.id) }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { store.showChat(project.id) }
+        .accessibilityAction(named: "Use") { store.use(project) }
         .onHover { hovered = $0 }
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hovered)
         .background(ShareAnchor(origin: .app(project.id)))
         .contextMenu {
             Button("Change…") { store.showChat(project.id) }
+            Button("Use") { store.use(project) }
             Divider()
             AppMenu(project: project)
         }
@@ -672,7 +678,7 @@ enum WishHUD {
 }
 
 extension Store {
-    /// A wish clicked on the desk: used when it's made and nothing's waiting on it, else its chat is shown.
+    /// A wish double-clicked on the desk: used when it's made and nothing's waiting on it, else its chat is shown.
     /// Where opening it brings nothing to the front (the menu bar, a widget, the background, the person's own
     /// phone), the desk says where it is.
     func use(_ project: LampProject) {
