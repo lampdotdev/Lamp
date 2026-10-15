@@ -3524,6 +3524,8 @@ enum Template {
                 center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { note in
                     MainActor.assumeIsolated {
                         guard let window = note.object as? NSWindow, isAppWindow(window) else { return }
+                        // The chat in the window now in front is the one that will be typed in.
+                        LampSidebar.Placing.shared.place(in: window)
                         guard isOn else { return detach(from: window) }
                         putBack(window)
                         attach(to: window)

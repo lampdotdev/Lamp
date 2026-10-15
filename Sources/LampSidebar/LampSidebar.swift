@@ -27,7 +27,11 @@ struct SidebarExtension: AppExtension {
 
 private final class Placement: NSObject, SidebarPlacement {
     func place(x: Double, y: Double) {
-        DispatchQueue.main.async { Composer.hostOrigin = CGPoint(x: x, y: y) }
+        DispatchQueue.main.async {
+            Composer.hostOrigin = CGPoint(x: x, y: y)
+            // A popup already showing for the caret (an input method's candidates) is moved with it.
+            NSTextInputContext.current?.invalidateCharacterCoordinates()
+        }
     }
 }
 

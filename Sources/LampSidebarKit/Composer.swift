@@ -47,7 +47,9 @@ public struct Composer: NSViewRepresentable {
     /// Where the box's window really is on screen, when that isn't where its own window says: inside an app's
     /// sidebar, the box lives in a process of its own whose window macOS keeps out of sight, so the caret it
     /// reports (for the typing indicator, the emoji picker, an input method's candidates) would land at the edge
-    /// of the screen. The app hosting it says where it is (`SidebarPlacement`).
+    /// of the screen. The app hosting it says where it is (`SidebarPlacement`). One place for the process, though
+    /// an app may show the chat in more than one window: the app says it again whenever one of its windows comes
+    /// to the front, and only the front one has a caret.
     nonisolated(unsafe) public static var hostOrigin: CGPoint?
     public static let inset: CGFloat = 4
     /// Height of a one-line composer; buttons beside it use this so they line up with the text.
