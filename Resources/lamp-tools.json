@@ -372,6 +372,21 @@
     }
   },
   {
+    "name": "connectors",
+    "label": "Connectors",
+    "description": "Lists the services an app can connect to with the person's own account (Notion, Linear, Airtable, GitHub, Readwise and more), or, with service set, how to build on one. Call it before writing code for a service the person uses that the accounts on this device can't reach.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "service": {
+          "type": "string",
+          "description": "A connector's id from the list"
+        }
+      }
+    }
+  },
+  {
     "name": "ask",
     "label": "Ask",
     "description": "Asks the person something as a card in the chat that they answer with a click, instead of questions written in your reply. Each question comes with 2 to 4 likely answers, each with a `symbol` that pictures it; the person can also type their own, or leave it to you. `layout` is how it's shown: `steps` is one question at a time (the usual choice); `together` puts short questions on one card with their answers as chips, for two or three quick picks that don't depend on each other. Asking ends your turn: change nothing and call nothing after it. The answer is the next message, each question followed by its answer.",
