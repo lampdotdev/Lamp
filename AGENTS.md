@@ -774,7 +774,21 @@ description fetches included, so each document comes from the address that was v
 `ServiceSignInTests` runs this against the five services' recorded answers and against changed copies of them.
 The service sends the person back to this Mac's own address (`127.0.0.1`, a listener open
 only while that sign-in waits, which ignores anything that isn't the answer to it), and the app trades the code for
-its sign-in. The registration and the sign-in are one Keychain item of the app's, this device only: never in the
+its sign-in. The registration and the sign-in are kept by Lamp for the app, not in the app's own Keychain
+(`LampSecrets` in LampSupport.swift, `AppSecrets` and `/app/secrets` in Lamp): Lamp's certificate has no Apple team,
+so macOS ties an item an app makes to the one build that made it and asks for the login password after every
+rebuild, while Lamp is the same program from build to build. Lamp keeps them as it keeps its own keys (the Keychain
+when it is signed for a team, else a file only this user can read), each app's under its instance (so an app made
+later under the same folder name doesn't inherit them), and forgets them when
+the app is deleted. The app's token is in its folder, where the agent can read it, so Lamp answers only the app
+itself (`PeerProcess.isApp`): the process on the other end of the connection must run from where Lamp installed the
+app and pass that installed copy's designated requirement; `AppSecretsTests` runs real processes against it.
+Two things keep that check from being passed by a process the builder's shell starts as the app: every Mac app
+is built with a `__RESTRICT` segment (buildSh), so dyld ignores `DYLD_INSERT_LIBRARIES` and the like for it —
+LiveReload's `dlopen` from inside the app is unaffected — and the agent's sandbox refuses `process-exec` under
+the apps folder, since exec needs no read the profile closes. A
+connection therefore opens only while Lamp is open. On iPhone `LampSecrets` stays the device's Keychain, which asks
+nothing, and an app that keeps its own secrets again is one line (`LampSecrets.store`). They are never in the
 app's folder, so a shared copy arrives disconnected and is flagged in the review (`Sharing.checklist`). Disconnect
 forgets the sign-in here and asks the service to end both its keys, writing each answer (never a key) to the app's log. A service is
 added only when its server lets an app register itself this way; one that needs a developer app or a pasted token

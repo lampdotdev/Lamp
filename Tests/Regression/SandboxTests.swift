@@ -49,4 +49,36 @@ final class SandboxTests: XCTestCase {
         let quoted = try run("echo 'it'\"'\"'s quoted > fine'", in: project)
         XCTAssertEqual(quoted.output.trimmingCharacters(in: .whitespacesAndNewlines), "it's quoted > fine")
     }
+
+    /// The apps Lamp installs can't be started by a command: exec maps the binary without the read the
+    /// profile closes, so the profile refuses it by name. A command could otherwise run another app with a
+    /// library of its own inside (DYLD_INSERT_LIBRARIES) and read that app's secrets out of Lamp through it.
+    func testInstalledAppsCantBeStarted() throws {
+        let (project, _) = try project()
+        let fm = FileManager.default
+        // A pretend installed app, cleaned up after: the rule names the apps folder, so the program must be there.
+        let place = Edition.appsFolder.appendingPathComponent("sandbox-exec-test-\(UUID().uuidString)")
+        try fm.createDirectory(at: place, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: place) }
+        let program = place.appendingPathComponent("hello")
+        let compile = Process()
+        compile.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        compile.arguments = ["xcrun", "clang", "-x", "c", "-", "-o", program.path]
+        let stdin = Pipe()
+        compile.standardInput = stdin
+        try compile.run()
+        stdin.fileHandleForWriting.write(Data("int main(void) { return 0; }".utf8))
+        stdin.fileHandleForWriting.closeFile()
+        compile.waitUntilExit()
+        XCTAssertEqual(compile.terminationStatus, 0)
+
+        let started = try run(Sandbox.quoted(program.path), in: project)
+        XCTAssertNotEqual(started.status, 0, started.output)
+        XCTAssertTrue(started.output.contains("not permitted"), started.output)
+        let injected = try run("DYLD_INSERT_LIBRARIES=/tmp/nothing.dylib \(Sandbox.quoted(program.path))", in: project)
+        XCTAssertTrue(injected.output.contains("not permitted"), injected.output)
+        // An ordinary program still starts.
+        let plain = try run("/bin/echo fine", in: project)
+        XCTAssertEqual(plain.output.trimmingCharacters(in: .whitespacesAndNewlines), "fine")
+    }
 }
