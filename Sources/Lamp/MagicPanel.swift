@@ -135,14 +135,6 @@ final class MagicPanel {
 
     // MARK: Pointing
 
-    /// Asks the app to let the person point at part of its window, and brings it in front for that.
-    func point(at project: LampProject) {
-        follow(project.id)
-        DistributedNotificationCenter.default().postNotificationName(
-            Notification.Name(Edition.notificationPrefix + "pick"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
-        Store.shared.macCopies(of: project).first?.activate()
-    }
-
     /// The pointed-at thing goes into the message box as a picture named after it ("Save button.png"), so the
     /// person writes their message as they would and the agent sees what it is and what it looks like. Both
     /// come from the app, so neither is trusted further than that: only a picture the app left in its own

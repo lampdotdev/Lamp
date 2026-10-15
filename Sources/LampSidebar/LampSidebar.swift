@@ -147,22 +147,6 @@ private struct Chat: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 14) {
-                Text("Editing \(state.app)").font(.headline).lineLimit(1)
-                Spacer()
-                Button { link.send(.point) } label: { Image(systemName: "scope") }
-                    .help("Point at what you want to change")
-                    .accessibilityLabel("Point at Something")
-                Button { link.send(.openInLamp) } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
-                    .help("Open this chat in Lamp")
-                    .accessibilityLabel("Open in Lamp")
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 14)
-            .frame(height: 36)
-            Divider()
             ScrollViewReader { scroller in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
@@ -179,19 +163,21 @@ private struct Chat: View {
                             .id("working")
                         }
                     }
-                    .padding(14)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 10)
                 }
                 .onChange(of: state.lines.last?.id) { follow(scroller) }
                 .onChange(of: state.working) { follow(scroller) }
-                .onAppear { follow(scroller) }
+                // Once the lines are laid out: scrolled before then, the chat opens partway up.
+                .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { follow(scroller, animated: false) } }
             }
-            Divider()
             Composer(state: state)
         }
     }
 
-    private func follow(_ scroller: ScrollViewProxy) {
-        withAnimation(.easeOut(duration: 0.2)) {
+    private func follow(_ scroller: ScrollViewProxy, animated: Bool = true) {
+        withAnimation(animated ? .easeOut(duration: 0.2) : nil) {
             if state.working != nil { scroller.scrollTo("working", anchor: .bottom) } else if let last = state.lines.last { scroller.scrollTo(last.id, anchor: .bottom) }
         }
     }
@@ -313,7 +299,7 @@ private struct Composer: View {
                     }
                 }
             }
-            HStack(alignment: .bottom, spacing: 8) {
+            HStack(alignment: .bottom, spacing: 6) {
                 TextField("Describe a change", text: $text, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...8)
@@ -326,15 +312,24 @@ private struct Composer: View {
                         submit()
                         return .handled
                     }
+                    .padding(.vertical, 3)
                 Button(action: submit) {
-                    Image(systemName: "arrow.up.circle.fill").font(.system(size: 20))
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 22, height: 22)
+                        .background(canSend ? Color.accentColor : Color.secondary.opacity(0.35), in: Circle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(canSend ? Color.accentColor : Color.secondary)
                 .disabled(!canSend)
+                .help("Send")
             }
+            .padding(.leading, 12).padding(.trailing, 6).padding(.vertical, 6)
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.6), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
         .onAppear { take(state) }
         .onChange(of: state.draftVersion) { take(state) }
         .onChange(of: text) { link.send(.draft(text)) }

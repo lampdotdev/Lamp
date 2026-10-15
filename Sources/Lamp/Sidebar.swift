@@ -234,11 +234,9 @@ final class SidebarServer {
             case .agent:
                 out.append(SidebarLine(id: line.id, kind: .agent, text: line.text))
             case .status:
-                // A step in progress ("Building…") gives way to whatever follows it.
-                let next = visible[(index + 1)...].first
-                if line.text.hasSuffix("…"), next != nil { continue }
-                // A run of them shows its latest, as in Lamp's window.
-                if out.last?.kind == .status { out.removeLast() }
+                // Only what's happening at the end of the chat: a status from an earlier turn ("… is ready") says
+                // nothing the app beside it doesn't, and the work in progress has its own line.
+                guard index == visible.count - 1, !busy else { continue }
                 out.append(SidebarLine(id: line.id, kind: .status, text: line.text))
             case .error:
                 out.append(SidebarLine(id: line.id, kind: .error, text: line.text))
@@ -310,11 +308,6 @@ final class SidebarServer {
             store.updateDraft(draft, for: project)
         case .stop:
             store.stop(project)
-        case .point:
-            MagicPanel.shared.point(at: project)
-        case .openInLamp:
-            NSApp.activate(ignoringOtherApps: true)
-            store.showChat(project.id)
         }
     }
 

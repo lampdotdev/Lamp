@@ -93,6 +93,4 @@ public enum SidebarCommand: Codable, Equatable {
     case draft(String)
     case removeAttachment(Int)
     case stop
-    case point
-    case openInLamp
 }

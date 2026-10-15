@@ -440,8 +440,10 @@ the app; the rule (`Agent.Rules.macGenerated`) asks the agent to keep what the p
 quits it leaves a picture of its front window and where it was in its runtime folder (`LampMagic.leaveCover`); while
 the app's turn is going, Lamp shows that picture where the window was (`MagicPanel.showCover`, a borderless window
 marked "Updating…"), the new copy opens its first window in the same place (`putBack`), and the picture fades out
-once the new copy reports its window (or goes when the turn ends without it). The chat's crosshair lets the person
-point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
+once the new copy reports its window (or goes when the turn ends without it). The title bar above the chat has its
+two buttons, drawn by the app (`LampMagic.fit`), since they do only what the app could do anyway: open the chat in
+Lamp's window, and point. The chat sits below the title bar, on a solid background that runs up behind them. The
+crosshair lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
 thing under the pointer from its own accessibility tree (`LampDriver.elements`), and on a click leaves a cropped
 picture of it in its runtime folder and says what it is; Lamp attaches that picture to the message, named after the
 thing ("Save button.png", `MagicPanel.name`), and takes a picture only from that folder.

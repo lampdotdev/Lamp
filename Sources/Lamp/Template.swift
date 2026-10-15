@@ -3749,20 +3749,27 @@ enum Template {
             if let holder = window.titlebarAccessoryViewControllers.first(where: { $0.view.identifier == identifier })?.view {
                 return fit(holder, in: window)
             }
-            let symbol = NSImage(systemSymbolName: "wand.and.sparkles", accessibilityDescription: "Change This App")!
-                .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))!
-            let button = NSButton(image: symbol, target: Opener.shared, action: #selector(Opener.open(_:)))
-            button.toolTip = "Change this app with Lamp"
-            if #available(macOS 26, *) {
-                button.bezelStyle = .glass
-                button.borderShape = .circle
-            } else {
-                button.bezelStyle = .accessoryBarAction
-                button.isBordered = false
+            func button(_ symbol: String, _ name: String, _ tip: String, _ action: Selector) -> NSButton {
+                let image = NSImage(systemSymbolName: symbol, accessibilityDescription: name)!
+                    .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))!
+                let button = NSButton(image: image, target: Opener.shared, action: action)
+                button.toolTip = tip
+                if #available(macOS 26, *) {
+                    button.bezelStyle = .glass
+                    button.borderShape = .circle
+                } else {
+                    button.bezelStyle = .accessoryBarAction
+                    button.isBordered = false
+                }
+                return button
             }
             let holder = NSView()
             holder.identifier = identifier
-            holder.addSubview(button)
+            holder.addSubview(button("wand.and.sparkles", "Change This App", "Change this app with Lamp", #selector(Opener.open(_:))))
+            // Above the chat while it's open, as an inspector's own buttons sit in the title bar above it. They
+            // do only what the app could do anyway (point at itself, open Lamp), so they needn't be the chat's.
+            holder.addSubview(button("scope", "Point at Something", "Point at what you want to change", #selector(Opener.point(_:))))
+            holder.addSubview(button("arrow.up.left.and.arrow.down.right", "Open in Lamp", "Open this chat in Lamp", #selector(Opener.openInLamp(_:))))
             let accessory = NSTitlebarAccessoryViewController()
             accessory.view = holder
             accessory.layoutAttribute = .trailing
@@ -3775,11 +3782,19 @@ enum Template {
         /// the middle of the title bar's height. It stays at the right of the app's own content: with the chat
         /// open beside it, it's kept clear of the chat by the chat's width.
         @MainActor private static func fit(_ holder: NSView, in window: NSWindow) {
-            guard let button = holder.subviews.first else { return }
+            guard holder.subviews.count == 3 else { return }
             let titlebar = max(window.frame.height - window.contentLayoutRect.height, 28)
             let side: CGFloat = titlebar > 40 ? 34 : 22
-            holder.frame.size = NSSize(width: side + 14 + LampSidebar.openWidth(in: window), height: titlebar)
-            button.frame = NSRect(x: 4, y: ((titlebar - side) / 2).rounded(), width: side, height: side)
+            let chat = LampSidebar.openWidth(in: window)
+            holder.frame.size = NSSize(width: side + 14 + chat, height: titlebar)
+            let y = ((titlebar - side) / 2).rounded()
+            holder.subviews[0].frame = NSRect(x: 4, y: y, width: side, height: side)
+            // The chat's buttons in the title bar above it: pointing at its left, opening in Lamp at its right.
+            let point = holder.subviews[1], expand = holder.subviews[2]
+            point.isHidden = chat == 0
+            expand.isHidden = chat == 0
+            point.frame = NSRect(x: side + 14 + 10, y: y, width: side, height: side)
+            expand.frame = NSRect(x: holder.frame.width - 10 - side, y: y, width: side, height: side)
         }
 
         private static let identifier = NSUserInterfaceItemIdentifier("lampMagic")
@@ -3807,6 +3822,10 @@ enum Template {
             @objc func open(_ sender: NSButton) {
                 guard let window = sender.window ?? NSApp.keyWindow ?? NSApp.mainWindow, isAppWindow(window) else { return }
                 LampSidebar.toggle(window)
+            }
+            @objc func point(_ sender: NSButton) { Picker.start() }
+            @objc func openInLamp(_ sender: NSButton) {
+                NSWorkspace.shared.open(URL(string: "{{SCHEME}}://edit?app={{SLUG}}")!)
             }
         }
     }
@@ -3849,9 +3868,16 @@ enum Template {
             tellLamp()
             if let item = item(in: window) {
                 guard item.isCollapsed else { return }
+                // All at once, in one screen update: the window grows by the chat as the chat appears, so the app's
+                // content and the wand stay exactly where they were. The chat fades in rather than slides.
+                window.disableScreenUpdatesUntilFlush()
+                let content = window.frame.width
                 if grow { resize(window, by: width) }
+                item.viewController.view.alphaValue = 0
                 item.isCollapsed = false
+                keep(content: grow ? content : nil, in: window)
                 LampMagic.refit(window)
+                fadeIn(item.viewController.view)
                 return
             }
             Task { @MainActor in
@@ -3862,7 +3888,6 @@ enum Template {
                 guard let identity else { return fallback() }
                 let host = EXHostViewController()
                 host.configuration = .init(appExtension: identity, sceneID: "chat")
-                host.view.identifier = identifier
                 embed(host, in: window, grow: grow)
             }
         }
@@ -3871,6 +3896,7 @@ enum Template {
             UserDefaults.standard.set(false, forKey: openKey)
             guard let item = item(in: window), !item.isCollapsed else { return }
             let thickness = item.viewController.view.frame.width
+            window.disableScreenUpdatesUntilFlush()
             item.isCollapsed = true
             resize(window, by: -thickness)
             LampMagic.refit(window)
@@ -3887,23 +3913,63 @@ enum Template {
                 content = NSViewController()
                 content.view = window.contentView ?? NSView()
             }
+            window.disableScreenUpdatesUntilFlush()
             window.contentViewController = nil
             let split = NSSplitViewController()
             split.splitView.isVertical = true
             split.addSplitViewItem(NSSplitViewItem(viewController: content))
-            let side = NSSplitViewItem(inspectorWithViewController: host)
+            // The chat below the title bar, on a solid background that runs up behind the title bar's buttons.
+            let column = NSViewController()
+            column.view = Backing()
+            column.view.wantsLayer = true
+            column.view.identifier = identifier
+            column.addChild(host)
+            host.view.translatesAutoresizingMaskIntoConstraints = false
+            column.view.addSubview(host.view)
+            NSLayoutConstraint.activate([
+                host.view.topAnchor.constraint(equalTo: column.view.safeAreaLayoutGuide.topAnchor),
+                host.view.bottomAnchor.constraint(equalTo: column.view.bottomAnchor),
+                host.view.leadingAnchor.constraint(equalTo: column.view.leadingAnchor),
+                host.view.trailingAnchor.constraint(equalTo: column.view.trailingAnchor),
+            ])
+            let side = NSSplitViewItem(inspectorWithViewController: column)
             side.minimumThickness = 300
             side.maximumThickness = 640
             side.canCollapse = true
+            host.view.alphaValue = 0
             split.addSplitViewItem(side)
             window.contentViewController = split
             window.setFrame(frame, display: false)
             if grow { resize(window, by: width) }
+            split.splitView.layoutSubtreeIfNeeded()
+            keep(content: grow ? frame.width : nil, in: window)
             NotificationCenter.default.addObserver(forName: NSSplitView.didResizeSubviewsNotification, object: split.splitView,
                                                    queue: .main) { [weak window] _ in
                 MainActor.assumeIsolated { if let window { LampMagic.refit(window) } }
             }
             LampMagic.refit(window)
+            fadeIn(host.view)
+        }
+
+        /// The app's content as wide as it was before the chat opened (`content`), or else the chat at its own
+        /// width, so the content and the wand stay where they were.
+        @MainActor private static func keep(content: CGFloat?, in window: NSWindow) {
+            guard let split = window.contentViewController as? NSSplitViewController else { return }
+            split.splitView.layoutSubtreeIfNeeded()
+            let position = content ?? (window.frame.width - width)
+            split.splitView.setPosition(min(position, window.frame.width - 300), ofDividerAt: 0)
+        }
+
+        private final class Backing: NSView {
+            override var wantsUpdateLayer: Bool { true }
+            override func updateLayer() { layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor }
+        }
+
+        @MainActor private static func fadeIn(_ view: NSView) {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                view.animator().alphaValue = 1
+            }
         }
 
         /// Wider or narrower on the right, kept on its screen: moved left when there's no room.
@@ -3915,7 +3981,7 @@ enum Template {
                 frame.origin.x = max(screen.minX, screen.maxX - frame.width)
                 frame.size.width = min(frame.width, screen.width)
             }
-            window.setFrame(frame, display: true, animate: true)
+            window.setFrame(frame, display: true, animate: false)
         }
 
         /// Lamp listens for the chat: told directly when it's running (so this Lamp answers, not another copy),
