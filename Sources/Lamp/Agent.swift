@@ -852,8 +852,10 @@ enum Agent {
         outline, proportions (length to height, where the parts begin and end), colours and the parts that make it \
         recognisable. Small or generic props (a box, a pole, a cup) need none.
           Each prop that matters goes in `props` by name, and look_at_app with `prop` shows it on its own from four \
-        sides. Name the entity you place in the scene with its prop's key (`car.name = "car"`): a change you make \
-        then shows in the open app, which remakes it in place; other changes to the scene show when it reopens. Compare that with the reference: shape, proportions, colours, parts. Fix and look again, up to three \
+        sides. Every distinct object made by its own function (a vehicle, a character, furniture, a machine) is a \
+        prop, the player's or main object first, and goes into the scene with `scene.place("car", at:heading:)`, \
+        which returns the entity to keep and move: so placed, a change to its code shows in the open app; other \
+        changes to the scene show when it reopens. Compare that with the reference: shape, proportions, colours, parts. Fix and look again, up to three \
         rounds for the main props; background things get one look.
           LampSceneView already avoids RealityKit's flicker; keep it that way: no sun shadows (they make the whole \
         picture flicker; `lampShadow` instead), and flat things laid on others (roads, markings, decals, a sign's \

@@ -63,7 +63,7 @@ extension Template {
     //             concrete, asphalt, brick, tiles, grass, glow.
     //  Parts: entity.lampPress { }, lampTurn(axis:range:), lampSlide(axis:range:), lampGrab(), lampPhysics(), lampShadow().
     //  Many copies of one thing: LampScene.copies(of:at:).
-    //  Props: a dictionary of name to a function making the prop; Lamp's builder can look at one at a time.
+    //  Props: a dictionary of name to a function making the prop; `scene.place(name, at:)` puts one in the scene.
 
     import SwiftUI
     import RealityKit
@@ -90,7 +90,7 @@ extension Template {
         var body: some View {
             GeometryReader { geometry in
                 RealityView { content in
-                    await scene.start(&content, sky: sky, rig: camera, build: build, update: update)
+                    await scene.start(&content, sky: sky, rig: camera, props: props, build: build, update: update)
                 }
                 .realityViewCameraControls(.none)
                 .focusable()
@@ -178,10 +178,31 @@ extension Template {
 
         func add(_ entity: Entity) { root.addChild(entity) }
 
+        /// The view's props, by name: what `place` makes.
+        private(set) var props: [String: @MainActor () -> Entity] = [:]
+
+        /// Puts a new copy of the prop with this name in the scene (or in `parent`), at a point and turned to a
+        /// heading in radians, and hands it back for the app to keep and move. Placed this way, it carries the
+        /// prop's name, so a change to the prop's code shows in the open app. Nil when there's no such prop.
+        @discardableResult
+        func place(_ name: String, at position: SIMD3<Float> = .zero, heading: Float = 0, in parent: Entity? = nil) -> Entity? {
+            guard let make = props[name] else {
+                print("LampScene: there's no prop named \(name). The props are: \(props.keys.sorted().joined(separator: ", ")).")
+                return nil
+            }
+            let entity = make()
+            entity.name = name
+            entity.position = position
+            entity.orientation = simd_quatf(angle: heading, axis: [0, 1, 0])
+            (parent ?? root).addChild(entity)
+            return entity
+        }
+
         /// After a live change: the frame loop runs the new code, and every entity named after a prop is made of
         /// what the new code makes (see LampSceneView's live reload).
         func refresh(update: ((LampScene, Float) -> Void)?, props: [String: @MainActor () -> Entity]) {
             self.update = update
+            self.props = props
             for (name, make) in props {
                 var found: [Entity] = []
                 func visit(_ e: Entity) {
@@ -208,10 +229,11 @@ extension Template {
             key == .shift ? NSEvent.modifierFlags.contains(.shift) : keys.contains(key.code)
         }
 
-        func start(_ content: inout RealityViewCameraContent, sky: LampSky, rig: LampCameraRig,
+        func start(_ content: inout RealityViewCameraContent, sky: LampSky, rig: LampCameraRig, props: [String: @MainActor () -> Entity],
                    build: (LampScene) async -> Void, update: ((LampScene, Float) -> Void)?) async {
             self.rig = rig
             self.update = update
+            self.props = props
             if case .orbit(_, let distance, let yaw, let pitch) = rig { orbitDistance = distance; orbitYaw = yaw; orbitPitch = pitch }
             if case .firstPerson(let position, let heading) = rig { camera.position = position; lookYaw = heading }
             content.add(root)
