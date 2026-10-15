@@ -589,8 +589,8 @@ extension Sharing {
                    patterns: ["LampMail.", "LampContacts.", "LampCalendar.", "LampReminders."]),
         Capability(label: "Reads or uses your other apps (Slack, Mail, your browser…)", icon: "macwindow.on.rectangle", level: .powerful,
                    patterns: ["LampComputer."]),
-        Capability(label: "Asks you to connect your Notion, Linear, Todoist, Jira or monday.com account", icon: "person.badge.key", level: .powerful,
-                   patterns: ["LampService"]),
+        Capability(label: "Asks you to connect an account you use elsewhere (Notion, Airtable, GitHub…)", icon: "person.badge.key", level: .powerful,
+                   patterns: ["LampService", "LampAPI"]),
         Capability(label: "Controls other apps with AppleScript", icon: "applescript", level: .powerful,
                    patterns: ["NSAppleScript", "osascript", "OSAScript"]),
         Capability(label: "Uses the camera or microphone", icon: "mic", level: .powerful,
@@ -708,17 +708,18 @@ extension Sharing {
         from documents and pictures, on the Mac), LampCalendar, LampReminders, LampContacts and LampMail (the \
         reader's accounts, each asked for by macOS), LampNotifications, LampAssets (files sent with the app), \
         LampFolders, LampFolderWatcher, LampClipboardWatcher, LampHotKey, LampLoginItem, LampPermissions, \
-        LampMenuBar, LampDrop, LampWindows, LampWidget and LampService (the reader connects their own Notion, Linear, \
-        Todoist, Jira and Confluence or monday.com account on that service's own page; the sign-in stays on the \
-        reader's Mac, never comes with a shared app, and goes only to that service). Using these is normal and expected: they are Lamp's code, not the \
+        LampMenuBar, LampDrop, LampWindows, LampWidget, LampService and LampAPI (the reader connects their own account \
+        on a service such as Notion, Airtable or GitHub, by signing in on that service's own page or pasting a token \
+        they make there; it stays on the reader's device, never comes with a shared app, and goes only to that \
+        service). Using these is normal and expected: they are Lamp's code, not the \
         sender's, not hidden, and not a concern in themselves, and Lamp lists them to the reader separately. One \
         thing about them does matter: what goes to LampAI (its prompts, data and pictures) and what LampComputer \
         reads from other apps is sent to the AI provider the reader has set up in Lamp, which may be a service on \
         the internet. So judge what the app's own code does with the blocks and beyond them: which of the reader's \
         data it hands to the AI (a mention of their own notes is ordinary; their mail, documents, passwords or \
         other people's data deserve a word), where else it sends data, what it deletes or changes, whether it \
-        does more than its description says, and whether anything is obscured. With LampService the app acts as the \
-        reader on that service: say what it reads there, and name anything it changes, deletes or posts.
+        does more than its description says, and whether anything is obscured. With LampService or LampAPI the app acts \
+        as the reader on that service: say what it reads there, and name anything it changes, deletes or posts.
 
         An app may declare things in capabilities.json, which Lamp acts on for it: "background": true means Lamp \
         opens the app at login and keeps it running after its windows close (what a watcher needs; say so, and \

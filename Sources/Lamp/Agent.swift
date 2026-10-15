@@ -39,7 +39,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,ask,show_result,write_wish"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,ask,show_result,write_wish"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -54,7 +54,7 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + (Memory.isOn ? memoryRules : "") }
+    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + connectorRules + (Memory.isOn ? memoryRules : "") }
 
     /// For the engines whose shell commands run confined (Sandbox): what the shell can and can't reach.
     static let sandboxNote = """
@@ -187,6 +187,15 @@ enum Agent {
     shows the person how to set it up. Never ask for keys or send them to Settings yourself.
     """
 
+    /// Which services there are and how to build on each is the tool's answer (Connectors), so this stays one
+    /// rule however many there are.
+    private static let connectorRules = """
+
+    - When a wish needs a service the person uses (their Notion, Airtable, GitHub…) that the accounts on this \
+    device can't reach, call `connectors` before writing code for it, and build on what it says. Never ask for a \
+    key or a token in the chat or put one in the code: the app's own button asks the person.
+    """
+
     /// Kept short, like the tools' descriptions: every word here is sent with every call to the model. What the
     /// notes cover comes at the end of a request (Memory.brief); the notes only when the agent asks.
     private static let memoryRules = """
@@ -244,7 +253,7 @@ enum Agent {
         let rules = [Rules.edit, Rules.ask, Rules.shell, Rules.universal, Rules.universalFrameworks,
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks), half(onMac, BrowserBridge.enabled ? Rules.browserCompanion : ""),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
-                     Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.services), half(onMac, Rules.computer),
+                     Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
                      half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true), Rules.game2D,
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
@@ -266,7 +275,7 @@ enum Agent {
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.macShare, Rules.permissions] }
         if mac && sidebar { rules.append(Rules.browserCompanion) }
         rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
-        if mac { rules += [Rules.services, Rules.computer] }
+        if mac { rules += [Rules.computer] }
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.iPhoneShare, Rules.icloud] }
         rules += [Rules.store, Rules.kinds(mac: mac, threeD: mac && Rules.scenes), Rules.game2D] + (mac && Rules.scenes ? [Rules.scene3D] : [])
         rules += [mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
@@ -675,16 +684,9 @@ enum Agent {
         message if refused, so show `error.localizedDescription`.
         """
 
-        static let services = """
-        - When a wish needs the person's Notion, Linear, Todoist, Jira or Confluence, or monday.com, use `LampService` \
-        in LampSupport.swift (read it there first): after the Mac's own accounts above, before LampComputer. The person \
-        connects with `LampServiceButton` and approves on the service's own page, so never ask for a key, a token or a \
-        developer app. Connected, that button is Disconnect: keep it reachable, in the toolbar or Settings.
-        """
-
         static let computer = """
         - When the information or the job lives in another app the person uses and the accounts and synced folders \
-        above can't reach it (Slack, Messages, Notes, or a site in their browser such as LinkedIn or a CRM), use `LampComputer.ask("…")` to read it or \
+        above and `connectors` can't reach it (Slack, Messages, Notes, or a site in their browser such as LinkedIn or a CRM), use `LampComputer.ask("…")` to read it or \
         `LampComputer.perform("…")` to act there, from LampSupport.swift. It works with what they're already signed \
         in to, with no API keys or connectors, and returns text (ask for JSON in the task when the app needs \
         structure). Calls take 10–60 seconds, so run them when the person asks (a button), never on a timer, and \
