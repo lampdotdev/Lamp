@@ -7720,6 +7720,9 @@ enum Template {
                     made.close(with: error)
                     throw error
                 }
+                // Connect may have been cancelled, and another finished, while the service answered: this one's
+                // registration would overwrite that sign-in.
+                guard mine == generation else { made.close(with: CancellationError()); throw CancellationError() }
                 guard saved?.save(id) == true else {
                     made.close(with: CancellationError())
                     throw Failure(message: "Couldn't keep the connection to \(name) on this Mac.")
@@ -7795,7 +7798,9 @@ enum Template {
                     let tokens = try await Self.postForm(saved.tokenEndpoint, form)
                     guard mine == self.generation else { throw CancellationError() }
                     try saved.take(tokens)
-                    saved.save(self.id)
+                    // Going on would send the expired key again, and a service that changes the renewing key each
+                    // time would have handed over one nobody kept.
+                    guard saved.save(self.id) else { throw Failure(message: "Couldn't keep the connection to \(self.name) on this Mac.") }
                 } catch let failure as Failure where failure.needsConnection {
                     guard mine == self.generation else { throw failure }
                     saved.accessToken = nil
@@ -7837,6 +7842,7 @@ enum Template {
 
         /// One JSON-RPC message. The answer may come as JSON or as a stream of events; a notification has none.
         private func send(_ method: String, _ params: [String: Any]?, renewed: Bool = false) async throws -> [String: Any]? {
+            let mine = generation
             guard var saved = Saved.read(id), saved.accessToken != nil else {
                 state = .notConnected
                 throw Failure(message: "Connect \(name) first.", needsConnection: true)
@@ -7859,6 +7865,9 @@ enum Template {
             if let session { request.setValue(session, forHTTPHeaderField: "Mcp-Session-Id") }
             request.httpBody = try JSONSerialization.data(withJSONObject: message)
             let (bytes, response) = try await URLSession.shared.bytes(for: request, delegate: Self.stayPut)
+            // The person may have disconnected, and connected again, while this was on its way: what comes back
+            // belongs to the sign-in it was sent with, and mustn't end or renew the one there is now.
+            guard mine == generation else { throw CancellationError() }
             let http = response as? HTTPURLResponse
             let status = http?.statusCode ?? 0
             if status == 401 {
@@ -8031,10 +8040,13 @@ enum Template {
                 return try? JSONDecoder().decode(Saved.self, from: data)
             }
 
+            /// Stands in for a Keychain that refuses, as a locked one does, in the harness that checks what follows.
+            fileprivate static var refusesSaving = false
+
             /// False when the Keychain refused it (the person clicked Deny, or the keychain is locked).
             @discardableResult
             func save(_ id: String) -> Bool {
-                guard let data = try? JSONEncoder().encode(self) else { return false }
+                guard !Saved.refusesSaving, let data = try? JSONEncoder().encode(self) else { return false }
                 let query = Saved.query(id)
                 var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
                 if status == errSecItemNotFound {

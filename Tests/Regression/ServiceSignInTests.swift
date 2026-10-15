@@ -51,6 +51,27 @@ final class ServiceSignInTests: XCTestCase {
         XCTAssertFalse(logged.contains { $0.contains("made-up-") }, printed)
     }
 
+    /// A renewal whose new keys the Keychain won't keep stops there, rather than going on with the expired key.
+    func testARenewalThatCantBeKeptStops() throws {
+        let printed = try runProgram(scenarios: ["renew-unsaved"])
+        XCTAssertTrue(printed.contains("renew-unsaved stopped"), printed)
+        XCTAssertTrue(printed.contains("renew-unsaved sent old key: false"), printed)
+    }
+
+    /// A refusal that comes back after the person disconnected and connected again belongs to the old sign-in, and
+    /// leaves the new one alone.
+    func testALateRefusalLeavesANewSignInAlone() throws {
+        let printed = try runProgram(scenarios: ["old-401"])
+        XCTAssertTrue(printed.contains("old-401 kept the new sign-in: true"), printed)
+    }
+
+    /// A Connect that was cancelled while its registration was on its way doesn't save that registration over the
+    /// sign-in a second Connect finished meanwhile.
+    func testACancelledConnectDoesntOverwriteANewerOne() throws {
+        let printed = try runProgram(scenarios: ["late-registration"])
+        XCTAssertTrue(printed.contains("late-registration kept: true client made-up-new-client"), printed)
+    }
+
     // MARK: - The program
 
     private func runProgram(scenarios: [String]) throws -> String {
@@ -83,7 +104,12 @@ final class ServiceSignInTests: XCTestCase {
     final class Answers: URLProtocol {
         nonisolated(unsafe) static var table: [String: (Int, [String: String], Data)] = [:]
         nonisolated(unsafe) static var posted: [(String, String)] = []
-        override class func canInit(with request: URLRequest) -> Bool { true }
+        /// Answers given in turn for one address, each after its own delay in seconds; the table's once they run out.
+        nonisolated(unsafe) static var queued: [String: [(Int, [String: String], Data, Double)]] = [:]
+        /// The key each request to a service's MCP address carried.
+        nonisolated(unsafe) static var authorizations: [String] = []
+        // The app's own address on this Mac is reached for real: it's where a sign-in comes back.
+        override class func canInit(with request: URLRequest) -> Bool { request.url?.host != "127.0.0.1" }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
         override func startLoading() {
             if request.httpMethod == "POST" {
@@ -96,7 +122,20 @@ final class ServiceSignInTests: XCTestCase {
                 }
                 Answers.posted.append((request.url!.absoluteString, String(decoding: body, as: UTF8.self)))
             }
-            let answer = Answers.table[request.url!.absoluteString] ?? (404, [:], Data())
+            let address = request.url!.absoluteString
+            if address.hasSuffix("/mcp"), let key = request.value(forHTTPHeaderField: "Authorization") { Answers.authorizations.append(key) }
+            var delay = 0.0
+            var answer = Answers.table[address] ?? (404, [:], Data())
+            if var waiting = Answers.queued[address], !waiting.isEmpty {
+                let next = waiting.removeFirst()
+                Answers.queued[address] = waiting
+                answer = (next.0, next.1, next.2)
+                delay = next.3
+            }
+            guard delay > 0 else { return respond(answer) }
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay) { self.respond(answer) }
+        }
+        private func respond(_ answer: (Int, [String: String], Data)) {
             let response = HTTPURLResponse(url: request.url!, statusCode: answer.0, httpVersion: "HTTP/1.1", headerFields: answer.1)!
             // A redirect is offered to the session, which follows it unless the request said not to.
             if (300..<400).contains(answer.0), let location = answer.1["Location"].flatMap(URL.init(string:)) {
@@ -188,6 +227,71 @@ final class ServiceSignInTests: XCTestCase {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                     for (address, body) in Answers.posted where address == "https://mcp.linear.app/token" {
                         for token in ["made-up-refresh", "made-up-access"] where body.contains("token=" + token) { print("revoked " + token) }
+                    }
+                    SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Bundle.main.bundleIdentifier ?? "lamp",
+                                   kSecAttrAccount as String: "lamp-service-" + id] as CFDictionary)
+                    continue
+                case "renew-unsaved", "old-401", "late-registration":
+                    // Made-up sign-ins for Linear, answered as its addresses would; nothing leaves this Mac.
+                    load(real)
+                    let json = ["Content-Type": "application/json"]
+                    let id = "test-" + UUID().uuidString.prefix(8)
+                    let test = LampService(id: id, name: "Linear", url: "https://mcp.linear.app/mcp")
+                    func signIn(_ access: String, _ refresh: String, expires: Date) {
+                        var saved = LampService.Saved(clientID: "made-up-client", clientSecret: nil, redirectURI: "http://127.0.0.1:1/callback",
+                                                      authorizationEndpoint: "https://mcp.linear.app/authorize", tokenEndpoint: "https://mcp.linear.app/token")
+                        saved.accessToken = access
+                        saved.refreshToken = refresh
+                        saved.expiresAt = expires
+                        saved.save(id)
+                    }
+                    func tokens(_ access: String, _ refresh: String) -> Data {
+                        Data(("{\"access_token\":\"" + access + "\",\"refresh_token\":\"" + refresh + "\",\"expires_in\":3600}").utf8)
+                    }
+                    switch scenario {
+                    case "renew-unsaved":
+                        // The key has expired; the service renews it, but the Keychain won't keep the new one.
+                        signIn("made-up-old", "made-up-refresh", expires: Date().addingTimeInterval(-10))
+                        Answers.table["https://mcp.linear.app/token"] = (200, json, tokens("made-up-new", "made-up-refresh-2"))
+                        Answers.table["https://mcp.linear.app/mcp"] = (200, json, Data(#"{"jsonrpc":"2.0","id":1,"result":{}}"#.utf8))
+                        LampService.Saved.refusesSaving = true
+                        do { _ = try await test.tools(); print("renew-unsaved went on") } catch { print("renew-unsaved stopped: \(error.localizedDescription)") }
+                        LampService.Saved.refusesSaving = false
+                        print("renew-unsaved sent old key: \(Answers.authorizations.contains("Bearer made-up-old"))")
+                    case "old-401":
+                        // A call is refused, renewed and sent again; its second refusal comes back slowly, after the
+                        // person has disconnected and signed in again.
+                        signIn("made-up-a", "made-up-ra", expires: Date().addingTimeInterval(3600))
+                        Answers.table["https://mcp.linear.app/token"] = (200, json, tokens("made-up-a2", "made-up-ra2"))
+                        Answers.queued["https://mcp.linear.app/mcp"] = [(401, json, Data(), 0), (401, json, Data(), 1.5)]
+                        let call = Task { try? await test.tools() }
+                        try? await Task.sleep(nanoseconds: 700_000_000)
+                        test.disconnect()
+                        signIn("made-up-b", "made-up-rb", expires: Date().addingTimeInterval(3600))
+                        _ = await call.value
+                        print("old-401 kept the new sign-in: \(LampService.Saved.read(id)?.accessToken == "made-up-b")")
+                    default:
+                        // The first Connect's registration answers slowly; it is cancelled, and a second Connect
+                        // registers, is approved and signs in before that answer arrives.
+                        Answers.queued["https://mcp.linear.app/register"] = [(201, json, Data(#"{"client_id":"made-up-old-client"}"#.utf8), 2.0),
+                                                                             (201, json, Data(#"{"client_id":"made-up-new-client"}"#.utf8), 0)]
+                        Answers.table["https://mcp.linear.app/token"] = (200, json, tokens("made-up-new", "made-up-rn"))
+                        LampService.openPage = { page in
+                            // The person approves: the service sends the browser back to the app's own address.
+                            let items = URLComponents(url: page, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                            guard let back = items.first(where: { $0.name == "redirect_uri" })?.value,
+                                  let state = items.first(where: { $0.name == "state" })?.value,
+                                  let url = URL(string: back + "?code=made-up-code&state=" + state) else { return }
+                            Task.detached { _ = try? await URLSession.shared.data(from: url) }
+                        }
+                        let first = Task { try? await test.connect() }
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                        test.cancel()
+                        try? await test.connect()
+                        _ = await first.value
+                        let saved = LampService.Saved.read(id)
+                        print("late-registration kept: \(saved?.accessToken == "made-up-new") client \(saved?.clientID ?? "none")")
+                        LampService.openPage = { opened.append($0) }
                     }
                     SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Bundle.main.bundleIdentifier ?? "lamp",
                                    kSecAttrAccount as String: "lamp-service-" + id] as CFDictionary)
