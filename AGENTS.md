@@ -791,11 +791,13 @@ modifier, since an app has no other place that's told. The rules are `Agent.Rule
 ### Services the person already uses
 
 An app reaches the person's account on a service they use (Notion, Linear, Airtable, GitHub, Readwise…) in one of two
-ways, and every service an app can connect to is one entry in `Connectors.all` (Sources/Lamp/Connectors.swift): its
+ways, or open data that needs no account in a third, and every service an app can connect to is one entry in
+`Connectors.all` (Sources/Lamp/Connectors.swift): its
 name, what people keep there, how it connects, its API's documentation and a few lines on the calls that matter.
 The builder finds them through the `connectors` tool, which lists them and, given one, says how to build on it
 (`Connectors.answer`), so the system prompt has one line about connectors however many there are
-(`Agent.connectorRules`, which keeps the Mac's own accounts first and `LampComputer` after). Each entry's
+(`Agent.connectorRules`, which keeps the Mac's own accounts first and `LampComputer` after, and names open data
+too, since a wish for the weather or exchange rates isn't about an account). Each entry's
 declaration in LampSupport.swift (`LampService.<id>`, `LampAPI.<id>`) is written from the same entry
 (`Connectors.fill`, in place of `{{SIGN_IN_SERVICES}}` and `{{TOKEN_SERVICES}}`), so what the builder is told is what
 the app has. A service is added only when the person can connect without anyone registering an app first; one that
@@ -830,7 +832,16 @@ refused before anything is sent, and no request follows a redirect, so the token
 A 401 means the token is over and it's forgotten; a 403 is asked of the check address again, since Toggl Track says
 403 for a token it doesn't take where others say it of one thing the token may not see. Disconnect forgets the
 token here; it still works until the person deletes it on the service. `TokenServiceTests` runs this against each
-service's recorded answer to a wrong token.
+service's recorded answer to a wrong token. A service that runs on the person's own server (Home Assistant) has
+`{server}` in its base and its token page, and an address field on the sheet: what they type is cut to its scheme,
+host and port (`LampAPI.server`; with no scheme, http for a home-network name or a number, as such servers come,
+https otherwise), kept with the token, and the token goes only there.
+
+**Open data** (`LampAPI` with no fields; Open-Meteo, Open Food Facts, Frankfurter): no account and no key, so no
+Connect, no sheet and no button; it is always connected and the app calls it as it opens. It keeps `LampAPI`'s paths
+relative to its base, plus a full address under one of its own other hosts (`also`: Open-Meteo answers air quality
+and place names elsewhere). Only services free to read without signing up belong here, and their terms (credit,
+limits) go in the entry's notes for the builder.
 
 Both kinds are kept by Lamp for the app, not in the app's own Keychain (`LampSecrets` in LampSupport.swift,
 `AppSecrets` and `/app/secrets` in Lamp): Lamp's certificate has no Apple team, so macOS ties an item an app makes to

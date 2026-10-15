@@ -391,7 +391,7 @@
   {
     "name": "connectors",
     "label": "Connectors",
-    "description": "Lists the services an app can connect to with the person's own account (Notion, Linear, Airtable, GitHub, Readwise and more), or, with service set, how to build on one. Call it before writing code for a service the person uses that the accounts on this device can't reach.",
+    "description": "Lists the services an app can connect to: the person's own accounts (Notion, Linear, Airtable, GitHub, Home Assistant and more) and open data (weather, exchange rates, food products), or, with service set, how to build on one. Call it before writing code for a service the person uses that the accounts on this device can't reach, or for weather, exchange rates or food data.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
