@@ -57,6 +57,8 @@ final class ServiceSignInTests: XCTestCase {
         let printed = try runProgram(scenarios: ["disconnect-unkept"])
         XCTAssertTrue(printed.contains("disconnect-unkept kept by lamp: true"), printed)
         XCTAssertTrue(printed.contains("disconnect-unkept still connected: true"), printed)
+        XCTAssertTrue(printed.contains("disconnect-unkept second still connected: true"), printed)
+        XCTAssertTrue(printed.contains("disconnect-unkept finally disconnected: true"), printed)
         XCTAssertTrue(printed.contains("didn't finish on this Mac"), printed)
     }
 
@@ -285,6 +287,30 @@ final class ServiceSignInTests: XCTestCase {
                     try? await Task.sleep(nanoseconds: 300_000_000)
                     test.disconnect()
                     print("disconnect-unkept still connected: \(test.isConnected)")
+                    // Again with Lamp still closed: a read returns nothing now (the failed save evicted the
+                    // cache), and it still mustn't look done — it retries with the cleared record it kept.
+                    test.disconnect()
+                    print("disconnect-unkept second still connected: \(test.isConnected)")
+                    // Lamp returns: the retry clears the sign-in for real.
+                    let server2 = socket(AF_INET, SOCK_STREAM, 0)
+                    setsockopt(server2, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+                    _ = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(server2, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+                    listen(server2, 4)
+                    DispatchQueue.global().async {
+                        while true {
+                            let connection = accept(server2, nil, nil)
+                            guard connection >= 0 else { return }
+                            var buffer = [UInt8](repeating: 0, count: 8192)
+                            _ = Darwin.read(connection, &buffer, buffer.count)
+                            let body = #"{"ok": true}"#
+                            let head = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+                            _ = (head + body).withCString { Darwin.write(connection, $0, strlen($0)) }
+                            Darwin.close(connection)
+                        }
+                    }
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    test.disconnect()
+                    print("disconnect-unkept finally disconnected: \(!test.isConnected)")
                     LampSecrets.store = .keychain
                     continue
                 case "renew-unsaved", "old-401", "late-registration":

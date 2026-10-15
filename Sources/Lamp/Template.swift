@@ -478,8 +478,9 @@ enum Template {
         mkdir -p .build
         : > .build/restrict
         # The path is quoted inside the value: Xcode splits the setting on spaces otherwise, and the app's
-        # folder has them ("Application Support").
-        RESTRICT_FLAGS="-Xlinker -sectcreate -Xlinker __RESTRICT -Xlinker __restrict -Xlinker \"$PWD/.build/restrict\""
+        # folder has them ("Application Support"). The quotes must reach the shell literally (\\" in this
+        # literal), or the shell itself eats them.
+        RESTRICT_FLAGS="-Xlinker -sectcreate -Xlinker __RESTRICT -Xlinker __restrict -Xlinker \\"$PWD/.build/restrict\\""
         # A live build (LiveReload): Xcode builds a copy of the project whose sources are the live copy (its
         # ../../Sources lands on .lamp/live/Sources), unoptimized and linked so a change can go into the open app.
         if [[ "${LAMP_LIVE:-}" == 1 ]]; then
@@ -7817,6 +7818,10 @@ enum Template {
             }
         }
 
+        /// A cleared sign-in Lamp couldn't keep (it isn't open), for the next Disconnect to try again with:
+        /// reading it back then returns nothing (Lamp still closed), which would look done without this.
+        private var clearing: Saved?
+
         /// Stops waiting for a sign-in the person didn't finish.
         func cancel() {
             generation += 1
@@ -7833,7 +7838,7 @@ enum Template {
             pending?.close(with: CancellationError())
             pending = nil
             session = nil
-            if var saved = Saved.read(id) {
+            if var saved = Saved.read(id) ?? clearing {
                 if let endpoint = saved.revocationEndpoint {
                     let keys = [("refresh_token", saved.refreshToken), ("access_token", saved.accessToken)].compactMap { kind, token in token.map { (kind, $0) } }
                     let client = saved.clientID, secret = saved.clientSecret, name = name
@@ -7845,11 +7850,14 @@ enum Template {
                 saved.refreshToken = nil
                 saved.expiresAt = nil
                 // False when Lamp isn't open: it never kept the cleared sign-in, so the old one comes back on
-                // the next read. Stay connected then (it's the truth), and say why to the log; the service may
-                // already have ended the keys, which a Connect also sorts out.
+                // the next read. Stay connected then (it's the truth), say why to the log, and keep the cleared
+                // record for the next Disconnect to try again with; the service may already have ended the keys,
+                // which a Connect also sorts out.
                 if saved.save(id) {
+                    clearing = nil
                     state = .notConnected
                 } else {
+                    clearing = saved
                     fputs("LampService: Lamp isn't open, so the disconnect didn't finish on this Mac; the sign-in is still kept.\n", stderr)
                     state = .connected
                 }
