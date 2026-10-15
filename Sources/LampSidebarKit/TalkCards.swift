@@ -426,125 +426,55 @@ struct ChipRow: View {
     }
 }
 
-/// The card itself, drawn from plain values: by Lamp's window, its gallery, and the chat inside each app's window.
+/// What a request came to, drawn from plain values: by Lamp's window, its gallery, and the chat inside each app's
+/// window. It says one thing, in the agent's own words: what changed and where to find it. A picture of the app
+/// beside it, and a row offering to have Lamp test what it hadn't, left people unsure how the two went together and
+/// what the row's words were; the app is open beside the chat, and with changes going in live people try them
+/// themselves. What wasn't tried stays, as a plain sentence, so they know what to look at.
 public struct ResultCardView: View {
     let result: TalkCard.Result
-    let isCurrent: Bool
-    let picture: NSImage?
-    let tryIt: (String) -> Void
 
-    public init(result: TalkCard.Result, isCurrent: Bool, picture: NSImage?, tryIt: @escaping (String) -> Void) {
+    public init(result: TalkCard.Result) {
         self.result = result
-        self.isCurrent = isCurrent
-        self.picture = picture
-        self.tryIt = tryIt
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: 14) {
-                if let picture {
-                    Image(nsImage: picture)
-                        .resizable().scaledToFit()
-                        .frame(maxWidth: 150, maxHeight: 100)
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(.quaternary))
-                        .accessibilityHidden(true)
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(result.summary).font(.headline).fixedSize(horizontal: false, vertical: true)
-                    // A card saved while it had rows of what's new: where to find each, as part of its
-                    // sentence rather than rows under the picture.
-                    ForEach(Array((result.news ?? []).enumerated()), id: \.offset) { _, news in
-                        Text("\(news.what): \(news.place)").font(.callout).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(result.summary).font(.headline).fixedSize(horizontal: false, vertical: true)
+            // A card saved while it had rows of what's new: where to find each, as part of its sentence.
+            ForEach(Array((result.news ?? []).enumerated()), id: \.offset) { _, news in
+                Text("\(news.what): \(news.place)").foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(14)
             // A card saved while guesses were buttons keeps the one the person turned, as what they chose:
             // the chat doesn't show the message that click sent (`Talk.shows`).
             ForEach(Array(result.guesses.enumerated()), id: \.offset) { index, guess in
                 if result.switched?.contains(index) == true {
-                    Divider()
                     Label {
-                        Text(guess.instead).fontWeight(.medium)
+                        Text(guess.instead)
                     } icon: {
                         Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                     }
-                    .padding(.horizontal, 14).padding(.vertical, 9)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            if isCurrent, let untried = result.untried {
-                row(untried, detail: "Lamp hasn't tested this yet.", button: "Have Lamp Test It") { tryIt(untried) }
+            if let untried = result.untried {
+                Text(Self.notTried(untried)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
-        .frame(maxWidth: 620, alignment: .leading)
+        .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func row(_ title: String, detail: String?, button: String? = nil, action: @escaping () -> Void = {}) -> some View {
-        VStack(spacing: 0) {
-            Divider()
-            ButtonBeside {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).fixedSize(horizontal: false, vertical: true)
-                    if let detail {
-                        Text(detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                if let button { Button(button, action: action) }
-            }
-            .padding(.horizontal, 14).padding(.vertical, 9)
+    /// "Saving a bill, viewing History" after the sentence that says what it is: "Lamp hasn't tried this yet:
+    /// saving a bill, viewing History." A first word in capitals throughout (a name like "PDF") keeps them.
+    static func notTried(_ untried: String) -> String {
+        var words = untried.trimmingCharacters(in: .whitespacesAndNewlines)
+        while let last = words.last, ".!".contains(last) { words.removeLast() }
+        let first = words.prefix { !$0.isWhitespace }
+        if first.dropFirst().contains(where: \.isUppercase) == false {
+            words = words.prefix(1).lowercased() + words.dropFirst()
         }
-    }
-}
-
-/// A row's words with its button at the right, or the button under the words where the row is too narrow for both.
-/// Side by side in the wand's narrow panel, the button was cut to "Have Lamp Tes…" and the words squeezed to a
-/// word or two a line: the button's whole name always shows, and the words keep enough of a line to read.
-private struct ButtonBeside: Layout {
-    static let spacing: CGFloat = 12
-    static let under: CGFloat = 8
-    /// Narrower than this beside the button, the words break after every word or two.
-    static let narrowestWords: CGFloat = 160
-
-    private func beside(_ subviews: Subviews, width: CGFloat?) -> Bool {
-        guard subviews.count == 2, let width else { return true }
-        return width - subviews[1].sizeThatFits(.unspecified).width - Self.spacing >= Self.narrowestWords
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        guard let words = subviews.first else { return .zero }
-        guard subviews.count == 2 else { return words.sizeThatFits(proposal) }
-        let button = subviews[1].sizeThatFits(.unspecified)
-        if beside(subviews, width: proposal.width) {
-            let width = proposal.width.map { $0 - button.width - Self.spacing }
-            let text = words.sizeThatFits(ProposedViewSize(width: width, height: nil))
-            return CGSize(width: proposal.width ?? text.width + Self.spacing + button.width, height: max(text.height, button.height))
-        }
-        let text = words.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
-        return CGSize(width: proposal.width ?? max(text.width, button.width), height: text.height + Self.under + button.height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        guard let words = subviews.first else { return }
-        guard subviews.count == 2 else { return words.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size)) }
-        let button = subviews[1].sizeThatFits(.unspecified)
-        if beside(subviews, width: bounds.width) {
-            let width = bounds.width - button.width - Self.spacing
-            words.place(at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(width: width, height: nil))
-            subviews[1].place(at: CGPoint(x: bounds.maxX, y: bounds.midY), anchor: .trailing, proposal: .unspecified)
-        } else {
-            let text = words.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
-            words.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: nil))
-            subviews[1].place(at: CGPoint(x: bounds.minX, y: bounds.minY + text.height + Self.under),
-                              proposal: ProposedViewSize(width: min(button.width, bounds.width), height: nil))
-        }
+        return "Lamp hasn't tried this yet: \(words)."
     }
 }
 
