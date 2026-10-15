@@ -13,6 +13,8 @@ struct WishDesk: View {
     @FocusState private var barFocused: Bool
     /// Drawn once, so they don't change under the reader.
     @State private var ideas: [Idea] = []
+    /// The ideas under the bar, opened by "Not sure?", and open from the start on an empty desk.
+    @State private var showingIdeas = false
 
     /// A wish not yet told is thrown away as the desk comes back (`discardIfUnused`): the rest are on the desk.
     private var wishes: [LampProject] { store.projects }
@@ -20,27 +22,30 @@ struct WishDesk: View {
     var body: some View {
         ZStack {
             DeskBackground().ignoresSafeArea()
-            ScrollView {
-                VStack(spacing: 0) {
-                    header
-                        .padding(.top, wishes.isEmpty ? 72 : 40)
-                    if wishes.isEmpty {
-                        if !ideas.isEmpty {
-                            StarterIdeas(ideas: ideas) { wish in
-                                text = wish
-                                barFocused = true
-                            }
-                            .padding(.top, 40)
-                            .padding(.horizontal, 32)
+            GeometryReader { area in
+                ScrollView {
+                    // In the middle of the window while it fits, gliding to its new place as ideas open or
+                    // close and wishes come and go; from the top, scrolling, once it doesn't.
+                    VStack(spacing: 0) {
+                        header
+                        if showingIdeas && !ideas.isEmpty {
+                            DeskIdeas(ideas: ideas, choose: choose, find: store.findWish)
+                                .padding(.top, 28)
+                                .padding(.horizontal, 32)
+                                .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)),
+                                                        removal: .opacity))
                         }
-                    } else {
-                        grid.padding(.top, 44)
+                        if !wishes.isEmpty {
+                            grid.padding(.top, 44)
+                        }
                     }
+                    .padding(.vertical, 40)
+                    .frame(maxWidth: .infinity, minHeight: area.size.height)
+                    .animation(.spring(response: 0.45, dampingFraction: 0.86), value: showingIdeas)
+                    .animation(.spring(response: 0.45, dampingFraction: 0.86), value: wishes.map(\.id))
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.bottom, 40)
+                .scrollContentBackground(.hidden)
             }
-            .scrollContentBackground(.hidden)
         }
         .navigationTitle("Lamp")
         .toolbar {
@@ -53,6 +58,7 @@ struct WishDesk: View {
         .onAppear {
             hasMicrophone = Dictation.hasMicrophone
             if ideas.isEmpty { ideas = Ideas.starters(made: store.projects.filter { !$0.untitled }.map(\.name)) }
+            if wishes.isEmpty { showingIdeas = true }
             barFocused = true
         }
         .onChange(of: store.deskFocusRequest) { barFocused = true }
@@ -86,14 +92,19 @@ struct WishDesk: View {
             }
             .frame(maxWidth: 600)
             .padding(.horizontal, 32)
-            Button(action: store.findWish) {
-                Label("Not sure? Help me find one", systemImage: "sparkle.magnifyingglass")
-                    .font(.callout.weight(.medium))
-                    .contentShape(Rectangle())
+            Button { showingIdeas.toggle() } label: {
+                HStack(spacing: 5) {
+                    Text("Not sure what to wish for?")
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .rotationEffect(.degrees(showingIdeas ? 180 : 0))
+                }
+                .font(.callout.weight(.medium))
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .help("Lamp asks a few questions about your days and writes a wish with you")
+            .help(showingIdeas ? "Hide the ideas" : "Show some ideas, or have Lamp help you find your wish")
         }
     }
 
@@ -135,6 +146,13 @@ struct WishDesk: View {
         }
         .frame(maxWidth: 880)
         .padding(.horizontal, 32)
+    }
+
+    /// An idea goes in the bar to be made the person's own, and the ideas step aside for it.
+    private func choose(_ wish: String) {
+        text = wish
+        showingIdeas = false
+        barFocused = true
     }
 
     /// The words heard go in the bar, after whatever was typed; the person sends them when they look right.
@@ -201,6 +219,87 @@ struct DeskRows: Layout {
             }
             y += tallest + lineSpacing
         }
+    }
+}
+
+/// The ideas "Not sure?" opens: a few wishes someone might have, each put in the bar when chosen, and last
+/// the way to find one's own with Lamp, in a new wish's chat (`Store.findWish`).
+struct DeskIdeas: View {
+    let choose: (String) -> Void
+    let find: () -> Void
+    @StateObject private var deck: IdeaDeck
+    @State private var hovered: String?
+
+    /// Five ideas and the finder make two rows of three.
+    private static let shown = 5
+    private static let finder = "finder"
+
+    init(ideas: [Idea], choose: @escaping (String) -> Void, find: @escaping () -> Void) {
+        self.choose = choose
+        self.find = find
+        _deck = StateObject(wrappedValue: IdeaDeck(first: ideas))
+    }
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            Button(action: deck.more) {
+                HStack(spacing: 5) {
+                    Image(systemName: IdeaDeck.moreSymbol)
+                    Text("Show me others")
+                }
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 10)], spacing: 10) {
+                ForEach(Array(deck.ideas.prefix(Self.shown).enumerated()), id: \.element.id) { index, idea in
+                    Button { choose(idea.blurb) } label: {
+                        card(lit: hovered == idea.title) {
+                            IdeaIcon(symbol: idea.symbol, hue: idea.hue, size: 26, lit: hovered == idea.title)
+                            Text(idea.blurb).font(.subheadline)
+                                .lineLimit(4, reservesSpace: true)
+                                .multilineTextAlignment(.leading)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hovered = $0 ? idea.title : (hovered == idea.title ? nil : hovered) }
+                    .help("Puts this in the box so you can change it before sending")
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.94)).animation(.spring(response: 0.5, dampingFraction: 0.8).delay(Double(index) * 0.04)),
+                        removal: .opacity.animation(.easeOut(duration: 0.15))))
+                }
+                Button(action: find) {
+                    card(lit: hovered == Self.finder, accent: true) {
+                        Image(systemName: "sparkle.magnifyingglass")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 26, height: 26)
+                        Text("Help me find my wish")
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(4, reservesSpace: true)
+                    }
+                }
+                .buttonStyle(.plain)
+                .onHover { hovered = $0 ? Self.finder : (hovered == Self.finder ? nil : hovered) }
+                .help("Lamp asks a few questions about your days and writes a wish with you")
+            }
+        }
+        .frame(maxWidth: 640)
+        .onAppear { deck.prefetch() }
+    }
+
+    private func card(lit: Bool, accent: Bool = false, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 10) { content() }
+            .padding(12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(accent ? Color.accentColor.opacity(lit ? 0.16 : 0.1) : Color(nsColor: .textBackgroundColor).opacity(lit ? 0.95 : 0.7),
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(accent ? Color.accentColor.opacity(0.35) : Color.primary.opacity(lit ? 0.18 : 0.08), lineWidth: 1))
+            .scaleEffect(lit ? 1.02 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: lit)
+            .contentShape(Rectangle())
     }
 }
 
