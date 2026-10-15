@@ -34,29 +34,14 @@ struct ContentView: View {
         .modifier(PlaygroundIconSheet())
     }
 
+    /// The desk, or one wish's chat. The chat goes back to the desk with its toolbar's back button.
     private var main: some View {
-        NavigationSplitView {
-            AppSidebar()
-                .navigationSplitViewColumnWidth(min: 200, ideal: 230)
-        } detail: {
-            // The banner sits in a stack rather than a top safe-area inset: an inset, even an empty one, keeps
-            // the chat's scroll view from reaching the toolbar, and macOS then drops the toolbar's background
-            // and divider when the chat scrolls under it.
-            VStack(spacing: 0) {
-                if store.setup.checked && !store.setup.hasBuildTools { BuildToolsBanner() }
-                if let project = store.selected {
-                    ProjectView(project: project).id(project.id)
-                } else if store.projects.isEmpty {
-                    ContentUnavailableView {
-                        Label("Nothing here yet", systemImage: "lightbulb")
-                    } description: {
-                        Text("Tell Lamp what would make your day easier, or more fun, and it makes it for you.")
-                    } actions: {
-                        Button("New") { store.create() }
-                    }
-                } else {
-                    ContentUnavailableView("Select an app", systemImage: "sidebar.left")
-                }
+        VStack(spacing: 0) {
+            if store.setup.checked && !store.setup.hasBuildTools { BuildToolsBanner() }
+            if let project = store.selected {
+                ProjectView(project: project).id(project.id)
+            } else {
+                WishDesk()
             }
         }
         .alert("Rename “\(store.renaming?.name ?? "")”", isPresented: Binding(
@@ -93,7 +78,7 @@ struct ContentView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The app, its chat, its history and what it saved are moved to the Trash.")
+            Text("The wish, its chat, its history and what it saved are moved to the Trash.")
         }
         .dialogIcon(store.deleting.map { Image(nsImage: dialogIcon(for: $0)) })
         .onChange(of: store.renaming) { newName = store.renaming.map { $0.untitled ? "" : $0.name } ?? "" }
@@ -108,162 +93,6 @@ struct ContentView: View {
         let renderer = ImageRenderer(content: StandInIcon(project: project, size: 128))
         renderer.scale = 2
         return renderer.nsImage ?? NSApp.applicationIconImage
-    }
-}
-
-/// The app list, as rows or as icon tiles. Double-click an app to build and open it.
-struct AppSidebar: View {
-    enum Layout: String { case list, tiles }
-
-    @EnvironmentObject private var store: Store
-    @AppStorage("sidebarLayout") private var layout = Layout.list
-
-    var body: some View {
-        Group {
-            switch layout {
-            case .list: list
-            case .tiles: tiles
-            }
-        }
-        .scrollContentBackground(.hidden)
-        .background(SidebarMaterial().ignoresSafeArea())
-        .safeAreaInset(edge: .bottom) {
-            HStack {
-                SettingsLink { Label("Settings", systemImage: "gearshape") }
-                    .buttonStyle(.borderless)
-                    .help("Settings (⌘,)")
-                Spacer()
-                Picker("Layout", selection: $layout) {
-                    Image(systemName: "list.bullet").help("Show as List").accessibilityLabel("Show as List").tag(Layout.list)
-                    Image(systemName: "square.grid.2x2").help("Show as Tiles").accessibilityLabel("Show as Tiles").tag(Layout.tiles)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-            }
-            .labelStyle(.iconOnly)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-        }
-    }
-
-    private var list: some View {
-        List(selection: $store.selection) {
-            ForEach(store.projects) { project in
-                HStack(spacing: 8) {
-                    Label {
-                        Text(project.title)
-                    } icon: {
-                        AppIcon(project: project, size: 24)
-                    }
-                    Spacer()
-                    if store.busy.contains(project.id) {
-                        ProgressView().controlSize(.small)
-                    } else if store.unread.contains(project.id) {
-                        ReadyDot()
-                    }
-                }
-                .background(ShareAnchor(origin: .app(project.id)))
-                .tag(project.id)
-            }
-            Button { store.create() } label: {
-                Label {
-                    Text("New")
-                } icon: {
-                    Image(systemName: "plus").frame(width: 24, height: 24)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .padding(.top, store.projects.isEmpty ? 0 : 12)
-        }
-        .listStyle(.sidebar)
-        .environment(\.sidebarRowSize, .large)
-        .contextMenu(forSelectionType: String.self) { ids in
-            if let id = ids.first, let project = store.projects.first(where: { $0.id == id }) {
-                AppMenu(project: project)
-            }
-        } primaryAction: { ids in
-            for project in store.projects where ids.contains(project.id) {
-                store.openPrepared(project)
-            }
-        }
-    }
-
-    private var tiles: some View {
-        ScrollView {
-            // Tiles line up along the top of their row, as names take one line or two.
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 84, maximum: 110), spacing: 4, alignment: .top)], spacing: 8) {
-                ForEach(store.projects) { project in
-                    // A button, so Tab reaches every tile and Space or Return selects it; a double-click opens.
-                    Button { store.selection = project.id } label: {
-                        AppTile(project: project, selected: store.selection == project.id)
-                    }
-                    .buttonStyle(.plain)
-                    .simultaneousGesture(TapGesture(count: 2).onEnded { store.openPrepared(project) })
-                    .background(ShareAnchor(origin: .app(project.id)))
-                    .contextMenu { AppMenu(project: project) }
-                    .accessibilityLabel(project.title)
-                    .accessibilityAddTraits(store.selection == project.id ? [.isSelected] : [])
-                }
-                Button { store.create() } label: {
-                    VStack(spacing: 6) {
-                        Image(systemName: "plus")
-                            .font(.title)
-                            .frame(width: 56, height: 56)
-                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-                        Text("New").font(.callout)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(6)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-            }
-            .padding(10)
-        }
-    }
-}
-
-struct AppTile: View {
-    @EnvironmentObject private var store: Store
-    let project: LampProject
-    let selected: Bool
-
-    var body: some View {
-        VStack(spacing: 6) {
-            AppIcon(project: project, size: 56)
-                .overlay(alignment: .topTrailing) {
-                    if store.busy.contains(project.id) {
-                        ProgressView().controlSize(.small)
-                            .padding(3)
-                            .background(.regularMaterial, in: Circle())
-                            .offset(x: 6, y: -6)
-                    } else if store.unread.contains(project.id) {
-                        ReadyDot(size: 12)
-                            .overlay(Circle().strokeBorder(.background, lineWidth: 2))
-                            .offset(x: 4, y: -4)
-                    }
-                }
-            // Up to two lines, so most names show whole; icons still line up, since rows align at the top.
-            // The full name shows on hover.
-            Text(project.title)
-                .font(.callout)
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-                .truncationMode(.tail)
-                .foregroundStyle(selected ? Color.white : Color.primary)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 1)
-                .background(selected ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 4))
-        }
-        .frame(maxWidth: .infinity)
-        .padding(6)
-        .background(selected ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 10))
-        .contentShape(Rectangle())
-        .help(project.title)
     }
 }
 
@@ -432,7 +261,8 @@ struct AppMenu: View {
         }
         Divider()
         Button("Rename…") { store.renaming = project }
-            .disabled(busy)
+            // Still being found: the wish it becomes names it.
+            .disabled(busy || project.finding)
         Button("Duplicate") { Task { await store.duplicate(project) } }
             .disabled(busy || !project.scaffolded || project.untitled)
         Button("New Icon") { Task { await store.newIcon(project) } }
@@ -442,7 +272,7 @@ struct AppMenu: View {
         }
         Divider()
         if store.canShare(project) {
-            Button("Copy App File") { store.copyAppFile(project) }
+            Button("Copy Wish File") { store.copyAppFile(project) }
             Button { Sharing.share(project, from: .app(project.id)) } label: {
                 Label("Share…", systemImage: "square.and.arrow.up")
             }
@@ -451,18 +281,6 @@ struct AppMenu: View {
         }
         Button("Delete…", role: .destructive) { store.deleting = project }
     }
-}
-
-/// The translucent, behind-window sidebar material System Settings uses.
-struct SidebarMaterial: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .sidebar
-        view.blendingMode = .behindWindow
-        view.state = .followsWindowActiveState
-        return view
-    }
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
 
 struct ProjectView: View {
@@ -574,81 +392,93 @@ struct ProjectView: View {
         let pin = pinned(latestRequest)
         return ScrollViewReader { proxy in
             GeometryReader { area in
-                ScrollView {
-                    // Every row shown is laid out, not only the ones in view. A stack that makes its rows as
-                    // they scroll into view has to guess the height of the rest, and during a turn that
-                    // guessing could go round without ever settling, with Lamp stuck for good.
-                    // With the end in view, the pinned request's bubble is a margin below the top of the chat.
-                    ChatStack(fill: area.size.height - Self.pinMargin, end: 16) {
-                        // Earlier messages come in as the chat is scrolled up towards them (see `earlier`).
-                        // The button is only for when that can't be watched for.
-                        if start > 0, !earlierOnScroll {
-                            Button("Show Earlier Messages") {
-                                guard let top = shown.first?.id else { return }
-                                showEarlier(lines, from: start)
-                                // They come in above what's being read, which stays where it is.
-                                Task { @MainActor in
-                                    await Task.yield()
-                                    proxy.scrollTo(top, anchor: .top)
-                                }
-                            }
-                            .buttonStyle(.link)
-                            .font(.callout)
-                            .frame(maxWidth: .infinity)
-                            .padding(.bottom, 24)
-                        }
-                        // While a new app is being built, its card stays in view above the steps, if there's
-                        // room: in a short window a pinned card would fill the chat and hide everything else.
-                        chatRows(shown, pin: pin, height: area.size.height,
-                                 cardPinned: building != nil && area.size.height >= Self.roomToPinCard)
-                        // Room for the answer to a request just sent. The answer fills it as it comes; once
-                        // there's more, the chat follows it down as ever.
-                        Color.clear.id("bottom").layoutValue(key: ChatStack.Room.self, value: true)
-                    }
-                    .background(EarlierOnScroll(more: start > 0, follow: follow, glides: glides, glided: {
-                        gliding = false
-                        followEnd(proxy, lines, pin: pin)
-                    }, watching: $earlierOnScroll) { showEarlier(lines, from: start) })
-                    // A readable line length; wide windows get margins instead of longer lines.
-                    .frame(maxWidth: 640)
-                    // Only at the top: the margin at the bottom is the room's (see `ChatStack.end`).
-                    .padding(.horizontal, 20).padding(.top, 16)
-                    .frame(maxWidth: .infinity)
-                    // At least as tall as the chat area, so a short chat still sits at the top.
-                    .frame(minHeight: area.size.height, alignment: .top)
-                }
-                // A chat opens on its latest messages: the scroll view starts at the bottom, with
-                // no scrolling to get there.
-                // It stays at its end as the chat grows, except while a request just sent glides to the top
-                // (it would be at the end at once) and while the agent's questions wait.
-                .modifier(OpensAtEnd(holdsEnd: !gliding && pin == pinned && Talk.open(in: lines) == nil))
-                // The chat follows what's added at its end, but only from the end: scrolled up to read
-                // something earlier, it stays there. A message sent goes to the top, with room below for the answer.
-                // The agent's questions come into view whole as they arrive, and then the chat holds still
-                // until they're answered: following anything added meanwhile would slide the answers out
-                // from under the pointer.
-                .onChange(of: Talk.open(in: lines)?.id) { _, waiting in
-                    // Answered, by a click or in words: the chat goes back to following its end, where the
-                    // reply is about to be. It stopped following while the card waited, so it may not be there.
-                    if waiting == nil { follow.followThroughSettling() }
-                    // After this pass: the card isn't laid out yet, and the end is still where it was.
-                    if follow.atEnd { DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) } }
-                }
-                .onChange(of: lines.count) { followEnd(proxy, lines, pin: pin) }
-                // A result card comes into view whole. It can take the place of the line before it, so the
-                // count may not change; and it's tall, so the end is looked for after it has been laid out.
-                .onChange(of: Talk.current(in: lines)?.id) {
-                    if follow.atEnd { DispatchQueue.main.async { followEnd(proxy, lines, pin: pin) } }
-                }
-                .onChange(of: written(lines)) { followEnd(proxy, lines, pin: pin) }
-                .onChange(of: queued.count) { followEnd(proxy, lines, pin: pin) }
-                .onChange(of: store.progress[project.id]?.plan.count) { followEnd(proxy, lines, pin: pin) }
-                .onChange(of: store.progress[project.id]?.screenshot != nil) { followEnd(proxy, lines, pin: pin) }
-                .onChange(of: sends) {
-                    follow.atEnd = true
-                    followEnd(proxy, lines, pin: pin)
-                }
+                following(scroll(shown, all: lines, start: start, pin: pin, proxy: proxy, area: area), lines, pin: pin, proxy: proxy)
             }
+        }
+    }
+
+    /// The chat's scroll view and what's in it. Apart from `chat` and `following`: together they're more than
+    /// the compiler will type-check in reasonable time.
+    private func scroll(_ shown: [LogLine], all lines: [LogLine], start: Int, pin: UUID?, proxy: ScrollViewProxy,
+                        area: GeometryProxy) -> some View {
+        ScrollView {
+            // Every row shown is laid out, not only the ones in view. A stack that makes its rows as
+            // they scroll into view has to guess the height of the rest, and during a turn that
+            // guessing could go round without ever settling, with Lamp stuck for good.
+            // With the end in view, the pinned request's bubble is a margin below the top of the chat.
+            ChatStack(fill: area.size.height - Self.pinMargin, end: 16) {
+                // Earlier messages come in as the chat is scrolled up towards them (see `earlier`).
+                // The button is only for when that can't be watched for.
+                if start > 0, !earlierOnScroll {
+                    Button("Show Earlier Messages") {
+                        guard let top = shown.first?.id else { return }
+                        showEarlier(lines, from: start)
+                        // They come in above what's being read, which stays where it is.
+                        Task { @MainActor in
+                            await Task.yield()
+                            proxy.scrollTo(top, anchor: .top)
+                        }
+                    }
+                    .buttonStyle(.link)
+                    .font(.callout)
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, 24)
+                }
+                // While a new app is being built, its card stays in view above the steps, if there's
+                // room: in a short window a pinned card would fill the chat and hide everything else.
+                chatRows(shown, pin: pin, height: area.size.height,
+                         cardPinned: building != nil && area.size.height >= Self.roomToPinCard)
+                // Room for the answer to a request just sent. The answer fills it as it comes; once
+                // there's more, the chat follows it down as ever.
+                Color.clear.id("bottom").layoutValue(key: ChatStack.Room.self, value: true)
+            }
+            .background(EarlierOnScroll(more: start > 0, follow: follow, glides: glides, glided: {
+                gliding = false
+                followEnd(proxy, lines, pin: pin)
+            }, watching: $earlierOnScroll) { showEarlier(lines, from: start) })
+            // A readable line length; wide windows get margins instead of longer lines.
+            .frame(maxWidth: 640)
+            // Only at the top: the margin at the bottom is the room's (see `ChatStack.end`).
+            .padding(.horizontal, 20).padding(.top, 16)
+            .frame(maxWidth: .infinity)
+            // At least as tall as the chat area, so a short chat still sits at the top.
+            .frame(minHeight: area.size.height, alignment: .top)
+        }
+    }
+
+    /// How the chat keeps to its end, or to a request just sent, as things are added.
+    private func following(_ content: some View, _ lines: [LogLine], pin: UUID?, proxy: ScrollViewProxy) -> some View {
+        content
+        // A chat opens on its latest messages: the scroll view starts at the bottom, with
+        // no scrolling to get there.
+        // It stays at its end as the chat grows, except while a request just sent glides to the top
+        // (it would be at the end at once) and while the agent's questions wait.
+        .modifier(OpensAtEnd(holdsEnd: !gliding && pin == pinned && Talk.open(in: lines) == nil))
+        // The chat follows what's added at its end, but only from the end: scrolled up to read
+        // something earlier, it stays there. A message sent goes to the top, with room below for the answer.
+        // The agent's questions come into view whole as they arrive, and then the chat holds still
+        // until they're answered: following anything added meanwhile would slide the answers out
+        // from under the pointer.
+        .onChange(of: Talk.open(in: lines)?.id) { _, waiting in
+            // Answered, by a click or in words: the chat goes back to following its end, where the
+            // reply is about to be. It stopped following while the card waited, so it may not be there.
+            if waiting == nil { follow.followThroughSettling() }
+            // After this pass: the card isn't laid out yet, and the end is still where it was.
+            if follow.atEnd { DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) } }
+        }
+        .onChange(of: lines.count) { followEnd(proxy, lines, pin: pin) }
+        // A result card comes into view whole. It can take the place of the line before it, so the
+        // count may not change; and it's tall, so the end is looked for after it has been laid out.
+        .onChange(of: Talk.current(in: lines)?.id) {
+            if follow.atEnd { DispatchQueue.main.async { followEnd(proxy, lines, pin: pin) } }
+        }
+        .onChange(of: written(lines)) { followEnd(proxy, lines, pin: pin) }
+        .onChange(of: queued.count) { followEnd(proxy, lines, pin: pin) }
+        .onChange(of: store.progress[project.id]?.plan.count) { followEnd(proxy, lines, pin: pin) }
+        .onChange(of: store.progress[project.id]?.screenshot != nil) { followEnd(proxy, lines, pin: pin) }
+        .onChange(of: sends) {
+            follow.atEnd = true
+            followEnd(proxy, lines, pin: pin)
         }
     }
 
@@ -830,7 +660,7 @@ struct ProjectView: View {
         .navigationSubtitle(usageSummary)
         .toolbarTitleMenu {
             Button("Rename…") { store.renaming = project }
-                .disabled(busy)
+                .disabled(busy || project.finding)
         }
         .toolbar { toolbar }
     }
@@ -842,6 +672,11 @@ struct ProjectView: View {
         .onAppear {
             focusRequest += 1
             loadDraft()
+            // A wish made on the desk: its words are in the draft, and go now, as if sent from here.
+            if store.sendWhenShown == project.id {
+                store.sendWhenShown = nil
+                send()
+            }
         }
         .onChange(of: store.draftUpdates[store.current(project)?.id ?? project.id]) { loadDraft() }
         .onChange(of: project.platform) { PhoneSetup.shared.refreshIfVisible() }
@@ -953,16 +788,22 @@ struct ProjectView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Button { store.showDesk() } label: {
+                Label("All Wishes", systemImage: "chevron.backward")
+            }
+            .keyboardShortcut("[", modifiers: .command)
+            .help("Back to all your wishes (⌘[)")
+        }
         if #available(macOS 26, *) {
             ToolbarItem(placement: .navigation) { titleIcon }
                 .sharedBackgroundVisibility(.hidden)
         } else {
             ToolbarItem(placement: .navigation) { titleIcon }
         }
-        // A wish not yet told has nothing to open, undo, share or look into: only its icon, until it does.
-        // Something stays in the toolbar all the same: with nothing in it, macOS draws the title bar's line
-        // straight across the sidebar.
-        if untold { ToolbarItem { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) } } else { appTools }
+        // A wish not yet told, or still being found, has nothing to open, undo, share or look into: only its
+        // icon, until it does.
+        if !untold && !project.finding { appTools }
     }
 
     /// Nothing asked yet: a new wish, with no app behind it.
@@ -975,15 +816,15 @@ struct ProjectView: View {
             // both can be open on this Mac and in a simulator at once).
             if store.isOpen(project) {
                 Button { Task { await store.quitApp(project) } } label: {
-                    Label("Quit App", systemImage: "stop.fill")
+                    Label("Quit", systemImage: "stop.fill")
                 }
-                .help("Quit the app (double-click it in the sidebar to bring it to the front)")
+                .help("Quit \(project.name)")
             } else {
                 Button { store.openPrepared(project) } label: {
-                    Label("Open App", systemImage: "play.fill")
+                    Label("Use", systemImage: "play.fill")
                 }
                 .disabled(!made)
-                .help(made ? "Open the app (right-click it in the sidebar to rebuild)" : "Describe the app first; Lamp opens it once it's built")
+                .help(made ? "Use \(project.name) (right-click it on the desk to rebuild)" : "Lamp opens it once it's made")
             }
         }
         if project.platform.hasIOS {
@@ -996,8 +837,8 @@ struct ProjectView: View {
                     Label(store.tryOnName(project), systemImage: !project.onIOS ? "laptopcomputer" : (device?.family ?? project.family) == .ipad ? "ipad" : "iphone")
                 }
                 .disabled(busy)
-                .help(project.platform == .universal ? "Where the app opens: this Mac, a simulator, or your own iPhone or iPad"
-                      : "Where the app opens: a simulator, or your own iPhone or iPad")
+                .help(project.platform == .universal ? "Where it opens: this Mac, a simulator, or your own iPhone or iPad"
+                      : "Where it opens: a simulator, or your own iPhone or iPad")
             }
         }
         gap
@@ -1008,21 +849,21 @@ struct ProjectView: View {
             .disabled(busy || !undoable)
             .help(undoable ? "Go back to the version before this one" : "Nothing to undo yet")
             Button { store.deleting = project } label: {
-                Label("Delete App", systemImage: "trash")
+                Label("Delete Wish", systemImage: "trash")
             }
-            .help("Delete this app")
+            .help("Delete this wish")
             if store.canShare(project) {
                 Menu {
-                    Button("Copy App File") { store.copyAppFile(project) }
+                    Button("Copy Wish File") { store.copyAppFile(project) }
                     Button { Sharing.share(project, from: .toolbar) } label: {
                         Label("Share…", systemImage: "square.and.arrow.up")
                     }
                     Button("Export…") { store.chooseExport(project) }
                 } label: {
-                    Label("Share App", systemImage: "square.and.arrow.up")
+                    Label("Share Wish", systemImage: "square.and.arrow.up")
                 }
                 .disabled(!made)
-                .help(made ? "Send this app to someone with Lamp" : "Nothing to share until the app is built")
+                .help(made ? "Send this wish to someone with Lamp" : "Nothing to share until it's made")
                 .background(ShareAnchor(origin: .toolbar))
             }
         }
@@ -1032,16 +873,16 @@ struct ProjectView: View {
                 Label("Agent Details", systemImage: "wrench.and.screwdriver")
             }
             .help("Agent details")
-            // Versions and App Info share the side panel: showing one hides the other.
+            // Versions and Wish Info share the side panel: showing one hides the other.
             Toggle(isOn: Binding(get: { showVersions && saved }, set: { showVersions = $0; if $0 { showInfo = false } })) {
                 Label("Versions", systemImage: "clock.arrow.circlepath")
             }
             .disabled(!saved)
-            .help(saved ? "See earlier versions of this app, name them, and go back to one" : "No versions yet: each change Lamp makes is saved as one")
+            .help(saved ? "See earlier versions of this wish, name them, and go back to one" : "No versions yet: each change Lamp makes is saved as one")
             Toggle(isOn: Binding(get: { showInfo }, set: { showInfo = $0; if $0 { showVersions = false } })) {
-                Label("App Info", systemImage: "info.circle")
+                Label("Wish Info", systemImage: "info.circle")
             }
-            .help("Show usage, cost and models for this app")
+            .help("Show usage, cost and models for this wish")
         }
     }
 
@@ -1442,7 +1283,7 @@ struct NewAppIntro: View {
                             .allowsHitTesting(false)
                     }
                 }
-                .help("Rename this app")
+                .help("Rename this wish")
             }
             Text(project.untitled && project.fromWish ? "Here's your wish. Change anything you like."
                  : project.untitled
@@ -1550,8 +1391,8 @@ struct ImportReviewView: View {
                             .padding(.bottom, 2)
                     }
                     Text(pending.package.description == nil
-                         ? "Someone shared this app with you. Lamp builds it and opens it here, where it can do anything an app you run can do."
-                         : "Someone shared this app with you, and the description above is theirs. Lamp builds it and opens it here, where it can do anything an app you run can do.")
+                         ? "Someone shared this wish with you. Lamp builds it and opens it here, where it can do anything an app you run can do."
+                         : "Someone shared this wish with you, and the description above is theirs. Lamp builds it and opens it here, where it can do anything an app you run can do.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1608,7 +1449,7 @@ struct ImportReviewView: View {
             } else {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
-                    Text("Checking what this app does…").foregroundStyle(.secondary)
+                    Text("Checking what this wish does…").foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 20)
             }
@@ -1616,7 +1457,7 @@ struct ImportReviewView: View {
             if let existing = pending.existing {
                 // The buttons say what each does; this is what someone would worry about before choosing Update.
                 Label {
-                    Text(verbatim: "You already have this app\(existing.name == pending.package.name ? "" : ", as “\(existing.name)”"). Updating keeps your data, and you can go back if you change your mind.")
+                    Text(verbatim: "You already have this wish\(existing.name == pending.package.name ? "" : ", as “\(existing.name)”"). Updating keeps your data, and you can go back if you change your mind.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {

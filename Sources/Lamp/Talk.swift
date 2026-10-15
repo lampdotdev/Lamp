@@ -144,9 +144,13 @@ enum Talk {
         var switched: [Int]?
 
         var text: String {
-            ([summary] + (news ?? []).map { "- \($0.what): \($0.place)" } + guesses.map { "- \($0.guess) (or: \($0.instead))" } + (idea.map { ["- Idea: \($0.title)"] } ?? [])
-                + (untried.map { ["- Not tried: \($0)"] } ?? []))
-                .joined(separator: "\n")
+            // In steps: as one expression it's more than the compiler will type-check in reasonable time.
+            var lines: [String] = [summary]
+            lines += (news ?? []).map { "- \($0.what): \($0.place)" }
+            lines += guesses.map { "- \($0.guess) (or: \($0.instead))" }
+            if let idea { lines.append("- Idea: \(idea.title)") }
+            if let untried { lines.append("- Not tried: \(untried)") }
+            return lines.joined(separator: "\n")
         }
     }
 
@@ -160,7 +164,7 @@ enum Talk {
     /// long sentence in it is a paragraph again, set in bold. Too long goes back to the agent to say shorter, so
     /// every engine is held to the same; the tools' descriptions give the same numbers.
     enum Words {
-        static let question = 10, option = 4, summary = 12
+        static let question = 10, option = 4, summary = 12, wish = 40
     }
 
     static func words(in text: String) -> Int { text.split(whereSeparator: \.isWhitespace).count }

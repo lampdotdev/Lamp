@@ -147,6 +147,7 @@ struct TurnProgress {
         case .kind: return "Making it for other devices"
         case .ask: return "Asking you"
         case .result: return "Wrapping up"
+        case .wish: return "Writing your wish"
         case .delegate, .other: return "Working on your app"
         }
     }

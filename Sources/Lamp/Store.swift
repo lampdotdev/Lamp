@@ -81,6 +81,9 @@ struct LampProject: Identifiable, Hashable {
     var untitled = false
     /// Made by a wish that came from the site (`Wish`): until it has a name it reads as their wish.
     var fromWish = false
+    /// Started with "Help me find one": the agent asks about the person's days and writes a wish into the message
+    /// box (`write_wish`). Nothing is named or built until that wish, or one of their own, is sent.
+    var finding = false
     var platform: Platform = .mac
     var family: DeviceFamily = .iphone
     /// The person's own iPhone or iPad that Play puts the app on (Devices), instead of the simulator.
@@ -118,7 +121,7 @@ struct LampProject: Identifiable, Hashable {
     /// its folder and everything that asks `untitled` go by), so the screen says what it is instead: a wish,
     /// theirs from the site or one still to be told. Nothing is an app until Lamp has made something; the
     /// name Lamp or the person gives it takes over everywhere at once.
-    var title: String { !untitled ? name : fromWish ? "Your wish" : "New" }
+    var title: String { !untitled ? name : fromWish ? "Your wish" : finding ? "Finding a wish" : "New wish" }
     /// False for a draft (Template.draft): a new app whose scaffold isn't written yet.
     var scaffolded: Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent("Package.swift").path) }
 }
@@ -134,6 +137,7 @@ struct ProjectMeta: Codable {
     var simulator: String?     // iOS apps: the simulator chosen by name under Try On, if any
     var instance: String?      // LampProject.instance
     var wish: Bool?            // LampProject.fromWish
+    var finding: Bool?         // LampProject.finding
 }
 
 struct AppUsage: Codable {
@@ -310,7 +314,9 @@ final class Store: ObservableObject {
     @Published var arrivedWish: String?
     /// The wishes being written into a message box right now, by app (`Wish.Arrival`). The drafts hold them whole.
     @Published private(set) var arrivals: [String: Wish.Arrival] = [:]
-    private var wishWriting: Task<Void, Never>?
+    /// What writes each arriving wish in, by app: wishes from the site and from the agent's `write_wish` can be
+    /// arriving in several chats at once, and one finishing or starting mustn't cut another short.
+    private var wishWriting: [String: Task<Void, Never>] = [:]
     /// The new app the last such wish went into.
     private var wishApp: String?
     @Published private(set) var pendingSubmissions = PendingSubmissions()
@@ -498,7 +504,8 @@ final class Store: ObservableObject {
         restoreWaiting()
         for project in projects { discardIfUnused(project.id) }
         Onboarding.settle(hasApps: !projects.isEmpty)
-        selection = projects.first?.id
+        // Lamp opens on the desk (`WishDesk`), not on a wish's chat.
+        selection = nil
         startGateway()
         watchOpenApps()
         // Asking for phones runs devicectl, so only for someone with iPhone apps; Try On asks again when it's opened.
@@ -601,7 +608,7 @@ final class Store: ObservableObject {
                   let meta = try? JSONDecoder().decode(ProjectMeta.self, from: data) else { return nil }
             return LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
                                 instance: meta.instance ?? dir.lastPathComponent,
-                                untitled: meta.untitled ?? false, fromWish: meta.wish ?? false,
+                                untitled: meta.untitled ?? false, fromWish: meta.wish ?? false, finding: meta.finding ?? false,
                                 platform: meta.platform ?? .mac, family: meta.family ?? .iphone,
                                 device: meta.device, chosen: meta.target ?? .mac, simulator: meta.simulator)
         }
@@ -830,9 +837,10 @@ final class Store: ObservableObject {
     func take(wish: String) {
         NSApp.activate()
         guard Onboarding.isDone || welcomeFinished else { arrivedWish = wish; return }
-        wishWriting?.cancel()
         // A second link goes into the app the first one made, while nothing has been sent there: a page that
-        // keeps opening links can't fill Lamp with apps.
+        // keeps opening links can't fill Lamp with apps. Whatever was still being written in is there whole.
+        for writer in wishWriting.values { writer.cancel() }
+        wishWriting = [:]
         arrivals = [:]
         if let id = wishApp, let earlier = projects.first(where: { $0.id == id }), earlier.untitled, nothingAsked(of: id) {
             showChat(id)
@@ -841,14 +849,20 @@ final class Store: ObservableObject {
         }
         guard let project = selected else { return }
         wishApp = project.id
-        // The draft is the whole wish at once, with whatever else it already held (a file dropped there):
-        // only the box's showing of it is written in, so Send at any moment sends all of it.
+        writeIn(wish, for: project)
+    }
+
+    /// Puts a wish in an app's message box, written in a word at a time. The draft is the whole wish at once,
+    /// with whatever else it already held (a file dropped there): only the box's showing of it is written in,
+    /// so Send at any moment sends all of it.
+    func writeIn(_ wish: String, for project: LampProject) {
+        wishWriting.removeValue(forKey: project.id)?.cancel()
         let whole = draft(for: project).taking(wish: wish)
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return updateDraft(whole, for: project) }
         arrivals[project.id] = Wish.Arrival(wish)
         updateDraft(whole, for: project)
         let id = project.id
-        wishWriting = Task {
+        wishWriting[id] = Task {
             let steps = Wish.steps(wish)
             let pace = Wish.pace(words: steps.count)
             for step in steps {
@@ -856,12 +870,15 @@ final class Store: ObservableObject {
                 arrivals[id]?.advance(to: step)
                 try? await Task.sleep(for: pace)
             }
-            if !Task.isCancelled { arrivals[id] = nil }
+            guard !Task.isCancelled else { return }
+            arrivals[id] = nil
+            wishWriting[id] = nil
         }
     }
 
     /// The box's text changed under an arriving wish, or it was sent: the writing is over.
     func endArrival(for id: String) {
+        wishWriting.removeValue(forKey: id)?.cancel()
         if arrivals[id] != nil { arrivals[id] = nil }
     }
 
@@ -890,11 +907,12 @@ final class Store: ObservableObject {
 
     /// New: an untitled app, straight into its chat. Its first message names it and designs its icon.
     /// A Mac app until the intro says otherwise (`setKind`).
-    func create(fromWelcome: Bool = false, fromSite: Bool = false) {
+    func create(fromWelcome: Bool = false, fromSite: Bool = false, from desk: DeskStart? = nil) {
         // A draft: its scaffold waits for the first build (`materialize`), so the intro can still change its kind.
         let project: LampProject
         do {
-            project = try Template.draft(name: uniqueName("Untitled"), untitled: true, fromWish: fromSite, in: root)
+            project = try Template.draft(name: uniqueName("Untitled"), untitled: true, fromWish: fromSite,
+                                         finding: desk == .finding, in: root)
         } catch {
             NSAlert(error: error).runModal()
             return
@@ -902,7 +920,50 @@ final class Store: ObservableObject {
         reload()
         selection = project.id
         chatFocusRequest += 1
-        Analytics.capture(.appCreated, ["source": fromSite ? "site" : fromWelcome ? "welcome" : "new_app"])
+        Analytics.capture(.appCreated, ["source": fromSite ? "site" : fromWelcome ? "welcome" : desk?.rawValue ?? "new_app"])
+    }
+
+    /// How a wish was started on Lamp's desk (`WishDesk`).
+    enum DeskStart: String { case typed = "desk", spoken = "desk_spoken", finding = "desk_finding" }
+
+    /// A wish made on the desk goes straight to its chat, sent as if typed there: the chat sends it as it
+    /// appears (`sendWhenShown`), so it goes through the same setup checks and lands in the same place.
+    @Published var sendWhenShown: String?
+
+    func wish(_ text: String, attachments: [URL] = [], spoken: Bool = false) {
+        guard !text.trimmed.isEmpty || !attachments.isEmpty else { return }
+        create(from: spoken ? .spoken : .typed)
+        guard let project = selected else { return }
+        updateDraft(Draft(text: text.trimmed, attachments: attachments), for: project)
+        sendWhenShown = project.id
+    }
+
+    /// "Help me find one": a new wish whose first request asks the agent to find it with the person, in the
+    /// chat, through its cards (`Agent.findRules`).
+    func findWish() {
+        create(from: .finding)
+        guard let project = selected else { return }
+        updateDraft(Draft(text: Agent.findingRequest), for: project)
+        sendWhenShown = project.id
+    }
+
+    /// Back to the desk from a wish's chat.
+    func showDesk() {
+        selection = nil
+    }
+
+    /// What's typed in the desk's wish bar and not sent: kept here, so going to a wish's chat and back keeps it.
+    @Published var deskDraft = ""
+
+    /// Goes up to put the cursor in the desk's wish bar (New Wish).
+    @Published var deskFocusRequest = 0
+
+    /// New Wish: the desk, ready to type.
+    func newWish() {
+        showDesk()
+        deskFocusRequest += 1
+        NSApp.activate()
+        if let main = MagicPanel.mainWindow, !main.isVisible { main.makeKeyAndOrderFront(nil) }
     }
 
     /// Writes a draft's scaffold and makes its first version, before anything builds it. Nil, after saying so,
@@ -1123,7 +1184,9 @@ final class Store: ObservableObject {
     /// executable and bundle ID match. After that only the display name changes: the bundle ID stays,
     /// so the app keeps its settings and data. Returns the app as it is now.
     func rename(_ project: LampProject, to name: String) async {
-        guard begin(project) != nil else { return }
+        // A wish still being found has no name to give: the wish it becomes names it (`startQueued`), and a
+        // rename now would end the finding before the wish is.
+        guard !project.finding, begin(project) != nil else { return }
         finish(await performRename(project, to: name))
     }
 
@@ -1749,10 +1812,16 @@ final class Store: ObservableObject {
         guard setup.ready, let messages = queued[project.id], !messages.isEmpty,
               let owner = begin(project) else { return }
         queued[project.id] = nil
-        let first = !(logs[project.id] ?? []).contains { $0.kind == .user }
+        // A wish being found isn't named by its opening request or by answers to the agent's cards: the wish
+        // the agent writes into the box (or one of the person's own) names it when it's sent.
+        let spoken = (logs[project.id] ?? []).contains { $0.kind == .user }
+        let names = project.finding ? spoken && project.untitled && !messages.contains { $0.card != nil } : !spoken
+        let first = names
+        let stillFinding = project.finding && !names
         // Still a new app until a request has made its first version: after the agent only asked questions,
-        // the answers start the build and get the build card. An imported app has already been built.
-        let newApp = Template.isScaffold(project) && !hasVersions(project)
+        // the answers start the build and get the build card. An imported app has already been built. Not
+        // while a wish is being found: there's nothing to build yet.
+        let newApp = Template.isScaffold(project) && !hasVersions(project) && (!project.finding || names)
         progress[project.id] = TurnProgress(newApp: newApp)
         // Only the first message names the app (bootstrap). A later one, after the agent only asked questions,
         // finds it untitled if that naming failed, and mustn't show a naming that isn't happening.
@@ -1773,6 +1842,14 @@ final class Store: ObservableObject {
                     ? "An app made from the attached file\(saved.count == 1 ? "" : "s"): \(saved.joined(separator: ", "))"
                     : words
                 project = await bootstrap(project, brief: brief)
+                if project.finding, let found = current(project) {
+                    // Found: from here it's a wish like any other.
+                    var plain = found
+                    plain.finding = false
+                    try? Template.saveMeta(plain)
+                    reload()
+                    project = current(project) ?? project
+                }
                 if project.id != untitled.id { progress[project.id] = progress.removeValue(forKey: untitled.id) }
             }
             var worked = false
@@ -1805,8 +1882,12 @@ final class Store: ObservableObject {
                 finish(project)
             }
             // Named now, so the scaffold is written under its name. If it can't be, the turn ends here, failed.
-            guard let ready = await materialize(project) else { return }
-            project = ready
+            // Not while a wish is still being found: the agent only asks, and the wish it finds may be for the
+            // iPhone, which a scaffold already written as a Mac app would rule out.
+            if !stillFinding {
+                guard let ready = await materialize(project) else { return }
+                project = ready
+            }
             // Where the app is as the turn starts, so the request can be changed and sent again from here.
             if let head = await Versions.head(project) { mark(asked, sentFrom: head, in: project) }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
@@ -2028,6 +2109,10 @@ final class Store: ObservableObject {
         // before Lamp ended it. That holds whether or not the card still waits: an answer clicked while the
         // agent was finishing is only in line, and the agent hasn't had it. Its turn picks up from here.
         if owner.asked {
+            return TurnResult(end: .replied, watched: isWatching(project.id))
+        }
+        // Still finding the wish: there's no app yet to build or save, whatever the agent did.
+        if project.finding {
             return TurnResult(end: .replied, watched: isWatching(project.id))
         }
         // A new app the agent didn't touch: it only replied (say, with questions about a vague request).
@@ -2422,7 +2507,6 @@ final class Store: ObservableObject {
             return
         }
         Self.trashData(of: project)
-        let index = projects.firstIndex { $0.id == project.id }
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil
         usage[project.id] = nil
@@ -2431,9 +2515,8 @@ final class Store: ObservableObject {
         release(project)
         unread.remove(project.id)
         tokens = tokens.filter { $0.value != project.id }
-        if selection == project.id {
-            selection = index.flatMap { projects.indices.contains($0) ? projects[$0] : projects.last }?.id
-        }
+        // A wish deleted from its chat leaves the person on the desk.
+        if selection == project.id { selection = nil }
     }
 
     /// What the app kept on this Mac goes with it, so an app made later under the same name starts empty rather
@@ -2866,7 +2949,7 @@ final class Store: ObservableObject {
             case "make_art": (status, answer) = await makeArt(arguments, for: project)
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
-            case "ask", "show_result": (status, answer) = talk(name, arguments, for: project)
+            case "ask", "show_result", "write_wish": (status, answer) = talk(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -2978,6 +3061,17 @@ final class Store: ObservableObject {
                 turn.pendingResult = result
                 return (200, ["text": Talk.resultKept])
             }
+        case "write_wish":
+            // Only for a wish being found: one the person told is already theirs, and a box they're typing in
+            // isn't the agent's to fill.
+            guard project.finding else {
+                return (400, ["error": "`write_wish` is only for helping someone find a wish. Build what they asked for."])
+            }
+            guard let wish = Wish.tidy(arguments["wish"] as? String), Talk.words(in: wish) <= Talk.Words.wish else {
+                return (400, ["error": "Give the wish in `wish`, \(Talk.Words.wish) words at most."])
+            }
+            writeIn(wish, for: project)
+            return (200, ["text": "The wish is in their message box, for them to change and send. End your reply now, with one short sentence at most."])
         default:
             return (400, ["error": "Unknown tool \(tool)."])
         }

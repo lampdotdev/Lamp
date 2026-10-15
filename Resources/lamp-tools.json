@@ -457,5 +457,23 @@
         }
       }
     }
+  },
+  {
+    "name": "write_wish",
+    "label": "Write wish",
+    "description": "Writes the wish you found together into the person's message box, in their own words, for them to change and send: the end of helping them find something to wish for. Only then, never for a wish they told you themselves. After it, end your reply with one short sentence at most.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wish"
+      ],
+      "properties": {
+        "wish": {
+          "type": "string",
+          "description": "The wish as they'd ask Lamp for it, one or two sentences and 40 words at most, saying what it does for them and where it lives when that matters (menu bar, widget, iPhone, watch, in the background): “Remind me which bins go out each week, on my iPhone, the evening before.”"
+        }
+      }
+    }
   }
 ]

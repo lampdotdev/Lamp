@@ -530,6 +530,6 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(makeArt);
 	pi.registerTool(offerSetup);
 	pi.registerTool(makeAppFor);
-	for (const name of ["ask", "show_result"]) pi.registerTool(talkTool(name));
+	for (const name of ["ask", "show_result", "write_wish"]) pi.registerTool(talkTool(name));
 	for (const name of ["read_notes", "save_notes"]) pi.registerTool(notesTool(name));
 }
