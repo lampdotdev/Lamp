@@ -100,6 +100,7 @@ extension Template {
                 .gesture(DragGesture(minimumDistance: 0)
                     .onChanged {
                         if !focused { focused = true }
+                        scene.hasFocus = true
                         scene.dragChanged(from: $0.startLocation, to: $0.location)
                     }
                     .onEnded { scene.dragEnded(from: $0.startLocation, to: $0.location) })
@@ -111,6 +112,11 @@ extension Template {
                     scene.viewSize = geometry.size
                     focused = true
                 }
+                #if LAMP_LIVE
+                // A change Lamp put into the open app replaces functions, but the scene was built by the old ones:
+                // it's built again, so a changed prop or layout shows. The camera stays where it was.
+                .onChange(of: LampLive.generation) { _, _ in Task { await scene.rebuild() } }
+                #endif
                 .onChange(of: geometry.size) { _, size in scene.viewSize = size }
             }
             .overlay {
@@ -160,6 +166,7 @@ extension Template {
         private var subscription: EventSubscription?
         private var monitor: Any?
         private var update: ((LampScene, Float) -> Void)?
+        private var build: ((LampScene) async -> Void)?
         private var drag: Drag?
         private var orbitYaw: Float = 0.6, orbitPitch: Float = 0.35, orbitDistance: Float = 4
         private var lookYaw: Float = 0, lookPitch: Float = 0
@@ -169,6 +176,16 @@ extension Template {
         nonisolated init() {}
 
         func add(_ entity: Entity) { root.addChild(entity) }
+
+        /// Builds the scene again from scratch (see LampSceneView's live reload).
+        func rebuild() async {
+            guard let build else { return }
+            for child in Array(root.children) { child.removeFromParent() }
+            keys.removeAll()
+            chaseHeading = nil
+            chasePosition = nil
+            await build(self)
+        }
 
         /// The first entity with this name anywhere in the scene.
         func find(_ name: String) -> Entity? { root.findEntity(named: name) }
@@ -183,6 +200,7 @@ extension Template {
                    build: (LampScene) async -> Void, update: ((LampScene, Float) -> Void)?) async {
             self.rig = rig
             self.update = update
+            self.build = build
             if case .orbit(_, let distance, let yaw, let pitch) = rig { orbitDistance = distance; orbitYaw = yaw; orbitPitch = pitch }
             if case .firstPerson(let position, let heading) = rig { camera.position = position; lookYaw = heading }
             content.add(root)
@@ -198,13 +216,23 @@ extension Template {
             subscription = content.subscribe(to: SceneEvents.Update.self) { [weak self] event in
                 MainActor.assumeIsolated { self?.tick(min(Float(event.deltaTime), 1 / 20)) }
             }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .scrollWheel]) { [weak self] event in
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .scrollWheel, .leftMouseDown, .rightMouseDown]) { [weak self] event in
                 guard let self else { return event }
                 if event.type == .keyUp {
                     self.keys.remove(event.keyCode)
                     return event
                 }
                 guard let window = self.window, event.window === window else { return event }
+                // A click in the window outside the scene's own content (Lamp's chat beside the app, drawn by another
+                // process, which AppKit's focus doesn't follow) takes the keyboard away from the scene; a click back
+                // in the scene gives it back (the drag gesture).
+                if event.type == .leftMouseDown || event.type == .rightMouseDown {
+                    if let content = self.content(), !content.bounds.contains(content.convert(event.locationInWindow, from: nil)) {
+                        self.hasFocus = false
+                        self.keys.removeAll()
+                    }
+                    return event
+                }
                 if event.type == .scrollWheel {
                     self.orbitDistance = max(0.3, self.orbitDistance * (1 - Float(event.scrollingDeltaY) * 0.01))
                     return event
@@ -226,10 +254,13 @@ extension Template {
             guard let responder = window.firstResponder as? NSView else { return true }
             guard let marker else { return false }
             if marker.isDescendant(of: responder) { return true }
-            // SwiftUI's view for the window's content (its class names vary: NSHostingView, AppKitWindowHostingView), in
-            // which RealityKit's own view takes focus when the scene has it. Lamp's chat is outside it.
-            let hosting = sequence(first: marker, next: \.superview).first { String(describing: type(of: $0)).contains("HostingView") }
-            return hosting.map { responder.isDescendant(of: $0) } ?? false
+            return content().map { responder.isDescendant(of: $0) } ?? false
+        }
+
+        /// SwiftUI's view for the window's content (its class names vary: NSHostingView, AppKitWindowHostingView), in
+        /// which RealityKit's own view takes focus when the scene has it. Lamp's chat is outside it.
+        private func content() -> NSView? {
+            marker.flatMap { sequence(first: $0, next: \.superview).first { String(describing: type(of: $0)).contains("HostingView") } }
         }
 
         private func tick(_ dt: Float) {

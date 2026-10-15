@@ -2819,7 +2819,14 @@ final class Store: ObservableObject {
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(Edition.notificationPrefix + "useApp.\(project.id)"), object: nil,
             userInfo: ["actions": json, "id": id, "lampUseAppSignature": signature], deliverImmediately: true)
-        let waits = actions.reduce(0.0) { $0 + (($1["action"] as? String) == "wait" ? min($1["amount"] as? Double ?? 1, 10) : 0) }
+        // Waits, and keys held down (a Mac app's `key` with `amount`), each up to 10 seconds, as the app takes them.
+        let waits = actions.reduce(0.0) { total, action in
+            switch action["action"] as? String {
+            case "wait": total + min(action["amount"] as? Double ?? 1, 10)
+            case "key": total + min(max(action["amount"] as? Double ?? 0, 0), 10)
+            default: total
+            }
+        }
         let wait = Double(actions.count) * 0.4 + waits + 5
         guard let report = await Runtime.useReport(of: project, id: id, waiting: wait, while: { !app.isTerminated }) else {
             guard app.isTerminated else {

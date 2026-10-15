@@ -845,10 +845,15 @@ enum Agent {
         `lampSlide(axis:range:)` and `lampGrab()`; `lampPhysics(.dynamic)` or `.static` for falling and \
         knocking; `lampShadow()` under anything standing on the ground. Many copies of one thing go in one \
         `LampScene.copies(of:at:)`.
+          Model a real thing from a picture of it, never from memory alone. Before writing a main prop that is a \
+        real object (a car model, a building, a piece of furniture, an animal), get a reference: the person's photo \
+        from the chat, else one `make_art` of the object alone on a plain background, seen straight from the side \
+        (or the front, for something whose face matters), whole and uncropped. Read off it what code needs: its \
+        outline, proportions (length to height, where the parts begin and end), colours and the parts that make it \
+        recognisable. Small or generic props (a box, a pole, a cup) need none.
           Each prop that matters goes in `props` by name, and look_at_app with `prop` shows it on its own from four \
-        sides. Compare that with a reference (the person's photo from the chat, or `make_art` of the object alone on \
-        a plain background): shape, proportions, colours, parts. Fix and look again, up to three rounds for the main \
-        props; background things get one look.
+        sides. Compare that with the reference: shape, proportions, colours, parts. Fix and look again, up to three \
+        rounds for the main props; background things get one look.
           LampSceneView already avoids RealityKit's flicker; keep it that way: no sun shadows (they make the whole \
         picture flicker; `lampShadow` instead), and flat things laid on others (roads, markings, decals, a sign's \
         writing) a few centimetres above them, never at the same height. After big changes, look_at_app with \
