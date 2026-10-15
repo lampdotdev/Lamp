@@ -485,7 +485,7 @@ struct ResultCard: View {
                     }
                 }
                 if isCurrent, let untried = result.untried {
-                    row(untried, detail: "Lamp hasn't tried this yet.", button: "Try It") {
+                    row(untried, detail: "Lamp hasn't tested this yet.", button: "Have Lamp Test It") {
                         store.send(Talk.tryRequest(untried), to: project)
                     }
                 }

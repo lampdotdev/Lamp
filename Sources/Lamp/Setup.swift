@@ -132,8 +132,8 @@ struct SetupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            Text("Welcome to Lamp").font(.largeTitle.bold())
-            Text("Say what would make your day easier or more fun, and Lamp makes it: a real app you can keep using, change whenever you like, and share. Two one-time steps first, and they can happen at the same time.")
+            Text("Lamp can't build apps right now").font(.largeTitle.bold())
+            Text("Finish what's left below. Your apps and chats are kept.")
                 .foregroundStyle(.secondary)
 
             if !store.setup.hasAgent {

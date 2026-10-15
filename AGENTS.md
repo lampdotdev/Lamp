@@ -41,7 +41,7 @@ A capability given to one engine must be given to all of them that can take it, 
   chooses (`Talk.Layout`: one at a time, or all on one card; always in the chat, never a page of their own), and `show_result` is
   the card for what a request came to: its picture and one sentence, for a new app or a big change what they
   now have, for an ordinary change that adds things to find what's new and where, and what wasn't tried as a
-  Try It button. No rows: under the picture they read as captions of it, and a new app's guesses and idea there
+  Have Lamp Test It button. No rows: under the picture they read as captions of it, and a new app's guesses and idea there
   made a form to go through when it's the app the person wants to try. Cards saved with them still read
   (`Talk.News`, `Talk.Guess`, `Talk.Idea`): what's new as lines under the sentence, a guess the person turned as
   what they chose, and nothing else. The card takes the place of the reply and of the line saying the app is ready (`LogLine.visible`); a

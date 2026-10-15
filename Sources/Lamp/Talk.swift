@@ -150,7 +150,7 @@ enum Talk {
         }
     }
 
-    /// What the card's Try It button sends: the agent's own words for what it didn't try, as a request.
+    /// What the card's Have Lamp Test It button sends: the agent's own words for what it didn't try, as a request.
     static func tryRequest(_ untried: String) -> String { "Please try this out: \(untried)" }
 
     static let questionLimit = 4

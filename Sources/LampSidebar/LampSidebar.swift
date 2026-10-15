@@ -220,9 +220,9 @@ private struct LineView: View {
                 ChatLook.AgentText(line.text)
                 if let untried = line.untried {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(untried).font(.callout).foregroundStyle(.secondary)
+                        Text("Not tested yet: \(untried)").font(.callout).foregroundStyle(.secondary)
                         Spacer()
-                        Button("Try It") { link.send(.tryIt(line.id)) }
+                        Button("Have Lamp Test It") { link.send(.tryIt(line.id)) }
                     }
                 }
             }

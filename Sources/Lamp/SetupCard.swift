@@ -94,6 +94,8 @@ struct SetupCard: View {
 
     private var title: String {
         if offer.context == .phoneAway { return "Use AI on your phone, away from this Mac" }
+        // Raised for the app's icon, its options include drawing icons by hand, which isn't AI.
+        if offer.context == .icon { return "Give your apps proper icons" }
         return switch offer.capability {
         case .text: "Use AI in your apps"
         case .decisions: "Let your apps make quick judgments"
@@ -393,8 +395,8 @@ private struct DrawIconsUpgrade: View {
 
     var body: some View {
         OptionRow(symbol: "paintbrush.pointed", title: "Draw icons yourself",
-                  detail: "Free, with Image Playground. You pick each app's picture.", compact: compact) {
-            Button("Use for Icons") { Icons.iconChoice = Icons.byHand }
+                  detail: "Free, with Image Playground. You draw each app's icon.", compact: compact) {
+            Button("Use for All Apps") { Icons.iconChoice = Icons.byHand }
         }
     }
 }
@@ -436,8 +438,8 @@ struct IPhoneSetupLine: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "iphone").foregroundStyle(.secondary)
-            Text("\(project.name) is a Mac app for now. Your iPhone needs a little setup first.").foregroundStyle(.secondary)
-            Button("Set Up iPhone Apps…", action: setUp)
+            Text("\(project.name) is a Mac app for now. This Mac needs a few things from Apple to make iPhone apps.").foregroundStyle(.secondary)
+            Button("See What's Needed…", action: setUp)
                 .controlSize(.small)
                 .disabled(asked.ids.contains(project.id) || store.busy.contains(project.id) || !(store.queued[project.id] ?? []).isEmpty)
         }
