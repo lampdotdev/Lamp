@@ -7643,10 +7643,12 @@ enum Template {
             return true
         }
 
-        static func delete(_ name: String) {
+        /// False when it couldn't be forgotten (Lamp isn't open): what was kept is still kept.
+        @discardableResult
+        static func delete(_ name: String) -> Bool {
             if store == .keychain { return Keychain.delete(name) }
             lock.lock(); cache[name] = nil; lock.unlock()
-            _ = ask(["op": "delete", "name": name])
+            return ask(["op": "delete", "name": name])?["ok"] as? Bool == true
         }
 
         // Lamp is asked once for each name; what it answered, and what was kept since, is remembered here.
@@ -7705,7 +7707,10 @@ enum Template {
                 return status == errSecSuccess
             }
 
-            static func delete(_ name: String) { SecItemDelete(query(name) as CFDictionary) }
+            static func delete(_ name: String) -> Bool {
+                let status = SecItemDelete(query(name) as CFDictionary)
+                return status == errSecSuccess || status == errSecItemNotFound
+            }
         }
     }
     // end LampSecrets
@@ -8463,7 +8468,7 @@ enum Template {
     /// A service the person already uses that lets them make a personal token on its own site: Airtable, Coda,
     /// Readwise, GitHub, Toggl Track and the others listed below. The person clicks Connect, opens the service's
     /// page from the sheet, makes a token there and pastes it into the sheet; the app checks it with the service
-    /// before keeping it. It is kept in this device's Keychain for this app only and is sent only to that service's
+    /// before keeping it. It is kept on this device for this app only (`LampSecrets`) and is sent only to that service's
     /// own address. It is never in the app's folder, so a shared copy arrives disconnected and each person
     /// connects their own account.
     ///
@@ -8581,8 +8586,13 @@ enum Template {
 
         /// Forgets the token on this device. It still works on the service until the person deletes it there.
         func disconnect() {
+            // False when Lamp isn't open: the token is still kept and comes back on the next read, so the app stays
+            // connected (it's the truth) and says why to the log; Disconnect works once Lamp is open.
+            guard Saved.delete(id) else {
+                fputs("LampAPI: Lamp isn't open, so \(name) is still connected on this Mac.\n", stderr)
+                return
+            }
             generation += 1
-            Saved.delete(id)
             isConnected = false
         }
 
@@ -8687,37 +8697,21 @@ enum Template {
         }
         private static let stayPut: URLSessionTaskDelegate = StayPut()
 
-        /// What the person pasted, in this device's Keychain under this app's id, never in the app's folder: a shared
-        /// copy has a different id and doesn't see it.
+        /// What the person pasted, in `LampSecrets` for this app only, never in the app's folder: a shared copy is
+        /// another app and doesn't see it.
         fileprivate enum Saved {
-            private static func query(_ id: String) -> [String: Any] {
-                [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Bundle.main.bundleIdentifier ?? "lamp",
-                 kSecAttrAccount as String: "lamp-api-" + id]
-            }
-
             static func read(_ id: String) -> [String: String]? {
-                var query = query(id)
-                query[kSecReturnData as String] = true
-                var item: CFTypeRef?
-                guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
-                return try? JSONDecoder().decode([String: String].self, from: data)
+                LampSecrets.read("lamp-api-" + id).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) }
             }
 
+            /// False when it couldn't be kept (Lamp isn't open, or the Keychain refused).
             static func save(_ values: [String: String], for id: String) -> Bool {
                 guard let data = try? JSONEncoder().encode(values) else { return false }
-                let query = query(id)
-                var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-                if status == errSecItemNotFound {
-                    var add = query
-                    add[kSecValueData as String] = data
-                    add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-                    status = SecItemAdd(add as CFDictionary, nil)
-                }
-                if status != errSecSuccess { fputs("LampAPI: couldn't keep the token (\(status))\n", stderr) }
-                return status == errSecSuccess
+                return LampSecrets.save(data, as: "lamp-api-" + id)
             }
 
-            static func delete(_ id: String) { SecItemDelete(query(id) as CFDictionary) }
+            @discardableResult
+            static func delete(_ id: String) -> Bool { LampSecrets.delete("lamp-api-" + id) }
         }
     }
 

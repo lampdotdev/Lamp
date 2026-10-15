@@ -60,16 +60,29 @@ final class TokenServiceTests: XCTestCase {
         XCTAssertTrue(printed.contains("late-401: kept new-token, connected true"), printed)
     }
 
+    /// On a Mac the token is kept by Lamp: a Disconnect while Lamp is closed can't forget it, so the app stays
+    /// connected rather than look disconnected until the token comes back on the next read.
+    func testADisconnectLampCantKeepStaysConnected() throws {
+        let printed = try runProgram(scenarios: ["disconnect-unkept"])
+        XCTAssertTrue(printed.contains("disconnect-unkept kept by lamp: true"), printed)
+        XCTAssertTrue(printed.contains("disconnect-unkept still connected: true"), printed)
+    }
+
     // MARK: - The program
 
     private func runProgram(scenarios: [String]) throws -> String {
         let support = Template.lampSupportSwift
         let start = try XCTUnwrap(support.range(of: "@MainActor final class LampAPI"))
         let end = try XCTUnwrap(support.range(of: "// end LampAPI", range: start.upperBound..<support.endIndex))
+        // Where the token is kept: in this harness the Keychain, since there is no Lamp to ask.
+        let secretsStart = try XCTUnwrap(support.range(of: "// LampSecrets\n"))
+        let secretsEnd = try XCTUnwrap(support.range(of: "// end LampSecrets", range: secretsStart.upperBound..<support.endIndex))
         let program = """
         import Foundation
         import SwiftUI
         import Security
+        var lampGateway = "http://127.0.0.1:1"
+        \(support[secretsStart.upperBound..<secretsEnd.lowerBound])
         \(support[start.lowerBound..<end.lowerBound])
         \(Self.harness)
         """
@@ -90,7 +103,11 @@ final class TokenServiceTests: XCTestCase {
         nonisolated(unsafe) static var seen: [String] = []
         /// Seconds to wait before answering an address.
         nonisolated(unsafe) static var delays: [String: Double] = [:]
-        override class func canInit(with request: URLRequest) -> Bool { true }
+        /// An address answered for real, not from the table.
+        nonisolated(unsafe) static var passing = ""
+        override class func canInit(with request: URLRequest) -> Bool {
+            passing.isEmpty || !(request.url?.absoluteString.hasPrefix(passing) ?? false)
+        }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
         override func startLoading() {
             let address = request.url!.absoluteString
@@ -116,6 +133,7 @@ final class TokenServiceTests: XCTestCase {
     @main struct Harness {
         @MainActor static func main() async {
             URLProtocol.registerClass(Answers.self)
+            LampSecrets.store = .keychain
             let recorded = try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))) as! [String: [String: Any]]
             /// A made-up service, connected with a made-up token kept under a name of its own and forgotten after.
             func example() -> LampAPI {
@@ -192,6 +210,44 @@ final class TokenServiceTests: XCTestCase {
                     await old.value
                     print("late-401: kept \(LampAPI.Saved.read(api.id)?["token"] ?? "nothing"), connected \(api.isConnected)")
                     LampAPI.Saved.delete(api.id)
+                case "disconnect-unkept":
+                    // As on a Mac (`.lamp`): a tiny stand-in for Lamp keeps the token (so the app's read of it is
+                    // cached), then Lamp is gone and Disconnect can't forget it.
+                    LampSecrets.store = .lamp
+                    let server = socket(AF_INET, SOCK_STREAM, 0)
+                    var reuse: Int32 = 1
+                    setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+                    var address = sockaddr_in()
+                    address.sin_family = sa_family_t(AF_INET)
+                    address.sin_addr.s_addr = INADDR_LOOPBACK.bigEndian
+                    address.sin_port = UInt16(47898).bigEndian
+                    _ = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(server, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+                    listen(server, 4)
+                    DispatchQueue.global().async {
+                        while true {
+                            let connection = accept(server, nil, nil)
+                            guard connection >= 0 else { return }
+                            var buffer = [UInt8](repeating: 0, count: 8192)
+                            _ = Darwin.read(connection, &buffer, buffer.count)
+                            let body = #"{"ok": true}"#
+                            let head = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+                            _ = (head + body).withCString { Darwin.write(connection, $0, strlen($0)) }
+                            Darwin.close(connection)
+                        }
+                    }
+                    lampGateway = "http://127.0.0.1:47898"
+                    // Lamp's own address isn't the service's: let it through to the stand-in.
+                    Answers.passing = "http://127.0.0.1:47898"
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    let id = "test-" + UUID().uuidString.prefix(8)
+                    print("disconnect-unkept kept by lamp: \(LampAPI.Saved.save(["token": "made-up-token"], for: id))")
+                    let api = LampAPI(id: id, name: "Example", base: "https://api.example.test/v1/", page: "https://example.test/tokens",
+                                      steps: "", fields: [.init(key: "token", label: "Token")], headers: ["Authorization": "Bearer {token}"], check: "me")
+                    close(server)
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    api.disconnect()
+                    print("disconnect-unkept still connected: \(api.isConnected)")
+                    LampSecrets.store = .keychain
                 default: print("unknown scenario \(scenario)")
                 }
             }
