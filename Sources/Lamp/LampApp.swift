@@ -45,6 +45,7 @@ struct LampApp: App {
                 .keyboardShortcut("s")
                 .disabled(store.selected == nil)
             }
+            CommandGroup(after: .windowArrangement) { GalleryCommand() }
         }
         Settings {
             SettingsView().environmentObject(store)
@@ -52,6 +53,7 @@ struct LampApp: App {
         LampHelpScene()
         BugReportScene()
         AboutScene()
+        GalleryScene()
     }
 }
 

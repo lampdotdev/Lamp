@@ -58,53 +58,65 @@ struct AskCard: View {
     let isOpen: Bool
     @ObservedObject private var store = Store.shared
     @ObservedObject private var progresses = AskProgresses.shared
-    private var progress: Binding<AskProgress> { progresses.binding(for: line.id) }
 
     var body: some View {
         if let ask = line.ask, let project = store.projects.first(where: { $0.dir == dir }) {
-            if !isOpen {
-                Answered(ask: ask)
-            } else {
-                Group {
-                    if ask.layout == .together && ask.questions.count > 1 {
-                        together(ask, project)
-                    } else {
-                        AskSteps(ask: ask, progress: progress) { answers in withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: answers, in: project) } }
-                    }
-                }
-                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
-                .frame(maxWidth: 620, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            AskCardView(ask: ask, isOpen: isOpen, progress: progresses.binding(for: line.id)) { answers in
+                withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: answers, in: project) }
             }
+        }
+    }
+}
+
+/// The card itself, drawn from plain values so the gallery can show it without an app or a chat.
+struct AskCardView: View {
+    let ask: Talk.Ask
+    let isOpen: Bool
+    @Binding var progress: AskProgress
+    let send: ([String]) -> Void
+
+    var body: some View {
+        if !isOpen {
+            Answered(ask: ask)
+        } else {
+            Group {
+                if ask.layout == .together && ask.questions.count > 1 {
+                    together
+                } else {
+                    AskSteps(ask: ask, progress: $progress, send: send)
+                }
+            }
+            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+            .frame(maxWidth: 620, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     /// Every question at once, each answered by a chip.
-    private func together(_ ask: Talk.Ask, _ project: LampProject) -> some View {
-        let progress = progress
-        return VStack(alignment: .leading, spacing: 0) {
+    private var together: some View {
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(ask.questions.enumerated()), id: \.offset) { index, question in
                 if index > 0 { Divider() }
                 VStack(alignment: .leading, spacing: 8) {
                     Text(question.question).font(.headline)
-                    ChipRow(options: question.options, chosen: progress.wrappedValue.answers[index],
-                            own: Binding(get: { progress.wrappedValue.own[index] ?? "" }, set: { progress.wrappedValue.type($0, for: index) })) {
-                        progress.wrappedValue.choose($0, for: index)
+                    ChipRow(options: question.options, chosen: progress.answers[index],
+                            own: Binding(get: { progress.own[index] ?? "" }, set: { progress.type($0, for: index) })) {
+                        progress.choose($0, for: index)
                     }
                 }
                 .padding(.horizontal, 16).padding(.vertical, 12)
             }
             Divider()
             HStack {
-                if progress.wrappedValue.answers.isEmpty {
-                    Button(Talk.youDecide) { withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: progress.wrappedValue.all(ask.questions.count), in: project) } }
+                if progress.answers.isEmpty {
+                    Button(Talk.youDecide) { send(progress.all(ask.questions.count)) }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Send") { withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: progress.wrappedValue.all(ask.questions.count), in: project) } }
+                Button("Send") { send(progress.all(ask.questions.count)) }
                     .buttonStyle(.borderedProminent)
-                    .disabled(progress.wrappedValue.answers.isEmpty)
+                    .disabled(progress.answers.isEmpty)
             }
             .padding(.horizontal, 16).padding(.vertical, 10)
         }
@@ -447,54 +459,66 @@ struct ResultCard: View {
 
     var body: some View {
         if let result = line.result, let project = store.projects.first(where: { $0.dir == dir }) {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .center, spacing: 14) {
-                    if let version = result.version,
-                       let picture = NSImage(contentsOf: Versions.pictureURL(in: project, for: version)) {
-                        Image(nsImage: picture)
-                            .resizable().scaledToFit()
-                            .frame(maxWidth: 150, maxHeight: 100)
-                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(.quaternary))
-                            .accessibilityHidden(true)
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(result.summary).font(.headline).fixedSize(horizontal: false, vertical: true)
-                        // A card saved while it had rows of what's new: where to find each, as part of its
-                        // sentence rather than rows under the picture.
-                        ForEach(Array((result.news ?? []).enumerated()), id: \.offset) { _, news in
-                            Text("\(news.what): \(news.place)").font(.callout).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    Spacer(minLength: 0)
+            ResultCardView(result: result, isCurrent: isCurrent,
+                           picture: result.version.flatMap { NSImage(contentsOf: Versions.pictureURL(in: project, for: $0)) }) {
+                store.send(Talk.tryRequest($0), to: project)
+            }
+        }
+    }
+}
+
+/// The card itself, drawn from plain values so the gallery can show it without an app or a chat.
+struct ResultCardView: View {
+    let result: Talk.Result
+    let isCurrent: Bool
+    let picture: NSImage?
+    let tryIt: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 14) {
+                if let picture {
+                    Image(nsImage: picture)
+                        .resizable().scaledToFit()
+                        .frame(maxWidth: 150, maxHeight: 100)
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(.quaternary))
+                        .accessibilityHidden(true)
                 }
-                .padding(14)
-                // A card saved while guesses were buttons keeps the one the person turned, as what they chose:
-                // the chat doesn't show the message that click sent (`Talk.shows`).
-                ForEach(Array(result.guesses.enumerated()), id: \.offset) { index, guess in
-                    if result.switched?.contains(index) == true {
-                        Divider()
-                        Label {
-                            Text(guess.instead).fontWeight(.medium)
-                        } icon: {
-                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                        }
-                        .padding(.horizontal, 14).padding(.vertical, 9)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(result.summary).font(.headline).fixedSize(horizontal: false, vertical: true)
+                    // A card saved while it had rows of what's new: where to find each, as part of its
+                    // sentence rather than rows under the picture.
+                    ForEach(Array((result.news ?? []).enumerated()), id: \.offset) { _, news in
+                        Text("\(news.what): \(news.place)").font(.callout).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                if isCurrent, let untried = result.untried {
-                    row(untried, detail: "Lamp hasn't tested this yet.", button: "Have Lamp Test It") {
-                        store.send(Talk.tryRequest(untried), to: project)
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            // A card saved while guesses were buttons keeps the one the person turned, as what they chose:
+            // the chat doesn't show the message that click sent (`Talk.shows`).
+            ForEach(Array(result.guesses.enumerated()), id: \.offset) { index, guess in
+                if result.switched?.contains(index) == true {
+                    Divider()
+                    Label {
+                        Text(guess.instead).fontWeight(.medium)
+                    } icon: {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                     }
+                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
-            .frame(maxWidth: 620, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            if isCurrent, let untried = result.untried {
+                row(untried, detail: "Lamp hasn't tested this yet.", button: "Have Lamp Test It") { tryIt(untried) }
+            }
         }
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+        .frame(maxWidth: 620, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func row(_ title: String, detail: String?, button: String? = nil, action: @escaping () -> Void = {}) -> some View {
