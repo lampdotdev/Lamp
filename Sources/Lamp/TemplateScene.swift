@@ -79,6 +79,9 @@ extension Template {
 
         @State private var scene = LampScene()
         @State private var studio: String?
+        /// Whether the scene has keyboard focus: it does when it appears and when it's clicked, and loses it when
+        /// Tab or a click gives another control focus, whose keys are then its own.
+        @FocusState private var focused: Bool
 
         var body: some View {
             GeometryReader { geometry in
@@ -86,11 +89,21 @@ extension Template {
                     await scene.start(&content, sky: sky, rig: camera, build: build, update: update)
                 }
                 .realityViewCameraControls(.none)
+                .focusable()
+                .focusEffectDisabled()
+                .focused($focused)
+                .onChange(of: focused) { _, now in scene.hasFocus = now }
                 .gesture(DragGesture(minimumDistance: 0)
-                    .onChanged { scene.dragChanged(from: $0.startLocation, to: $0.location) }
+                    .onChanged {
+                        if !focused { focused = true }
+                        scene.dragChanged(from: $0.startLocation, to: $0.location)
+                    }
                     .onEnded { scene.dragEnded(from: $0.startLocation, to: $0.location) })
                 .background(LampSceneWindow { scene.window = $0 })
-                .onAppear { scene.viewSize = geometry.size }
+                .onAppear {
+                    scene.viewSize = geometry.size
+                    focused = true
+                }
                 .onChange(of: geometry.size) { _, size in scene.viewSize = size }
             }
             .overlay {
@@ -133,6 +146,8 @@ extension Template {
         private var keys = Set<UInt16>()
         /// The window the scene is drawn in: only its keys are the scene's.
         weak var window: NSWindow?
+        /// Whether the scene has keyboard focus (see `LampSceneView.focused`).
+        var hasFocus = false
         private var subscription: EventSubscription?
         private var monitor: Any?
         private var update: ((LampScene, Float) -> Void)?
@@ -179,14 +194,14 @@ extension Template {
                     self.keys.remove(event.keyCode)
                     return event
                 }
-                // Only what's aimed at this scene's own window, and never while something in it takes typing (a text
-                // field, a search box): those keys are theirs, as are other windows', sheets' and menu shortcuts.
                 guard let window = self.window, event.window === window else { return event }
                 if event.type == .scrollWheel {
                     self.orbitDistance = max(0.3, self.orbitDistance * (1 - Float(event.scrollingDeltaY) * 0.01))
                     return event
                 }
-                if event.modifierFlags.contains(.command) || window.firstResponder is NSText { return event }
+                // Keys only while the scene has focus: when a field, a button or anything else in the window has it
+                // (by a click or Tab), its typing, Space, Return and Tab are its own, as menu shortcuts always are.
+                guard self.hasFocus, !event.modifierFlags.contains(.command), !(window.firstResponder is NSText) else { return event }
                 self.keys.insert(event.keyCode)
                 return nil
             }
