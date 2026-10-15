@@ -708,6 +708,11 @@ final class SidebarServer {
                 for index in state.lines.indices where state.lines[index].pointed != nil {
                     state.lines[index].attachments = (state.lines[index].attachments ?? []) + asFile(state.lines[index].pointed)
                 }
+                state.queued = state.queued?.map { message in
+                    var message = message
+                    message.attachments += asFile(message.pointed)
+                    return message
+                }
             }
             guard let data = SidebarWire.encode(state), force || data != last else { return }
             last = data

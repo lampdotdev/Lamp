@@ -327,7 +327,15 @@ struct ProjectView: View {
     private func pointedPill(_ pointed: PointedAt) -> some View {
         ChatLook.PointedPill(title: pointed.title, detail: pointed.detail,
                              chooseAgain: store.canPoint(in: project) ? { MagicPanel.shared.pointAgain(in: project) } : nil,
-                             remove: { self.pointed = nil })
+                             remove: removePointed)
+    }
+
+    /// Lets what was pointed at go, and says so to the chat beside the app at once: words typed here are saved
+    /// without telling it, but a pill it still showed would be sent from there as if it were still wanted.
+    private func removePointed() {
+        pointed = nil
+        saveDraft()
+        if let current = store.current(project) { store.announceDraft(of: current) }
     }
 
     /// The files going with the next message, above the message box.
