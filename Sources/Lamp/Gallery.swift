@@ -120,7 +120,7 @@ enum Gallery {
         pointed("An area", detail: nil, typed: "Put a photo of the plant here.", title: "Top left area"),
         Entry(group: "Pointed at", name: "Sent") {
             AnyView(ChatLook.UserRow(text: "Let me add how much water, too.", busy: false, goBack: nil, sendAgain: {}, isLatest: true) {
-                ChatLook.PointedCard(app: "", title: "Watered button", detail: "Kitchen basil", picture: watered)
+                ChatLook.PointedPill(title: "Watered button", detail: "Kitchen basil", preview: {})
             })
         },
     ]
@@ -134,38 +134,10 @@ enum Gallery {
                     .frame(maxWidth: .infinity, minHeight: Composer.lineHeight, alignment: .leading)
                     .padding(.leading, 5)
             } above: {
-                ChatLook.PointedCard(app: "Garden Notes", title: title, detail: detail, picture: title == "Top left area" ? screenshot : watered,
-                                     preview: {}, chooseAgain: canChooseAgain ? {} : nil, remove: {})
+                ChatLook.PointedPill(title: title, detail: detail, chooseAgain: canChooseAgain ? {} : nil, remove: {})
                     .padding(.top, 4)
             })
         }
-    }
-
-    /// A stand-in for what was pointed at: a small bordered button, with the margin the app leaves around it.
-    private static let watered = NSImage(size: NSSize(width: 100, height: 56), flipped: true) { rect in
-        NSColor.textBackgroundColor.setFill()
-        rect.fill()
-        let button = NSBezierPath(roundedRect: NSRect(x: 12, y: 12, width: 76, height: 32), xRadius: 6, yRadius: 6)
-        NSColor.separatorColor.setStroke()
-        button.lineWidth = 1
-        button.stroke()
-        let text = NSAttributedString(string: "Watered", attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
-        text.draw(at: NSPoint(x: 50 - text.size().width / 2, y: 28 - text.size().height / 2))
-        return true
-    }
-
-    /// A stand-in for the app's picture: a window with a sidebar, in the proportions of a real one.
-    private static let screenshot = NSImage(size: NSSize(width: 600, height: 400), flipped: true) { rect in
-        NSColor.windowBackgroundColor.setFill()
-        rect.fill()
-        NSColor.controlBackgroundColor.setFill()
-        NSRect(x: 0, y: 0, width: 160, height: rect.height).fill()
-        NSColor.controlAccentColor.withAlphaComponent(0.8).setFill()
-        for row in 0..<5 {
-            NSBezierPath(roundedRect: NSRect(x: 190, y: 40 + CGFloat(row) * 60, width: 380 - CGFloat(row % 3) * 70, height: 34),
-                         xRadius: 8, yRadius: 8).fill()
-        }
-        return true
     }
 }
 

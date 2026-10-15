@@ -3769,23 +3769,24 @@ enum Template {
             }
 
             /// What a named thing is part of, to tell it from others like it: the "Kitchen basil" of one of several
-            /// "Watered" buttons. The nearest named thing around it (a row says what's in it), else short words on
-            /// its own line to its left, else the heading just above it, in its column.
+            /// "Watered" buttons. Short words on its own line to its left; else the nearest named thing around it
+            /// that isn't most of the window (a list's row says what's in it, "Kitchen basil · Last watered…"); else
+            /// the heading just above it in its column, for things laid out without rows.
             private func context(of index: Int) -> String {
                 let own = rect(items[index])
                 let label = items[index].label.isEmpty ? items[index].value : items[index].label
                 func short(_ text: String) -> Bool { !text.isEmpty && text.count <= 40 && text != label && !text.contains("\n") }
-                let around = items.indices.filter { other in
-                    other != index && rect(items[other]).contains(own) && rect(items[other]) != own
-                        && items[other].frame.width * items[other].frame.height < items[index].frame.width * items[index].frame.height * 40
-                        && items[other].label.components(separatedBy: " · ").contains(where: short)
-                }
-                .min { rect(items[$0]).width * rect(items[$0]).height < rect(items[$1]).width * rect(items[$1]).height }
-                if let around, let first = items[around].label.components(separatedBy: " · ").first(where: short) { return first }
                 let words = items.indices.filter { $0 != index && ["text", "heading"].contains(items[$0].role) && short(items[$0].label) }
                 let left = words.filter { rect(items[$0]).maxX <= own.minX + 2 && abs(rect(items[$0]).midY - own.midY) < own.height / 2 + 4 }
                     .max { rect(items[$0]).maxX < rect(items[$1]).maxX }
                 if let left { return items[left].label }
+                let around = items.indices.filter { other in
+                    let box = rect(items[other])
+                    return other != index && box.contains(own) && box != own && box.width * box.height < bounds.width * bounds.height / 2
+                        && items[other].label.components(separatedBy: " · ").contains(where: short)
+                }
+                .min { rect(items[$0]).width * rect(items[$0]).height < rect(items[$1]).width * rect(items[$1]).height }
+                if let around, let first = items[around].label.components(separatedBy: " · ").first(where: short) { return first }
                 // Going up from it, the first words larger than the line just above it: a plant's name over the
                 // line about it, not the page's title further up. With none larger, that nearest line.
                 let above = words.filter {
@@ -3795,8 +3796,8 @@ enum Template {
                 }
                 .sorted { rect(items[$0]).maxY > rect(items[$1]).maxY }
                 guard let nearest = above.first else { return "" }
-                let heading = above.first { items[$0].role == "heading" || rect(items[$0]).height > rect(items[nearest]).height + 2 }
-                return items[heading ?? nearest].label
+                let larger = above.first { items[$0].role == "heading" || rect(items[$0]).height > rect(items[nearest]).height + 2 }
+                return items[larger ?? nearest].label
             }
 
             /// Leaves a picture of `box` (this view's points) in the runtime folder and tells Lamp what it is.
@@ -3804,13 +3805,12 @@ enum Template {
                 guard let window = target else { return stop() }
                 let scale = scale
                 stop(tell: false)
-                // The picture is taken once the outline is off the screen, a little wider than the thing itself:
-                // enough to show its edge, not so much that its neighbours crowd its card in the chat.
+                // The picture is taken once the outline is off the screen, a little wider than the thing itself.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { MainActor.assumeIsolated {
                     // What it is and what it says; Lamp names the picture with them.
                     var info: [String: String] = ["role": role, "label": label, "context": context]
                     if let png = LampRuntime.picture(of: window), let image = NSBitmapImageRep(data: png)?.cgImage {
-                        let margin = 6 * scale
+                        let margin = 12 * scale
                         let crop = CGRect(x: box.minX * scale, y: box.minY * scale, width: box.width * scale, height: box.height * scale)
                             .insetBy(dx: -margin, dy: -margin)
                             .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))

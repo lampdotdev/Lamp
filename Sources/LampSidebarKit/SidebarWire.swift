@@ -64,7 +64,7 @@ public struct SidebarState: Codable, Equatable {
     public var dictationProblem: SidebarProblem?
     /// A message is on its way in (Lamp's window or this one sent it): nothing else is sent meanwhile.
     public var submitting: Bool?
-    /// What was pointed at in the app, on its own card in the message box. Its picture counts as the attachment
+    /// What was pointed at in the app, on its own pill in the message box. Its picture counts as the attachment
     /// after the last of `attachments`, for `SidebarCommand.preview` and `removeAttachment`.
     public var pointed: SidebarPointed?
 
@@ -180,18 +180,16 @@ public struct SidebarApproval: Codable, Equatable {
     }
 }
 
-/// What was pointed at in the app: what it is, what it's part of, its picture, and whether it can be pointed at
-/// again now (the app is open on this Mac).
+/// What was pointed at in the app: what it is, what it's part of, and whether it can be pointed at again now
+/// (the app is open on this Mac). Its picture stays in Lamp and is shown from there (`SidebarCommand.preview`).
 public struct SidebarPointed: Codable, Equatable {
     public var title: String
     public var detail: String?
-    public var picture: Data?
     public var canChooseAgain: Bool?
 
-    public init(title: String, detail: String?, picture: Data?, canChooseAgain: Bool? = nil) {
+    public init(title: String, detail: String?, canChooseAgain: Bool? = nil) {
         self.title = title
         self.detail = detail
-        self.picture = picture
         self.canChooseAgain = canChooseAgain
     }
 }
@@ -214,7 +212,7 @@ public struct SidebarAttachment: Codable, Equatable {
 public enum SidebarCommand: Codable, Equatable {
     /// The first thing a sidebar says: which shape of `SidebarState` it reads. One that says nothing is from
     /// before the summary line, which it can't read; one before 3, from before the notes receipt; one before 4, from before offers;
-    /// one before 5, from before what was pointed at had a card of its own.
+    /// one before 5, from before what was pointed at had a pill of its own.
     case hello(Int)
     case send(String)
     case answer(UUID, [String])

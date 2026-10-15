@@ -217,11 +217,11 @@ final class SidebarServer {
                                  working: progress?.activity, workingSince: progress?.started, empty: log.isEmpty, busy: busy,
                                  draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
                                  attachments: draft.attachments.map { Self.attachment($0) })
-        state.pointed = draft.pointed.map { Self.pointed($0, url: $0.url, canChooseAgain: store.canPoint(in: project)) }
+        state.pointed = draft.pointed.map { Self.pointed($0, canChooseAgain: store.canPoint(in: project)) }
         state.queued = (store.queued[project.id] ?? []).map { message in
             var queued = SidebarQueued(id: message.id, text: message.text,
                                        attachments: message.attachments.map { Self.attachment($0) })
-            queued.pointed = message.pointed.map { Self.pointed($0, url: $0.url) }
+            queued.pointed = message.pointed.map { Self.pointed($0) }
             return queued
         }
         state.waitingForSetup = !store.setup.ready
@@ -273,7 +273,7 @@ final class SidebarServer {
                     let (files, pointed) = line.draftAttachments(in: project)
                     var request = SidebarLine(id: line.id, kind: .user, text: line.text, gap: gap,
                                               attachments: files.isEmpty ? nil : files.map { attachment($0) })
-                    request.pointed = pointed.map { Self.pointed($0, url: $0.url) }
+                    request.pointed = pointed.map { Self.pointed($0) }
                     request.canGoBack = line.version != nil
                     request.canSendAgain = canSendAgain && line.canSendAgain
                     request.isLatest = line.id == latestRequest
@@ -454,23 +454,9 @@ final class SidebarServer {
     /// under the receipt.
     fileprivate static var noteProblems: [UUID: String] = [:]
 
-    /// A picture small enough to send every time the chat changes.
-    private static var pictures: [URL: Data] = [:]
-    fileprivate static func picture(_ url: URL) -> Data? {
-        if let data = pictures[url] { return data }
-        guard let image = NSImage(contentsOf: url) else { return nil }
-        let scale = min(300 / max(image.size.width, 1), 200 / max(image.size.height, 1), 1)
-        let size = NSSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
-        let small = NSImage(size: size, flipped: false) { rect in image.draw(in: rect); return true }
-        guard let tiff = small.tiffRepresentation,
-              let data = NSBitmapImageRep(data: tiff)?.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return nil }
-        pictures[url] = data
-        return data
-    }
-
-    /// What was pointed at, as the sidebar shows it, with a picture sharp enough for its card.
-    fileprivate static func pointed(_ pointed: PointedAt, url: URL?, canChooseAgain: Bool? = nil) -> SidebarPointed {
-        SidebarPointed(title: pointed.title, detail: pointed.detail, picture: url.flatMap { picture($0) }, canChooseAgain: canChooseAgain)
+    /// What was pointed at, as the sidebar shows it.
+    fileprivate static func pointed(_ pointed: PointedAt, canChooseAgain: Bool? = nil) -> SidebarPointed {
+        SidebarPointed(title: pointed.title, detail: pointed.detail, canChooseAgain: canChooseAgain)
     }
 
     private static var thumbnails: [URL: Data] = [:]
@@ -713,10 +699,10 @@ final class SidebarServer {
             // Nor one from before the notes receipt a receipt.
             if version < 3 { state.lines.removeAll { $0.kind == .note } }
             if version < 4 { state.lines.removeAll { $0.kind == .offer || $0.kind == .action } }
-            // What was pointed at, as the picture it was before it had a card.
+            // What was pointed at, as the file it was before it had a pill of its own.
             if version < 5 {
                 func asFile(_ pointed: SidebarPointed?) -> [SidebarAttachment] {
-                    pointed.map { [SidebarAttachment(name: $0.title + ".png", thumbnail: $0.picture, isImage: true)] } ?? []
+                    pointed.map { [SidebarAttachment(name: $0.title + ".png", thumbnail: nil)] } ?? []
                 }
                 state.attachments += asFile(state.pointed)
                 for index in state.lines.indices where state.lines[index].pointed != nil {

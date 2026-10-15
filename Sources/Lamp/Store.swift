@@ -708,7 +708,7 @@ final class Store: ObservableObject {
     struct Draft: Equatable {
         var text = ""
         var attachments: [URL] = []
-        /// What was pointed at in the app, shown as its own card in the box rather than among `attachments`.
+        /// What was pointed at in the app, shown as its own pill in the box rather than among `attachments`.
         var pointed: PointedAt?
         /// The request in the chat this takes the place of when it's sent (see `sendAgain`).
         var replacing: UUID?

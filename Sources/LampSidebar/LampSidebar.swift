@@ -197,7 +197,7 @@ private struct Chat: View {
                         ForEach(state.queued ?? []) { message in
                             ChatLook.QueuedRow(text: message.text, waitingForSetup: state.waitingForSetup ?? false,
                                                onRemove: { link.send(.unqueue(message.id)) }) {
-                                if let pointed = message.pointed { PointedCard(pointed: pointed) }
+                                if let pointed = message.pointed { PointedPill(pointed: pointed) }
                                 ForEach(message.attachments.indices, id: \.self) { index in
                                     AttachmentChip(attachment: message.attachments[index])
                                 }
@@ -281,10 +281,9 @@ private struct LineView: View {
                              sendAgain: line.canSendAgain == true ? { link.send(.takeBack(line.id)) } : nil,
                              isLatest: line.isLatest ?? false) {
                 let attachments = line.attachments ?? []
-                // What was pointed at keeps its card; its picture counts after the other files.
+                // What was pointed at keeps its pill; its picture counts after the other files.
                 if let pointed = line.pointed {
-                    Button { link.send(.preview(line.id, attachments.count)) } label: { PointedCard(pointed: pointed) }
-                        .buttonStyle(.plain)
+                    PointedPill(pointed: pointed, preview: { link.send(.preview(line.id, attachments.count)) })
                 }
                 ForEach(attachments.indices, id: \.self) { index in
                     // A click shows it in Quick Look, as in Lamp's window.
@@ -393,17 +392,15 @@ private struct Thumbnail: View {
     }
 }
 
-/// What was pointed at, as Lamp's window shows it: in the message box with its buttons, else the smaller card.
-private struct PointedCard: View {
+/// What was pointed at, as Lamp's window shows it.
+private struct PointedPill: View {
     let pointed: SidebarPointed
-    var app = ""
-    var preview: (() -> Void)?
     var chooseAgain: (() -> Void)?
+    var preview: (() -> Void)?
     var remove: (() -> Void)?
 
     var body: some View {
-        ChatLook.PointedCard(app: app, title: pointed.title, detail: pointed.detail, picture: pointed.picture.flatMap { NSImage(data: $0) },
-                             preview: preview, chooseAgain: chooseAgain, remove: remove)
+        ChatLook.PointedPill(title: pointed.title, detail: pointed.detail, chooseAgain: chooseAgain, preview: preview, remove: remove)
     }
 }
 
@@ -480,8 +477,7 @@ private struct ComposerRow: View {
         } above: {
             if let pointed = state.pointed {
                 // Its picture counts after the other files (`SidebarState.pointed`).
-                PointedCard(pointed: pointed, app: state.app, preview: { link.send(.preview(nil, state.attachments.count)) },
-                            chooseAgain: pointed.canChooseAgain == true ? { link.send(.pointAgain) } : nil,
+                PointedPill(pointed: pointed, chooseAgain: pointed.canChooseAgain == true ? { link.send(.pointAgain) } : nil,
                             remove: { link.send(.removeAttachment(state.attachments.count)) })
                     .padding(.top, 4)
             }

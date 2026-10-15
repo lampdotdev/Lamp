@@ -135,7 +135,7 @@ final class MagicPanel {
 
     // MARK: Pointing
 
-    /// The pointed-at thing goes into the message box as a card: its picture, named after it ("Save button.png"),
+    /// The pointed-at thing goes into the message box as a pill: its picture, named after it ("Save button.png"),
     /// and what it is, so the person writes their message as they would and the agent sees what it is and what it
     /// looks like. Pointing again replaces it. Both come from the app, so neither is trusted further than that:
     /// only a picture the app left in its own runtime folder, as Lamp asked, is taken, and its name is made from
@@ -293,7 +293,7 @@ struct PointedAt: Codable, Equatable {
 }
 
 extension LogLine {
-    /// A request's files as the message box holds them when it's taken back: what was pointed at on its own card,
+    /// A request's files as the message box holds them when it's taken back: what was pointed at on its own pill,
     /// the rest as files.
     func draftAttachments(in project: LampProject) -> (attachments: [URL], pointed: PointedAt?) {
         let names = (attachments ?? []).filter { $0 != pointed?.picture }

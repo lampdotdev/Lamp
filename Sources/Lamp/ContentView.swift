@@ -323,16 +323,12 @@ struct ProjectView: View {
         return suggestion
     }
 
-    /// What was pointed at in the app, going with the next message, as its card in the message box.
-    private func pointedCard(_ pointed: PointedAt) -> some View {
-        ChatLook.PointedCard(app: project.name, title: pointed.title, detail: pointed.detail,
-                             picture: pointed.url.flatMap { NSImage(contentsOf: $0) },
-                             preview: pointed.url == nil ? nil : { previewPointed = pointed.url },
+    /// What was pointed at in the app, going with the next message, as its pill in the message box.
+    private func pointedPill(_ pointed: PointedAt) -> some View {
+        ChatLook.PointedPill(title: pointed.title, detail: pointed.detail,
                              chooseAgain: store.canPoint(in: project) ? { MagicPanel.shared.pointAgain(in: project) } : nil,
                              remove: { self.pointed = nil })
-            .quickLookPreview($previewPointed)
     }
-    @State private var previewPointed: URL?
 
     /// The files going with the next message, above the message box.
     private var pendingAttachments: some View {
@@ -516,7 +512,7 @@ struct ProjectView: View {
         ForEach(queued) { message in
             ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready, onRemove: { store.unqueue(message, from: project) }) {
                 if let pointed = message.pointed {
-                    ChatLook.PointedCard(app: "", title: pointed.title, detail: pointed.detail, picture: pointed.url.flatMap { NSImage(contentsOf: $0) })
+                    ChatLook.PointedPill(title: pointed.title, detail: pointed.detail)
                 }
                 ForEach(message.attachments, id: \.self) { AttachmentChip(url: $0, siblings: message.attachments) }
             }
@@ -544,7 +540,7 @@ struct ProjectView: View {
                      onSubmit: send, onFiles: attach)
                 .frame(height: composerHeight)
         } above: {
-            if let pointed { pointedCard(pointed).padding(.top, 4) }
+            if let pointed { pointedPill(pointed).padding(.top, 4) }
             if !attachments.isEmpty { pendingAttachments }
         } beside: {
             if hasMicrophone {
