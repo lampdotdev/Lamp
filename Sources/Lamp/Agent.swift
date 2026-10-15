@@ -39,7 +39,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,ask,show_result"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,ask,show_result,write_wish"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -54,7 +54,7 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static var tryRules: String { talkRules + lookRules + planRules + artRules + setupRules + (Memory.isOn ? memoryRules : "") }
+    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + (Memory.isOn ? memoryRules : "") }
 
     /// For the engines whose shell commands run confined (Sandbox): what the shell can and can't reach.
     static let sandboxNote = """
@@ -83,7 +83,9 @@ enum Agent {
     `target` to an id or exact name from that list (click a button or switch, type into a field, press a key \
     in it), and read the list for exact words and values rather than the picture. Use x and y only for what \
     the list doesn't have: a drawing, a canvas, a chart, a game board. A control the list shows with no name \
-    has no accessibility label: give it one. It tells you what each action did and whether the window \
+    has no accessibility label: give it one. Name what's drawn too: in a game or anything drawn in a Canvas or \
+    SpriteKit, make each thing the person would point at (the ball, a piece, a character) an accessibility element \
+    with its name, so it's in the list and the person can point at it from the chat. It tells you what each action did and whether the window \
     changed: when nothing changed, a click by point probably missed, so aim again before deciding the app is \
     broken. It uses the app as last built, so call `look_at_app` again after editing code.
     - Never open the print panel while trying an app (a Print button, File > Print, ⌘P): it makes macOS ask \
@@ -133,6 +135,21 @@ enum Agent {
     thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
     message, the same as something typed. If they type something that isn't one of your options, that's their \
     answer: follow it.
+    """
+
+    /// "Help me find one" on Lamp's desk starts a wish with this request (`LampProject.finding`).
+    static let findingRequest = "Help me find something to wish for."
+
+    private static let findRules = """
+
+    - When the person asks you to help them find something to wish for, nothing is built yet: change no files. \
+    Find it with them like a short wizard, in `ask` cards: first which of four everyday moments sounds like them, \
+    each a situation from a different part of life (home, family, health, money, work, play) in plain words, such \
+    as "Checking if a delivery is close"; then one or two questions about the one they pick: who it's for, when it \
+    comes up, and where help would suit them (their Mac, iPhone or watch, the menu bar, a widget, or quietly in \
+    the background). Ask about their days, never about apps. Then call `write_wish` with the wish in their words, \
+    as a request to Lamp, and end. They send it, changed or not: that message is the wish. Build it then, \
+    without asking again.
     """
 
     private static let artRules = """

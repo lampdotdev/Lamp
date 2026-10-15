@@ -11,23 +11,30 @@ struct LampApp: App {
             ContentView()
                 .environmentObject(store)
         }
+        // Each wish's chat in a window of its own, listed in the Window menu like a document's.
+        WindowGroup("Wish", id: "wish", for: String.self) { $id in
+            WishWindow(id: $id)
+                .environmentObject(store)
+        }
+        .defaultSize(width: 980, height: 720)
+        .commandsRemoved()
         .commands {
             AboutCommands()
             CheckForUpdatesCommand()
             LampHelpCommands()
             CommandGroup(replacing: .newItem) {
-                Button("New") { store.create() }
+                Button("New Wish") { store.newWish() }
                     .keyboardShortcut("n")
             }
             CommandGroup(after: .newItem) {
-                Button("Import Shared App…") { store.chooseImport() }
+                Button("Import Shared Wish…") { store.chooseImport() }
                     .keyboardShortcut("o")
                 Button("Duplicate") { if let project = store.selected { Task { await store.duplicate(project) } } }
                     .disabled(store.selected.map { store.busy.contains($0.id) || !$0.scaffolded || $0.untitled } ?? true)
             }
             CommandGroup(after: .pasteboard) {
-                // The same as Share ▸ Copy App File in the toolbar; here so the shortcut the Help lists exists.
-                Button("Copy App File") { if let project = store.selected { store.copyAppFile(project) } }
+                // The same as Share ▸ Copy Wish File in the toolbar; here so the shortcut the Help lists exists.
+                Button("Copy Wish File") { if let project = store.selected { store.copyAppFile(project) } }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
                     .disabled(store.selected.map { !store.canShare($0) } ?? true)
             }
@@ -38,6 +45,7 @@ struct LampApp: App {
                 .keyboardShortcut("s")
                 .disabled(store.selected == nil)
             }
+            CommandGroup(after: .windowArrangement) { GalleryCommand() }
         }
         Settings {
             SettingsView().environmentObject(store)
@@ -45,6 +53,7 @@ struct LampApp: App {
         LampHelpScene()
         BugReportScene()
         AboutScene()
+        GalleryScene()
     }
 }
 
@@ -94,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Subprocess.killStopping()
             guard Store.shared.isWorking else { return .terminateNow }
             let alert = NSAlert()
-            alert.messageText = "An app is still being worked on. Quit anyway?"
+            alert.messageText = "A wish is still being worked on. Quit anyway?"
             alert.informativeText = "Quitting stops the work. Any changes made so far are kept; you can undo them later."
             alert.addButton(withTitle: "Quit")
             alert.addButton(withTitle: "Cancel")

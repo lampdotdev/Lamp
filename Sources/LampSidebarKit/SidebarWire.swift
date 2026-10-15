@@ -188,3 +188,10 @@ public final class SidebarOutbox {
         }
     }
 }
+
+/// What the app hosting the sidebar tells it over their own connection: where the sidebar's lower left corner is on
+/// screen, so its message box reports its caret where it really is (`Composer.hostOrigin`). The only thing the app
+/// can say to it, and nothing that reaches Lamp. LampSupport.swift declares the same.
+@objc(LampSidebarPlacement) public protocol SidebarPlacement {
+    func place(x: Double, y: Double)
+}

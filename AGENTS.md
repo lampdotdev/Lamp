@@ -20,7 +20,7 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `ask`, `show_result`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `ask`, `show_result`, `write_wish`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
@@ -31,7 +31,7 @@ A capability given to one engine must be given to all of them that can take it, 
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `ask`, `show_result`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `ask`, `show_result`, `write_wish`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **How the agent talks** (`Talk`, `TalkCards.swift`): in short sentences and in cards, not paragraphs, so building
   feels like a short wizard: a new app starts with two or three questions as a card unless the request already
@@ -166,6 +166,27 @@ A capability given to one engine must be given to all of them that can take it, 
 
 Before opening a PR that touches any of this, check each engine's `case` in `Agent.run` and its parser,
 and say in the PR description which engines you tried.
+
+## The desk
+
+Lamp's window opens on the desk (`WishDesk`, `Desk.swift`): the person's wishes as icons, and above them the
+one place to make a new one. Everything someone makes with Lamp is a **wish** in what they read; a wish may
+be made of an app, a widget, a menu bar item, a watch app, so "app" stays where it means that piece. A wish is
+typed in the bar, or said with the talk button beside it (`TalkButton`, moving with `Dictation.level`); either
+way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so it passes the same
+setup checks as anything typed in a chat. A click on a wish uses it (`Store.use`); one still coming true, or
+waiting on an answer, opens its chat instead, and Change… on its menu always does. Under each icon is what's
+going on with it or where it lives (`WishPlace`, read from its files), and when it's used where nothing comes
+forward (the menu bar, a widget, the background, the person's own phone) the desk says so in `WishHUD`, a
+large translucent square like macOS's old volume display. Its chat has a back button (⌘[) to the desk.
+
+"Help me find one" (`Store.findWish`) is the site's wizard in the app, held in the ordinary chat: a new wish
+marked `finding` whose first request is `Agent.findingRequest`. The agent asks about the person's days in
+`ask` cards (`Agent.findRules`), never about apps, and ends by writing the wish into the message box with
+`write_wish`, word by word as a wish from the site arrives (`Store.writeIn`), for the person to change and
+send. Until that message, nothing is named, scaffolded, built or saved (`startQueued`, `turn`): the wish it
+becomes may be an iPhone app, which a scaffold already written as a Mac app would rule out. The message that
+isn't an answer to a card names it like any first request and ends `finding`.
 
 ## Two Lamps on one Mac
 
@@ -443,12 +464,15 @@ the app; the rule (`Agent.Rules.macGenerated`) asks the agent to keep what the p
 quits it leaves a picture of its front window and where it was in its runtime folder (`LampMagic.leaveCover`); while
 the app's turn is going, Lamp shows that picture where the window was (`MagicPanel.showCover`, a borderless window
 marked "Updating…"), the new copy opens its first window in the same place (`putBack`), and the picture fades out
-once the new copy reports its window (or goes when the turn ends without it). The title bar above the chat has its
-two buttons, drawn by the app (`LampMagic.fit`), since they do only what the app could do anyway: open the chat in
-Lamp's window, and point. The chat sits below the title bar, on a solid background that runs up behind them. The
-crosshair lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
-thing under the pointer from its own accessibility tree (`LampDriver.elements`), and on a click leaves a cropped
-picture of it in its runtime folder and says what it is; Lamp attaches that picture to the message, named after the
+once the new copy reports its window (or goes when the turn ends without it). The chat's two buttons sit in
+the strip above it where the title bar is, as the column's own (`LampSidebar.embed`), drawn by the app since they do
+only what the app could do anyway: open the chat in Lamp's window, and point. They can't be title bar accessories:
+with the chat a full-height inspector, the window's split view lies over the title bar there and takes the clicks.
+The chat sits below the strip, on a solid background that runs up behind them. The crosshair lets the person point
+at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), outlines the smallest named
+thing under the pointer from its own accessibility tree (`LampDriver.elements`), a click where nothing is named (a game's
+ball, a drawing) takes the area around it, and a drag draws a box of the person's own; it then leaves a cropped
+picture in its runtime folder and says what it is (an area is named by where it is, "Top left area"); Lamp attaches that picture to the message, named after the
 thing ("Save button.png", `MagicPanel.name`), and takes a picture only from that folder.
 
 Whether the change was asked for beside the app or in Lamp's window, a change goes into the open app without a restart when it can (`LiveReload`). The
@@ -806,6 +830,16 @@ card), check:
   indented under it and shows only while that's on. Details for the curious (paths, versions) go in `.help`.
 - **Same words for the same thing**, in every screen, Help and errors. Product names come from one place
   (`Engine.title`: "ChatGPT Codex"), never a literal.
+
+### The gallery
+
+Lamp Dev has a gallery (Window → Gallery, ⌥⇧⌘G; `Gallery.swift`): each of the chat's cards in every state it
+can be in, drawn from made-up values at the chat's width and the wand panel's, light and dark. A card is drawn by
+a view that takes plain values (`AskCardView`, `ResultCardView`), and the view that reads `Store` only finds those
+values and passes them in, so the gallery shows exactly what people see. Keep it that way: a new card, a new
+state of one (a layout, a shape saved by an earlier Lamp, a button that shows only sometimes) or a fix to how one
+lays out gets its entry in `Gallery.entries` in the same change, and is looked at there before the PR. A card
+that reads `Store` in its drawing can't be listed: split it first.
 
 ### Settings
 

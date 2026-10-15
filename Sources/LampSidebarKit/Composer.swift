@@ -44,6 +44,13 @@ public struct Composer: NSViewRepresentable {
     }
 
     public static let maxLines: CGFloat = 6
+    /// Where the box's window really is on screen, when that isn't where its own window says: inside an app's
+    /// sidebar, the box lives in a process of its own whose window macOS keeps out of sight, so the caret it
+    /// reports (for the typing indicator, the emoji picker, an input method's candidates) would land at the edge
+    /// of the screen. The app hosting it says where it is (`SidebarPlacement`). One place for the process, though
+    /// an app may show the chat in more than one window: the app says it only for the window in front, and again
+    /// whenever another comes to the front, since only the front one has a caret.
+    nonisolated(unsafe) public static var hostOrigin: CGPoint?
     public static let inset: CGFloat = 4
     /// Height of a one-line composer; buttons beside it use this so they line up with the text.
     public static let lineHeight = NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: NSFont.systemFontSize)) + inset * 2
@@ -177,6 +184,12 @@ final class ComposerTextView: NSTextView {
 
     private var showsSuggestion: Bool { string.isEmpty && suggestion != nil }
 
+    override func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        let rect = super.firstRect(forCharacterRange: range, actualRange: actualRange)
+        guard let host = Composer.hostOrigin, let window else { return rect }
+        return rect.offsetBy(dx: host.x - window.frame.minX, dy: host.y - window.frame.minY)
+    }
+
     override func keyDown(with event: NSEvent) {
         // Left alone while an input method is composing, where Escape belongs to it.
         if event.keyCode == 53, let onEscape, !hasMarkedText(),
@@ -287,7 +300,7 @@ final class ComposerTextView: NSTextView {
     private static let hint = "⇥ to accept"
     private static let hintAttributes: [NSAttributedString.Key: Any] = [
         .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize - 1, weight: .medium),
-        .foregroundColor: NSColor.secondaryLabelColor,
+        .foregroundColor: NSColor.tertiaryLabelColor,
     ]
 
     private var lineHeight: CGFloat {
@@ -311,9 +324,8 @@ final class ComposerTextView: NSTextView {
         if suggestion != nil {
             let pill = hintRect
             let path = NSBezierPath(roundedRect: pill.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
-            NSColor.quaternaryLabelColor.setFill()
-            path.fill()
-            NSColor.tertiaryLabelColor.setStroke()
+            // Only an outline: a filled key cap drew the eye away from the suggestion itself.
+            NSColor.quaternaryLabelColor.setStroke()
             path.stroke()
             (Self.hint as NSString).draw(at: NSPoint(x: pill.minX + 5, y: pill.minY + 1), withAttributes: Self.hintAttributes)
             right = pill.minX - 8

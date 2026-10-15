@@ -176,7 +176,7 @@ Local models are slower and much less capable than the best cloud models for who
 | `Sources/Lamp/Updater.swift` | Updates for release builds (Sparkle); the feed is served by `updates/` (see RELEASING.md) |
 | `updates/` | The Vercel app that serves the update feed and downloads from the private GitHub releases |
 | `site/` | The website at lamp.dev: one static Astro page (see RELEASING.md) |
-| `Resources/Icon/` | Lamp's own icon as an Icon Composer document: a lamp in silhouette against a setting sun over desert dunes, as one full-bleed picture. It's compiled into `Resources/Assets.car` (Liquid Glass on macOS 26) and drawn into `Resources/AppIcon.icns` and `Resources/AppIcon.png` on Apple's grid |
+| `Resources/Icon/` | Lamp's own icon as an Icon Composer document: a flame over two rings, each a vector layer in Liquid Glass on white (dark in dark mode). It's compiled into `Resources/Assets.car` (Liquid Glass on macOS 26) and drawn into `Resources/AppIcon.icns` and `Resources/AppIcon.png` on Apple's grid |
 | `Resources/THIRD_PARTY_NOTICES.md` | Licences for the bundled pi agent and llama.cpp (both MIT) |
 
 Generated apps live in `~/Library/Application Support/Lamp/Apps/<app>/`, each with its own git history.

@@ -160,34 +160,104 @@ public enum ChatLook {
         }
     }
 
-    /// The Stop and Send buttons beside the message box.
-    public struct StopButton: View {
-        let action: () -> Void
-        public init(action: @escaping () -> Void) { self.action = action }
+    /// The message box as a row of controls with nothing behind them, in Lamp's window and beside an app alike: a round attach button,
+    /// the rounded field with the text (and what's attached above it), any other round buttons beside it (such
+    /// as dictation), and a round button that sends, with one that stops the turn beside it while one runs.
+    public struct MessageBar<Field: View, Above: View, Beside: View>: View {
+        let busy: Bool
+        let canSend: Bool
+        let attachHelp: String
+        let attach: () -> Void
+        let send: () -> Void
+        let stop: () -> Void
+        let focus: () -> Void
+        let field: Field
+        let above: Above
+        let beside: Beside
+
+        public init(busy: Bool, canSend: Bool, attachHelp: String, attach: @escaping () -> Void,
+                    send: @escaping () -> Void, stop: @escaping () -> Void, focus: @escaping () -> Void,
+                    @ViewBuilder field: () -> Field,
+                    @ViewBuilder above: () -> Above = { EmptyView() }, @ViewBuilder beside: () -> Beside = { EmptyView() }) {
+            self.busy = busy
+            self.canSend = canSend
+            self.attachHelp = attachHelp
+            self.attach = attach
+            self.send = send
+            self.stop = stop
+            self.focus = focus
+            self.field = field()
+            self.above = above()
+            self.beside = beside()
+        }
+
+        /// A one-line field is as tall as the round buttons, so the three line up.
+        public static var height: CGFloat { Composer.lineHeight + 2 * padding }
+        static var padding: CGFloat { 6 }
 
         public var body: some View {
-            Button(action: action) { Image(systemName: "stop.circle.fill").font(.title2) }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Stop")
-                .accessibilityLabel("Stop")
-                .frame(height: Composer.lineHeight)
+            HStack(alignment: .bottom, spacing: 8) {
+                Button(action: attach) { Image(systemName: "plus") }
+                    .buttonStyle(Round(prominent: false))
+                    .help(attachHelp)
+                    .accessibilityLabel("Attach files")
+                VStack(alignment: .leading, spacing: 6) {
+                    above
+                    field
+                }
+                .padding(.vertical, Self.padding).padding(.leading, 10).padding(.trailing, 12)
+                .frame(minHeight: Self.height)
+                // Pressing anywhere in the field, not only on the text, is for typing: the field's padding hands
+                // focus to the text. Behind the text and what's attached, so clicks on those stay theirs.
+                .background {
+                    Self.fieldShape.fill(Color(nsColor: .textBackgroundColor))
+                        .onTapGesture(perform: focus)
+                }
+                .overlay(Self.fieldShape.strokeBorder(Color(nsColor: .separatorColor)))
+                beside
+                // Stop stays for as long as the turn runs, beside Send rather than in its place: someone writing the
+                // next change can still stop this one, and what they've written stays in the box.
+                if busy {
+                    Button(action: stop) { Image(systemName: "stop.fill") }
+                        .buttonStyle(Round(prominent: false))
+                        .help("Stop")
+                        .accessibilityLabel("Stop")
+                }
+                Button(action: send) { Image(systemName: "arrow.up") }
+                    .buttonStyle(Round(prominent: true))
+                    .disabled(!canSend)
+                    .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
+                    .accessibilityLabel("Send")
+            }
         }
+
+        static var fieldShape: RoundedRectangle { RoundedRectangle(cornerRadius: height / 2, style: .continuous) }
     }
 
-    public struct SendButton: View {
-        let busy: Bool
-        let action: () -> Void
-        public init(busy: Bool, action: @escaping () -> Void) {
-            self.busy = busy
-            self.action = action
-        }
+    /// A round button beside the message box: the accent colour for Send, plain for the rest.
+    public struct Round: ButtonStyle {
+        let prominent: Bool
+        @Environment(\.isEnabled) private var isEnabled
 
-        public var body: some View {
-            Button(action: action) { Image(systemName: "arrow.up.circle.fill").font(.title2) }
-                .buttonStyle(.plain)
-                .help(busy ? "Queue this change. It's sent when the current one is done." : "Send")
-                .frame(height: Composer.lineHeight)
+        public init(prominent: Bool) { self.prominent = prominent }
+
+        public func makeBody(configuration: Configuration) -> some View {
+            let size = MessageBar<EmptyView, EmptyView, EmptyView>.height
+            configuration.label
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(prominent ? (isEnabled ? AnyShapeStyle(.white) : AnyShapeStyle(.tertiary))
+                                           : AnyShapeStyle(.secondary))
+                .frame(width: size, height: size)
+                .background {
+                    if prominent {
+                        Circle().fill(isEnabled ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary))
+                    } else {
+                        Circle().fill(Color(nsColor: .textBackgroundColor))
+                            .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor)))
+                    }
+                }
+                .contentShape(Circle())
+                .opacity(configuration.isPressed ? 0.7 : 1)
         }
     }
 
@@ -195,6 +265,14 @@ public enum ChatLook {
     public static func placeholder(busy: Bool, empty: Bool) -> String {
         busy ? "Working… describe the next change" : empty ? "Describe what you'd like…" : "Describe a change…"
     }
+
+    /// What the chat sits on: an off-white a touch warm, calmer than a text view's white, so the cards and the
+    /// answers to choose from (still white) stand a little above it. A warm near-black in dark mode.
+    public static let paper = Color(nsColor: NSColor(name: "LampChatPaper") { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x1F / 255, green: 0x1E / 255, blue: 0x1C / 255, alpha: 1)
+            : NSColor(srgbRed: 0xF7 / 255, green: 0xF5 / 255, blue: 0xF1 / 255, alpha: 1)
+    })
 
     /// Parsed once per message: parsing markdown on every redraw adds up while an agent is streaming.
     @MainActor private static var proseCache: [String: AttributedString] = [:]
