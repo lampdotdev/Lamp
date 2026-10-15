@@ -18,6 +18,8 @@ final class Dictation: ObservableObject {
     @Published var problem: Problem?
     /// Goes up as each spoken phrase begins, so the message box can give every phrase its own Undo step.
     @Published private(set) var phrase = 0
+    /// How loud the voice is, 0 to 1, while listening: the desk's talk button moves with it.
+    @Published private(set) var level: Double = 0
 
     private let engine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -55,7 +57,9 @@ final class Dictation: ObservableObject {
             problem = Problem(title: "No Microphone", message: "This Mac has no microphone connected, so there's nothing to listen to.")
             return
         }
-        input.installTap(onBus: 0, bufferSize: 1024, format: format, block: Self.feed(request))
+        input.installTap(onBus: 0, bufferSize: 1024, format: format, block: Self.feed(request) { [weak self] loudness in
+            DispatchQueue.main.async { if self?.isListening == true { self?.level = loudness } }
+        })
         engine.prepare()
         do {
             try engine.start()
@@ -97,6 +101,7 @@ final class Dictation: ObservableObject {
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
         isListening = false
+        level = 0
     }
 
     private func finished(_ failure: Error?) {
@@ -148,8 +153,16 @@ final class Dictation: ObservableObject {
 
     // The audio tap and recognition callbacks run off the main thread, so they're built outside the actor.
 
-    nonisolated private static func feed(_ request: SFSpeechAudioBufferRecognitionRequest) -> AVAudioNodeTapBlock {
-        { buffer, _ in request.append(buffer) }
+    nonisolated private static func feed(_ request: SFSpeechAudioBufferRecognitionRequest,
+                                         loudness: @escaping @Sendable (Double) -> Void) -> AVAudioNodeTapBlock {
+        { buffer, _ in
+            request.append(buffer)
+            guard let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return }
+            var sum: Float = 0
+            for i in 0..<Int(buffer.frameLength) { sum += samples[i] * samples[i] }
+            // Speech sits far below full scale: the root mean square, raised and capped, spans the button's range.
+            loudness(min(1, Double(sqrt(sum / Float(buffer.frameLength))) * 12))
+        }
     }
 
     nonisolated private static func deliver(
