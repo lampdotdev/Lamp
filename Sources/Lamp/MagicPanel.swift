@@ -135,10 +135,11 @@ final class MagicPanel {
 
     // MARK: Pointing
 
-    /// The pointed-at thing goes into the message box as a picture named after it ("Save button.png"), so the
-    /// person writes their message as they would and the agent sees what it is and what it looks like. Both
-    /// come from the app, so neither is trusted further than that: only a picture the app left in its own
-    /// runtime folder, as Lamp asked, is taken, and its name is made from plain words, shown before it's sent.
+    /// The pointed-at thing goes into the message box as a pill: its picture, named after it ("Save button.png"),
+    /// and what it is, so the person writes their message as they would and the agent sees what it is and what it
+    /// looks like. Pointing again replaces it. Both come from the app, so neither is trusted further than that:
+    /// only a picture the app left in its own runtime folder, as Lamp asked, is taken, and its name is made from
+    /// plain words, shown before it's sent.
     private func take(pointed info: [AnyHashable: Any], in project: LampProject) {
         let folder = Runtime.macFolder(project).standardizedFileURL.resolvingSymlinksInPath().path + "/"
         guard let path = info["picture"] as? String else { return }
@@ -149,7 +150,25 @@ final class MagicPanel {
         let named = place.appendingPathComponent(name + ".png")
         guard (try? FileManager.default.createDirectory(at: place, withIntermediateDirectories: true)) != nil,
               (try? FileManager.default.copyItem(at: picture, to: named)) != nil else { return }
-        Store.shared.attach([named], to: project)
+        Store.shared.point(at: PointedAt(title: name, detail: Self.words(info["context"] as? String ?? ""), picture: named.path), in: project)
+    }
+
+    /// Points again for the message being written: the app lays its pointer over its window, in front. What's
+    /// picked takes the place of what was; Escape there leaves it as it was.
+    func pointAgain(in project: LampProject) {
+        guard let app = Store.shared.macCopies(of: project).first else { return }
+        follow(project.id)
+        NSApp.yieldActivation(to: app)
+        app.activate()
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(Edition.notificationPrefix + "pick"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
+    }
+
+    /// Words from the app, on one line and short enough for the card; nil when there are none.
+    static func words(_ text: String) -> String? {
+        var words = text.split(whereSeparator: \.isWhitespace).joined(separator: " ").filter { !$0.isNewline && $0 != "\0" }
+        if words.count > 60 { words = String(words.prefix(59)) + "…" }
+        return words.isEmpty ? nil : words
     }
 
     /// "Save button", "Banana Bread text", "area": what it says, then what it is in everyday words, short
@@ -240,5 +259,55 @@ private struct CoverView: View {
                 .padding(.bottom, 18)
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+/// What the person pointed at in an app, going with a message: what it is in everyday words ("Watered button"),
+/// what it's part of when the app says ("Kitchen basil"), and its picture, which is one of the message's files.
+struct PointedAt: Codable, Equatable {
+    var title: String
+    var detail: String?
+    /// The picture's path while the message is being written, and its name in the app's Attachments folder in
+    /// a request already sent.
+    var picture: String
+
+    /// The picture, while the message is being written.
+    var url: URL? { picture.hasPrefix("/") ? URL(fileURLWithPath: picture) : nil }
+
+    /// Tells the agent which of the attached pictures is the part of the app the request is about, and what
+    /// it's part of, which the picture alone may not show.
+    static func note(for pointed: [PointedAt]) -> String {
+        pointed.map { pointed in
+            let part = pointed.detail.map { " (part of \"\($0)\")" } ?? ""
+            return "\n\nThe user pointed at this in the app: \(pointed.title)\(part), pictured in \(Attachments.folder)/\(pointed.picture)."
+        }.joined()
+    }
+
+    /// This, from a request already sent, for a message being written again.
+    func waiting(in project: LampProject) -> PointedAt {
+        guard url == nil else { return self }
+        var waiting = self
+        waiting.picture = Attachments.urls([picture], in: project)[0].path
+        return waiting
+    }
+}
+
+extension LogLine {
+    /// A request's files as the message box holds them when it's taken back: what was pointed at on its own pill,
+    /// the rest as files.
+    func draftAttachments(in project: LampProject) -> (attachments: [URL], pointed: PointedAt?) {
+        let names = (attachments ?? []).filter { $0 != pointed?.picture }
+        return (Attachments.urls(names, in: project), pointed?.waiting(in: project))
+    }
+}
+
+extension Store {
+    /// The app is open on this Mac, where it can be pointed at again.
+    func canPoint(in project: LampProject) -> Bool {
+        switch project.platform {
+        case .mac: isOpen(project)
+        case .universal: openOnMac.contains(project.id)
+        case .iphone: false
+        }
     }
 }

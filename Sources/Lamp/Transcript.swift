@@ -360,7 +360,13 @@ struct LogRow: View, Equatable {
             ChatLook.UserRow(text: line.text, busy: busy, goBack: line.version != nil ? goBack.map { goBack in { goBack(line, $0) } } : nil,
                              sendAgain: line.canSendAgain ? sendAgain.map { sendAgain in { sendAgain(line) } } : nil,
                              isLatest: isLatestRequest) {
-                ForEach(urls, id: \.self) { url in
+                // What was pointed at keeps its pill, and its picture isn't shown a second time beside it.
+                if let pointed = line.pointed, let url = urls.first(where: { $0.lastPathComponent == pointed.picture }) {
+                    AttachmentPreview(url: url, siblings: urls) {
+                        ChatLook.PointedPill(title: pointed.title, detail: pointed.detail)
+                    }
+                }
+                ForEach(urls.filter { $0.lastPathComponent != line.pointed?.picture }, id: \.self) { url in
                     if Attachments.isImage(url) {
                         AttachmentPreview(url: url, siblings: urls) { AttachmentThumbnail(url: url, size: 72) }
                     } else {

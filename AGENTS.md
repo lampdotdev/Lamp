@@ -483,7 +483,9 @@ at part of the app: the app lays a clear window over its own (`LampMagic.Picker`
 thing under the pointer from its own accessibility tree (`LampDriver.elements`), a click where nothing is named (a game's
 ball, a drawing) takes the area around it, and a drag draws a box of the person's own; it then leaves a cropped
 picture in its runtime folder and says what it is (an area is named by where it is, "Top left area"); Lamp attaches that picture to the message, named after the
-thing ("Save button.png", `MagicPanel.name`), and takes a picture only from that folder.
+thing ("Save button.png", `MagicPanel.name`), and takes a picture only from that folder. In both chats' message boxes it is
+one pill (`ChatLook.PointedPill`: what it is and what it's part of, from the app's own row or the heading above it),
+which a click points again and its × lets go; pointing again replaces it, and nothing is left drawn over the app.
 
 Whether the change was asked for beside the app or in Lamp's window, a change goes into the open app without a restart when it can (`LiveReload`). The
 Mac app, or the Mac half of an app for both while Try On points at this Mac, is
